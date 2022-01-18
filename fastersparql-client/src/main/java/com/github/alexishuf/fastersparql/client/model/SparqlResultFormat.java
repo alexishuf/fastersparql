@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.client.model;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -37,19 +36,16 @@ public enum SparqlResultFormat {
     public String lowercase() { return LOWERCASE[ordinal()]; }
 
 
-    /* --- --- --- static methods --- --- --- */
+    /* --- --- --- constants --- --- --- */
 
     /**
      * Get a {@link List} with all members of the enum
      */
-    public static List<SparqlResultFormat> valuesList() {
-        return valuesList;
-    }
+    public static final List<SparqlResultFormat> VALUES =
+            Collections.unmodifiableList(Arrays.asList(values()));
 
     /* --- --- --- internals --- --- --- */
 
-    private static final List<SparqlResultFormat> valuesList = Collections.unmodifiableList(
-            Arrays.asList(values()));
     private static final String[] mediaTypeStrings = {
             "application/sparql-results+json",
             "text/tab-separated-values",

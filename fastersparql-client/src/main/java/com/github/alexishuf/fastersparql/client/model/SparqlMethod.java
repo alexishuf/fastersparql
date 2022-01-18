@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public enum SparqlMethod {
     GET,
@@ -42,4 +44,10 @@ public enum SparqlMethod {
             default: throw new UnsupportedOperationException(this+" not supported");
         }
     }
+
+    /**
+     * {@link List} wrapping {@link SparqlMethod#values()}.
+     */
+    public static final List<SparqlMethod> VALUES =
+            Collections.unmodifiableList(Arrays.asList(values()));
 }

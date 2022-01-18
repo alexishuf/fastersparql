@@ -31,9 +31,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 
+import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.GET;
+import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.POST;
+import static com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties.maxQueryByGet;
 import static com.github.alexishuf.fastersparql.client.util.UriUtils.escapeQueryParam;
 import static com.github.alexishuf.fastersparql.client.util.UriUtils.needsEscape;
-import static java.util.Objects.requireNonNull;
 
 @Slf4j
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
@@ -62,7 +64,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         Throwable cause;
         try {
             SparqlConfiguration eff = buildConfig(configuration, sparql);
-            HttpMethod m = method2netty(requireNonNull(eff.preferredMethod(null)));
+            HttpMethod m = method2netty(eff.methods().get(0));
             SafeCompletableAsyncTask<List<String>> vars = new SafeCompletableAsyncTask<>();
             PublisherShim<String[]> publisher = new PublisherShim<>();
             netty.get().request(m, firstLine(eff, sparql), a -> generateBody(a, eff, sparql),
@@ -86,7 +88,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         Throwable cause;
         try {
             SparqlConfiguration eff = buildConfig(configuration, sparql);
-            HttpMethod m = method2netty(requireNonNull(eff.preferredMethod(null)));
+            HttpMethod m = method2netty(eff.methods().get(0));
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             PublisherShim<byte[]> publisher = new PublisherShim<>();
             netty.get().request(m, firstLine(eff, sparql), a -> generateBody(a, eff, sparql),
@@ -128,8 +130,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
     private String resultsAcceptString(SparqlConfiguration configuration) {
         List<SparqlResultFormat> list = configuration.resultsAccepts();
-        if (list == null || list.isEmpty())
-            list = SparqlResultFormat.valuesList();
         if (list.size() == 1)
             return list.get(0).contentType();
         StringBuilder builder = new StringBuilder(32 * list.size());
@@ -141,8 +141,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
     private String rdfAcceptString(SparqlConfiguration configuration) {
         List<MediaType> list = configuration.rdfAccepts();
-        if (list == null || list.isEmpty())
-            list = RDFMediaTypes.KNOWN;
         if (list.size() == 1)
             return list.get(0).toString();
         StringBuilder builder = new StringBuilder(23 * list.size());
@@ -206,7 +204,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     private ByteBuf generateBody(ByteBufAllocator allocator, SparqlConfiguration config,
                                  CharSequence sparql) {
         CharSequence body;
-        switch (config.preferredMethod(SparqlMethod.POST)) {
+        switch (config.methods().get(0)) {
             case POST: body = sparql; break;
             case FORM: body = writeParams("", '\0', sparql, config.params()); break;
             default: return null;
@@ -221,14 +219,19 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         SparqlConfiguration offer = endpoint.configuration();
         if (!offer.accepts(configuration))
             throw new UnacceptableSparqlConfiguration(endpoint.uri(), offer, configuration);
-        SparqlConfiguration result = offer.overlayWith(configuration);
-        if (result.methods() == null) {
-            if (query.length() < FasterSparqlProperties.clientGetSafeMaxQuery())
-                result = result.toBuilder().method(SparqlMethod.GET).build();
-            else
-                result = result.toBuilder().method(SparqlMethod.POST).build();
+        SparqlConfiguration effective = offer.overlayWith(configuration);
+        List<SparqlMethod> effMethods = effective.methods();
+        int getIdx = effMethods.indexOf(GET), postIdx = effMethods.indexOf(POST);
+        boolean canPOST = offer.methods().contains(POST);
+        boolean prefersGET = getIdx >= 0 && (postIdx < 0 || getIdx < postIdx);
+        if (prefersGET && canPOST && query.length() > maxQueryByGet()) {
+            ArrayList<SparqlMethod> copy = new ArrayList<>(effMethods);
+            if (postIdx >= 0)
+                copy.remove(postIdx);
+            copy.add(0, POST);
+            effective = effective.toBuilder().methods(copy).build();
         }
-        return result;
+        return effective;
     }
 
     /* --- --- --- inner classes  --- --- ---  */

@@ -25,23 +25,24 @@ class SparqlConfigurationTest {
     private static final MediaType JSONLD_FLATTENED = MediaType.parse("application/ld+json; profile=\"http://www.w3.org/ns/json-ld#flattened\"");
 
     static Stream<Arguments> testNonEmptyNonNullDistinct() {
+        List<String> fallback = asList("5", "23");
         return Stream.of(
-                arguments(null, null),
-                arguments(emptyList(), null),
-                arguments(singletonList("1"), singletonList("1")),
-                arguments(asList("1", "11"), asList("1", "11")),
-                arguments(asList("1", "11", "1"), asList("1", "11")),
-                arguments(asList("1", "11", "1", "11"), asList("1", "11")),
-                arguments(asList("2", "11", "2", "1"), asList("2", "11", "1")),
-                arguments(asList("1", null), singletonList("1")),
-                arguments(asList("1", null, "2"), asList("1", "2")),
-                arguments(asList(null, "1", null, "2"), asList("1", "2"))
+                arguments(null, fallback, fallback),
+                arguments(emptyList(), fallback, fallback),
+                arguments(singletonList("1"), fallback, singletonList("1")),
+                arguments(asList("1", "11"), fallback, asList("1", "11")),
+                arguments(asList("1", "11", "1"), fallback, asList("1", "11")),
+                arguments(asList("1", "11", "1", "11"), fallback, asList("1", "11")),
+                arguments(asList("2", "11", "2", "1"), fallback, asList("2", "11", "1")),
+                arguments(asList("1", null), fallback, singletonList("1")),
+                arguments(asList("1", null, "2"), fallback, asList("1", "2")),
+                arguments(asList(null, "1", null, "2"), fallback, asList("1", "2"))
         );
     }
 
     @ParameterizedTest @MethodSource
-    void testNonEmptyNonNullDistinct(List<String> in, List<String> expected) {
-        List<String> ac = SparqlConfiguration.nonEmptyNonNullDistinct(in, "itemName");
+    void testNonEmptyNonNullDistinct(List<String> in, List<String> fallback, List<String> expected) {
+        List<String> ac = SparqlConfiguration.nonEmptyNonNullDistinct(in, fallback, "itemName");
         assertEquals(expected, ac);
     }
 
@@ -55,7 +56,7 @@ class SparqlConfigurationTest {
     @ParameterizedTest @MethodSource
     void testInvalidNonEmptyNonNullDistinct(List<String> input) {
         assertThrows(SparqlClientInvalidArgument.class,
-                () -> SparqlConfiguration.nonEmptyNonNullDistinct(input, "itemName"));
+                () -> SparqlConfiguration.nonEmptyNonNullDistinct(input, emptyList(), "itemName"));
     }
 
     static Stream<Arguments> testSanitizeHeaders() {

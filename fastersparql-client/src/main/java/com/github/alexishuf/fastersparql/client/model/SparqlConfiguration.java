@@ -11,6 +11,7 @@ import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
+import org.checkerframework.common.value.qual.MinLen;
 
 import java.util.*;
 
@@ -33,28 +34,29 @@ import static java.lang.String.format;
  * {@link SparqlConfiguration#overlayWith(SparqlConfiguration)} method provides an
  * implementation of such semantics.
  */
-@Value @Builder(toBuilder = true) @Accessors(fluent = true)
+@Builder(toBuilder = true)
+@Value @Accessors(fluent = true)
 public class SparqlConfiguration {
     public static final SparqlConfiguration EMPTY = SparqlConfiguration.builder().build();
 
     /**
-     * Possibly null, non-empty, immutable distinct list of preferred SPARQL protocol
-     * methods to use in querying
+     * Non-null, non-empty, immutable distinct list of preferred SPARQL protocol methods.
      *
      * <ul>
      *     <li>Deduplication (only the earliest item remain)</li>
      *     <li>Nulls items will be removed, so long the resulting list remains non-empty</li>
-     *     <li>Empty lists are converted to null</li>
+     *     <li>Null lists are replaced with empty lists</li>
+     *     <li>Empty lists are replaced with {@link SparqlMethod#VALUES}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If non-null (and thus non-empty), any list set in a
-     * lower-precedence {@link SparqlConfiguration} will be ignored in favor of this one.
-     * If empty, there is no effect over lower-precedence {@link SparqlConfiguration}s.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasMethods()} this list
+     * override replaces the list set in the lower-precedence {@link SparqlConfiguration}, else,
+     * the lower-precedence list remains effective.
      */
-    @Singular List<SparqlMethod> methods;
+    @Singular @MinLen(1) List<SparqlMethod> methods;
 
     /**
-     * Possibly null, non-empty, immutable, distinct list of non-null SPARQL result formats
+     * Non-null, non-empty, immutable, distinct list of non-null SPARQL result formats
      * ordered from most to least-preferred.
      *
      * These result formats will be applied to {@code SELECT} and {@code ASK} queries.
@@ -63,27 +65,30 @@ public class SparqlConfiguration {
      * <ul>
      *     <li>Deduplication (only the earliest item remain)</li>
      *     <li>Nulls items will be removed, so long the resulting list remains non-empty</li>
-     *     <li>Empty lists are converted to null</li>
+     *     <li>Null lists are converted to empty lists</li>
+     *     <li>Empty lists are converted to a {@link SparqlResultFormat#VALUES}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If non-null (and thus non-empty), the list will
-     * completely replace any list set in a lower-precedence {@link SparqlConfiguration}.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasResultsAccepts()},
+     * this list replaces the list set in the lower-precedence {@link SparqlConfiguration}, else,
+     * the lower-precedence list remains effective.
      */
-    @Singular @Nullable List<SparqlResultFormat> resultsAccepts;
+    @Singular @MinLen(1) List<SparqlResultFormat> resultsAccepts;
 
     /**
-     * Possibly null, non-empty, distinct immutable list of accepted RDF media types
+     * Non-null, non-empty, distinct immutable list of accepted RDF media types
      * ordered from most preferred to least preferred and not including q-values.
      *
      * <strong>Sanitization at construction time</strong>:
      * <ul>
-     *     <li>Empty lists are converted to a {@code null}</li>
+     *     <li>{@code null} is converted to an empty list.</li>
+     *     <li>An empty list is converted to {@link RDFMediaTypes#ALL}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If null, there is no effect. If non-null
-     * (and thus non-empty), lists set in lower-precedence {@link SparqlConfiguration}s are ignored.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasRdfAccepts()}, this
+     * list will replace a lower-precedence list, else the lower-precedence list prevails.
      */
-    @Singular @Nullable List<MediaType> rdfAccepts;
+    @Singular @MinLen(1) List<MediaType> rdfAccepts;
 
     /**
      * An immutable non-null map from non-null (but possibly empty) param names to non-null
@@ -195,32 +200,18 @@ public class SparqlConfiguration {
      */
     @Singular Map<String, List<String>> appendHeaders;
 
-    /**
-     * Create a new {@link SparqlConfiguration}.
-     *
-     * The {@code params} and {@code headers} arguments will be sanitized and validated as
-     * described in the class overview: {@link SparqlConfiguration}.
-     *
-     * @param methods a possibly null {@link SparqlMethod}
-     * @param params a map from query params to possibly-escaped values. Null or empty keys will
-     *               raise a {@link SparqlClientInvalidArgument}. Null lists will be converted
-     *               to empty lists, yielding suppression semantics. Names and values will be
-     *               percent-escaped if containing forbidden characters that are not part of a
-     *               %-escape.
-     * @param headers a map from header names to a list of values. Null and empty keys will raise
-     *                {@link SparqlClientInvalidArgument}. Null lists will be converted to
-     *                empty lists, yielding suppression semantics. Header names will be trimmed
-     *                and converted to lower case. Values will only be trimmed.
-     */
-    public SparqlConfiguration(@Nullable List<@Nullable SparqlMethod> methods,
-                               @Nullable List<@Nullable SparqlResultFormat> resultsAccepts,
-                               @Nullable List<@Nullable MediaType> rdfAccepts,
-                               @Nullable Map<String, @Nullable List<@Nullable String>> params,
-                               @Nullable Map<String, @Nullable String> headers,
-                               @Nullable Map<String, @Nullable List<@Nullable String>> appendHeaders) {
-        this.methods = nonEmptyNonNullDistinct(methods, "method");
-        this.resultsAccepts = nonEmptyNonNullDistinct(resultsAccepts, "accepted results format");
-        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, "accepted RDF media types");
+    private SparqlConfiguration(@Nullable List<@Nullable SparqlMethod> methods,
+                                @Nullable List<@Nullable SparqlResultFormat> resultsAccepts,
+                                @Nullable List<@Nullable MediaType> rdfAccepts,
+                                @Nullable Map<String, @Nullable List<@Nullable String>> params,
+                                @Nullable Map<String, @Nullable String> headers,
+                                @Nullable Map<String, @Nullable List<@Nullable String>> appendHeaders) {
+        this.methods = nonEmptyNonNullDistinct(methods, SparqlMethod.VALUES,
+                                               "method");
+        this.resultsAccepts = nonEmptyNonNullDistinct(resultsAccepts, SparqlResultFormat.VALUES,
+                                                      "accepted results format");
+        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, RDFMediaTypes.ALL,
+                                                  "accepted RDF media types");
         this.params = sanitizeParams(params);
         this.headers = sanitizeHeaders(headers);
         this.appendHeaders = sanitizeAppendHeaders(appendHeaders);
@@ -236,6 +227,22 @@ public class SparqlConfiguration {
         }
     }
 
+
+    /**
+     * Whether {@link SparqlConfiguration#methods()} was set on construction.
+     */
+    boolean hasMethods() { return methods != SparqlMethod.VALUES; }
+
+    /**
+     * Whether {@link SparqlConfiguration#resultsAccepts()} was set on construction.
+     */
+    boolean hasResultsAccepts() { return resultsAccepts != SparqlResultFormat.VALUES; }
+
+    /**
+     * Whether {@link SparqlConfiguration#rdfAccepts()} was set on construction.
+     */
+    boolean hasRdfAccepts() { return rdfAccepts != RDFMediaTypes.ALL; }
+
     /**
      * Tests if this objects set no configuration (i.e., it is a no-op).
      *
@@ -243,41 +250,9 @@ public class SparqlConfiguration {
      */
     public boolean isEmpty() {
         return this == EMPTY || (
-                methods == null && resultsAccepts == null && rdfAccepts == null &&
+                methods.isEmpty() && resultsAccepts.isEmpty() && rdfAccepts.isEmpty() &&
                 params.isEmpty() && headers.isEmpty() && appendHeaders.isEmpty()
         );
-    }
-
-    /**
-     * Get the preferred (first in list) {@link SparqlMethod}.
-     *
-     * @param fallback what to return {@link SparqlConfiguration#methods()} is empty
-     * @return the first {@link SparqlMethod} in {@link SparqlConfiguration#methods()} or
-     *         {@code fallback}
-     */
-    public @PolyNull SparqlMethod preferredMethod(SparqlMethod fallback) {
-        return methods == null || methods.isEmpty() ? fallback : methods.get(0);
-    }
-
-    /**
-     * Get the preferred (first in list) {@link SparqlResultFormat}.
-     *
-     * @param fallback what to return if this {@link SparqlConfiguration#resultsAccepts} is empty.
-     * @return a {@link SparqlResultFormat}
-     */
-    public @PolyNull SparqlResultFormat preferredResults(SparqlResultFormat fallback) {
-        return resultsAccepts == null || resultsAccepts.isEmpty() ? fallback : resultsAccepts.get(0);
-    }
-
-    /**
-     * Get the highest-priority {@link MediaType} for RDF graph results.
-     *
-     * @param fallback what to return if {@link SparqlConfiguration#rdfAccepts()} is empty.
-     * @return The first {@link MediaType} in {@link SparqlConfiguration#rdfAccepts()}
-     *         or {@code fallback}
-     */
-    public @PolyNull MediaType preferredRDF(MediaType fallback) {
-        return rdfAccepts == null || rdfAccepts.isEmpty() ? fallback : rdfAccepts.get(0);
     }
 
     /**
@@ -330,7 +305,12 @@ public class SparqlConfiguration {
         if (higher == null)
             return this;
         SparqlConfigurationBuilder b = toBuilder();
-        overlayLists(higher, b);
+        if (higher.hasMethods())
+            b.clearMethods().methods(higher.methods);
+        if (higher.hasResultsAccepts())
+            b.clearResultsAccepts().resultsAccepts(higher.resultsAccepts);
+        if (higher.hasRdfAccepts())
+            b.clearRdfAccepts().rdfAccepts(higher.rdfAccepts);
         overlayParams(higher, b);
         overlayHeaders(higher, b);
         return b.build();
@@ -362,7 +342,7 @@ public class SparqlConfiguration {
             return true;
         if (noIntersection(methods, req.methods))               return false;
         if (noIntersection(resultsAccepts, req.resultsAccepts)) return false;
-        if (rdfAccepts == null || req.rdfAccepts == null)       return true;
+        if (rdfAccepts.isEmpty() || req.rdfAccepts.isEmpty())   return true;
         for (MediaType reqMT : req.rdfAccepts) {
             for (MediaType offerMT : rdfAccepts) {
                 if (reqMT.accepts(offerMT))
@@ -386,25 +366,13 @@ public class SparqlConfiguration {
 
     /* --- --- --- implementation details --- --- --- */
 
-    private static <T> boolean noIntersection(@Nullable List<T> a, @Nullable List<T> b) {
-        if (a == null || b == null)
-            return false;
+    private static <T> boolean noIntersection(List<T> a, List<T> b) {
         boolean has = false;
         for (T o : b) {
             has = a.contains(o);
             if (has) break;
         }
         return !has;
-    }
-
-    private void overlayLists(@NonNull SparqlConfiguration higher,
-                              SparqlConfigurationBuilder b) {
-        if (higher.methods != null)
-            b.clearMethods().methods(higher.methods);
-        if (higher.resultsAccepts != null)
-            b.clearResultsAccepts().resultsAccepts(higher.resultsAccepts);
-        if (higher.rdfAccepts != null)
-            b.clearRdfAccepts().rdfAccepts(higher.rdfAccepts);
     }
 
     private void overlayHeaders(@NonNull SparqlConfiguration higher,
@@ -455,9 +423,9 @@ public class SparqlConfiguration {
     }
 
     static <T> @PolyNull List<T> nonEmptyNonNullDistinct(@PolyNull List<@Nullable T> input,
-                                                        String itemName) {
+                                                         List<T> ifEmpty, String itemName) {
         if (input == null || input.isEmpty())
-            return null;
+            return ifEmpty;
         ArrayList<T> sanitized = new ArrayList<>(input.size());
         int nullCount = 0;
         for (T item : input) {
@@ -468,7 +436,7 @@ public class SparqlConfiguration {
         }
         if (sanitized.isEmpty()) {
             String msg = itemName.substring(0, 1).toUpperCase() + itemName.substring(1)+
-                       " list cannot be empty. Note: "+nullCount+" null items removed from input";
+                    " list became empty after removing "+nullCount+" items";
             throw new SparqlClientInvalidArgument(msg);
         }
         return Collections.unmodifiableList(sanitized);

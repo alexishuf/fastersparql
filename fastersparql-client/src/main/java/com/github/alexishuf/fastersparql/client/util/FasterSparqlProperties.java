@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
 import org.checkerframework.checker.index.qual.Positive;
 
 import java.util.regex.Matcher;
@@ -9,9 +8,9 @@ import java.util.regex.Pattern;
 
 public class FasterSparqlProperties {
     public static final String REACTIVE_QUEUE_CAPACITY   = "fastersparql.reactive.queue.capacity";
-    public static final String CLIENT_GET_SAFE_MAX_QUERY = "fastersparql.client.get.safe-max-query";
+    public static final String CLIENT_MAX_QUERY_GET = "fastersparql.client.max-query-get";
     public static final int DEF_REACTIVE_QUEUE_CAPACITY = 1024;
-    public static final int DEF_CLIENT_GET_SAFE_MAX_QUERY = 2048;
+    public static final int DEF_CLIENT_MAX_QUERY_GET = 1024;
 
     protected interface Parser<T> {
         T parse(String source, String value) throws IllegalArgumentException;
@@ -66,9 +65,9 @@ public class FasterSparqlProperties {
      * since large queries (especially after percent-encoding) may exceed fixed buffer sizes for
      * the first line in the HTTP request.
      *
-     * The default value is {@link FasterSparqlProperties#DEF_CLIENT_GET_SAFE_MAX_QUERY}.
+     * The default value is {@link FasterSparqlProperties#DEF_CLIENT_MAX_QUERY_GET}.
      */
-    public static @Positive int clientGetSafeMaxQuery() {
-        return readPositiveInt(CLIENT_GET_SAFE_MAX_QUERY, DEF_CLIENT_GET_SAFE_MAX_QUERY);
+    public static @Positive int maxQueryByGet() {
+        return readPositiveInt(CLIENT_MAX_QUERY_GET, DEF_CLIENT_MAX_QUERY_GET);
     }
 }
