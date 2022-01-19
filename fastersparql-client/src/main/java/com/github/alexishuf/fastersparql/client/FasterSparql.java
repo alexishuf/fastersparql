@@ -29,8 +29,7 @@ public class FasterSparql {
      * @param preferredTagsOrClassNames a list of {@link SparqlClientFactory#tag()}s,
      *                                  {@link Class#getName()} and {@link Class#getSimpleName()}.
      *                                  The earlier an entry appears, the higher its precedence.
-     * @return a non-null {@link SparqlClientFactory} whose ownership is transferred to the caller,
-     *         who must then call {@link SparqlClient#close()}. The returned {@link SparqlClient}
+     * @return a non-null {@link SparqlClientFactory}. The returned {@link SparqlClientFactory}
      *         may correspond to no tag or class name in {@code preferredTagsOrClassNames}.
      */
     public static SparqlClientFactory factory(List<String> preferredTagsOrClassNames) {
@@ -64,27 +63,54 @@ public class FasterSparql {
      * @param endpoint the {@link SparqlEndpoint} to be queried
      * @param rowParser {@link RowParser} to process rows of SPARQL results
      * @param fragmentParser {@link FragmentParser} to process fragments of RDF graphs
-     * @param <Row> type of SPARQL result rows (i.e. solutions) exposed by the {@code rowParser}
-     * @param <Fragment> type of RDF graph fragments exposed by the {@code fragmentParser}
-     * @return a non-null ready to use {@link SparqlClient} targetting the given {@code endpoint}.
-     *         Ownership is given to the caller, which must eventually call
-     *         {@link SparqlClient#close()}
+     * @param <R> type of SPARQL result rows (i.e. solutions) exposed by the {@code rowParser}
+     * @param <F> type of RDF graph fragments exposed by the {@code fragmentParser}
+     * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
      */
-    public static <Row, Fragment> SparqlClient<Row, Fragment>
-    clientFor(SparqlEndpoint endpoint, RowParser<Row> rowParser,
-              FragmentParser<Fragment> fragmentParser) {
+    public static <R, F> SparqlClient<R, F>
+    clientFor(SparqlEndpoint endpoint, RowParser<R> rowParser, FragmentParser<F> fragmentParser) {
         return factory().createFor(endpoint, rowParser, fragmentParser);
     }
 
     /**
-     * Equivalent to {@link FasterSparql#clientFor(SparqlEndpoint, RowParser, FragmentParser)}
-     * but with default row and fragment parsers.
+     * Creates a {@link SparqlClient} for the given {@link SparqlEndpoint}.
      *
      * @param endpoint the SPARQL endpoint to receive the queries.
-     * @return see {@link FasterSparql#clientFor(SparqlEndpoint, RowParser, FragmentParser)}.
+     * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
      */
     public static SparqlClient<String[], byte[]>
     clientFor(SparqlEndpoint endpoint) {
-        return factory("netty").createFor(endpoint);
+        return factory().createFor(endpoint);
+    }
+
+    /**
+     * Creates a {@link SparqlClient} for the endpoint at {@code augmentedUri} with given parsers.
+     *
+     * @param augmentedUri The URI of the SPARQL endpoint, optionally prefixed with configurations
+     *                     to be embedded in {@link SparqlEndpoint#configuration()}.
+     *                     See {@link SparqlEndpoint#parse(String)}.
+     * @param rowParser a parser to convert rows of ASK/SELECT queries
+     * @param fragmentParser a parser to convert fragments of graphs returned from
+     *                       CONSTRUCT/DESCRIBE queries
+     * @param <R> the type of rows
+     * @param <F> the type of graph fragments
+     * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
+     */
+    public static <R, F> SparqlClient<R, F>
+    clientFor(String augmentedUri, RowParser<R> rowParser, FragmentParser<F> fragmentParser) {
+        return factory().createFor(SparqlEndpoint.parse(augmentedUri), rowParser, fragmentParser);
+    }
+
+    /**
+     * Creates a {@link SparqlClient} for the endpoint at {@code augmentedUri}.
+     *
+     * @param augmentedUri The URI of the SPARQL endpoint, optionally prefixed with configurations
+     *                     to be embedded in {@link SparqlEndpoint#configuration()}.
+     *                     See {@link SparqlEndpoint#parse(String)}.
+     * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
+     */
+    public static SparqlClient<String[], byte[]>
+    clientFor(String augmentedUri) {
+        return factory().createFor(SparqlEndpoint.parse(augmentedUri));
     }
 }

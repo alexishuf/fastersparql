@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.exceptions.AsyncIterableCancelled;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 
@@ -43,6 +44,14 @@ public interface AsyncIterable<T> extends Iterable<T>, AutoCloseable {
      * @return The reason for the producer failure or null if it did not fail.
      */
     @Nullable Throwable error();
+
+    /**
+     * Whether an error has been flagged via {@link AsyncIterable#error()}.
+     *
+     * @return {@code true} iff {@link AsyncIterable#error()} {@code != null}.
+     */
+    @EnsuresNonNullIf(expression = "error()", result = true)
+    default boolean hasError() { return error() != null; }
 
     /**
      * Notifies the attached asynchronous producer that no more items will be consumed.

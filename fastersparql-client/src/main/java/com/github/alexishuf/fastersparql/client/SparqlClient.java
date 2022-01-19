@@ -121,5 +121,16 @@ public interface SparqlClient<R, F> extends AutoCloseable {
     }
 
 
-    @Override void close() throws Exception;
+    /**
+     * Closes the client, releasing all resources.
+     *
+     * Subsequent calls to the {@code query*()} methods will fail immediately (i.e., not via the
+     * {@link Publisher}) with {@link IllegalStateException}.
+     *
+     * Active {@link Publisher}s spawned from this client may be interrupted and terminate
+     * with {@link Subscriber#onError(Throwable)} after this method is called. Howerver,
+     * implementations of {@code close} should not try to block until all active {@link Publisher}s
+     * terminate.
+     */
+    @Override void close();
 }
