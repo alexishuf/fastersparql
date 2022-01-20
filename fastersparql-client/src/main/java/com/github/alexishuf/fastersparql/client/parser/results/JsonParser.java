@@ -27,7 +27,7 @@ public class JsonParser implements ResultsParser {
     private final List<String> fieldStrings = new ArrayList<>(8);
     private final List<String> vars = new ArrayList<>();
     private final List<@Nullable String> row = new ArrayList<>();
-    private @Nullable String type, value, lang;
+    private @Nullable String type, datatype, value, lang;
 
     public JsonParser(ResultsParserConsumer consumer) {
         this.input = "";
@@ -101,6 +101,7 @@ public class JsonParser implements ResultsParser {
         RESULTS,
         BINDINGS,
         TYPE,
+        DATATYPE,
         VALUE,
         XMLLANG,
         BOOLEAN,
@@ -232,6 +233,8 @@ public class JsonParser implements ResultsParser {
                             s.vars.add(str);
                         } else if (s.atField(RESULTS, BINDINGS, UNKNOWN, Field.TYPE)) {
                             s.type = str;
+                        } else if (s.atField(RESULTS, BINDINGS, UNKNOWN, Field.DATATYPE)) {
+                            s.datatype = str;
                         } else if (s.atField(RESULTS, BINDINGS, UNKNOWN, Field.VALUE)) {
                             s.value = str;
                         } else if (s.atField(RESULTS, BINDINGS, UNKNOWN, Field.XMLLANG)) {
@@ -312,7 +315,7 @@ public class JsonParser implements ResultsParser {
     }
 
     private void notifyError(SyntaxException e) {
-        if (!sentError)
+        if (sentError)
             log.error("Suppressing {} to avoid double {}.onError()", e, consumer, e);
         consumer.onError(e.getMessage());
         sentError = true;
@@ -394,23 +397,44 @@ public class JsonParser implements ResultsParser {
     }
 
     String takeNT() throws SyntaxException {
-        if (value == null)
-            throw new SyntaxException(pos(), "No value set, cannot assemble NT value");
+        if (value == null && !"bnode".equalsIgnoreCase(type) && !"blank".equalsIgnoreCase(type))
+            throw new SyntaxException(pos(), "No value set, cannot build NT representation");
         String nt;
-        if (lang != null && !lang.isEmpty()) {
-            nt = "\""+value+"\"@"+lang.replace('_', '-');
-        } else if (type != null && !type.isEmpty()) {
-            if (type.charAt(0) == '<' && type.charAt(type.length()-1) == '>')
-                type = type.substring(1, type.length()-1);
-            if (type.startsWith("xsd:"))
-                type = "http://www.w3.org/2001/XMLSchema#" + type.substring(4);
-            else if (type.startsWith("rdf:"))
-                type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#" + type.substring(4);
-            nt = "\""+value+"\"^^<"+type+">";
+        if ("uri".equalsIgnoreCase(type) || "iri".equalsIgnoreCase(type)) {
+            nt = "<"+value+">";
+        } else if ("bnode".equalsIgnoreCase(type) || "blank".equalsIgnoreCase(type)) {
+            if (value == null || value.isEmpty() || value.equals("_:")) {
+                value = UUID.randomUUID().toString();
+                log.debug("Generated UUID "+value+" for null/empty bnode at "+pos());
+            }
+            assert value != null;
+            return value.startsWith("_:") ? value : "_:"+value;
+        } else if ("literal".equalsIgnoreCase(type)
+                || (type == null && (datatype != null || lang != null))) {
+            if (lang != null && !lang.isEmpty()) {
+                nt = "\""+value+"\"@"+lang.replace('_', '-');
+            } else if (datatype != null && !datatype.isEmpty()) {
+                if (datatype.charAt(0) == '<' && datatype.charAt(datatype.length() - 1) == '>')
+                    datatype = datatype.substring(1, datatype.length() - 1);
+                if (datatype.startsWith("xsd:"))
+                    datatype = "http://www.w3.org/2001/XMLSchema#"+datatype.substring(4);
+                else if (datatype.startsWith("rdf:"))
+                    datatype = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"+datatype.substring(4);
+                nt = "\""+value+"\"^^<"+datatype+">";
+            } else {
+                nt = "\""+value+"\"";
+            }
+        } else if (type == null) {
+            if (value.startsWith("http://") || value.startsWith("https://"))
+                return "<"+value+">";
+            else if (value.startsWith("_:"))
+                return value;
+            else
+                return "\""+value+"\"";
         } else {
-            nt = "\""+value+"\"";
+            throw new SyntaxException(pos(), "Unsupported type=\""+type+"\" for JSON values");
         }
-        value = type = lang = null;
+        value = type = datatype = lang = null;
         return nt;
     }
 
@@ -441,13 +465,13 @@ public class JsonParser implements ResultsParser {
         return this;
     }
 
-    void setupForTest(CharSequence input, int cursor,
-                      @Nullable String value, @Nullable String type, @Nullable String lang,
-                      List<String> fields) {
+    void setupForTest(CharSequence input, int cursor, @Nullable String value, @Nullable String type,
+                      @Nullable String datatype, @Nullable String lang, List<String> fields) {
         this.input = input;
         this.cursor = cursor;
         this.value = value;
         this.type = type;
+        this.datatype = datatype;
         this.lang = lang;
         for (String field : fields)
             enterField(field);

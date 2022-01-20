@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -54,7 +55,7 @@ class JsonParserTest {
     @ParameterizedTest @MethodSource
     void testReadString(String input, int start, @Nullable String expected) {
         JsonParser parser = new JsonParser(new TestConsumer());
-        parser.setupForTest(input, start, null, null, null, emptyList());
+        parser.setupForTest(input, start, null, null, null, null, emptyList());
         boolean thrown = false;
         try {
             assertEquals(expected, parser.readString());
@@ -93,7 +94,7 @@ class JsonParserTest {
     @ParameterizedTest @MethodSource
     void testAtField(List<String> state, List<Field> query, boolean expected) {
         JsonParser parser = new JsonParser(new TestConsumer());
-        parser.setupForTest("", 0, null, null, null, state);
+        parser.setupForTest("", 0, null, null, null, null, state);
         assertEquals(expected, parser.atField(query.toArray(new Field[0])));
     }
 
@@ -112,43 +113,96 @@ class JsonParserTest {
     @ParameterizedTest @MethodSource
     void testAtKnownField(List<String> state, boolean expected) {
         JsonParser parser = new JsonParser(new TestConsumer());
-        parser.setupForTest("", 0, null, null, null, state);
+        parser.setupForTest("", 0, null, null, null, null, state);
         assertEquals(expected, parser.atKnownField());
     }
 
+    @SuppressWarnings("ConstantConditions")
     static Stream<Arguments> testToNT() {
+        String noType = null;
+        String noDatatype = null;
+        String noLang = null;
         return Stream.of(
-    /*  1 */    arguments("23", "http://www.w3.org/2001/XMLSchema#integer", null,
+    /*  1 */    arguments("23", "literal", "http://www.w3.org/2001/XMLSchema#integer", null,
                           "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
-    /*  2 */    arguments("23", "http://www.w3.org/2001/XMLSchema#string", null,
+    /*  2 */    arguments("23",  "literal", "http://www.w3.org/2001/XMLSchema#string", null,
                           "\"23\"^^<http://www.w3.org/2001/XMLSchema#string>"),
-    /*  3 */    arguments("23", null, null, "\"23\""),
-    /*  4 */    arguments("\\\"x", null, null, "\"\\\"x\""),
-    /*  5 */    arguments("bob", null, "en", "\"bob\"@en"),
-    /*  6 */    arguments("bob", null, "en-US", "\"bob\"@en-US"),
-    /*  7 */    arguments("bob", null, "en_US", "\"bob\"@en-US"),
+    /*  3 */    arguments("23", "literal", noDatatype, noLang, "\"23\""),
+    /*  4 */    arguments("\\\"x", "literal", noDatatype, noLang, "\"\\\"x\""),
+    /*  5 */    arguments("bob", "literal", noDatatype, "en", "\"bob\"@en"),
+    /*  6 */    arguments("bob", "literal", noDatatype, "en-US", "\"bob\"@en-US"),
+    /*  7 */    arguments("bob", "literal", noDatatype, "en_US", "\"bob\"@en-US"),
 
                 // tolerate <> inside type
-    /*  8 */    arguments("23", "<http://www.w3.org/2001/XMLSchema#string>", null,
+    /*  8 */    arguments("23", "literal", "<http://www.w3.org/2001/XMLSchema#string>", noLang,
                         "\"23\"^^<http://www.w3.org/2001/XMLSchema#string>"),
                 // expand xsd: in type
-    /*  9 */    arguments("23", "xsd:int", null, "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+    /*  9 */    arguments("23", "literal", "xsd:int", noLang, "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
                 // expand rdf: in type
-    /* 10 */    arguments("23", "rdf:XMLLiteral", null,
+    /* 10 */    arguments("23", "literal", "rdf:XMLLiteral", noLang,
                           "\"23\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>"),
                 // replace _ xsd: in tag
-    /* 11 */    arguments("bob", null, "en_US", "\"bob\"@en-US")
+    /* 11 */    arguments("bob", "literal", noDatatype, "en_US", "\"bob\"@en-US"),
+                // identify literal if datatype is set but type is not
+    /* 12 */    arguments("bob", noType, "<http://www.w3.org/2001/XMLSchema#string>", noLang,
+                          "\"bob\"^^<http://www.w3.org/2001/XMLSchema#string>"),
+                // identify literal if lang is set but type is not
+    /* 13 */    arguments("bob", noType, noDatatype, "en-US", "\"bob\"@en-US"),
+                // fallback to plain string if nothing is set
+    /* 14 */    arguments("bob", noType, noDatatype, noLang, "\"bob\""),
+                // fallback to plain string if nothing is set
+    /* 15 */    arguments("23", noType, noDatatype, noLang, "\"23\""),
+                // fallback to uri if nothing is set but starts with https?://
+    /* 16 */    arguments("http://example.org/Alice", noType, noDatatype, noLang,
+                          "<http://example.org/Alice>"),
+                // bnode
+    /* 17 */    arguments("b0", "bnode", noDatatype, noLang, "_:b0"),
+                // tolerate _: prefixed
+    /* 18 */    arguments("_:b23", "bnode", noDatatype, noLang, "_:b23"),
+                // generate UUID if value is missing
+    /* 19 */    arguments(null, "bnode", noDatatype, noLang, "{{UUID}}"),
+                // generate UUID if value is empty
+    /* 20 */    arguments("", "bnode", noDatatype, noLang, "{{UUID}}"),
+                // identify bnode if type is missing buf _: was included
+    /* 21 */    arguments("_:b0", noType, noDatatype, noLang, "_:b0"),
+                // parse declared as uri
+    /* 22 */    arguments("http://example.org/Alice", "uri", noDatatype, noLang,
+                         "<http://example.org/Alice>"),
+                // accept relative URI
+    /* 23 */    arguments("Alice", "uri", noDatatype, noLang, "<Alice>"),
+                // accept number relative URI
+    /* 24 */    arguments("23", "uri", noDatatype, noLang, "<23>"),
+                // ignore datatype in number relative URI
+    /* 25 */    arguments("23", "uri", "http://www.w3.org/2001/XMLSchema#integer", noLang, "<23>"),
+                // ignore lang in string-like relative URI
+    /* 26 */    arguments("alice", "uri", noDatatype, "en", "<alice>"),
+                // accept iri as an alias to uri
+    /* 27 */    arguments("alice", "iri", noDatatype, noLang, "<alice>"),
+                // accept iri as an alias to uri, ignore lang
+    /* 28 */    arguments("alice", "iri", noDatatype, "en", "<alice>"),
+                // accept iri as an alias to uri, ignore datatype
+    /* 29 */    arguments("alice", "iri", "http://www.w3.org/2001/XMLSchema#string", noLang, "<alice>"),
+                // accept blank as bnode
+    /* 30 */    arguments("b0", "blank", noDatatype, noLang, "_:b0"),
+                // accept blank as bnode, ignoring lang
+    /* 31 */    arguments("b0", "blank", noDatatype, "en", "_:b0"),
+                // accept blank as bnode, ignoring datatype
+    /* 32 */    arguments("b0", "blank", "http://www.w3.org/2001/XMLSchema#string", noLang, "_:b0")
         );
     }
 
     @ParameterizedTest @MethodSource
-    void testToNT(@Nullable String value, @Nullable String type, @Nullable String lang,
-                  @Nullable String expected) {
+    void testToNT(@Nullable String value, @Nullable String type, @Nullable String datatype,
+                  @Nullable String lang, @Nullable String expected) {
         JsonParser parser = new JsonParser(new TestConsumer());
-        parser.setupForTest("", 0, value, type, lang, emptyList());
+        parser.setupForTest("", 0, value, type, datatype, lang, emptyList());
         boolean thrown = false;
         try {
-            assertEquals(expected, parser.takeNT());
+            String actual = parser.takeNT();
+            if ("{{UUID}}".equals(expected))
+                assertDoesNotThrow(() -> UUID.fromString(actual.substring(2)));
+            else
+                assertEquals(expected, actual);
         } catch (JsonParser.SyntaxException e) {
             thrown = true;
         }
@@ -183,19 +237,25 @@ class JsonParserTest {
                           asList("x", "y"), emptyList()),
 
                 // single var, single typed result
-        /* 10 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [{\"x\": {\"value\": \"23\", \"type\": \"http://www.w3.org/2001/XMLSchema#integer\"}}]}}",
+        /* 10 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
+                                "{\"x\": {\"value\": \"23\", \"type\": \"literal\", \"datatype\": \"http://www.w3.org/2001/XMLSchema#integer\"}}" +
+                                "]}}",
                          singletonList("x"), singletonList(singletonList("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"))),
                 // single var, single lang-tagged result
-        /* 11 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [{\"x\": {\"value\": \"bob\", \"xml:lang\": \"en\"}}]}}",
+        /* 11 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\", \"xml:lang\": \"en\"}}" +
+                                "]}}",
                          singletonList("x"), singletonList(singletonList("\"bob\"@en"))),
                 // single var, plain literal
-        /* 12 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [{\"x\": {\"value\": \"alice\"}}]}}",
+        /* 12 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
+                                "{\"x\": {\"value\": \"alice\", \"type\":\"literal\"}}" +
+                                "]}}",
                          singletonList("x"), singletonList(singletonList("\"alice\""))),
                 // single var, three rows
         /* 13 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"23\", \"type\": \"http://www.w3.org/2001/XMLSchema#int\"}}," +
-                                "{\"x\": {\"value\": \"alice\", \"xml:lang\": \"en_US\"}}," +
-                                "{\"x\": {\"value\": \"bob\"}}," +
+                                "{\"x\": {\"value\": \"23\", \"type\":\"literal\", \"datatype\": \"http://www.w3.org/2001/XMLSchema#int\"}}," +
+                                "{\"x\": {\"value\": \"alice\", \"type\":\"literal\", \"xml:lang\": \"en_US\"}}," +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\"}}," +
                                 "]}}",
                          singletonList("x"),
                          asList(singletonList("\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
@@ -203,24 +263,26 @@ class JsonParserTest {
                                 singletonList("\"bob\""))),
                 //single var extra var on binding
         /* 14 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"bob\"}, \"y\": {\"value\": \"wrong\"}}," +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\"}, " +
+                                 "\"y\": {\"value\": \"wrong\", \"type\":\"literal\"}}," +
                                 "]}}",
                          singletonList("x"), null),
                 //single var extra var on 2nd binding
         /* 15 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"alice\"}}," +
-                                "{\"x\": {\"value\": \"bob\"}, \"y\": {\"value\": \"wrong\"}}," +
+                                "{\"x\": {\"value\": \"alice\", \"type\":\"literal\"}}," +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\"}, " +
+                                " \"y\": {\"value\": \"wrong\", \"type\":\"literal\"}}," +
                                 "]}}",
                          singletonList("x"), asList(singletonList("\"alice\""), null)),
                 //single var empty value object on 2nd
         /* 16 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"alice\"}}," +
+                                "{\"x\": {\"value\": \"alice\", \"type\":\"literal\"}}," +
                                 "{\"x\": {}}," +
                                 "]}}",
                          singletonList("x"), asList(singletonList("\"alice\""), null)),
                 //single var empty binding on 2nd
         /* 17 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"bob\"}}," +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\"}}," +
                                 "{}" +
                                 "]}}",
                          singletonList("x"), asList(singletonList("\"bob\""), singletonList(null))),
@@ -230,9 +292,9 @@ class JsonParserTest {
 
                 //two vars two rows with unbound on first
         /* 19 */arguments("{\"head\": {\"vars\": [\"x\", \"y\"]}, \"results\": {\"bindings\": [" +
-                                "{\"x\": {\"value\": \"bob\", \"y\": null}}," +
-                                "{\"x\": {\"value\": \"alice\", \"xml:lang\": \"en\"},"+
-                                 "\"y\": {\"value\": \"charlie\"}}" +
+                                "{\"x\": {\"value\": \"bob\", \"type\":\"literal\", \"y\": null}}," +
+                                "{\"x\": {\"type\":\"literal\", \"value\": \"alice\", \"xml:lang\": \"en\"},"+
+                                 "\"y\": {\"type\":\"literal\", \"value\": \"charlie\"}}" +
                                 "]}}",
                          asList("x", "y"),
                          asList(asList("\"bob\"", null),
