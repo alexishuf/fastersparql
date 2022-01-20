@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -130,9 +131,10 @@ class CSUtilsTest {
         String[] data = dataString.split(" *\\| *");
         String input = data[0];
         int from = Integer.parseInt(data[1]), expected = Integer.parseInt(data[3]);
-        char c0 = data[2].charAt(0), c1 = data[2].charAt(1), c2 = data[2].charAt(2);
+        char[] chars = {data[2].charAt(0), data[2].charAt(1), data[2].charAt(2)};
+        Arrays.sort(chars);
         for (CharSequence cs : asList(input, new StringBuilder(input))) {
-            assertEquals(expected, CSUtils.skipUntil(cs, from, c0, c1, c2),
+            assertEquals(expected, CSUtils.skipUntil(cs, from, chars),
                          "cs.getClass()="+cs.getClass());
         }
     }
@@ -169,7 +171,7 @@ class CSUtilsTest {
         String[] data = dataString.split(" *\\| *");
         int from = parseInt(data[1]), end = parseInt(data[2]), expected = parseInt(data[3]);
         for (CharSequence cs : asList(data[0], new StringBuilder(data[0])))
-            assertEquals(expected, CSUtils.skipUntilIn(cs, from, end, 'x', 'y', 'z'));
+            assertEquals(expected, CSUtils.skipUntilIn(cs, from, end, new char[] {'x', 'y', 'z'}));
     }
 
     @ParameterizedTest @ValueSource(strings = {
@@ -249,6 +251,102 @@ class CSUtilsTest {
     @ParameterizedTest @MethodSource
     void testSkipSpaceAnd(String cs, int from, char skip, int expected) {
         assertEquals(expected, CSUtils.skipSpaceAnd(cs, from, skip));
+        assertEquals(expected, CSUtils.skipSpaceAnd(new StringBuilder(cs), from, skip));
+    }
+
+    static Stream<Arguments> testBoundedSkipSpaceAnd() {
+        return Stream.of(
+                arguments("", 0, 0, '.', 0),
+                arguments("asd", 0, 0, '.', 0),
+                arguments("asd", 0, 3, '.', 0),
+                arguments("asd", 1, 3, '.', 1),
+                arguments(" .\t\nasd", 0, 7, '.', 4),
+                arguments(" .\t\nasd", 1, 7, '.', 4),
+                arguments(" .\t\nasd", 2, 7, '.', 4),
+                arguments(" .\t\nasd", 3, 7, '.', 4),
+                arguments(" .\t\nasd", 4, 7, '.', 4),
+                arguments(" .\t\nasd", 5, 7, '.', 5),
+                arguments("..asd", 0, 5, '.', 2),
+                arguments("..asd", 1, 5, '.', 2),
+                arguments("..asd", 2, 5, '.', 2),
+                arguments("..asd", 3, 5, '.', 3),
+                arguments(".asd", 0, 4, '\0', 0),
+                arguments(".asd", 1, 4, '\0', 1),
+                arguments("a .", 1, 3, '\0', 2),
+                arguments("a .", 2, 3, '\0', 2),
+                arguments("a .", 3, 3, '\0', 3),
+                arguments("a .", 1, 3, '.', 3),
+                arguments("a .", 2, 3, '.', 3),
+                arguments("a .", 3, 3, '.', 3)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testBoundedSkipSpaceAnd(String cs, int begin, int end, char skip, int expected) {
+        assertEquals(expected, CSUtils.skipSpaceAnd(cs, begin, end, skip));
+        assertEquals(expected, CSUtils.skipSpaceAnd(new StringBuilder(cs), begin, end, skip));
+    }
+
+    static Stream<Arguments> testStartsWith() {
+        return Stream.of(
+                arguments("http://asd", 0, 10, "http://", true),
+                arguments("http://asd", 0, 10, "https://", false),
+                arguments("http://asd", 0, 10, "http:/", true),
+                arguments("http://asd", 0, 10, "h", true),
+                arguments("http://asd", 0, 10, "", true),
+                arguments("", 0, 10, "", true),
+                arguments("https://asd", 0, 11, "https://", true),
+                arguments("https://asd", 0, 11, "http://", false),
+                arguments("https://asd", 0, 11, "http:", false),
+                arguments("https://asd", 0, 11, "http", true),
+                arguments("https://asd", 0, 11, "asd", false),
+                arguments("https://asd", 0, 11, "://", false),
+                arguments("https://asd", 0, 11, "/", false),
+                arguments(" asd", 0, 4, "as", false),
+                arguments(" asd", 1, 4, "as", true),
+                arguments(" asd", 2, 4, "as", false),
+                arguments("aasd", 0, 5, "as", false),
+                arguments("aasd", 1, 5, "as", true),
+                arguments("aasd", 2, 5, "as", false),
+                arguments("asd", 0, 1, "as", false),
+                arguments("asd", 0, 2, "as", true)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testStartsWith(String cs, int begin, int end, String prefix, boolean expected) {
+        assertEquals(expected, CSUtils.startsWith(cs, begin, end, prefix));
+        assertEquals(expected, CSUtils.startsWith(new StringBuilder(cs), begin, end, prefix));
+    }
+
+    static Stream<Arguments> testReverseSkipSpaceAnd() {
+        return Stream.of(
+                arguments("", 0, 0, '.', 0),
+                arguments("", 0, 0, '\0', 0),
+                arguments(" as ", 0, 4, '.', 3),
+                arguments(" as.", 0, 4, '.', 3),
+                arguments(" as\n", 0, 4, '.', 3),
+                arguments(" as\t", 0, 4, '.', 3),
+                arguments(" as\r", 0, 4, '.', 3),
+
+                arguments("   ",  1, 2, '\0', 1),
+                arguments("   ",  1, 2, '.',  1),
+                arguments(" . ",  1, 2, '.',  1),
+                arguments(" \n ", 1, 2, '.',  1),
+                arguments(" \t ", 1, 2, '.',  1),
+
+                arguments("  x",  1, 2, '\0', 1),
+                arguments("  x",  1, 2, '.',  1),
+                arguments(" .x",  1, 2, '.',  1),
+                arguments(" \nx", 1, 2, '.',  1),
+                arguments(" \tx", 1, 2, '.',  1)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testReverseSkipSpaceAnd(String cs, int begin, int end, char skip, int expected) {
+        assertEquals(expected, CSUtils.reverseSkipSpaceAnd(cs, begin, end, skip));
+        assertEquals(expected, CSUtils.reverseSkipSpaceAnd(new StringBuilder(cs), begin, end, skip));
     }
 
     static Stream<Arguments> testFindNotEscaped() {

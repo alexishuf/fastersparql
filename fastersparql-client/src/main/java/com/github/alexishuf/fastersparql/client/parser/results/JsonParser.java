@@ -203,9 +203,10 @@ public class JsonParser implements ResultsParser {
             }
         },
         NUMBER {
+            private final char[] END_CHARS = {',', ']', '}'};
             @Override String first() { return "-0123456789"; }
             @Override void parse(JsonParser s) throws SyntaxException {
-                int end = skipUntil(s.input, s.cursor, ']', '}', ',');
+                int end = skipUntil(s.input, s.cursor, END_CHARS);
                 if (end < s.input.length()) {
                     if (s.atField(Field.BOOLEAN)) {
                         int value = end - s.cursor  == 1 ? s.input.charAt(s.cursor) - '0' : -1;

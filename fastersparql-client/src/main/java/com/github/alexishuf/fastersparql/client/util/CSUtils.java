@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 
-import org.checkerframework.checker.index.qual.Positive;
+import org.checkerframework.checker.index.qual.NonNegative;
 
 public class CSUtils {
 
@@ -63,11 +63,11 @@ public class CSUtils {
     }
 
     /**
-     * Equivalent to {@link CSUtils#skipUntilIn(CharSequence, int, int, char, char, char)}
+     * Equivalent to {@link CSUtils#skipUntilIn(CharSequence, int, int, char[])}
      * with {@code end = cs.length()}.
      */
-    public static int skipUntil(CharSequence cs, int from, char c0, char c1, char c2) {
-        return skipUntilIn(cs, from, cs.length(), c0, c1, c2);
+    public static int skipUntil(CharSequence cs, int from, char[] sortedChars) {
+        return skipUntilIn(cs, from, cs.length(), sortedChars);
     }
 
     /**
@@ -77,30 +77,59 @@ public class CSUtils {
      * @param cs the input {@link CharSequence} where to search
      * @param from the first index to search
      * @param end the first index to <strong>not</strong> search
-     * @param c0 one char to search for
-     * @param c1 an alternative char to search for
-     * @param c2 another alternative char to search for
+     * @param sortedChars array of characters to stop if found
      * @return The lowest {@code from <= i < end} where {@code cs.charAt(i)} is one of the
      *         given characters or {@code end} if there is no such {@code i}.
      */
-    public static int skipUntilIn(CharSequence cs, int from, int end, char c0, char c1, char c2) {
-        for (int i = from; i < end; i++) {
+    public static int skipUntilIn(CharSequence cs, int from, int end, char[] sortedChars) {
+        assert isSorted(sortedChars) : "sortedChars array is not sorted";
+        for (int i = from, j = 0; i < end; i++, j = 0) {
             char c = cs.charAt(i);
-            if (c == c0 || c == c1 || c == c2) return i;
+            while (j < sortedChars.length && sortedChars[j] < c) ++j;
+            if (j < sortedChars.length && sortedChars[j] == c) return i;
         }
         return end;
     }
 
-    public static @Positive int skipSpaceAnd(CharSequence cs, int from, char skip) {
-        for (int i = from, len = cs.length(); i < len; i++) {
+    private static boolean isSorted(char[] array) {
+        for (int i = 1; i < array.length; i++) {
+            if (array[i-1] > array[i]) return false;
+        }
+        return true;
+    }
+
+
+    public static @NonNegative int skipSpaceAnd(CharSequence cs, int from, char skip) {
+        return skipSpaceAnd(cs, from, cs.length(), skip);
+    }
+    public static @NonNegative int skipSpaceAnd(CharSequence cs, int begin, int end, char skip) {
+        for (int i = begin; i < end; i++) {
             char c = cs.charAt(i);
             if (c < '\t' || (c > '\r' && c != ' ' && c != skip))
                 return i;
         }
-        return cs.length();
+        return end;
     }
 
-    public static @Positive int findNotEscaped(CharSequence cs, int from, char ch) {
+    public static @NonNegative int
+    reverseSkipSpaceAnd(CharSequence cs, int begin, int end, char skip) {
+        for (int i = end-1; i >= begin; i--) {
+            char c = cs.charAt(i);
+            if (c < '\t' || (c > '\r' && c != ' ' && c != skip))
+                return i+1;
+        }
+        return begin;
+    }
+
+    public static boolean startsWith(CharSequence cs, int begin, int end, String prefix) {
+        int csLen = end-begin, pLen = prefix.length();
+        boolean ok = csLen >= pLen;
+        for (int i = 0; ok && i < pLen; i++)
+            ok = cs.charAt(begin+i) == prefix.charAt(i);
+        return ok;
+    }
+
+    public static @NonNegative int findNotEscaped(CharSequence cs, int from, char ch) {
         int length = cs.length();
         if (cs instanceof String) {
             String string = (String) cs;

@@ -14,6 +14,7 @@ public class ResultsParserRegistry {
         ResultsParserRegistry factory = new ResultsParserRegistry();
         factory.register(SparqlResultFormat.TSV.asMediaType(), TSVParser::new);
         factory.register(SparqlResultFormat.JSON.asMediaType(), JsonParser::new);
+        factory.register(SparqlResultFormat.CSV.asMediaType(), CSVParser::new);
         INSTANCE = factory;
     }
 

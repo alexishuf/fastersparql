@@ -40,7 +40,10 @@ class TestConsumer implements ResultsParserConsumer {
                 assertArrayEquals(rows.get(i), this.rows.get(i), "i=" + i);
         }
         boolean expectError = vars == null || rows == null || rows.contains(null);
-        assertEquals(!expectError, errors.isEmpty(), "errors="+errors);
+        if (expectError)
+            assertFalse(errors.isEmpty(), "expected errors but got none");
+        else
+            assertTrue(errors.isEmpty(), "unexpected errors="+errors);
         assertEquals(endCalls, 1);
     }
 }
