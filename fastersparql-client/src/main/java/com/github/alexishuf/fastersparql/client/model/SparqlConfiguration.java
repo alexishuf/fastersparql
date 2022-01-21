@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
+import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.util.HeaderUtils;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
@@ -49,9 +50,10 @@ public class SparqlConfiguration {
      *     <li>Empty lists are replaced with {@link SparqlMethod#VALUES}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasMethods()} this list
-     * override replaces the list set in the lower-precedence {@link SparqlConfiguration}, else,
-     * the lower-precedence list remains effective.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasMethods()} the overlay
+     * result will be the intersection between this list and the lower-precedence list, with the
+     * order of elements in this list being preserved. Else, the lower-precedence list
+     * remains effective.
      */
     @Singular @MinLen(1) List<SparqlMethod> methods;
 
@@ -69,9 +71,10 @@ public class SparqlConfiguration {
      *     <li>Empty lists are converted to a {@link SparqlResultFormat#VALUES}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasResultsAccepts()},
-     * this list replaces the list set in the lower-precedence {@link SparqlConfiguration}, else,
-     * the lower-precedence list remains effective.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasResultsAccepts()} the
+     * overlay result will be the intersection between this list and the lower-precedence list,
+     * with the order of elements in this list being preserved. Else, the lower-precedence list
+     * remains effective.
      */
     @Singular @MinLen(1) List<SparqlResultFormat> resultsAccepts;
 
@@ -85,8 +88,10 @@ public class SparqlConfiguration {
      *     <li>An empty list is converted to {@link RDFMediaTypes#ALL}</li>
      * </ul>
      *
-     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasRdfAccepts()}, this
-     * list will replace a lower-precedence list, else the lower-precedence list prevails.
+     * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasRdfAccepts()} the
+     * overlay result will be the intersection between this list and the lower-precedence list,
+     * with the order of elements in this list being preserved. Else, the lower-precedence list
+     * remains effective.
      */
     @Singular @MinLen(1) List<MediaType> rdfAccepts;
 
@@ -300,17 +305,25 @@ public class SparqlConfiguration {
      * @param higher higher-precedence {@link SparqlConfiguration}. If null, will return {@code this}.
      * @return a new {@link SparqlConfiguration} with values in {@code this} overlaid with values
      *         from {@code higher}.
+     * @throws UnacceptableSparqlConfiguration if {@code !higher.accepts(this)}, i.e., the
+     *         resulting overlay would have an empty {@link SparqlConfiguration#methods()},
+     *         {@link SparqlConfiguration#resultsAccepts()} or
+     *         {@link SparqlConfiguration#rdfAccepts()}.
      */
-    public SparqlConfiguration overlayWith(@Nullable SparqlConfiguration higher) {
+    public SparqlConfiguration overlayWith(@Nullable SparqlConfiguration higher)
+            throws UnacceptableSparqlConfiguration {
         if (higher == null)
             return this;
+
         SparqlConfigurationBuilder b = toBuilder();
         if (higher.hasMethods())
-            b.clearMethods().methods(higher.methods);
-        if (higher.hasResultsAccepts())
-            b.clearResultsAccepts().resultsAccepts(higher.resultsAccepts);
+            b.clearMethods().methods(overlay(methods, higher.methods, higher));
+        if (higher.hasResultsAccepts()) {
+            b.clearResultsAccepts();
+            b.resultsAccepts(overlay(resultsAccepts, higher.resultsAccepts, higher));
+        }
         if (higher.hasRdfAccepts())
-            b.clearRdfAccepts().rdfAccepts(higher.rdfAccepts);
+            b.clearRdfAccepts().rdfAccepts(overlayTypes(rdfAccepts, higher.rdfAccepts, higher));
         overlayParams(higher, b);
         overlayHeaders(higher, b);
         return b.build();
@@ -373,6 +386,33 @@ public class SparqlConfiguration {
             if (has) break;
         }
         return !has;
+    }
+
+    private <T> List<T> overlay(List<T> lower, List<T> higher,
+                                SparqlConfiguration higherConfiguration) {
+        ArrayList<T> intersection = new ArrayList<>(Math.min(lower.size(), higher.size()));
+        for (T o : higher) {
+            if (lower.contains(o)) intersection.add(o);
+        }
+        if (intersection.isEmpty())
+            throw new UnacceptableSparqlConfiguration(this, higherConfiguration);
+        return intersection;
+    }
+
+    private List<MediaType> overlayTypes(List<MediaType> lower, List<MediaType> higher,
+                                         SparqlConfiguration higherConfiguration) {
+        ArrayList<MediaType> intersection = new ArrayList<>(Math.min(lower.size(), higher.size()));
+        for (MediaType request : higher) {
+            for (MediaType offer : lower) {
+                if (request.accepts(offer)) {
+                    intersection.add(request);
+                    break;
+                }
+            }
+        }
+        if (intersection.isEmpty())
+            throw new UnacceptableSparqlConfiguration(this, higherConfiguration);
+        return intersection;
     }
 
     private void overlayHeaders(@NonNull SparqlConfiguration higher,

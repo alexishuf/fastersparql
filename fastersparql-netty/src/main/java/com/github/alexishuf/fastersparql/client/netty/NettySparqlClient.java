@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
-import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.*;
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
@@ -28,14 +27,13 @@ import org.reactivestreams.Subscription;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.ExecutionException;
 
-import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.GET;
-import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.POST;
-import static com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties.maxQueryByGet;
-import static com.github.alexishuf.fastersparql.client.util.UriUtils.escapeQueryParam;
-import static com.github.alexishuf.fastersparql.client.util.UriUtils.needsEscape;
+import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 
 @Slf4j
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
@@ -63,13 +61,15 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         Throwable cause;
         try {
-            SparqlConfiguration eff = buildConfig(configuration, sparql);
+            SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
             HttpMethod m = method2netty(eff.methods().get(0));
             SafeCompletableAsyncTask<List<String>> vars = new SafeCompletableAsyncTask<>();
             PublisherShim<String[]> publisher = new PublisherShim<>();
-            netty.get().request(m, firstLine(eff, sparql), a -> generateBody(a, eff, sparql),
+            netty.get().request(m, firstLine(endpoint, eff, sparql),
+                    m == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
-                        request.headers().set(HttpHeaderNames.ACCEPT, resultsAcceptString(eff));
+                        String accept = resultsAcceptString(eff.resultsAccepts());
+                        request.headers().set(HttpHeaderNames.ACCEPT, accept);
                         handler.setupResults(ch, vars, publisher);
                     });
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
@@ -87,13 +87,15 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     public Graph<F> queryGraph(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         Throwable cause;
         try {
-            SparqlConfiguration eff = buildConfig(configuration, sparql);
+            SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
             HttpMethod m = method2netty(eff.methods().get(0));
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             PublisherShim<byte[]> publisher = new PublisherShim<>();
-            netty.get().request(m, firstLine(eff, sparql), a -> generateBody(a, eff, sparql),
+            netty.get().request(m, firstLine(endpoint, eff, sparql),
+                    m == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
-                        request.headers().set(HttpHeaderNames.ACCEPT, rdfAcceptString(eff));
+                        String accept = rdfAcceptString(eff.rdfAccepts());
+                        request.headers().set(HttpHeaderNames.ACCEPT, accept);
                         handler.setupGraph(ch, mtTask, publisher);
                     });
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
@@ -128,67 +130,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
     /* --- --- --- helper methods  --- --- ---  */
 
-    private String resultsAcceptString(SparqlConfiguration configuration) {
-        List<SparqlResultFormat> list = configuration.resultsAccepts();
-        if (list.size() == 1)
-            return list.get(0).contentType();
-        StringBuilder builder = new StringBuilder(32 * list.size());
-        for (SparqlResultFormat fmt : list)
-            builder.append(fmt.contentType()).append(", ");
-        builder.setLength(builder.length()-2);
-        return builder.toString();
-    }
-
-    private String rdfAcceptString(SparqlConfiguration configuration) {
-        List<MediaType> list = configuration.rdfAccepts();
-        if (list.size() == 1)
-            return list.get(0).toString();
-        StringBuilder builder = new StringBuilder(23 * list.size());
-        for (MediaType mt : list) builder.append(mt).append(", ");
-        builder.setLength(builder.length()-2);
-        return builder.toString();
-    }
-
-    static CharSequence writeParams(CharSequence prefix, char firstSeparator,
-                                    @Nullable CharSequence sparql,
-                                    Map<String, List<String>> params) {
-        int capacity = prefix.length() + (sparql == null ? 0 : 7 + sparql.length()*2);
-        for (Map.Entry<String, List<String>> e : params.entrySet()) {
-            capacity += e.getKey().length() + 1;
-            for (String v : e.getValue())
-                capacity += v.length()*2;
-        }
-        if (capacity == 0)
-            return "";
-        boolean first = true;
-        StringBuilder output = new StringBuilder(capacity);
-        output.append(prefix);
-        if (sparql != null) {
-            if (firstSeparator != '\0') output.append(firstSeparator);
-            first = false;
-            escapeQueryParam(output.append("query="), sparql);
-        }
-        for (Map.Entry<String, List<String>> e : params.entrySet()) {
-            for (String v : e.getValue()) {
-                if (first) {
-                    if (firstSeparator != '\0') output.append(firstSeparator);
-                    first = false;
-                } else {
-                    output.append('&');
-                }
-                assert !needsEscape(e.getKey());
-                assert !needsEscape(v);
-                output.append(e.getKey()).append('=').append(v);
-            }
-        }
-        return output;
-    }
-
-    private CharSequence firstLine(SparqlConfiguration configuration, CharSequence sparql) {
-        return writeParams(endpoint.rawPathWithQuery(), endpoint.hasQuery() ? '&' : '?',
-                sparql, configuration.params());
-    }
-
     private static HttpMethod method2netty(SparqlMethod method) {
         switch (method) {
             case GET:
@@ -206,32 +147,12 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         CharSequence body;
         switch (config.methods().get(0)) {
             case POST: body = sparql; break;
-            case FORM: body = writeParams("", '\0', sparql, config.params()); break;
+            case FORM: body = formString(sparql, config.params()); break;
             default: return null;
         }
         ByteBuf bb = allocator.buffer(body.length());
         bb.writeCharSequence(body, StandardCharsets.UTF_8);
         return bb;
-    }
-
-    private SparqlConfiguration buildConfig(@Nullable SparqlConfiguration configuration,
-                                            CharSequence query) {
-        SparqlConfiguration offer = endpoint.configuration();
-        if (!offer.accepts(configuration))
-            throw new UnacceptableSparqlConfiguration(endpoint.uri(), offer, configuration);
-        SparqlConfiguration effective = offer.overlayWith(configuration);
-        List<SparqlMethod> effMethods = effective.methods();
-        int getIdx = effMethods.indexOf(GET), postIdx = effMethods.indexOf(POST);
-        boolean canPOST = offer.methods().contains(POST);
-        boolean prefersGET = getIdx >= 0 && (postIdx < 0 || getIdx < postIdx);
-        if (prefersGET && canPOST && query.length() > maxQueryByGet()) {
-            ArrayList<SparqlMethod> copy = new ArrayList<>(effMethods);
-            if (postIdx >= 0)
-                copy.remove(postIdx);
-            copy.add(0, POST);
-            effective = effective.toBuilder().methods(copy).build();
-        }
-        return effective;
     }
 
     /* --- --- --- inner classes  --- --- ---  */
@@ -378,8 +299,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         public void setupResults(Channel channel, SafeCompletableAsyncTask<List<String>> varsTask,
                                  PublisherShim<String[]> rowPublisher) {
             this.channel = channel;
-            rowPublisher.handler(this);
-            this.resultsAdapter = new ResultsParserAdapter(varsTask, rowPublisher);
             this.fragmentPublisher = null;
             this.mediaTypeTask = null;
         }
@@ -389,7 +308,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             this.channel = channel;
             this.resultsAdapter = null;
             (this.fragmentPublisher = fragmentPublisher).handler(this);
-            this.mediaTypeTask = mediaTypeTask;
         }
 
         public void autoRead(boolean value) {

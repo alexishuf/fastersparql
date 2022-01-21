@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
+import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -395,7 +396,7 @@ class SparqlConfigurationTest {
    /*  7 */     arguments(
                         builder().method(SparqlMethod.GET).build(),
                         builder().method(SparqlMethod.FORM).build(),
-                        builder().method(SparqlMethod.FORM).build()
+                        null
                 ),
    /*  8 */     arguments(
                         builder().build(),
@@ -410,7 +411,7 @@ class SparqlConfigurationTest {
    /* 10 */     arguments(
                         builder().resultsAccept(SparqlResultFormat.JSON).build(),
                         builder().resultsAccept(SparqlResultFormat.TSV).build(),
-                        builder().resultsAccept(SparqlResultFormat.TSV).build()
+                        null
                 ),
    /* 11 */     arguments(
                         builder().build(),
@@ -425,7 +426,7 @@ class SparqlConfigurationTest {
    /* 13 */     arguments(
                         builder().rdfAccept(TURTLE).build(),
                         builder().rdfAccept(JSONLD).build(),
-                        builder().rdfAccept(JSONLD).build()
+                        null
                 ),
    /* 14 */     arguments(
                         builder().param("x", singletonList("1")).build(),
@@ -494,12 +495,17 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testOverlay(@Nullable SparqlConfiguration lower, @Nullable SparqlConfiguration higher,
-                     SparqlConfiguration expected) {
-        if (lower != null)
-            assertEquals(expected, lower.overlayWith(higher));
-        if (higher != null)
-            assertEquals(expected, higher.overlayAbove(lower));
-        assertEquals(expected, SparqlConfiguration.overlay(lower, higher));
+                     @Nullable SparqlConfiguration expected) {
+        if (expected == null) {
+            assertThrows(UnacceptableSparqlConfiguration.class,
+                         () -> SparqlConfiguration.overlay(lower, higher));
+        } else {
+            assertEquals(expected, SparqlConfiguration.overlay(lower, higher));
+            if (lower != null)
+                assertEquals(expected, lower.overlayWith(higher));
+            if (higher != null)
+                assertEquals(expected, higher.overlayAbove(lower));
+        }
     }
 
     static Stream<Arguments> testAccepts() {
