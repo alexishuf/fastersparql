@@ -76,8 +76,12 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
     }
 
     private synchronized void signalComplete(@Nullable Throwable t) {
-        if (t != null && error == null)
-            error = t;
+        if (t != null) {
+            if (error == null)
+                error = t;
+            else
+                error.addSuppressed(t);
+        }
         complete = true;
         queue.add(Optional.empty());
     }
