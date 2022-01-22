@@ -30,6 +30,11 @@ class TestConsumer implements ResultsParserConsumer {
     }
 
     void check(@Nullable List<String> vars, @Nullable List<@Nullable String[]> rows) {
+        boolean expectError = vars == null || rows == null || rows.contains(null);
+        if (expectError)
+            assertFalse(errors.isEmpty(), "expected errors but got none");
+        else
+            assertTrue(errors.isEmpty(), "unexpected errors="+errors);
         assertEquals(vars, this.vars);
         if (rows != null) {
             assertNotNull(this.rows);
@@ -39,11 +44,6 @@ class TestConsumer implements ResultsParserConsumer {
             for (int i = 0; i < validRows; i++)
                 assertArrayEquals(rows.get(i), this.rows.get(i), "i=" + i);
         }
-        boolean expectError = vars == null || rows == null || rows.contains(null);
-        if (expectError)
-            assertFalse(errors.isEmpty(), "expected errors but got none");
-        else
-            assertTrue(errors.isEmpty(), "unexpected errors="+errors);
         assertEquals(endCalls, 1);
     }
 }
