@@ -195,7 +195,8 @@ public class JsonParser implements ResultsParser {
                 char f = Character.toLowerCase(s.input.charAt(s.cursor));
                 if (s.read(f == 't' ? "true" : (f == 'f' ? "false" : "null"))) {
                     if (s.atField(Field.BOOLEAN)) {
-                        s.notifyVars(emptyList());
+                        if (!s.varsDone)
+                            s.notifyVars(emptyList());
                         if (f == 't') s.notifyRow();
                     }
                     s.pop();

@@ -210,24 +210,25 @@ class JsonParserTest {
     }
 
     static Stream<Arguments> parseData() {
-        List<List<String>> POSITIVE_ASK = singletonList(emptyList());
+        List<List<String>> positiveAsk = singletonList(emptyList()), negativeAsk = emptyList();
+        List<String> noVars = emptyList();
         List<Arguments> base = asList(
                 // assume empty response
-        /*  1 */arguments("[]", emptyList(), emptyList()),
-        /*  2 */arguments("{}", emptyList(), emptyList()),
+        /*  1 */arguments("[]", noVars, emptyList()),
+        /*  2 */arguments("{}", noVars, emptyList()),
                 // non-empty response with unexpected properties
         /*  3 */arguments("{\"x\": false}", null, null),
                 // empty vars, no results
-        /*  4 */arguments("{\"head\": {\"vars\": []}}", emptyList(), emptyList()),
+        /*  4 */arguments("{\"head\": {\"vars\": []}}", noVars, emptyList()),
                 //empty vars, null results
         /*  5 */arguments("{\"head\": {\"vars\": []}, \"results\": null}",
-                          emptyList(), emptyList()),
+                          noVars, emptyList()),
                 //empty vars, null bindings
         /*  6 */arguments("{\"head\": {\"vars\": []}, \"results\": {\"bindings\": null}}",
-                         emptyList(), emptyList()),
+                         noVars, emptyList()),
                 //empty vars, empty bindings
         /*  7 */arguments("{\"head\": {\"vars\": []}, \"results\": {\"bindings\": []}}",
-                         emptyList(), emptyList()),
+                         noVars, emptyList()),
 
                 // single var, no bindings
         /*  8 */arguments("{\"head\": {\"vars\": [\"x\"]}, \"results\": {\"bindings\": []}}",
@@ -301,44 +302,48 @@ class JsonParserTest {
                                 asList("\"alice\"@en", "\"charlie\""))),
 
                 //negative ask
-        /* 20 */arguments("{\"head\": {}, \"boolean\": false}", emptyList(), emptyList()),
+        /* 20 */arguments("{\"head\": {}, \"boolean\": false}", noVars, emptyList()),
                 //positive ask
-        /* 21 */arguments("{\"head\": {}, \"boolean\": true}", emptyList(), POSITIVE_ASK),
+        /* 21 */arguments("{\"head\": {}, \"boolean\": true}", emptyList(), positiveAsk),
                 //no-head negative ask
-        /* 22 */arguments("{\"boolean\": false}", emptyList(), emptyList()),
+        /* 22 */arguments("{\"boolean\": false}", noVars, emptyList()),
                 //no-head positive ask
-        /* 23 */arguments("{\"boolean\": true}", emptyList(), POSITIVE_ASK),
+        /* 23 */arguments("{\"boolean\": true}", emptyList(), positiveAsk),
                 //negative ask with links
         /* 24 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": false}",
-                          emptyList(), emptyList()),
+                          noVars, emptyList()),
                 //positive ask with links
         /* 25 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": true}",
-                          emptyList(), POSITIVE_ASK),
+                          emptyList(), positiveAsk),
 
                 //negative ask typed as string
         /* 26 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": \"false\"}",
-                          emptyList(), emptyList()),
+                          noVars, negativeAsk),
                 //positive ask typed as string
         /* 27 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": \"true\"}",
-                          emptyList(), POSITIVE_ASK),
+                          emptyList(), positiveAsk),
                 //negative ask typed as camel string
         /* 28 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": \"False\"}",
-                          emptyList(), emptyList()),
+                          noVars, negativeAsk),
                 //positive ask typed as camel string
         /* 29 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": \"True\"}",
-                          emptyList(), POSITIVE_ASK),
+                          emptyList(), positiveAsk),
                 //negative ask typed as number
         /* 30 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": 0}",
-                          emptyList(), emptyList()),
+                          noVars, negativeAsk),
                 //positive ask typed as number
         /* 31 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": 1}",
-                          emptyList(), POSITIVE_ASK),
-                //positive ask typed as unguessable string
+                          emptyList(), positiveAsk),
+                //ask typed as unguessable string
         /* 32 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": \"x\"}",
                           null, null),
-                //positive ask typed as null
+                //negative ask typed as null
         /* 33 */arguments("{\"head\": {\"link\": [\"http://example.com\"]}, \"boolean\": null}",
-                          emptyList(), emptyList())
+                          noVars, negativeAsk),
+                //positive ask with empty vars list
+        /* 34 */arguments("{\"head\": {\"vars\": []}, \"boolean\": true}", noVars, positiveAsk),
+                //negative ask with empty vars list
+        /* 35 */arguments("{\"head\": {\"vars\": []}, \"boolean\": false}", noVars, negativeAsk)
         );
         List<Arguments> expanded = new ArrayList<>();
         for (Integer chunkSize : asList(Integer.MAX_VALUE, 8, 3, 1)) {
