@@ -9,13 +9,8 @@ public enum SparqlMethod {
     POST,
     FORM;
 
-    /**
-     * {@code GET} and {@code FORM} require SPARQL query strings to be percent-encoded.
-     *
-     * @return whether query strings must be percent-encoded.
-     */
-    public boolean mustEncodeQuery() {
-        return this != POST;
+    public boolean hasRequestBody() {
+        return this != GET;
     }
 
     private static final String[] LOWERCASE =

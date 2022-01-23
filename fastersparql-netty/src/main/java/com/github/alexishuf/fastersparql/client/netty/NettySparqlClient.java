@@ -26,7 +26,6 @@ import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
@@ -34,6 +33,8 @@ import java.util.Queue;
 import java.util.concurrent.ExecutionException;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 @Slf4j
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
@@ -62,14 +63,17 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         Throwable cause;
         try {
             SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-            HttpMethod m = method2netty(eff.methods().get(0));
+            SparqlMethod method = eff.methods().get(0);
+            HttpMethod nettyMethod = method2netty(method);
             SafeCompletableAsyncTask<List<String>> vars = new SafeCompletableAsyncTask<>();
             PublisherShim<String[]> publisher = new PublisherShim<>();
-            netty.get().request(m, firstLine(endpoint, eff, sparql),
-                    m == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+            netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                    nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
                         String accept = resultsAcceptString(eff.resultsAccepts());
                         request.headers().set(HttpHeaderNames.ACCEPT, accept);
+                        if (method.hasRequestBody())
+                            request.headers().set(CONTENT_TYPE, method.contentType());
                         handler.setupResults(ch, vars, publisher);
                     });
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
@@ -88,14 +92,17 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         Throwable cause;
         try {
             SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-            HttpMethod m = method2netty(eff.methods().get(0));
+            SparqlMethod method = eff.methods().get(0);
+            HttpMethod nettyMethod = method2netty(method);
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             PublisherShim<byte[]> publisher = new PublisherShim<>();
-            netty.get().request(m, firstLine(endpoint, eff, sparql),
-                    m == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+            netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                    nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
                         String accept = rdfAcceptString(eff.rdfAccepts());
                         request.headers().set(HttpHeaderNames.ACCEPT, accept);
+                        if (method.hasRequestBody())
+                            request.headers().set(CONTENT_TYPE, method.contentType());
                         handler.setupGraph(ch, mtTask, publisher);
                     });
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
@@ -151,7 +158,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             default: return null;
         }
         ByteBuf bb = allocator.buffer(body.length());
-        bb.writeCharSequence(body, StandardCharsets.UTF_8);
+        bb.writeCharSequence(body, UTF_8);
         return bb;
     }
 
@@ -232,8 +239,12 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
         public void feed(T row) {
             assert handler != null : "feed() with null handler";
-            if (requested == 0)
-                handler.autoRead(false); // propagate backpressure
+            synchronized (this) {
+                if (requested == 0)
+                    handler.autoRead(false); // propagate backpressure
+                else
+                    --requested;
+            }
             if      (subscriber == null) earlyRows.add(row);
             else if (active            ) callNext(row);
             else                         log.debug("feed({}): dropping", row);
@@ -277,36 +288,50 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             implements ReusableHttpClientInboundHandler {
         private Runnable onResponseEnd;
         private Channel channel;
+        private Throwable failure;
         private ResultsParserAdapter resultsAdapter;
         private PublisherShim<byte[]> fragmentPublisher;
         private SafeCompletableAsyncTask<MediaType> mediaTypeTask;
         private ResultsParser resultsParser;
-        private Charset charset = StandardCharsets.UTF_8;
+        private MediaType mediaType;
+        private Charset charset = UTF_8;
 
         @Override public void onResponseEnd(Runnable runnable) {
             this.onResponseEnd = runnable;
         }
 
         protected void responseEnded() {
-            resultsParser.end();
-            resultsParser = null;
+            if (resultsParser != null) resultsParser.end();
             if (resultsAdapter != null) resultsAdapter.end();
             if (fragmentPublisher != null) fragmentPublisher.end();
             channel = null;
             if (onResponseEnd != null) onResponseEnd.run();
         }
 
-        public void setupResults(Channel channel, SafeCompletableAsyncTask<List<String>> varsTask,
-                                 PublisherShim<String[]> rowPublisher) {
-            this.channel = channel;
+        private void reset(Channel channel) {
+            this.failure = null;
+            this.mediaType = null;
+            this.charset = null;
             this.fragmentPublisher = null;
             this.mediaTypeTask = null;
+            this.resultsParser = null;
+            this.resultsAdapter = null;
+            this.channel = channel;
+        }
+
+        public void setupResults(Channel channel, SafeCompletableAsyncTask<List<String>> varsTask,
+                                 PublisherShim<String[]> rowPublisher) {
+            reset(channel);
+            this.channel = channel;
+            this.resultsAdapter = new ResultsParserAdapter(varsTask, rowPublisher);
+            rowPublisher.handler(this);
         }
 
         public void setupGraph(Channel channel, SafeCompletableAsyncTask<MediaType> mediaTypeTask,
                                PublisherShim<byte[]> fragmentPublisher) {
+            reset(channel);
             this.channel = channel;
-            this.resultsAdapter = null;
+            this.mediaTypeTask = mediaTypeTask;
             (this.fragmentPublisher = fragmentPublisher).handler(this);
         }
 
@@ -322,17 +347,34 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) throws Exception {
+            if (failure != null) {
+                if (msg instanceof HttpContent) {
+                    log.debug("Chunk after {}: {}", failure.getClass().getSimpleName(),
+                              ((HttpContent) msg).content().toString(charset));
+                }
+                return;
+            }
             if (msg instanceof HttpResponse) {
                 HttpResponse resp = (HttpResponse) msg;
+                mediaType = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
+                if (mediaTypeTask != null)
+                    mediaTypeTask.complete(mediaType);
+                charset = mediaType == null ? UTF_8 : mediaType.charset(UTF_8);
                 String exception = null;
                 if (resp.status().codeClass() == HttpStatusClass.REDIRECTION) {
                     exception = "NettySparqlClient does not support redirection";
                 } else if (resp.status().codeClass() != HttpStatusClass.SUCCESS) {
                     exception = "Request failed with "+resp.status();
+                    if (resp instanceof HttpContent) {
+                        exception += ": "+((HttpContent) resp).content().toString(charset);
+                    }
                 }
                 if (exception != null)
                     throw new SparqlClientServerException(exception);
+                else if (mediaType == null)
+                    throw new InvalidSparqlResultsException("Bad server did not set Content-Type");
             }
+
             if (resultsAdapter != null) {
                 assert fragmentPublisher == null : "both fragment row publishers set";
                 readRows(msg);
@@ -340,33 +382,18 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                 assert fragmentPublisher != null : "no publisher set";
                 readFragments(ctx.alloc(), msg);
             }
-        }
-
-        private MediaType readContentType(HttpResponse response) {
-            String declared = response.headers().get(HttpHeaderNames.CONTENT_TYPE);
-            if (declared != null)
-                return MediaType.parse(declared);
-            throw new InvalidSparqlResultsException("Bad server did not set Content-Type header");
+            if (msg instanceof LastHttpContent)
+                responseEnded();
         }
 
         private void readRows(HttpObject msg) throws NoParserException {
-            if (msg instanceof HttpResponse) {
-                HttpResponse resp = (HttpResponse) msg;
-                MediaType ct = readContentType(resp);
-                charset = ct.charset(StandardCharsets.UTF_8);
-                resultsParser = ResultsParserRegistry.get().createFor(ct, resultsAdapter);
-            }
+            if (msg instanceof HttpResponse)
+                resultsParser = ResultsParserRegistry.get().createFor(mediaType, resultsAdapter);
             if (msg instanceof HttpContent)
                 resultsParser.feed(((HttpContent) msg).content().toString(charset));
-            if (msg instanceof LastHttpContent)
-                resultsParser.end();
         }
 
         private void readFragments(ByteBufAllocator alloc, HttpObject msg) {
-            if (msg instanceof HttpResponse) {
-                HttpResponse resp = (HttpResponse) msg;
-                mediaTypeTask.complete(readContentType(resp));
-            }
             if (msg instanceof HttpContent) {
                 ByteBuf bb = ((HttpContent) msg).content();
                 int len = bb.readableBytes();
@@ -377,14 +404,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                     fragmentPublisher.feed(heap.writeBytes(bb).array());
                     heap.release();
                 }
-                if (msg instanceof LastHttpContent)
-                    fragmentPublisher.end();
             }
         }
 
-        @Override public void channelInactive(ChannelHandlerContext ctx) {
-            responseEnded();
-        }
+        @Override public void channelInactive(ChannelHandlerContext ctx) { responseEnded(); }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
@@ -392,6 +415,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             if (mediaTypeTask != null && !mediaTypeTask.isDone())
                 mediaTypeTask.complete(null);
             if (fragmentPublisher != null) fragmentPublisher.error(cause);
+            failure = cause;
             ctx.close();
         }
     }

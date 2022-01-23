@@ -15,6 +15,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.net.InetSocketAddress;
 import java.util.function.Supplier;
 
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+
 public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
         implements NettyHttpClient<H> {
     private static final String CONNECTION = "close";
@@ -63,14 +65,16 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
                         HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         @Nullable Setup<T> setup) throws Exception {
-        HttpRequest req;
+        HttpRequest req = null;
         if (bodyGenerator != null) {
             ByteBuf bb = bodyGenerator.apply(ch.alloc());
-            req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, firstLine.toString(), bb);
-            req.headers().set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
-        } else {
-            req = new DefaultHttpRequest(HttpVersion.HTTP_1_1, method, firstLine.toString());
+            if (bb != null) {
+                req = new DefaultFullHttpRequest(HTTP_1_1, method, firstLine.toString(), bb);
+                req.headers().set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
+            }
         }
+        if (req == null)
+            req = new DefaultHttpRequest(HTTP_1_1, method, firstLine.toString());
         HttpHeaders headers = req.headers();
         headers.set(HttpHeaderNames.HOST, host);
         headers.set(HttpHeaderNames.CONNECTION, connection);
