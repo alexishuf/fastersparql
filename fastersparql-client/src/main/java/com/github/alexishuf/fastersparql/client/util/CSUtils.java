@@ -82,13 +82,24 @@ public class CSUtils {
      *         given characters or {@code end} if there is no such {@code i}.
      */
     public static int skipUntilIn(CharSequence cs, int from, int end, char[] sortedChars) {
-        assert isSorted(sortedChars) : "sortedChars array is not sorted";
-        for (int i = from, j = 0; i < end; i++, j = 0) {
-            char c = cs.charAt(i);
-            while (j < sortedChars.length && sortedChars[j] < c) ++j;
-            if (j < sortedChars.length && sortedChars[j] == c) return i;
+        for (int i = from; i < end; i++) {
+            if (charInSorted(cs.charAt(i), sortedChars)) return i;
         }
         return end;
+    }
+
+    /**
+     * Linear search for {@code c} in a ascending-sorted array {@code sortedChars}.
+     *
+     * @param c the char to look for
+     * @param sortedChars a sorted array of characters
+     * @return whether {@code c} is in {@code sorted}
+     */
+    public static boolean charInSorted(char c, char[] sortedChars) {
+        assert isSorted(sortedChars) : "sortedChars array is not sorted";
+        int i = 0;
+        while (i < sortedChars.length && sortedChars[i] < c) ++i;
+        return i < sortedChars.length && c == sortedChars[i];
     }
 
     private static boolean isSorted(char[] array) {

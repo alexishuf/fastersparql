@@ -194,7 +194,17 @@ class CSVParserTest {
         /* 25 */arguments("x\r\n1,2\r\n", singletonList("x"), null),
                 // extra column, second line
         /* 26 */arguments("x\r\n11\r\n21,22\r\n", singletonList("x"),
-                          asList(singletonList("\"11\""), null))
+                          asList(singletonList("\"11\""), null)),
+                // positive ask with explicit boolean
+        /* 27 */arguments("_askResult\r\ntrue\r\n", emptyList(), singletonList(emptyList())),
+                // positive ask with explicit boolean, quoted
+        /* 28 */arguments("_askResult\r\n\"true\"", emptyList(), singletonList(emptyList())),
+                // negative ask with explicit boolean
+        /* 29 */arguments("_askResult\r\nfalse\r\n", emptyList(), emptyList()),
+                // negative ask with explicit boolean, quoted
+        /* 30 */arguments("_askResult\r\n\"false\"", emptyList(), emptyList()),
+                // negative ask with no rows
+        /* 31 */arguments("_askResult\r\n", emptyList(), emptyList())
         ).map(a -> {
             //noinspection unchecked
             List<List<String>> lists = (List<List<String>>) a.get()[2];

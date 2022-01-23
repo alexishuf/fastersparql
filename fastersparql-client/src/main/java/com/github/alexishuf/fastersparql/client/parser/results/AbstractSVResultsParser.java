@@ -1,17 +1,24 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.singletonList;
 
 public abstract class AbstractSVResultsParser implements ResultsParser {
+    private static final Pattern ASK_VAR = Pattern.compile("(?i)_+ask_*(result|answer)?_*");
+    private static final Pattern BOOLEAN = Pattern.compile("\"?(true|false)\"?(\\^\\^(xsd:boolean|<http://www.w3.org/2001/XMLSchema#boolean>))?");
+
     private final ResultsParserConsumer consumer;
     private final String eol;
     private boolean headersDone;
+    private @Nullable List<List<String>> booleanAsk;
     private final List<String> current = new ArrayList<>();
     private final StringBuilder carry = new StringBuilder();
     private int nColumns = -1, lineNumber = 1, columnNumber = 1;
@@ -92,6 +99,12 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
                     if (carry.length() > 0)
                         error("Unterminated term (no closing \"?)");
                 }
+                if (booleanAsk != null && !hadError) {
+                    consumer.vars(emptyList());
+                    if (booleanAsk.size() > 1 && booleanAsk.get(1).get(0).contains("true"))
+                        consumer.row(new String[0]);
+                    booleanAsk = null;
+                }
                 if (!hadError) { // feed may call consumer.error() and consumer.end()
                     if (!headersDone) {
                         consumer.vars(emptyList());
@@ -118,7 +131,10 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
             } // else: zero-vars header (ASK query)
             nColumns = trimmed.size();
             headersDone = true;
-            consumer.vars(trimmed);
+            if (trimmed.size() == 1 && ASK_VAR.matcher(trimmed.get(0)).matches())
+                booleanAsk = new ArrayList<>(singletonList(trimmed));
+            else
+                consumer.vars(trimmed);
         } else if (nColumns == 0) {
             if (current.size() > 1 || current.get(0) != null) {
                 error("Unexpected non-empty row "+current+" for zero-vars results");
@@ -127,7 +143,21 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
             }
         } else {
             if (current.size() == nColumns) {
-                consumer.row(current.toArray(new String[0]));
+                if (booleanAsk != null) {
+                    String v = current.get(0);
+                    if (booleanAsk.size() == 1 && (v == null || BOOLEAN.matcher(v).matches())) {
+                        booleanAsk.add(new ArrayList<>(current));
+                    } else {
+                        assert !booleanAsk.isEmpty();
+                        consumer.vars(booleanAsk.get(0));
+                        for (int i = 1; i < booleanAsk.size(); i++)
+                            consumer.row(booleanAsk.get(i).toArray(new String[0]));
+                        consumer.row(current.toArray(new String[0]));
+                        booleanAsk = null;
+                    }
+                } else {
+                    consumer.row(current.toArray(new String[0]));
+                }
             } else if (current.size() < nColumns) {
                 error("Missing columns on row "+current+" expected "+nColumns+" columns. " +
                         "This is often caused by an unescaped line feed (\\n).");

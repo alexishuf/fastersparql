@@ -16,7 +16,14 @@ import static java.util.Collections.singletonList;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class TSVParserTest {
+    static String integer(String i) {
+        return "\""+i+"\"^^<http://www.w3.org/2001/XMLSchema#integer>";
+    }
+
     static Stream<Arguments> data() {
+        String dec = "\"^^<http://www.w3.org/2001/XMLSchema#decimal>";
+        String dbl = "\"^^<http://www.w3.org/2001/XMLSchema#double>";
+        String bool = "\"^^<http://www.w3.org/2001/XMLSchema#boolean>";
         return Stream.of(
     /*  1 */    arguments("empty", "", emptyList(), emptyList()),
     /*  2 */    arguments("negative ASK", "\n", emptyList(), emptyList()),
@@ -31,9 +38,9 @@ class TSVParserTest {
     /*  8 */    arguments("abs-x", "?x\n<http://example.org/?page=A&x=y#[]>\n",
                           singletonList("x"),
                           singletonList(singletonList("<http://example.org/?page=A&x=y#[]>"))),
-    /*  9 */    arguments("int-x", "?x\n\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>\n",
+    /*  9 */    arguments("int-x", "?x\n"+integer("23")+"\n",
                           singletonList("x"),
-                          singletonList(singletonList("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"))),
+                          singletonList(singletonList(integer("23")))),
     /* 10 */    arguments("lang-x", "?x\n\"bob\"@en-US\n", singletonList("x"),
                           singletonList(singletonList("\"bob\"@en-US"))),
     /* 11 */    arguments("plain-x", "?x\n\"bob\"\n", singletonList("x"),
@@ -61,7 +68,47 @@ class TSVParserTest {
     /* 22 */    arguments("excess-columns", "?x\n<a>\t<b>\n", singletonList("x"), null),
     /* 23 */    arguments("excess-null-columns", "?x\n\t<b>\n", singletonList("x"), null),
     /* 24 */    arguments("excess-columns-2nd-row", "?x\n<a>\n\t\t\n", singletonList("x"),
-                          asList(singletonList("<a>"), null))
+                          asList(singletonList("<a>"), null)),
+    /* 25 */    arguments("ttl-integer", "?x\n23", singletonList("x"),
+                          singletonList(singletonList(integer("23")))),
+    /* 26 */    arguments("ttl-pos-integer", "?x\n+23", singletonList("x"),
+                          singletonList(singletonList(integer("+23")))),
+    /* 27 */    arguments("ttl-neg-integer", "?x\n-23", singletonList("x"),
+                          singletonList(singletonList(integer("-23")))),
+    /* 28 */    arguments("ttl-decimal", "?x\n1.23", singletonList("x"),
+                          singletonList(singletonList("\"1.23"+dec))),
+    /* 29 */    arguments("ttl-pos-decimal", "?x\n+1.23", singletonList("x"),
+                          singletonList(singletonList("\"+1.23"+dec))),
+    /* 30 */    arguments("ttl-neg-decimal", "?x\n-1.33", singletonList("x"),
+                          singletonList(singletonList("\"-1.33"+dec))),
+    /* 31 */    arguments("ttl-double", "?x\n1.33e6", singletonList("x"),
+                          singletonList(singletonList("\"1.33e6"+dbl))),
+    /* 32 */    arguments("ttl-upper-double", "?x\n1.33E6", singletonList("x"),
+                          singletonList(singletonList("\"1.33E6"+dbl))),
+    /* 33 */    arguments("ttl-pos-double", "?x\n+1.33e6", singletonList("x"),
+                          singletonList(singletonList("\"+1.33e6"+dbl))),
+    /* 34 */    arguments("ttl-neg-double", "?x\n-1.33e6", singletonList("x"),
+                          singletonList(singletonList("\"-1.33e6"+dbl))),
+    /* 35 */    arguments("ttl-small-double", "?x\n-1.33e-06", singletonList("x"),
+                          singletonList(singletonList("\"-1.33e-06"+dbl))),
+    /* 36 */    arguments("ask-with-nt-true", "?_askResult\n\"true"+bool, emptyList(),
+                          singletonList(emptyList())),
+    /* 37 */    arguments("ask-with-ttl-true", "?_askResult\ntrue\n", emptyList(),
+                          singletonList(emptyList())),
+    /* 38 */    arguments("ask-with-nt-false", "?_askResult\n\"false"+bool, emptyList(),
+                          emptyList()),
+    /* 39 */    arguments("ask-with-ttl-false", "?_askResult\nfalse\n", emptyList(),
+                          emptyList()),
+    /* 40 */    arguments("ask-with-var-no-results", "?_askResult\n", emptyList(),
+                          emptyList()),
+    /* 41 */    arguments("ambiguous-ask", "?_askResult\ntrue\ntrue", singletonList("_askResult"),
+                          asList(singletonList("\"true"+bool), singletonList("\"true"+bool))),
+    /* 42 */    arguments("ambiguous-ask-null", "?_askResult\n\nfalse", singletonList("_askResult"),
+                          asList(singletonList(null), singletonList("\"false"+bool))),
+    /* 43 */    arguments("alt-ask-result", "?__ask__\ntrue", emptyList(),
+                          singletonList(emptyList())),
+    /* 44 */    arguments("ambiguous-alt-ask-result", "?__ask__\n\ntrue", singletonList("__ask__"),
+                          asList(singletonList(null), singletonList("\"true"+bool)))
         ).map(a -> {
             //noinspection unchecked
             List<List<String>> lists = (List<List<String>>) a.get()[3];
