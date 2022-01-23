@@ -30,6 +30,28 @@ public class ResultsParserRegistry {
         mt2Factory.put(mediaType, factory);
     }
 
+    /**
+     * Tests if {@link ResultsParserRegistry#createFor(MediaType, ResultsParserConsumer)} would
+     * throw a {@link NoParserException}.
+     *
+     * @param mediaType the media type of the SPARQL results.
+     * @return {@code true} iff a {@link ResultsParser} for {@code mediaType} can be created.
+     */
+    public boolean canParse(MediaType mediaType) {
+        return mt2Factory.containsKey(mediaType.withoutParams());
+    }
+
+    /**
+     * Creates a new {@link ResultsParser} for the given {@code mediaType}.
+     *
+     * Each {@link ResultsParser} shall be used to parse a single SPARQL results stream,
+     * feeding events to a single {@link ResultsParserConsumer}.
+     *
+     * @param mediaType The {@link MediaType} of the results format to be parsed.
+     * @param consumer A {@link ResultsParserConsumer} to receive events from the parser.
+     * @return a new {@link ResultsParser} bound to {@code consumer}
+     * @throws NoParserException if there is no parser implementation for the given media type.
+     */
     public ResultsParser createFor(MediaType mediaType,
                                    ResultsParserConsumer consumer) throws  NoParserException {
         Function<ResultsParserConsumer, ResultsParser> f;

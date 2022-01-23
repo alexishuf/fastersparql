@@ -19,8 +19,13 @@ public class UnacceptableSparqlConfiguration extends SparqlClientInvalidArgument
 
     public UnacceptableSparqlConfiguration(String uri, SparqlConfiguration offer,
                                            SparqlConfiguration request) {
-        super(String.format("Requested config %s is not satisfied by config %s for SPARQL " +
-                            "endpoint at %s", request, offer, uri));
+        this(uri, offer, request, String.format("Requested config %s is not satisfied by config " +
+                "%s for SPARQL endpoint at %s", request, offer, uri));
+    }
+
+    public UnacceptableSparqlConfiguration(String uri, SparqlConfiguration offer,
+                                           SparqlConfiguration request, String message) {
+        super(message);
         this.uri = uri;
         this.offer = offer;
         this.request = request;

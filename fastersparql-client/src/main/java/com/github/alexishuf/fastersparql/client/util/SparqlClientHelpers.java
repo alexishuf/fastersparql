@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.value.qual.MinLen;
 
@@ -15,6 +16,7 @@ import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
 import static com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties.maxQueryByGet;
 import static com.github.alexishuf.fastersparql.client.util.UriUtils.escapeQueryParam;
 import static com.github.alexishuf.fastersparql.client.util.UriUtils.needsEscape;
+import static java.util.stream.Collectors.toList;
 
 /**
  * Helpers for implementers of {@link com.github.alexishuf.fastersparql.client.SparqlClient}
@@ -191,4 +193,42 @@ public class SparqlClientHelpers {
         return output;
     }
 
+    /**
+     * Creates a copy of {@code endpoint} only with result formats supported by {@code reg}.
+     *
+     * @param endpoint the {@link SparqlEndpoint}
+     * @param reg where to test if there if a {@link SparqlResultFormat} is supported.
+     * @return a copy of {@code endpoint} where {@link ResultsParserRegistry#canParse(MediaType)}
+     *         is {@code true} for all {@link SparqlConfiguration#resultsAccepts()}
+     * @throws UnacceptableSparqlConfiguration {@link SparqlConfiguration#resultsAccepts()}
+     *         would be empty on the returned endpoint (no requested results format is supported).
+     */
+    public static SparqlEndpoint withoutUnsupportedResultFormats(SparqlEndpoint endpoint,
+                                                                 ResultsParserRegistry reg) {
+        List<SparqlResultFormat> supportedFormats = new ArrayList<>();
+        boolean changed = false;
+        SparqlConfiguration request = endpoint.configuration();
+        for (SparqlResultFormat fmt : request.resultsAccepts()) {
+            if (reg.canParse(fmt.asMediaType()))
+                supportedFormats.add(fmt);
+            else
+                changed = true;
+        }
+        if (supportedFormats.isEmpty()) {
+            SparqlConfiguration offer = request.toBuilder().clearResultsAccepts()
+                    .resultsAccepts(SparqlResultFormat.VALUES.stream()
+                            .filter(f -> reg.canParse(f.asMediaType())).collect(toList()))
+                    .build();
+            String msg = "None of the given SparqlResultFormats " + request.resultsAccepts() +
+                         " has a ResultsParser in ResultsParserRegistry.get()";
+            throw new UnacceptableSparqlConfiguration(endpoint.uri(), offer, request, msg);
+        }
+        if (changed) {
+            SparqlConfiguration amended = request.toBuilder()
+                    .clearResultsAccepts().resultsAccepts(supportedFormats)
+                    .build();
+            return new SparqlEndpoint(endpoint.uri(), amended);
+        }
+        return endpoint;
+    }
 }

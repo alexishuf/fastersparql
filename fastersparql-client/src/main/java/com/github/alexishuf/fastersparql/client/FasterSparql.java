@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client;
 
+import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
@@ -77,6 +78,8 @@ public class FasterSparql {
      *
      * @param endpoint the SPARQL endpoint to receive the queries.
      * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
+     * @throws UnacceptableSparqlConfiguration if {@code endpoint.configuration()} is unfeasible,
+     *         i.e., any query with the {@link SparqlClient} would throw this exception
      */
     public static SparqlClient<String[], byte[]>
     clientFor(SparqlEndpoint endpoint) {
@@ -95,6 +98,8 @@ public class FasterSparql {
      * @param <R> the type of rows
      * @param <F> the type of graph fragments
      * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
+     * @throws UnacceptableSparqlConfiguration if {@code endpoint.configuration()} is unfeasible,
+     *         i.e., any query with the {@link SparqlClient} would throw this exception
      */
     public static <R, F> SparqlClient<R, F>
     clientFor(String augmentedUri, RowParser<R> rowParser, FragmentParser<F> fragmentParser) {
@@ -108,6 +113,8 @@ public class FasterSparql {
      *                     to be embedded in {@link SparqlEndpoint#configuration()}.
      *                     See {@link SparqlEndpoint#parse(String)}.
      * @return a new, non-null {@link SparqlClient} whose ownership is given to the caller.
+     * @throws UnacceptableSparqlConfiguration if {@code endpoint.configuration()} is unfeasible,
+     *         i.e., any query with the {@link SparqlClient} would throw this exception
      */
     public static SparqlClient<String[], byte[]>
     clientFor(String augmentedUri) {

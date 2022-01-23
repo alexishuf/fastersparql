@@ -51,7 +51,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         if (endpoint == null) throw new NullPointerException("endpoint is null");
         if (rowParser == null) throw new NullPointerException("rowParser is null");
         if (fragmentParser == null) throw new NullPointerException("fragmentParser is null");
-        this.endpoint = endpoint;
+        this.endpoint = withoutUnsupportedResultFormats(endpoint, ResultsParserRegistry.get());
         this.netty = endpoint.resolvedHost().thenApplyThrowing(a ->
                 new NettyHttpClientBuilder().build(endpoint.protocol(), a, Handler::new));
         this.rowParser = rowParser;
