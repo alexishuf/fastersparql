@@ -1,0 +1,3 @@
+com.github.alexishuf.fastersparql.client.parser.results.TSVParser$Provider
+com.github.alexishuf.fastersparql.client.parser.results.CSVParser$Provider
+com.github.alexishuf.fastersparql.client.parser.results.JsonParser$Provider

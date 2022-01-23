@@ -1,33 +1,49 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
-import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.ServiceLoader;
 
 public class ResultsParserRegistry {
-    private static final ResultsParserRegistry INSTANCE;
+    private static final ResultsParserRegistry INSTANCE = new ResultsParserRegistry().registerAll();
 
-    static {
-        ResultsParserRegistry factory = new ResultsParserRegistry();
-        factory.register(SparqlResultFormat.TSV.asMediaType(), TSVParser::new);
-        factory.register(SparqlResultFormat.JSON.asMediaType(), JsonParser::new);
-        factory.register(SparqlResultFormat.CSV.asMediaType(), CSVParser::new);
-        INSTANCE = factory;
-    }
+    private final Map<MediaType, ResultsParserProvider> mt2Provider = new HashMap<>();
 
-    private final Map<MediaType, Function<ResultsParserConsumer, ResultsParser>> mt2Factory
-            = new HashMap<>();
-
+    /**
+     * Get a global {@link ResultsParserProvider} already initialized with
+     * {@link ResultsParserRegistry#registerAll()}
+     *
+     * @return a non-null shared {@link ResultsParserRegistry}.
+     */
     public static ResultsParserRegistry get() {
         return INSTANCE;
     }
 
-    public synchronized void register(MediaType mediaType,
-                                      Function<ResultsParserConsumer, ResultsParser> factory) {
-        mt2Factory.put(mediaType, factory);
+    /**
+     * Register a specific {@link ResultsParserProvider}.
+     *
+     * Any previous {@link ResultsParserProvider} registered to one of
+     * {@code provider.mediaTypes()} will be replaced with {@code provider.}
+     *
+     * @param provider the provider to register
+     */
+    public synchronized void register(ResultsParserProvider provider) {
+        for (MediaType mt : provider.mediaTypes())
+            mt2Provider.put(mt, provider);
+    }
+
+    /**
+     * Uses a {@link ServiceLoader} to register all {@link ResultsParserProvider} implementations.
+     *
+     * @return {@code this} {@link ResultsParserRegistry}
+     */
+    public ResultsParserRegistry registerAll() {
+        for (ResultsParserProvider provider : ServiceLoader.load(ResultsParserProvider.class)) {
+            register(provider);
+        }
+        return this;
     }
 
     /**
@@ -38,7 +54,7 @@ public class ResultsParserRegistry {
      * @return {@code true} iff a {@link ResultsParser} for {@code mediaType} can be created.
      */
     public boolean canParse(MediaType mediaType) {
-        return mt2Factory.containsKey(mediaType.withoutParams());
+        return mt2Provider.containsKey(mediaType.withoutParams());
     }
 
     /**
@@ -54,10 +70,10 @@ public class ResultsParserRegistry {
      */
     public ResultsParser createFor(MediaType mediaType,
                                    ResultsParserConsumer consumer) throws  NoParserException {
-        Function<ResultsParserConsumer, ResultsParser> f;
-        f = mt2Factory.getOrDefault(mediaType.withoutParams(), null);
-        if (f == null)
+        ResultsParserProvider provider;
+        provider = mt2Provider.getOrDefault(mediaType.withoutParams(), null);
+        if (provider == null)
             throw new NoParserException(mediaType);
-        return f.apply(consumer);
+        return provider.create(consumer);
     }
 }

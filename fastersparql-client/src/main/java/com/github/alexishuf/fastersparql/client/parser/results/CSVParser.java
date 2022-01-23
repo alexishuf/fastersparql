@@ -1,12 +1,27 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
+
+import java.util.Collections;
+import java.util.List;
 
 import static com.github.alexishuf.fastersparql.client.util.CSUtils.skipUntil;
 
 public class CSVParser extends AbstractSVResultsParser {
     private final StringBuilder unquoteBuilder = new StringBuilder();
     private final StringBuilder ntBuilder = new StringBuilder();
+
+    public static class Provider implements ResultsParserProvider {
+        @Override public List<MediaType> mediaTypes() {
+            return Collections.singletonList(SparqlResultFormat.CSV.asMediaType());
+        }
+
+        @Override public ResultsParser create(ResultsParserConsumer consumer) {
+            return new CSVParser(consumer);
+        }
+    }
 
     public CSVParser(ResultsParserConsumer consumer) {
         super(consumer, "\r\n");

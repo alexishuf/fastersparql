@@ -1,10 +1,13 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 public class TSVParser extends AbstractSVResultsParser {
@@ -14,6 +17,17 @@ public class TSVParser extends AbstractSVResultsParser {
     private static final char[] NT_FIRST = "\0\"<_".toCharArray();
 
     private final StringBuilder tmp = new StringBuilder();
+
+    public static class Provider implements ResultsParserProvider {
+        @Override public List<MediaType> mediaTypes() {
+            return Arrays.asList(SparqlResultFormat.TSV.asMediaType(),
+                                 new MediaType("text", "tsv"));
+        }
+
+        @Override public ResultsParser create(ResultsParserConsumer consumer) {
+            return new TSVParser(consumer);
+        }
+    }
 
     public TSVParser(ResultsParserConsumer consumer) {
         super(consumer, "\n");

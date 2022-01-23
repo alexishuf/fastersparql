@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -30,6 +32,17 @@ public class JsonParser implements ResultsParser {
     private final List<String> vars = new ArrayList<>();
     private final List<@Nullable String> row = new ArrayList<>();
     private @Nullable String type, datatype, value, lang;
+
+    public static class Provider implements ResultsParserProvider {
+        @Override public List<MediaType> mediaTypes() {
+            return Arrays.asList(SparqlResultFormat.JSON.asMediaType(),
+                                 new MediaType("application", "json"));
+        }
+
+        @Override public ResultsParser create(ResultsParserConsumer consumer) {
+            return new JsonParser(consumer);
+        }
+    }
 
     public JsonParser(ResultsParserConsumer consumer) {
         this.input = "";
