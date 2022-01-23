@@ -3,27 +3,21 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FasterSparqlNettyProperties;
-import com.github.alexishuf.fastersparql.client.netty.util.NettySslContextFactory;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
 import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.channel.socket.SocketChannel;
-import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpContentDecompressor;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.ssl.SslContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
-import java.util.IdentityHashMap;
 import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.client.netty.http.UnPooledNettyHttpClient.doRequestSetup;

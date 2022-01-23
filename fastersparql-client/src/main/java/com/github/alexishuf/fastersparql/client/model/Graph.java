@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.util.*;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;

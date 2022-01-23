@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.checker.nullness.qual.PolyNull;
 
-import java.util.Collections;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class HeaderUtils {

@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
 /**

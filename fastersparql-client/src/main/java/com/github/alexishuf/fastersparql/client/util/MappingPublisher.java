@@ -1,6 +1,9 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NonNull;
+import lombok.Value;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Processor;

@@ -7,7 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
-import static java.util.concurrent.TimeUnit.*;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(2)

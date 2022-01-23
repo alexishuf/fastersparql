@@ -1,10 +1,11 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
@@ -12,8 +13,9 @@ import static com.github.alexishuf.fastersparql.client.parser.results.JsonParser
 import static com.github.alexishuf.fastersparql.client.util.CSUtils.*;
 import static java.util.Collections.emptyList;
 
-@Slf4j
 public class JsonParser implements ResultsParser {
+    private static final Logger log = LoggerFactory.getLogger(JsonParser.class);
+
     private final ResultsParserConsumer consumer;
     private boolean sentError = false, sentEnd = false;
     private boolean varsDone, empty = true;

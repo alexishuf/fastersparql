@@ -1,15 +1,18 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-@Slf4j
+
 public class UriUtils {
+    private static final Logger log = LoggerFactory.getLogger(UriUtils.class);
+
     /**
      * HEX[i] == Integer.toHexString(i).toUpperCase().charAt(0)
      */

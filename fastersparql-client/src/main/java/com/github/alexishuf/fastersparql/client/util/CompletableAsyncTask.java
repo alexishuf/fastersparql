@@ -2,7 +2,10 @@ package com.github.alexishuf.fastersparql.client.util;
 
 import org.checkerframework.checker.nullness.qual.NonNull;
 
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class CompletableAsyncTask<T> extends CompletableFuture<T> implements AsyncTask<T> {
     @Override public T get() throws ExecutionException {

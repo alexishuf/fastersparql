@@ -1,13 +1,14 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.UUID;
 
-@Slf4j
 public class TSVParser extends AbstractSVResultsParser {
+    private static final Logger log = LoggerFactory.getLogger(TSVParser.class);
     private static final char[] FORBIDDEN_CHARS = "\b\t\n\f\r\"\\".toCharArray();
     private static final char[] ESCAPE_CHARS = "btnfr\"\\".toCharArray();
     private static final char[] NT_FIRST = "\0\"<_".toCharArray();

@@ -18,12 +18,13 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
 import java.util.ArrayDeque;
@@ -36,17 +37,20 @@ import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-@Slf4j
+
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
+    private static final Logger log = LoggerFactory.getLogger(NettySparqlClient.class);
     private final SparqlEndpoint endpoint;
     private final AsyncTask<NettyHttpClient<Handler>> netty;
     private final RowParser<R> rowParser;
     private final FragmentParser<F> fragParser;
 
 
-    public NettySparqlClient(@lombok.NonNull SparqlEndpoint endpoint,
-                             @lombok.NonNull RowParser<R> rowParser,
-                             @lombok.NonNull FragmentParser<F> fragmentParser) {
+    public NettySparqlClient(SparqlEndpoint endpoint, RowParser<R> rowParser,
+                             FragmentParser<F> fragmentParser) {
+        if (endpoint == null) throw new NullPointerException("endpoint is null");
+        if (rowParser == null) throw new NullPointerException("rowParser is null");
+        if (fragmentParser == null) throw new NullPointerException("fragmentParser is null");
         this.endpoint = endpoint;
         this.netty = endpoint.resolvedHost().thenApplyThrowing(a ->
                 new NettyHttpClientBuilder().build(endpoint.protocol(), a, Handler::new));
@@ -163,8 +167,8 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     }
 
     /* --- --- --- inner classes  --- --- ---  */
-    @Slf4j
     private static class PublisherShim<T> implements Publisher<T> {
+        private static final Logger log = LoggerFactory.getLogger(PublisherShim.class);
         private @MonotonicNonNull Handler handler;
         private long requested = 0;
         private boolean active = true;
@@ -283,9 +287,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         }
     }
 
-    @Slf4j
+
     private static class Handler extends SimpleChannelInboundHandler<HttpObject>
             implements ReusableHttpClientInboundHandler {
+        private static final Logger log = LoggerFactory.getLogger(Handler.class);
         private Runnable onResponseEnd;
         private Channel channel;
         private Throwable failure;

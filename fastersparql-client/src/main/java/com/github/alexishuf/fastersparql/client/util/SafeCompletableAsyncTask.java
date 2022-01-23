@@ -1,15 +1,17 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-@Slf4j
 public class SafeCompletableAsyncTask<T> extends CompletableAsyncTask<T>
         implements SafeAsyncTask<T> {
+    private static final Logger log = LoggerFactory.getLogger(SafeCompletableAsyncTask.class);
+
     @Override public T get() {
         try {
             return super.get();

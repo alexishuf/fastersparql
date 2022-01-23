@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.client.parser;
 import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
-import com.github.alexishuf.fastersparql.client.util.CompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.Test;
@@ -14,7 +13,6 @@ import reactor.core.publisher.Flux;
 
 import java.nio.charset.Charset;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import static java.util.Arrays.asList;

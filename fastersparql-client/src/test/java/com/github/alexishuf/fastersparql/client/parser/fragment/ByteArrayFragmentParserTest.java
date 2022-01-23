@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
-import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser.Encoder;
-import com.github.alexishuf.fastersparql.client.util.CompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.Test;
@@ -22,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 

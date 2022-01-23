@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.ChildJVM;
-import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;

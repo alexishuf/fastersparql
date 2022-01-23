@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.CompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,7 +9,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.client.parser.row.StringArrayRowParser.INSTANCE;
 import static java.nio.charset.StandardCharsets.UTF_8;

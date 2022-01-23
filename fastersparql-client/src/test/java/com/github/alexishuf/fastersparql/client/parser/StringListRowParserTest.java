@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.CompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.client.parser.row.StringListRowParser.INSTANCE;
 import static java.util.Arrays.asList;

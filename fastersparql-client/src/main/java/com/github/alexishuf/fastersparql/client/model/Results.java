@@ -1,26 +1,16 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.util.AsyncIterable;
-import com.github.alexishuf.fastersparql.client.util.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.SafeAsyncTask;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.Value;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
-import org.checkerframework.checker.index.qual.NonNegative;
-import org.checkerframework.checker.index.qual.Positive;
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.common.value.qual.MinLen;
-import org.checkerframework.dataflow.qual.Deterministic;
-import org.checkerframework.dataflow.qual.SideEffectFree;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.*;
 import java.util.stream.Stream;
 
 /**
