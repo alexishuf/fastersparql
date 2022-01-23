@@ -57,10 +57,23 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
+      <groupId>org.apache.jena</groupId>
+      <artifactId>apache-jena-libs</artifactId>
+      <type>pom</type>
+      <version>4.3.2</version>
+    </dependency>
+    <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>1.16.2</version>
       <scope>test</scope>
+      <exclusions>
+        <!-- Do not pull 2.10.3 as jena will pull 2.13.0 via jackson-databind-->
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-annotations</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
   </dependencies>
 

@@ -385,7 +385,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                 readRows(msg);
             } else {
                 assert fragmentPublisher != null : "no publisher set";
-                readFragments(ctx.alloc(), msg);
+                readFragments(msg);
             }
             if (msg instanceof LastHttpContent)
                 responseEnded();
@@ -398,17 +398,12 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                 resultsParser.feed(((HttpContent) msg).content().toString(charset));
         }
 
-        private void readFragments(ByteBufAllocator alloc, HttpObject msg) {
+        private void readFragments(HttpObject msg) {
             if (msg instanceof HttpContent) {
                 ByteBuf bb = ((HttpContent) msg).content();
-                int len = bb.readableBytes();
-                if (bb.hasArray() && bb.arrayOffset() == 0 && bb.array().length == len) {
-                    fragmentPublisher.feed(bb.array());
-                } else {
-                    ByteBuf heap = alloc.heapBuffer(len);
-                    fragmentPublisher.feed(heap.writeBytes(bb).array());
-                    heap.release();
-                }
+                byte[] heap = new byte[bb.readableBytes()];
+                bb.readBytes(heap);
+                fragmentPublisher.feed(heap);
             }
         }
 

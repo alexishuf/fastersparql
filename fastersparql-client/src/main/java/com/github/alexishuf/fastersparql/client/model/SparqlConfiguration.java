@@ -85,7 +85,7 @@ public class SparqlConfiguration {
      * <strong>Sanitization at construction time</strong>:
      * <ul>
      *     <li>{@code null} is converted to an empty list.</li>
-     *     <li>An empty list is converted to {@link RDFMediaTypes#ALL}</li>
+     *     <li>An empty list is converted to {@link RDFMediaTypes#DEFAULT_ACCEPTS}</li>
      * </ul>
      *
      * <strong>Overlay semantics</strong>: If {@link SparqlConfiguration#hasRdfAccepts()} the
@@ -215,7 +215,7 @@ public class SparqlConfiguration {
                                                "method");
         this.resultsAccepts = nonEmptyNonNullDistinct(resultsAccepts, SparqlResultFormat.VALUES,
                                                       "accepted results format");
-        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, RDFMediaTypes.ALL,
+        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, RDFMediaTypes.DEFAULT_ACCEPTS,
                                                   "accepted RDF media types");
         this.params = sanitizeParams(params);
         this.headers = sanitizeHeaders(headers);
@@ -246,7 +246,7 @@ public class SparqlConfiguration {
     /**
      * Whether {@link SparqlConfiguration#rdfAccepts()} was set on construction.
      */
-    boolean hasRdfAccepts() { return rdfAccepts != RDFMediaTypes.ALL; }
+    boolean hasRdfAccepts() { return rdfAccepts != RDFMediaTypes.DEFAULT_ACCEPTS; }
 
     /**
      * Tests if this objects set no configuration (i.e., it is a no-op).

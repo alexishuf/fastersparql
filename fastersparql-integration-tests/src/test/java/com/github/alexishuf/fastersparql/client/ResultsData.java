@@ -19,17 +19,16 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Data
-@Accessors(fluent = true, chain = true)
+@Data @Accessors(fluent = true, chain = true)
 class ResultsData {
     private static final String PREFIX;
     private static final Map<String, String> PREDEFINED;
 
+    private SparqlConfiguration config = SparqlConfiguration.EMPTY;
     private String sparql;
     private List<List<String>> expected;
     private boolean checkOrder = false;
     private Class<? extends Throwable> expectedError;
-    private SparqlConfiguration config = SparqlConfiguration.EMPTY;
 
     public ResultsData(ResultsData other) {
         this.sparql = other.sparql;

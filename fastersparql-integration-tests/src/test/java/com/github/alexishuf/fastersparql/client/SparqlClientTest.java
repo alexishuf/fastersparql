@@ -1,13 +1,16 @@
 package com.github.alexishuf.fastersparql.client;
 
+import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser;
-import com.github.alexishuf.fastersparql.client.parser.row.CharSequenceArrayRowParser;
-import com.github.alexishuf.fastersparql.client.parser.row.CharSequenceListRowParser;
-import com.github.alexishuf.fastersparql.client.parser.row.StringListRowParser;
+import com.github.alexishuf.fastersparql.client.parser.fragment.CharSequenceFragmentParser;
+import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
+import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
+import com.github.alexishuf.fastersparql.client.parser.row.*;
 import com.github.alexishuf.fastersparql.client.util.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -28,6 +31,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.client.GraphData.graph;
 import static com.github.alexishuf.fastersparql.client.ResultsData.results;
 import static com.github.alexishuf.fastersparql.client.util.Async.async;
 import static java.lang.String.format;
@@ -155,37 +159,72 @@ public class SparqlClientTest {
         }
 
         List<AsyncTask<?>> futures = new ArrayList<>();
-        for (SparqlEndpoint ep : asList(hdtss(), fuseki()))
-            scheduleTestResultsWithRowParsers(data, factory, ep, futures);
+        ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
+        List<RowParser<?>> rowParsers = asList(StringListRowParser.INSTANCE,
+                CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
+        for (SparqlEndpoint ep : asList(hdtss(), fuseki())) {
+            for (RowParser<?> rowParser : rowParsers) {
+                futures.add(async(() -> {
+                    try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, bytesP)) {
+                        data.assertExpected(client.query(data.sparql(), data.config()));
+                    }
+                }));
+            }
+        }
         for (AsyncTask<?> future : futures)
             future.get();
-    }
-
-    private void scheduleTestResultsWithRowParsers(ResultsData data, SparqlClientFactory factory,
-                                                   SparqlEndpoint ep, List<AsyncTask<?>> destination) {
-        ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
-        destination.add(async(() -> {
-            try (SparqlClient<List<String>, byte[]> client =
-                         factory.createFor(ep, StringListRowParser.INSTANCE, bytesP)) {
-                data.assertExpected(client.query(data.sparql(), data.config()));
-            }
-        }));
-        destination.add(async(() -> {
-            try (SparqlClient<List<CharSequence>, byte[]> client =
-                         factory.createFor(ep, CharSequenceListRowParser.INSTANCE, bytesP)) {
-                data.assertExpected(client.query(data.sparql(), data.config()));
-            }
-        }));
-        destination.add(async(() -> {
-            try (SparqlClient<CharSequence[], byte[]> client =
-                         factory.createFor(ep, CharSequenceArrayRowParser.INSTANCE, bytesP)) {
-                data.assertExpected(client.query(data.sparql(), data.config()));
-            }
-        }));
     }
 
     @ParameterizedTest @MethodSource("resultsData")
     void testResultsNetty(ResultsData data) throws ExecutionException {
         testResults(data, "netty");
+    }
+
+    private void testGraph(GraphData data, String tag) throws ExecutionException {
+        SparqlClientFactory factory = FasterSparql.factory(tag);
+        try (SparqlClient<String[], byte[]> client = factory.createFor(fuseki())) {
+            data.assertExpected(client.queryGraph(data.sparql(), data.config()));
+        }
+        List<AsyncTask<?>> futures = new ArrayList<>();
+        StringArrayRowParser rowP = StringArrayRowParser.INSTANCE;
+        for (FragmentParser<?> fragP : asList(CharSequenceFragmentParser.INSTANCE,
+                StringFragmentParser.INSTANCE)) {
+            futures.add(async(() -> {
+                try (SparqlClient<String[], ?> client = factory.createFor(fuseki(), rowP, fragP)) {
+                    data.assertExpected(client.queryGraph(data.sparql(), data.config()));
+                }
+            }));
+        }
+        for (AsyncTask<?> task : futures)
+            task.get();
+    }
+
+    static Stream<Arguments> graphData() {
+        List<GraphData> seed = asList(
+                // only URIs
+                graph("CONSTRUCT {:Graph :hasPerson ?x} WHERE {?x ?p ?o}",
+                      ":Graph  :hasPerson  :Alice, :Eric, :Dave, :Harry, :Bob, :Charlie."),
+                //list names
+                graph("CONSTRUCT {:Graph :hasName ?x} WHERE {?s foaf:name ?x}",
+                      ":Graph  :hasName  \"alice\"@en-US, \"bob\"^^xsd:string, \"charlie\",\n" +
+                            "\"Dave\\nNewline\", \"Dave\\r\\nWindows\"@en-US,\n" +
+                            "\"Eric\\r\\nNewline\"@en, \"Harry\"."),
+                //list ages
+                graph("CONSTRUCT {:Graph :hasAge ?x} WHERE {?s foaf:age ?x}",
+                      ":Graph  :hasAge  23, \"25\"^^xsd:int.")
+        );
+        List<GraphData> expanded = new ArrayList<>();
+        for (SparqlMethod method : SparqlMethod.VALUES) {
+            for (MediaType mt : RDFMediaTypes.DEFAULT_ACCEPTS) {
+                for (GraphData base : seed)
+                    expanded.add(base.dup().method(method).accepts(mt));
+            }
+        }
+        return expanded.stream().map(Arguments::arguments);
+    }
+
+    @ParameterizedTest @MethodSource("graphData")
+    void testGraphNetty(GraphData data) throws ExecutionException {
+        testGraph(data, "netty");
     }
 }
