@@ -19,11 +19,21 @@ The following interfaces for operators are offered:
 - `Filter(S, expr)` 
 - `Minus(L, R)` (removes from `L` all solutions compatible with at least one solution in `R`)
 
-All these operators have a `run` method that receives the inputs listed 
-within parenthesis above. Uppercase letters should be instances of 
-`Results<R>` and the return of the `run` method will also be a `Results<R>` 
-instance. To create actual trees, the leavez will be created with 
-`SparqlClient`.
+All these operators have `run` amd `checkedRun` methods that receives the inputs
+listed within parenthesis above. Both methods produce instances of `Results` 
+and where uppercase letters are used in the above list, a `Results` instance 
+is also expected. To build a useful opereator tree, the leaf `Results` are 
+produced by `SparqlClient.query` calls. 
+
+The two methods `run` and `checkedRun` differ on how errors detected before 
+execution (such as nulls and invalid arguments) are handled. For `run` these 
+errors are reported via `Subscriber.onError`, thus creating a single "error 
+path". For `checkedRun`, if possible, `Exception`s or `RuntimeException`s will 
+be thrown by the method itself.
+
+> Note that `checkedRun` may still produce `Results` objects whose
+> publisher fails via `Subscriber.onError()`. 
+
 
 ## Non-goals
 

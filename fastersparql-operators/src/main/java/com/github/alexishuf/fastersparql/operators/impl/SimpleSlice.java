@@ -6,9 +6,13 @@ import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Slice;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class SimpleSlice implements Slice {
+    private static final Logger log = LoggerFactory.getLogger(SimpleSlice.class);
 
     /** Creates {@link Slice} instances. */
     public static class Provider implements SliceProvider {
@@ -24,13 +28,17 @@ public class SimpleSlice implements Slice {
         }
     }
 
-    @Override public <R> Results<R> run(Results<R> input, long offset, long limit) {
-        return new Results<>(input.vars(), input.rowClass(),
-                             new SlicingProcessor<>(input.publisher(), offset, limit));
+    @Override public <R> Results<R> run(Results<R> input, @NonNegative long offset, @NonNegative long limit) {
+        try {
+            return new Results<>(input.vars(), input.rowClass(),
+                                 new SlicingProcessor<>(input.publisher(), offset, limit));
+        } catch (Throwable t) {
+            return OperatorHelpers.errorResults(input, null, null, t);
+        }
     }
 
     private static class SlicingProcessor<R> extends AbstractProcessor<R> {
-        private final long offset, limit;
+        private final @NonNegative long offset, limit;
         private long itemsReceived = 0;
 
         public SlicingProcessor(Publisher<? extends R> source, long offset, long limit) {
