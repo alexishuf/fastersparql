@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeoutException;

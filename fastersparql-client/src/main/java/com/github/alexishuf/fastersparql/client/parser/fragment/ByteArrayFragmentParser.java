@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
-import com.github.alexishuf.fastersparql.client.util.MappingPublisher;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
 import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 import org.reactivestreams.Publisher;

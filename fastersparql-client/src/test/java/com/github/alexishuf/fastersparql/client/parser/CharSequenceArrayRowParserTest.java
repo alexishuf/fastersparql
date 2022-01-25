@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

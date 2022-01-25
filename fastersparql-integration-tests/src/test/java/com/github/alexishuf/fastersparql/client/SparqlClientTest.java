@@ -9,9 +9,9 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.CharSequenceFrag
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.row.*;
-import com.github.alexishuf.fastersparql.client.util.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -33,7 +33,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.GraphData.graph;
 import static com.github.alexishuf.fastersparql.client.ResultsData.results;
-import static com.github.alexishuf.fastersparql.client.util.Async.async;
+import static com.github.alexishuf.fastersparql.client.util.async.Async.async;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 

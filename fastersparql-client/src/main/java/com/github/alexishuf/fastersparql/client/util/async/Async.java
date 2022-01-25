@@ -1,5 +1,6 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.async;
 
+import com.github.alexishuf.fastersparql.client.util.Throwing;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.Accessors;

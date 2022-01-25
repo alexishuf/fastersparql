@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
-import com.github.alexishuf.fastersparql.client.util.MappingPublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
 import org.reactivestreams.Publisher;
 
 import java.nio.charset.Charset;

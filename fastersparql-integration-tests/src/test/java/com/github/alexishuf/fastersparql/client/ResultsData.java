@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.client;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import com.github.alexishuf.fastersparql.client.util.IterableAdapter;
+import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Data;
 import lombok.experimental.Accessors;
 import org.opentest4j.AssertionFailedError;

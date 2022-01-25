@@ -1,6 +1,11 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.util.*;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.CompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
+import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;

@@ -1,4 +1,4 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import lombok.RequiredArgsConstructor;
 import lombok.Value;

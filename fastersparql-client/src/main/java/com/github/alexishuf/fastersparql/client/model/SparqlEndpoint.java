@@ -2,10 +2,10 @@ package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.SparqlConfigurationBuilder;
-import com.github.alexishuf.fastersparql.client.util.Async;
-import com.github.alexishuf.fastersparql.client.util.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.client.util.async.Async;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;

@@ -1,6 +1,7 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.exceptions.AsyncIterableCancelled;
+import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;

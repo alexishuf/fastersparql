@@ -1,5 +1,6 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.async;
 
+import com.github.alexishuf.fastersparql.client.util.Throwing;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 

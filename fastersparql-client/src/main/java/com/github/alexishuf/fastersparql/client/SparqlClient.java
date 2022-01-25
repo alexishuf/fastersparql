@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.parser.results.InvalidSparqlResultsException;
-import com.github.alexishuf.fastersparql.client.util.AsyncIterable;
+import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;

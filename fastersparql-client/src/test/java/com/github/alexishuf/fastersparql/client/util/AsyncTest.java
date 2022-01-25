@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.client.util.async.Async;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 

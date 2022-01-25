@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.client.parser.row;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.MappingPublisher;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
 import org.reactivestreams.Publisher;
 
 import java.nio.charset.StandardCharsets;

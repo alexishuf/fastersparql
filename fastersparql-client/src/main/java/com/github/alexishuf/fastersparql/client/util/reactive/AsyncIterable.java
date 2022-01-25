@@ -1,4 +1,4 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.exceptions.AsyncIterableCancelled;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;

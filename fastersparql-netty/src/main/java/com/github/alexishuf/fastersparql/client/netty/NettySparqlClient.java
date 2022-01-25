@@ -9,7 +9,12 @@ import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClientBuilde
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.results.*;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
-import com.github.alexishuf.fastersparql.client.util.*;
+import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.util.async.Async;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;

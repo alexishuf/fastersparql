@@ -1,4 +1,4 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import lombok.ToString;
 import org.checkerframework.checker.nullness.qual.Nullable;

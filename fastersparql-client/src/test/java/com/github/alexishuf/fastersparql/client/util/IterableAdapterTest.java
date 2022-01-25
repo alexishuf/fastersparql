@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.exceptions.AsyncIterableCancelled;
+import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;

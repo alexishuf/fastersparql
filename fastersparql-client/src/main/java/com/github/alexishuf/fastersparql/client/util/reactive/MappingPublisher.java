@@ -1,5 +1,6 @@
-package com.github.alexishuf.fastersparql.client.util;
+package com.github.alexishuf.fastersparql.client.util.reactive;
 
+import com.github.alexishuf.fastersparql.client.util.Throwing;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NonNull;

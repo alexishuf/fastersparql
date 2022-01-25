@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.util.AsyncIterable;
-import com.github.alexishuf.fastersparql.client.util.IterableAdapter;
-import com.github.alexishuf.fastersparql.client.util.SafeAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
+import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;

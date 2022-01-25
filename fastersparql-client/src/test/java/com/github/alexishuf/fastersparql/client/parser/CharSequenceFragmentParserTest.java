@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.client.parser.fragment.CharSequenceFragmentParser;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
-import com.github.alexishuf.fastersparql.client.util.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
