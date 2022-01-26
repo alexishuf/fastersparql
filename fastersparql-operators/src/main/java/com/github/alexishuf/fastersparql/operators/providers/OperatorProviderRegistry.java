@@ -56,18 +56,18 @@ public class OperatorProviderRegistry {
      * @throws NoOperatorProviderException if there is no {@link OperatorProvider} with a bid
      *         below {@link Integer#MAX_VALUE}
      */
-    public <T extends Operator> T create(Class<T> cls, long flags)
+    public <T extends OperatorProvider> T get(Class<T> cls, long flags)
             throws NoOperatorProviderException {
         //noinspection unchecked
-        return (T)create(OperatorName.valueOf(cls), flags);
+        return (T)get(OperatorName.valueOfProvider(cls), flags);
     }
 
 
     /**
-     * Version of {@link OperatorProviderRegistry#create(Class, long)} that takes an
+     * Version of {@link OperatorProviderRegistry#get(Class, long)} that takes an
      * {@link OperatorName} instead of a {@link Class}.
      */
-    public Operator create(OperatorName name, long flags) throws NoOperatorProviderException {
+    public OperatorProvider get(OperatorName name, long flags) throws NoOperatorProviderException {
         OperatorProvider best = null;
         int bestBid = Integer.MAX_VALUE;
         int rejected = 0;
@@ -85,7 +85,7 @@ public class OperatorProviderRegistry {
                 throw NoOperatorProviderException.noProviders(name.asClass(), flags);
             throw NoOperatorProviderException.rejectingProviders(name.asClass(), flags);
         } else {
-            return best.create(flags);
+            return best;
         }
     }
 }

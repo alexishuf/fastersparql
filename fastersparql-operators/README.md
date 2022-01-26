@@ -46,6 +46,29 @@ In order to allow for new operators to be added, new operators should be
 created via `FasterSparqlOps.create`. This method the operator interface 
 Class<> name  and a `long` acting as a set of `OperatorFlags`.
 
+## Row operations
+
+When an operator interacts with a result row (i.e., the `R` in `Results<R>`)
+it does not know what `R` is. Thus, operators use a `RowOperations` instance 
+which provides methods representing basic operations on rows. When an operator 
+needs a RowOperations it asks the `RowOperationsRegistry` to fetch a instance 
+adequate for the `Results.rowClass()`.
+
+The above scheme works seamlessly for positional row implementations, i.e., 
+the i-th member of the array or `Collection` is the value of the i-th variable.
+In other words, the following types for `R` are supported seamlessly:
+
+- `Object[]` (which covers `String[]` and `CharSequence[]`)
+- `List` (which covers `List<? extends CharSequence>`)
+
+To support user-defined row types, do the following:
+
+1. Create an implementation of `RowOperations`
+2. Implement a `RowOperationsProvider` with a default constructor 
+3. Create a `com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider`
+   resource file under `META-INF/services` containing the fully qualified class 
+   name of your `RowOperationsProvider` implementation
+
 ## Adding implementations
 
 To add an implementation, create a class implementing `*Provider` with `*` 

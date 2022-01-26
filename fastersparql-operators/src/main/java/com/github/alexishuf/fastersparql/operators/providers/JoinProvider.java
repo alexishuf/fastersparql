@@ -2,8 +2,9 @@ package com.github.alexishuf.fastersparql.operators.providers;
 
 import com.github.alexishuf.fastersparql.operators.Join;
 import com.github.alexishuf.fastersparql.operators.OperatorName;
+import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 
 public interface JoinProvider extends OperatorProvider {
     default OperatorName operatorName() { return OperatorName.JOIN; }
-    @Override Join create(long flags);
+    @Override Join create(long flags, RowOperations rowOperations);
 }

@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProvider;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProviderRegistry;
+import com.github.alexishuf.fastersparql.operators.row.RowOperations;
+import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 
 public class FasterSparqlOps {
     private static final OperatorProviderRegistry registry
@@ -26,14 +28,18 @@ public class FasterSparqlOps {
      *         below {@link Integer#MAX_VALUE}.
      */
     public static <T extends Operator> T
-    create(Class<T> cls, long flags) throws NoOperatorProviderException {
-        return registry.create(cls, flags);
+    create(Class<T> cls, long flags, Class<?> rowClass) throws NoOperatorProviderException {
+        RowOperations ops = RowOperationsRegistry.get().forClass(rowClass);
+        //noinspection unchecked
+        return (T)registry.get(OperatorName.valueOf(cls), flags).create(flags, ops);
     }
 
     /**
-     * Equivalent to {@link FasterSparqlOps#create(Class, long)} with {@code name.asClass()}.
+     * Equivalent to {@link FasterSparqlOps#create(Class, long, Class)} with {@code name.asClass()}.
      */
-    public Operator create(OperatorName name, long flags) throws NoOperatorProviderException {
-        return registry.create(name, flags);
+    public Operator create(OperatorName name, long flags,
+                           Class<?> rowClass) throws NoOperatorProviderException {
+        RowOperations ops = RowOperationsRegistry.get().forClass(rowClass);
+        return registry.get(name, flags).create(flags, ops);
     }
 }

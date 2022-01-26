@@ -132,7 +132,7 @@ public class CSUtils {
         return begin;
     }
 
-    public static boolean startsWith(CharSequence cs, int begin, int end, String prefix) {
+    public static boolean startsWith(CharSequence cs, int begin, int end, CharSequence prefix) {
         int csLen = end-begin, pLen = prefix.length();
         boolean ok = csLen >= pLen;
         for (int i = 0; ok && i < pLen; i++)

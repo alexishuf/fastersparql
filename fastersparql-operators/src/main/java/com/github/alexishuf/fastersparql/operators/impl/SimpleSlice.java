@@ -6,24 +6,18 @@ import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Slice;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
+import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SimpleSlice implements Slice {
-    private static final Logger log = LoggerFactory.getLogger(SimpleSlice.class);
-
-    /** Creates {@link Slice} instances. */
     public static class Provider implements SliceProvider {
-
         @Override public int bid(long flags) {
             int bid = BidCosts.BUILTIN_COST;
             if ((flags & OperatorFlags.ASYNC) > 0) bid += BidCosts.MINOR_COST;
             return bid;
         }
-
-        @Override public Slice create(long flags) {
+        @Override public Slice create(long flags, RowOperations ops) {
             return new SimpleSlice();
         }
     }
