@@ -15,7 +15,7 @@ public class SimpleSlice implements Slice {
     public static class Provider implements SliceProvider {
         @Override public int bid(long flags) {
             int bid = BidCosts.BUILTIN_COST;
-            if ((flags & OperatorFlags.ASYNC) > 0) bid += BidCosts.MINOR_COST;
+            if ((flags & OperatorFlags.ASYNC) != 0) bid += BidCosts.MINOR_COST;
             return bid;
         }
         @Override public Slice create(long flags, RowOperations ops) {

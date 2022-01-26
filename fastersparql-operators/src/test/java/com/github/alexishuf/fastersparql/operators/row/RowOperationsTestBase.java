@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.stream.IntStream;
@@ -52,6 +53,21 @@ public abstract class RowOperationsTestBase {
             assertEquals(i == setIdx ? value : null, ops.get(row, i, vars.get(i)), "i="+i);
     }
 
+    @ParameterizedTest @ValueSource(ints = {0, 1, 2})
+    public void testGetOutOfBounds(int size) {
+        List<String> vars = IntStream.range(0, size).mapToObj(i -> "x" + i).collect(toList());
+        RowOperations ops = provider().get();
+        Object row = ops.createEmpty(vars);
+        Object value = object1();
+        for (int i = 0; i < size; i++)
+            assertNull(ops.set(row, i, vars.get(i), value), "i="+i);
+        for (int i = 0; i < size; i++)
+            assertSame(value, ops.get(row, i, vars.get(i)), "i="+i);
+        assertThrows(IndexOutOfBoundsException.class, () -> ops.get(row, -1, "y"));
+        assertThrows(IndexOutOfBoundsException.class, () -> ops.get(row, size, "y"));
+        assertThrows(IndexOutOfBoundsException.class, () -> ops.get(row, size+1, "y"));
+    }
+
     @Test
     public void testGetFromNull() {
         assertNull(provider().get().get(null, 0, "x"));
@@ -89,5 +105,35 @@ public abstract class RowOperationsTestBase {
         }
         assertEquals(expected, ops.equalsSameVars(r1, r2));
         assertEquals(expected, ops.equalsSameVars(r2, r1));
+    }
+
+    @Test
+    public void testHash() {
+        RowOperations ops = provider().get();
+        Object r1a = ops.createEmpty(singletonList("x"));
+        Object r1b = ops.createEmpty(singletonList("x"));
+        assertEquals(ops.hash(r1a), ops.hash(r1b));
+
+        ops.set(r1b, 0, "x", object1());
+        assertNotEquals(ops.hash(r1a), ops.hash(r1b));
+
+        ops.set(r1a, 0, "x", object1());
+        assertEquals(ops.hash(r1a), ops.hash(r1b));
+
+        Object r2a = ops.createEmpty(asList("x", "y"));
+        Object r2b = ops.createEmpty(asList("x", "y"));
+        assertEquals(ops.hash(r2a), ops.hash(r2b));
+
+        ops.set(r2a, 0, "x", object1());
+        assertNotEquals(ops.hash(r2a), ops.hash(r2b));
+
+        ops.set(r2b, 0, "x", object1());
+        assertEquals(ops.hash(r2a), ops.hash(r2b));
+
+        ops.set(r2a, 1, "y", object1());
+        assertNotEquals(ops.hash(r2a), ops.hash(r2b));
+
+        ops.set(r2b, 1, "y", object1());
+        assertEquals(ops.hash(r2a), ops.hash(r2b));
     }
 }

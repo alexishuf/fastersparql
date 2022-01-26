@@ -2,8 +2,28 @@ package com.github.alexishuf.fastersparql.client.util;
 
 
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class CSUtils {
+
+    /**
+     * Compute a {@link String}-compatible hash code even if cs is not a {@link String}.
+     *
+     * @param cs the {@link CharSequence} to compute a hash for.
+     * @return a hash code for {@code cs} or zero if {@code cs == null}.
+     */
+    public static int hash(@Nullable CharSequence cs) {
+        if (cs instanceof String) {
+            return cs.hashCode();
+        } else if (cs == null) {
+            return 0;
+        } else {
+            int h = 0;
+            for (int i = 0, len = cs.length(); i < len; i++)
+                h = 31 * h + cs.charAt(i);
+            return h;
+        }
+    }
 
     /**
      * Equivalent to {@link CSUtils#skipUntilIn(CharSequence, int, int, char)} with

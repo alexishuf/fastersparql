@@ -37,6 +37,14 @@ public class ArrayOperations implements RowOperations {
         return Arrays.equals((Object[]) left, (Object[])right);
     }
 
+    @Override public int hash(@Nullable Object row) {
+        return Arrays.hashCode((Object[]) row);
+    }
+
+    @Override public boolean needsCustomHash() {
+        return true;
+    }
+
     @Override public RowMatcher createMatcher(List<String> leftVars, List<String> rightVars) {
         return new ArrayMatcher(leftVars, rightVars);
     }

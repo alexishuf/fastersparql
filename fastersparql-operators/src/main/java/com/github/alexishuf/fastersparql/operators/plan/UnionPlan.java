@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.Union;
 import lombok.Value;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -14,9 +13,7 @@ public class UnionPlan<R> implements Plan<R> {
     List<Plan<R>> inputs;
 
     @Override public Results<R> execute() {
-        List<Results<R>> list = new ArrayList<>(inputs.size());
-        for (Plan<R> p : inputs) list.add(p.execute());
-        return op.run(list);
+        return op.run(inputs);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

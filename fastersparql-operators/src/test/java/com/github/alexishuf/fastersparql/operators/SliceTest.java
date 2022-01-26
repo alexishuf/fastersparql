@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
-import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -10,11 +10,12 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.ALL_LARGE;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.ASYNC;
+import static com.github.alexishuf.fastersparql.operators.TestHelpers.*;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
-class SliceTest {
+public class SliceTest {
     static Stream<Arguments> test() {
         List<List<String>> base = asList(
                 asList("_:1", "_:b1"),
@@ -44,8 +45,8 @@ class SliceTest {
     void test(List<List<String>> in, int offset, int limit, List<List<String>> expected) {
         for (long flags : asList(0L, ASYNC, ASYNC|ALL_LARGE)) {
             Slice op = FasterSparqlOps.create(Slice.class, flags, List.class);
-            Results<List<String>> out = op.checkedRun(TestHelpers.asPlan(in), offset, limit);
-            TestHelpers.assertExpectedRows(expected, null, out, true);
+            Plan<List<String>> plan = op.asPlan(asPlan(in), offset, limit);
+            checkRows(expected, generateVars(in), null, plan, true);
         }
     }
 }

@@ -390,4 +390,19 @@ class CSUtilsTest {
                          "cs.getClass()="+cs.getClass());
         }
     }
+
+    @ParameterizedTest @ValueSource(strings = {
+            "",
+            "a",
+            "ação",
+            "...\uD83E\uDE02___"
+    })
+    void testHash(String string) {
+        assertEquals(string.hashCode(), CSUtils.hash(string));
+        assertEquals(string.hashCode(), CSUtils.hash(new StringBuilder(string)));
+
+        CharSequence subSequence = new StringBuilder(">" + string + "<")
+                .subSequence(1, 1 + string.length());
+        assertEquals(string.hashCode(), CSUtils.hash(subSequence));
+    }
 }

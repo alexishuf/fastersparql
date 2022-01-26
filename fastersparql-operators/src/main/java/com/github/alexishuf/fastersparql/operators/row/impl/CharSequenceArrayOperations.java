@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators.row.impl;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
@@ -33,5 +34,14 @@ public class CharSequenceArrayOperations extends ArrayOperations {
                 return false;
         }
         return true;
+    }
+
+    @Override public int hash(@Nullable Object row) {
+        if (row == null) return 0;
+        CharSequence[] a = (CharSequence[]) row;
+        int h = 0;
+        for (CharSequence cs : a)
+            h = 31 * h + CSUtils.hash(cs);
+        return h;
     }
 }

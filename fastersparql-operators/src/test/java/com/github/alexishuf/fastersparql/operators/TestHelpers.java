@@ -31,9 +31,16 @@ public class TestHelpers {
 
     public static Results<List<String>> asResults(Collection<List<String>> collection) {
         int width = collection.isEmpty() ? 0 : collection.iterator().next().size();
-        List<String> vars = IntStream.range(0, width).mapToObj(i -> "x" + i).collect(toList());
+        List<String> vars = generateVars(width);
         SafeAsyncTask<List<String>> varsTask = Async.wrap(vars);
         return new Results<>(varsTask, List.class, new IterablePublisher<>(collection));
+    }
+
+    public static List<String> generateVars(List<List<String>> rows) {
+        return generateVars(rows.isEmpty() ? 0 : rows.get(0).size());
+    }
+    public static List<String> generateVars(int width) {
+        return IntStream.range(0, width).mapToObj(i -> "x" + i).collect(toList());
     }
 
     private static LinkedHashMap<List<String>, Integer> countMap(Iterable<List<String>> lists) {
@@ -43,21 +50,33 @@ public class TestHelpers {
         return map;
     }
 
-    public static void assertExpectedRows(Collection<List<String>> expected,
-                                          Class<? extends Throwable> expectedError,
-                                          Results<List<String>> actual,
-                                          boolean checkOrder) {
+    public static void checkRows(Collection<List<String>> expected,
+                                 List<String> expectedVars,
+                                 Class<? extends Throwable> expectedError,
+                                 Plan<List<String>> plan,
+                                 boolean checkOrder) {
+        checkRows(expected, expectedVars, expectedError, plan.execute(), checkOrder);
+    }
+
+    public static void checkRows(Collection<List<String>> expected,
+                                 List<String> expectedVars,
+                                 Class<? extends Throwable> expectedError,
+                                 Results<List<String>> actual,
+                                 boolean checkOrder) {
         IterableAdapter<List<String>> adapter = new IterableAdapter<>(actual.publisher());
         LinkedHashMap<List<String>, Integer> exMap = countMap(expected);
         LinkedHashMap<List<String>, Integer> acMap = countMap(adapter);
         if (adapter.hasError()) {
+            Throwable error = adapter.error();
             if (expectedError != null)
-                assertEquals(expectedError, requireNonNull(adapter.error()).getClass());
+                assertEquals(expectedError, requireNonNull(error).getClass());
             else
-                fail("Unexpected error from actual.publisher()", adapter.error());
+                fail("Unexpected error from actual.publisher(): "+error, error);
         } else if (expectedError != null) {
             fail("Expected "+expectedError+" to be thrown by actual.publisher()");
         }
+        if (expectedVars != null)
+            assertEquals(expectedVars, actual.vars().get(), "vars mismatch");
         checkMissing(exMap, acMap);
         checkUnexpected(exMap, acMap);
         checkCounts(exMap, acMap);

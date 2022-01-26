@@ -29,8 +29,10 @@ public interface RowOperations {
      * @param idx the index of the variable to read in the {@link Results#vars()} from which
      *            the row originated.
      * @param var the name of the variable to be read
-     * @return the value of the variable in the given row. If {@code row} is null, {@code idx}
-     *         is out of bounds or {@code var} is not known to this row, {@code null} is returned.
+     * @return the value of the variable in the given row, which may be null.
+     * @throws IndexOutOfBoundsException if {@code idx} is out of bounds or if var is not
+     *         expected for this row (e.g., it was not present in
+     *         {@link RowOperations#createEmpty(List)}).
      */
     @Nullable Object get(@Nullable Object row, int idx, String var);
 
@@ -52,6 +54,22 @@ public interface RowOperations {
      *         the same values for all variables.
      */
     boolean equalsSameVars(@Nullable Object left, @Nullable Object right);
+
+    /**
+     * Compute a hash code for the given row.
+     *
+     * @param row the row
+     * @return an integer representing the hash code.
+     */
+    int hash(@Nullable Object row);
+
+    /**
+     * Whether {@link RowOperations#hash(Object)} is expected to be different from
+     * {@link java.util.Objects#hashCode(Object)}
+     *
+     * @return {@code false} iff {@code hash(o) == Objects.hashCode(o)} for every {@code o}.
+     */
+    boolean needsCustomHash();
 
     /**
      * Create a {@link RowMatcher} for this row type where the rows it receives have the
