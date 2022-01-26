@@ -43,20 +43,25 @@ public class Async {
      *         or exception when it completes.
      */
     @SuppressWarnings("unchecked") public static <T> AsyncTask<T> wrap(Future<T> future) {
-        if (future instanceof CompletionStage) {
-            return wrap((CompletionStage<T>) future);
-        }
-        CompletableAsyncTask<T> task = new CompletableAsyncTask<>();
-        poll(50, future::isDone).thenAccept(o -> {
-            try {
-                task.complete(future.get());
-            } catch (ExecutionException e) {
-                task.completeExceptionally(e.getCause() == null ? e : e.getCause());
-            } catch (Throwable t) {
-                task.completeExceptionally(t);
-            }
-        });
-        return task;
+        if (future instanceof CompletionStage) return wrap((CompletionStage<T>) future);
+        return pollFuture(new CompletableAsyncTask<>(), future);
+    }
+
+    /**
+     * Convert a {@link Future} into a {@link SafeAsyncTask}.
+     *
+     * If {@code future} completes exceptionally, the resulting {@link SafeAsyncTask} will still
+     * throw that failure within a {@link RuntimeException}. Calling this method with
+     * a {@link Future} that may fail is wrong.
+     *
+     * @param future A {@link Future} that certainly will not complete exceptionally
+     * @param <T> the result type of {@code future}
+     * @return a new, non-null {@link SafeAsyncTask} that will complete with the
+     *         {@code future} result.
+     */
+    @SuppressWarnings("unchecked") public static <T> SafeAsyncTask<T> wrapSafe(Future<T> future) {
+        if (future instanceof CompletionStage) return wrapSafe((CompletionStage<T>) future);
+        return (SafeAsyncTask<T>) pollFuture(new SafeCompletableAsyncTask<>(), future);
     }
 
     /**
@@ -68,6 +73,24 @@ public class Async {
      */
     public static <T> AsyncTask<T> wrap(CompletionStage<T> stage) {
         CompletableAsyncTask<T> task = new CompletableAsyncTask<>();
+        stage.handle((r, t) -> t == null ? task.complete(r) : task.completeExceptionally(t));
+        return task;
+    }
+
+    /**
+     * Create a {@link SafeAsyncTask} that will be complete when and as {@code stage} completes.
+     *
+     * If stage completes exceptionally, the {@link SafeAsyncTask} will still complete
+     * exceptionally, but as it is not expected to fail, that will raise an
+     * {@link RuntimeException}. Calling this method for a {@link CompletionStage} that may fail
+     * is wrong.
+     *
+     * @param stage the {@link CompletionStage}
+     * @param <T> the return type of {@code stage}
+     * @return A new {@link SafeAsyncTask} that will complete with the {@code stage} result.
+     */
+    public static <T> SafeAsyncTask<T> wrapSafe(CompletionStage<T> stage) {
+        SafeCompletableAsyncTask<T> task = new SafeCompletableAsyncTask<>();
         stage.handle((r, t) -> t == null ? task.complete(r) : task.completeExceptionally(t));
         return task;
     }
@@ -99,7 +122,6 @@ public class Async {
         poller.run(); // test immediately
         return task;
     }
-
 
     /* --- --- --- dispatch methods --- --- --- */
 
@@ -211,6 +233,20 @@ public class Async {
                 thread.setPriority(Thread.NORM_PRIORITY);
             return thread;
         }
+    }
+
+    private static <T> CompletableAsyncTask<T> pollFuture(CompletableAsyncTask<T> task, Future<T> future) {
+        poll(50, future::isDone).whenComplete((v, t) -> {
+            try {
+                if (t != null) task.completeExceptionally(t);
+                else           task.complete(future.get());
+            } catch (ExecutionException e) {
+                task.completeExceptionally(e.getCause() == null ? e : e.getCause());
+            } catch (Throwable throwable) {
+                task.completeExceptionally(throwable);
+            }
+        });
+        return task;
     }
 
     private static ScheduledExecutorService scheduled() {

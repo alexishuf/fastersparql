@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -196,16 +197,25 @@ class AsyncTest {
         CompletableFuture<Integer> ok = new CompletableFuture<>();
         CompletableFuture<Integer> fail = new CompletableFuture<>();
         AsyncTask<Integer> okTask = Async.wrap((Future<Integer>) ok);
+        SafeAsyncTask<Integer> safeOkTask = Async.wrapSafe((Future<Integer>) ok);
         AsyncTask<Integer> failTask = Async.wrap((Future<Integer>) fail);
         CompletableFuture<Integer> okResult = new CompletableFuture<>();
+        CompletableFuture<Integer> safeOkResult = new CompletableFuture<>();
         CompletableFuture<Integer> failResult = new CompletableFuture<>();
         new Thread(() -> okTask.handle((i, t) -> t == null ? okResult.complete(i) : okResult.completeExceptionally(t))).start();
+        new Thread(() -> safeOkTask.handle((i, t) -> t == null ? safeOkResult.complete(i) : safeOkResult.completeExceptionally(t))).start();
         new Thread(() -> failTask.handle((i, t) -> t == null ? failResult.complete(i) : failResult.completeExceptionally(t))).start();
 
         ok.complete(23);
         long start = System.nanoTime();
         assertEquals(23, okTask.get());
         long ms = (System.nanoTime() - start) / 1000000;
+        assertTrue(ms < 50, "okTask.get() too slow: "+ms+"ms");
+
+        ok.complete(23);
+        start = System.nanoTime();
+        assertEquals(23, safeOkTask.get());
+        ms = (System.nanoTime() - start) / 1000000;
         assertTrue(ms < 50, "okTask.get() too slow: "+ms+"ms");
 
         IllegalStateException cause = new IllegalStateException();
