@@ -8,15 +8,15 @@ import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public abstract class AbstractProcessor<T> implements Processor<T, T> {
+public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
     private static final Logger log = LoggerFactory.getLogger(AbstractProcessor.class);
 
-    private final Publisher<? extends T> source;
+    private final Publisher<? extends U> source;
     protected boolean terminated;
     protected Subscription upstream;
-    protected Subscriber<? super T> downstream;
+    protected Subscriber<? super D> downstream;
 
-    public AbstractProcessor(Publisher<? extends T> source) {
+    public AbstractProcessor(Publisher<? extends U> source) {
         this.source = source;
     }
 
@@ -46,6 +46,21 @@ public abstract class AbstractProcessor<T> implements Processor<T, T> {
         };
     }
 
+    /**
+     * Throwing body for {@link Subscriber#onNext(Object)}. Implementations should call
+     * {@link AbstractProcessor#emit(Object)} to send elements downstream
+     *
+     * If anything is throw, the processor will terminate:
+     * <ul>
+     *     <li>The upstream subscription will be cancelled</li>
+     *     <li>New items received from upstream will be silently dropped</li>
+     *     <li>The downstream will receive the Throwable via {@link Subscriber#onError(Throwable)}</li>
+     * </ul>
+     *
+     * @param item the item to process.
+     */
+    protected abstract void handleOnNext(U item) throws Exception;
+
     /* --- --- --- Helper methods called by implementations --- --- --- */
 
     /**
@@ -53,14 +68,16 @@ public abstract class AbstractProcessor<T> implements Processor<T, T> {
      *
      * @param item the item to publish
      */
-    protected void emit(T item) {
+    protected void emit(D item) {
         try {
-            downstream.onNext(item);
+            if (terminated)
+                log.debug("Discarding emit({}) after terminated.", item);
+            else
+                downstream.onNext(item);
         } catch (Throwable t) {
             assert false : "Unexpected Throwable";
             log.error("downstream={} threw {} on onNext({}). Treating as a Subscription.cancel().",
                       downstream, t.getClass(), item, t);
-            terminated = true;
             cancelUpstream();
         }
     }
@@ -101,7 +118,7 @@ public abstract class AbstractProcessor<T> implements Processor<T, T> {
 
     /* --- --- --- Publisher methods --- --- --- */
 
-    @Override public void subscribe(Subscriber<? super T> s) {
+    @Override public void subscribe(Subscriber<? super D> s) {
         if (upstream != null) {
             s.onSubscribe(new Subscription() {
                 @Override public void request(long n) { }
@@ -119,6 +136,16 @@ public abstract class AbstractProcessor<T> implements Processor<T, T> {
     @Override public void onSubscribe(Subscription s) {
         upstream = s;
         downstream.onSubscribe(createDownstreamSubscription());
+    }
+
+    @Override public void onNext(U item) {
+        try {
+            if (!terminated)
+                handleOnNext(item);
+        } catch (Throwable t) {
+            cancelUpstream();
+            completeDownstream(t);
+        }
     }
 
     @Override public void onError(Throwable t) {

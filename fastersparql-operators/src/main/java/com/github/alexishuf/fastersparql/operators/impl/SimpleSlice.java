@@ -34,7 +34,7 @@ public class SimpleSlice implements Slice {
         }
     }
 
-    private static class SlicingProcessor<R> extends AbstractProcessor<R> {
+    private static class SlicingProcessor<R> extends AbstractProcessor<R, R> {
         private final @NonNegative long offset, limit;
         private long itemsReceived = 0;
 
@@ -44,15 +44,14 @@ public class SimpleSlice implements Slice {
             this.limit = limit;
         }
 
-        @Override public void onNext(R r) {
+        @Override protected void handleOnNext(R item) {
             if (itemsReceived++ >= offset) {
                 if (itemsReceived-offset <= limit) {
-                    emit(r);
+                    emit(item);
                 } else if (!terminated) {
                     cancelUpstream();
                     completeDownstream(null);
                 }
-
             }
         }
     }

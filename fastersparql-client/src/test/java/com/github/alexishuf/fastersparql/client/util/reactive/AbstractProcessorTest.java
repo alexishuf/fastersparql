@@ -18,14 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class AbstractProcessorTest {
-    private static class Forward<T> extends AbstractProcessor<T> {
+    private static class Forward<T> extends AbstractProcessor<T, T> {
         public Forward(Publisher<? extends T> source) {
             super(source);
         }
 
-        @Override public void onNext(T s) {
-            downstream.onNext(s);
-        }
+        @Override protected void handleOnNext(T item) { emit(item); }
     }
 
     static Stream<Arguments> testForward() {
@@ -44,10 +42,11 @@ class AbstractProcessorTest {
         assertEquals(list, new IterableAdapter<>(processor).stream().collect(toList()));
     }
 
-    static class RemoveEven extends AbstractProcessor<Integer> {
+    static class RemoveEven extends AbstractProcessor<Integer, Integer> {
         public RemoveEven(Publisher<? extends Integer> source) { super(source); }
-        @Override public void onNext(Integer i) {
-            if (i % 2 != 0) downstream.onNext(i);
+
+        @Override protected void handleOnNext(Integer item) {
+            if (item % 2 != 0) emit(item);
         }
     }
 
