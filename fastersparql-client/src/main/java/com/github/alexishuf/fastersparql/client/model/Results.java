@@ -1,7 +1,9 @@
 package com.github.alexishuf.fastersparql.client.model;
 
+import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
+import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -9,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -68,6 +71,20 @@ public class Results<Row> {
         this.rowClass = rowClass;
         //noinspection unchecked
         this.publisher = (Publisher<Row>) publisher;
+    }
+
+    /**
+     * Create a {@link Results} with an empty publisher that fails with {@code cause} upon
+     * subscription.
+     *
+     * @param rowClass the class of rows to report, even tough no row will be emitted.
+     * @param cause the error to deliver via {@link Subscriber#onError(Throwable)}
+     * @param <Row> the row type
+     * @return a new {@link Results}.
+     */
+    public static <Row> Results<Row> forError(Class<? super Row> rowClass, Throwable cause) {
+        return new Results<>(Async.wrap(Collections.emptyList()), rowClass,
+                             new EmptyPublisher<>(cause));
     }
 
     /**

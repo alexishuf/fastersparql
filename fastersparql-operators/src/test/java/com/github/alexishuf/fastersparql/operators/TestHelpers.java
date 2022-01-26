@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 
 import java.util.*;
 import java.util.stream.IntStream;
@@ -15,6 +16,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 public class TestHelpers {
+
+    public static Plan<List<String>> asPlan(Collection<List<String>> collection) {
+        return new Plan<List<String>>() {
+            @Override public Results<List<String>> execute() {
+                return asResults(collection);
+            }
+
+            @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {
+                return this;
+            }
+        };
+    }
 
     public static Results<List<String>> asResults(Collection<List<String>> collection) {
         int width = collection.isEmpty() ? 0 : collection.iterator().next().size();

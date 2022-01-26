@@ -1,14 +1,20 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.UnionPlan;
 
 import java.util.List;
-
-import static com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers.*;
 
 public interface Union extends Operator {
     default OperatorName name() { return OperatorName.UNION; }
 
+    /**
+     * Create a plan for {@code run(inputs)}.
+     */
+    default <R> UnionPlan<R> asPlan(List<Plan<R>> inputs) {
+        return new UnionPlan<>(this, inputs);
+    }
 
     /**
      * Create a {@link Results} with all rows from all inputs.
@@ -27,7 +33,7 @@ public interface Union extends Operator {
         try {
             return checkedRun(inputs);
         } catch (Throwable t) {
-            return errorResults(null, varsUnion(inputs), rowClass(inputs), t);
+            return Results.forError(Object.class, t);
         }
     }
 }

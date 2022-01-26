@@ -2,7 +2,8 @@ package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.errors.IllegalSPARQLFilterException;
-import com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers;
+import com.github.alexishuf.fastersparql.operators.plan.FilterPlan;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
@@ -10,6 +11,14 @@ import java.util.function.Predicate;
 
 public interface Filter extends Operator {
     default OperatorName name() { return OperatorName.FILTER; }
+
+    /**
+     * Creates a plan for {@code run(input.execute(), filters, predicates)}.
+     */
+    default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable Collection<String> filters,
+                                     @Nullable Collection<Predicate<R>> predicates) {
+        return new FilterPlan<>(this, input, filters, predicates);
+    }
 
     /**
      * Create a {@link Results} without rows that fail any of the SPARQL filters in
@@ -28,15 +37,15 @@ public interface Filter extends Operator {
      * @throws IllegalSPARQLFilterException if any filter in {@code filter} is not a valid
      *         SPARQL boolean expression
      */
-    <R> Results<R> checkedRun(Results<R> input, @Nullable Collection<String> filters,
+    <R> Results<R> checkedRun(Plan<R> input, @Nullable Collection<String> filters,
                               @Nullable Collection<Predicate<R>> predicates);
 
-    default <R> Results<R> run(Results<R> input, @Nullable Collection<String> filters,
+    default <R> Results<R> run(Plan<R> input, @Nullable Collection<String> filters,
                                @Nullable Collection<Predicate<R>> predicates) {
         try {
             return checkedRun(input, filters, predicates);
         } catch (Throwable t) {
-            return OperatorHelpers.errorResults(input, null, null, t);
+            return Results.forError(Object.class, t);
         }
     }
 }

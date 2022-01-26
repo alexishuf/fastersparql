@@ -1,14 +1,21 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.reactivestreams.Subscriber;
 
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers.*;
-
 public interface Join extends Operator {
     default OperatorName name() { return OperatorName.JOIN; }
+
+    /**
+     * Create a plan for {@code run(inputs)}.
+     */
+    default <R> JoinPlan<R> asPlan(List<Plan<R>> inputs) {
+       return new JoinPlan<>(this, inputs);
+    }
 
     /**
      * Join the given results.
@@ -24,21 +31,21 @@ public interface Join extends Operator {
      * two operands do not share variables. Implementations should avoid or delay such cartesian
      * products, but are not required to.
      *
-     * @param resultsList the list of operands
+     * @param operands the list of operands
      * @param <R> the row type
      * @return a non-null {@link Results} with the join result.
      */
-    <R> Results<R> checkedRun(List<Results<R>> resultsList);
+    <R> Results<R> checkedRun(List<Plan<R>> operands);
 
     /**
      * Same as {@link Join#checkedRun(List)}, but returns errors via
      * {@link Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(List<Results<R>> list) {
+    default <R> Results<R> run(List<Plan<R>> operands) {
         try {
-            return checkedRun(list);
+            return checkedRun(operands);
         } catch (Throwable t) {
-            return errorResults(null, varsUnion(list), rowClass(list), t);
+            return Results.forError(Object.class, t);
         }
     }
 }

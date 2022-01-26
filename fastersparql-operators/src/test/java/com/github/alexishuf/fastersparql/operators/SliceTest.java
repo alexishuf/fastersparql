@@ -44,7 +44,7 @@ class SliceTest {
     void test(List<List<String>> in, int offset, int limit, List<List<String>> expected) {
         for (long flags : asList(0L, ASYNC, ASYNC|ALL_LARGE)) {
             Slice op = FasterSparqlOps.create(Slice.class, flags, List.class);
-            Results<List<String>> out = op.checkedRun(TestHelpers.asResults(in), offset, limit);
+            Results<List<String>> out = op.checkedRun(TestHelpers.asPlan(in), offset, limit);
             TestHelpers.assertExpectedRows(expected, null, out, true);
         }
     }

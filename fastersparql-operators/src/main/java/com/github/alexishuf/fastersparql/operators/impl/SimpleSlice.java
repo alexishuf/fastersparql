@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Slice;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -22,12 +23,14 @@ public class SimpleSlice implements Slice {
         }
     }
 
-    @Override public <R> Results<R> run(Results<R> input, @NonNegative long offset, @NonNegative long limit) {
+    @Override public <R> Results<R> run(Plan<R> inputPlan,
+                                        @NonNegative long offset, @NonNegative long limit) {
         try {
+            Results<R> input = inputPlan.execute();
             return new Results<>(input.vars(), input.rowClass(),
                                  new SlicingProcessor<>(input.publisher(), offset, limit));
         } catch (Throwable t) {
-            return OperatorHelpers.errorResults(input, null, null, t);
+            return Results.forError(Object.class, t);
         }
     }
 

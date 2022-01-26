@@ -1,15 +1,19 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.operators.plan.LeftJoinPlan;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.reactivestreams.Subscriber;
-
-import java.util.Arrays;
-import java.util.List;
-
-import static com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers.*;
 
 public interface LeftJoin extends Operator {
     default OperatorName name() { return OperatorName.LEFT_JOIN; }
+
+    /**
+     * Create a plan for {@code run(left, right)}.
+     */
+    default <R> LeftJoinPlan<R> asPlan(Plan<R> left, Plan<R> right) {
+        return new LeftJoinPlan<>(this, left, right);
+    }
 
     /**
      * Execute {@code LeftJoin(left, right)} from SPARQL algebra
@@ -20,18 +24,17 @@ public interface LeftJoin extends Operator {
      * @param <R> thr row type
      * @return a non-null {@link Results} with the left join rows.
      */
-    <R>Results<R> checkedRun(Results<R> left, Results<R> right);
+    <R>Results<R> checkedRun(Plan<R> left, Plan<R> right);
 
     /**
-     * Same as {@link LeftJoin#checkedRun(Results, Results)} but reports exceptions via
+     * Same as {@link LeftJoin#checkedRun(Plan, Plan)} but reports exceptions via
      * {@link Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(Results<R> left, Results<R> right) {
+    default <R> Results<R> run(Plan<R> left, Plan<R> right) {
         try {
             return checkedRun(left, right);
         } catch (Throwable t) {
-            List<Results<R>> list = Arrays.asList(left, right);
-            return errorResults(null, varsUnion(list), rowClass(list), t);
+            return Results.forError(Object.class, t);
         }
     }
 }

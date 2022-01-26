@@ -1,15 +1,19 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.operators.plan.MinusPlan;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.reactivestreams.Subscriber;
-
-import java.util.Arrays;
-
-import static com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers.errorResults;
-import static com.github.alexishuf.fastersparql.operators.impl.OperatorHelpers.rowClass;
 
 public interface Minus extends Operator {
     default OperatorName name() { return OperatorName.MINUS; }
+
+    /**
+     * Create a plan for {@code run(left.execute(), right)}.
+     */
+    default <R> MinusPlan<R> asPlan(Plan<R> left, Plan<R> right) {
+        return new MinusPlan<>(this, left, right);
+    }
 
     /**
      * Returns the result of SPARQL algebra {@code Minus(left, right)} operator.
@@ -19,17 +23,17 @@ public interface Minus extends Operator {
      * @param <R> the row type
      * @return a non-null {@link Results} with the result of the Minus operation.
      */
-    <R> Results<R> checkedRun(Results<R> left, Results<R> right);
+    <R> Results<R> checkedRun(Plan<R> left, Plan<R> right);
 
     /**
-     * Same as {@link Minus#checkedRun(Results, Results)} but reports any exception via
+     * Same as {@link Minus#checkedRun(Plan, Plan)} but reports any exception via
      * {@link Subscriber#onError(Throwable)}
      */
-    default <R> Results<R> run(Results<R> left, Results<R> right) {
+    default <R> Results<R> run(Plan<R> left, Plan<R> right) {
         try {
             return checkedRun(left, right);
         } catch (Throwable t) {
-            return errorResults(left, null, rowClass(Arrays.asList(left, right)), t);
+            return Results.forError(Object.class, t);
         }
     }
 }
