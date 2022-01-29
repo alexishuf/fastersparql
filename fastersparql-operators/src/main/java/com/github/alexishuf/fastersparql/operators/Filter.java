@@ -7,7 +7,6 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
-import java.util.function.Predicate;
 
 public interface Filter extends Operator {
     default OperatorName name() { return OperatorName.FILTER; }
@@ -15,9 +14,8 @@ public interface Filter extends Operator {
     /**
      * Creates a plan for {@code run(input.execute(), filters, predicates)}.
      */
-    default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable Collection<String> filters,
-                                     @Nullable Collection<Predicate<R>> predicates) {
-        return new FilterPlan<>(this, input, filters, predicates);
+    default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable Collection<String> filters) {
+        return new FilterPlan<>(this, input, filters);
     }
 
     /**
@@ -29,21 +27,17 @@ public interface Filter extends Operator {
      *                strings may use the {@code xsd}, {@code rdf}, {@code rdfs} and {@code owl}
      *                prefixes, which are mapped to their conventional URIs. Any other IRI
      *                references must be explicit. If {@code null}, will treat as an empty set.
-     * @param predicates a collection of java {@link Predicate}s that are able to evaluate
-     *                   the rows produced by the input. If {@code null}, will treat as an empty list.
      * @param <R> the row type
      * @return a non-null {@link Results} with only rows that are accepted by all filters predicates.
      *
      * @throws IllegalSPARQLFilterException if any filter in {@code filter} is not a valid
      *         SPARQL boolean expression
      */
-    <R> Results<R> checkedRun(Plan<R> input, @Nullable Collection<String> filters,
-                              @Nullable Collection<Predicate<R>> predicates);
+    <R> Results<R> checkedRun(Plan<R> input, @Nullable Collection<? extends CharSequence> filters);
 
-    default <R> Results<R> run(Plan<R> input, @Nullable Collection<String> filters,
-                               @Nullable Collection<Predicate<R>> predicates) {
+    default <R> Results<R> run(Plan<R> input, @Nullable Collection<? extends CharSequence> filters) {
         try {
-            return checkedRun(input, filters, predicates);
+            return checkedRun(input, filters);
         } catch (Throwable t) {
             return Results.forError(Object.class, t);
         }

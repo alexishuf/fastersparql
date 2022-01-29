@@ -2,49 +2,53 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.Filter;
+import com.github.alexishuf.fastersparql.operators.impl.SparqlBind;
 import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Predicate;
+import java.util.*;
 
 @Value
 public class FilterPlan<R> implements Plan<R> {
     Filter op;
     Plan<R> input;
-    Collection<String> filters;
-    Collection<Predicate<R>> predicates;
+    Collection<? extends CharSequence> filters;
 
-    public FilterPlan(Filter op, Plan<R> input, @Nullable Collection<String> filters,
-                      @Nullable Collection<Predicate<R>> predicates) {
+    public FilterPlan(Filter op, Plan<R> input,
+                      @Nullable Collection<? extends CharSequence> filters) {
         this.op = op;
         this.input = input;
-        this.filters = filters == null ? Collections.emptyList() : filters;
-        this.predicates = predicates == null ? Collections.emptyList() : predicates;
+        if (filters == null || filters.isEmpty()) {
+            this.filters = Collections.emptyList();
+        } else {
+            ArrayList<String> filterStrings = new ArrayList<>(filters.size());
+            for (CharSequence f : filters) filterStrings.add(f.toString());
+            this.filters = filterStrings;
+        }
+    }
+
+    /** This trusts {@code filters} and its {@link CharSequence}s will nto change. */
+    private FilterPlan(Collection<? extends CharSequence> filters, Plan<R> input, Filter op) {
+        this.op = op;
+        this.input = input;
+        this.filters = filters;
     }
 
     @Override public Results<R> execute() {
-        return op.run(input, filters, predicates);
+        return op.run(input, filters);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        if (filters.isEmpty() && predicates.isEmpty())
-            return new FilterPlan<>(op, input.bind(var2ntValue), filters, predicates);
-        throw new UnsupportedOperationException("Not implemented yet");
-    }
-
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        if (filters.isEmpty() && predicates.isEmpty())
-            return new FilterPlan<>(op, input.bind(vars, ntValues), filters, predicates);
-        return PlanHelpers.bindWithMap(this, vars, ntValues);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        if (filters.isEmpty() && predicates.isEmpty())
-            return new FilterPlan<>(op, input.bind(vars, ntValues), filters, predicates);
-        return PlanHelpers.bindWithMap(this, vars, ntValues);
+        Plan<R> boundIn = input.bind(var2ntValue);
+        boolean change = boundIn != input;
+        if (filters.isEmpty())
+            return change ? new FilterPlan<>(op, boundIn, filters) : this;
+        List<CharSequence> boundFilters = new ArrayList<>(filters.size());
+        for (CharSequence filter : filters) {
+            String bound = SparqlBind.bind(filter, var2ntValue).toString();
+            change |= bound != filter;
+            boundFilters.add(bound);
+        }
+        return change ? new FilterPlan<>(boundFilters, boundIn, op) : this;
     }
 }
