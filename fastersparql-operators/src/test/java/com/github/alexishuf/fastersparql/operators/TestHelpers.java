@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -31,9 +29,7 @@ public class TestHelpers {
 
     public static Results<List<String>> asResults(Collection<List<String>> collection) {
         int width = collection.isEmpty() ? 0 : collection.iterator().next().size();
-        List<String> vars = generateVars(width);
-        SafeAsyncTask<List<String>> varsTask = Async.wrap(vars);
-        return new Results<>(varsTask, List.class, new IterablePublisher<>(collection));
+        return new Results<>(generateVars(width), List.class, new IterablePublisher<>(collection));
     }
 
     public static List<String> generateVars(List<List<String>> rows) {
@@ -76,7 +72,7 @@ public class TestHelpers {
             fail("Expected "+expectedError+" to be thrown by actual.publisher()");
         }
         if (expectedVars != null)
-            assertEquals(expectedVars, actual.vars().get(), "vars mismatch");
+            assertEquals(expectedVars, actual.vars(), "vars mismatch");
         checkMissing(exMap, acMap);
         checkUnexpected(exMap, acMap);
         checkCounts(exMap, acMap);

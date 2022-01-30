@@ -39,7 +39,7 @@ public interface Filter extends Operator {
         try {
             return checkedRun(input, filters);
         } catch (Throwable t) {
-            return Results.forError(Object.class, t);
+            return Results.error(Object.class, t);
         }
     }
 }

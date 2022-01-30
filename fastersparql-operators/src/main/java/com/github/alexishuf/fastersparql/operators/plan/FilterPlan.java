@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
-import com.github.alexishuf.fastersparql.operators.impl.SparqlBind;
 import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -45,7 +45,7 @@ public class FilterPlan<R> implements Plan<R> {
             return change ? new FilterPlan<>(op, boundIn, filters) : this;
         List<CharSequence> boundFilters = new ArrayList<>(filters.size());
         for (CharSequence filter : filters) {
-            String bound = SparqlBind.bind(filter, var2ntValue).toString();
+            String bound = SparqlUtils.bind(filter, var2ntValue).toString();
             change |= bound != filter;
             boundFilters.add(bound);
         }

@@ -34,7 +34,7 @@ public interface LeftJoin extends Operator {
         try {
             return checkedRun(left, right);
         } catch (Throwable t) {
-            return Results.forError(Object.class, t);
+            return Results.error(Object.class, t);
         }
     }
 }

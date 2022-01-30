@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -42,12 +40,7 @@ class CharSequenceListRowParserTest {
     private static final List<List<byte[]>> BYTES_LISTS = STRING_LISTS.stream()
             .map(l -> l.stream().map(s -> s.getBytes(StandardCharsets.UTF_8)).collect(toList()))
             .collect(toList());
-    private SafeCompletableAsyncTask<List<String>> varsTask;
-
-    @BeforeEach
-    void setUp() {
-        varsTask = new SafeCompletableAsyncTask<>();
-    }
+    private static final List<String> varsList = asList("x", "y");
 
     private void checkPublisher(Publisher<List<CharSequence>> publisher) {
         checkPublisher(publisher, null);
@@ -55,7 +48,6 @@ class CharSequenceListRowParserTest {
 
     private void checkPublisher(Publisher<List<CharSequence>> publisher,
                                 @Nullable List<?> expectSame) {
-        varsTask.complete(asList("x", "y"));
         List<List<CharSequence>> actual = Flux.from(publisher).collectList().block();
         assertNotNull(actual);
         for (int i = 0; i < STRING_LISTS.size(); i++) {
@@ -72,42 +64,42 @@ class CharSequenceListRowParserTest {
     @Test
     void testParseStringArray() {
         Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
-        Results<String[]> results = new Results<>(varsTask, String[].class, inputFlux);
+        Results<String[]> results = new Results<>(varsList, String[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringArrayAsCSArray() {
         Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
-        Results<String[]> results = new Results<>(varsTask, CharSequence[].class, inputFlux);
+        Results<String[]> results = new Results<>(varsList, CharSequence[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseCSArray() {
         Flux<CharSequence[]> inputFlux = Flux.fromIterable(CS_ARRAYS);
-        Results<CharSequence[]> results = new Results<>(varsTask, CharSequence[].class, inputFlux);
+        Results<CharSequence[]> results = new Results<>(varsList, CharSequence[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringList() {
         Flux<List<String>> inputFlux = Flux.fromIterable(STRING_LISTS);
-        Results<List<String>> results = new Results<>(varsTask, List.class, inputFlux);
+        Results<List<String>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseCSList() {
         Flux<List<CharSequence>> inputFlux = Flux.fromIterable(CS_LISTS);
-        Results<List<CharSequence>> results = new Results<>(varsTask, List.class, inputFlux);
+        Results<List<CharSequence>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), CS_LISTS);
     }
 
     @Test
     void testParseCSListAsCollection() {
         Flux<List<CharSequence>> inputFlux = Flux.fromIterable(CS_LISTS);
-        Results<Collection<CharSequence>> results = new Results<>(varsTask, Collection.class, inputFlux);
+        Results<Collection<CharSequence>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), CS_LISTS);
     }
 
@@ -115,21 +107,21 @@ class CharSequenceListRowParserTest {
     void testParseStringListAsCollection() {
         Flux<Collection<CharSequence>> inputFlux =
                 (Flux<Collection<CharSequence>>)(Flux<?>) Flux.fromIterable(STRING_LISTS);
-        Results<Collection<CharSequence>> results = new Results<>(varsTask, Collection.class, inputFlux);
+        Results<Collection<CharSequence>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), STRING_LISTS);
     }
 
     @Test
     void testParseBytesArray() {
         Flux<byte[][]> inputFlux = Flux.fromIterable(BYTES_ARRAYS);
-        Results<byte[][]> results = new Results<>(varsTask, byte[][].class, inputFlux);
+        Results<byte[][]> results = new Results<>(varsList, byte[][].class, inputFlux);
         checkPublisher(INSTANCE.parseBytesArray(results));
     }
 
     @Test
     void testParseBytesList() {
         Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
-        Results<List<byte[]>> results = new Results<>(varsTask, List.class, inputFlux);
+        Results<List<byte[]>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseBytesList(results));
     }
 
@@ -137,7 +129,7 @@ class CharSequenceListRowParserTest {
     @Test
     void testParseBytesListAsCollection() {
         Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
-        Results<Collection<byte[]>> results = new Results<>(varsTask, Collection.class, inputFlux);
+        Results<Collection<byte[]>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseBytesList(results));
     }
 }

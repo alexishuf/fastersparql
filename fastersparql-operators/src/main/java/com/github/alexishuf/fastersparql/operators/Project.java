@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.operators.errors.IllegalOperatorArgumentException;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.ProjectPlan;
@@ -52,7 +50,7 @@ public interface Project extends Operator {
         } catch (Throwable t) {
             List<String> sanitized = vars.stream().filter(Objects::nonNull).distinct()
                                          .collect(Collectors.toList());
-            return new Results<>(Async.wrap(sanitized), Object.class, new EmptyPublisher<>(t));
+            return Results.error(sanitized, Object.class, t);
         }
     }
 }

@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -39,12 +37,7 @@ class CharSequenceArrayRowParserTest {
             .map(l -> l.stream().map(s -> s.getBytes(StandardCharsets.UTF_8)).collect(toList()))
             .collect(toList());
 
-    SafeCompletableAsyncTask<List<String>> varsFuture;
-
-    @BeforeEach
-    void setUp() {
-        varsFuture = new SafeCompletableAsyncTask<>();
-    }
+    private static final List<String> varsList = asList("x", "y");
 
     private void checkPublisher(Publisher<CharSequence[]> publisher) {
         checkPublisher(publisher, null);
@@ -68,70 +61,70 @@ class CharSequenceArrayRowParserTest {
     @Test @SuppressWarnings("unchecked")
     void testParseStringArray() {
         Flux<String[]> input = (Flux<String[]>)(Flux<?>) Flux.fromIterable(STRING_ARRAYS);
-        Results<CharSequence[]> results = new Results<>(varsFuture, CharSequence[].class, input);
+        Results<CharSequence[]> results = new Results<>(varsList, CharSequence[].class, input);
         checkPublisher(INSTANCE.parseStringsArray(results), STRING_ARRAYS);
     }
 
     @Test
     void testParseStringArrayAsCS() {
         Flux<CharSequence[]> input = Flux.fromIterable(STRING_ARRAYS);
-        Results<CharSequence[]> results = new Results<>(varsFuture, CharSequence[].class, input);
+        Results<CharSequence[]> results = new Results<>(varsList, CharSequence[].class, input);
         checkPublisher(INSTANCE.parseStringsArray(results), STRING_ARRAYS);
     }
 
     @Test
     void testParseCSArray() {
         Flux<CharSequence[]> input = Flux.fromIterable(CS_ARRAYS);
-        Results<CharSequence[]> results = new Results<>(varsFuture, CharSequence[].class, input);
+        Results<CharSequence[]> results = new Results<>(varsList, CharSequence[].class, input);
         checkPublisher(INSTANCE.parseStringsArray(results), CS_ARRAYS);
     }
 
     @Test
     void testParseStringList() {
         Flux<List<String>> input = Flux.fromIterable(STRING_LISTS);
-        Results<List<String>> results = new Results<>(varsFuture, List.class, input);
+        Results<List<String>> results = new Results<>(varsList, List.class, input);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseStringListAsCollection() {
         Flux<List<String>> input = Flux.fromIterable(STRING_LISTS);
-        Results<List<String>> results = new Results<>(varsFuture, Collection.class, input);
+        Results<List<String>> results = new Results<>(varsList, Collection.class, input);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseCSList() {
         Flux<List<CharSequence>> input = Flux.fromIterable(CS_LISTS);
-        Results<List<CharSequence>> results = new Results<>(varsFuture, List.class, input);
+        Results<List<CharSequence>> results = new Results<>(varsList, List.class, input);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseCSListAsCollection() {
         Flux<List<CharSequence>> input = Flux.fromIterable(CS_LISTS);
-        Results<List<CharSequence>> results = new Results<>(varsFuture, Collection.class, input);
+        Results<List<CharSequence>> results = new Results<>(varsList, Collection.class, input);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseBytesArray() {
         Flux<byte[][]> input = Flux.fromIterable(BYTES_ARRAYS);
-        Results<byte[][]> results = new Results<>(varsFuture, byte[][].class, input);
+        Results<byte[][]> results = new Results<>(varsList, byte[][].class, input);
         checkPublisher(INSTANCE.parseBytesArray(results));
     }
 
     @Test
     void testParseBytesList() {
         Flux<List<byte[]>> input = Flux.fromIterable(BYTES_LISTS);
-        Results<List<byte[]>> results = new Results<>(varsFuture, List.class, input);
+        Results<List<byte[]>> results = new Results<>(varsList, List.class, input);
         checkPublisher(INSTANCE.parseBytesList(results));
     }
 
     @Test
     void testParseBytesListAsCollection() {
         Flux<List<byte[]>> input = Flux.fromIterable(BYTES_LISTS);
-        Results<List<byte[]>> results = new Results<>(varsFuture, Collection.class, input);
+        Results<List<byte[]>> results = new Results<>(varsList, Collection.class, input);
         checkPublisher(INSTANCE.parseBytesList(results));
     }
 }

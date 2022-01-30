@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
@@ -39,16 +37,8 @@ import java.util.stream.Stream;
 public class Results<Row> {
     /**
      * The list of variables in the results.
-     *
-     * Being a {@link SafeAsyncTask} means that eventual failures before or during parsing of
-     * the variable lists are not reported here. On failure, the task will complete with an
-     * empty list (which is the expected value for ASK queries) and the failure cause will be
-     * reported via {@link Subscriber#onError(Throwable)} by the {@link Results#publisher()}.
-     *
-     * If an error occurs, an empty list will be returned and the {@link Throwable}
-     * will be delivered to {@link Subscriber#onError(Throwable)} by {@link Results#publisher()}
      */
-    private final SafeAsyncTask<List<String>> vars;
+    private final List<String> vars;
 
     /**
      * The class of items produced by {@link Results#publisher()}.
@@ -65,7 +55,7 @@ public class Results<Row> {
      */
     private final Publisher<Row> publisher;
 
-    public Results(SafeAsyncTask<List<String>> vars, Class<? super Row> rowClass,
+    public Results(List<String> vars, Class<? super Row> rowClass,
                    Publisher<? extends Row> publisher) {
         this.vars = vars;
         this.rowClass = rowClass;
@@ -74,17 +64,19 @@ public class Results<Row> {
     }
 
     /**
-     * Create a {@link Results} with an empty publisher that fails with {@code cause} upon
-     * subscription.
-     *
-     * @param rowClass the class of rows to report, even tough no row will be emitted.
-     * @param cause the error to deliver via {@link Subscriber#onError(Throwable)}
-     * @param <Row> the row type
-     * @return a new {@link Results}.
+     * Create a {@link Results} with zero vars and the given {@code rowClass} with an empty
+     * {@link Results#publisher()} that fails with {@code cause} upon subscription.
      */
-    public static <Row> Results<Row> forError(Class<? super Row> rowClass, Throwable cause) {
-        return new Results<>(Async.wrap(Collections.emptyList()), rowClass,
-                             new EmptyPublisher<>(cause));
+    public static <Row> Results<Row> error(Class<? super Row> rowClass, Throwable cause) {
+        return new Results<>(Collections.emptyList(), rowClass, new EmptyPublisher<>(cause));
+    }
+
+    /**
+     * Create a {@link Results} with given {@code vars} and {@code rowClass} with an empty
+     * {@link Results#publisher()} that fails with {@code cause} upon subscription.
+     */
+    public static <Row> Results<Row> error(List<String> vars, Class<? super Row> rowClass, Throwable cause) {
+        return new Results<>(vars, rowClass, new EmptyPublisher<>(cause));
     }
 
     /**

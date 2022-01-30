@@ -2,8 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
-import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Union;
@@ -21,9 +20,7 @@ import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Value
 public class SimpleUnion  implements Union {
@@ -44,7 +41,7 @@ public class SimpleUnion  implements Union {
     @Override public <R> Results<R> checkedRun(List<Plan<R>> plans) {
         List<Results<R>> results = new ArrayList<>(plans.size());
         for (Plan<R> plan : plans) results.add(plan.execute());
-        SafeAsyncTask<List<String>> unionVars = unionVars(results);
+        List<String> unionVars = VarUtils.union(results);
         return new Results<>(unionVars, rowClass(results),
                              new UnionPublisher<>(rowOps, unionVars, results, parallelSubscribe));
     }
@@ -57,49 +54,20 @@ public class SimpleUnion  implements Union {
         return Object.class;
     }
 
-    private static <R> SafeAsyncTask<List<String>> unionVars(List<Results<R>> results) {
-        SafeCompletableAsyncTask<List<String>> task = new SafeCompletableAsyncTask<>();
-        AtomicInteger varsDone = new AtomicInteger();
-        for (Results<?> r : results) {
-            r.vars().whenComplete((list, err) -> {
-                if (varsDone.incrementAndGet() == results.size()) {
-                    LinkedHashSet<String> set = new LinkedHashSet<>();
-                    for (Results<?> inner : results) set.addAll(inner.vars().get());
-                    task.complete(new ArrayList<>(set));
-                }
-            });
-        }
-        return task;
-    }
+    private static final class Projector {
+        private final RowOperations rowOps;
+        private final List<String> outVars;
+        private final List<String> upstreamVars;
+        private final int[] indices;
 
-    @Value
-    private static class Projector {
-        RowOperations rowOps;
-        List<String> upstreamVars;
-        List<String> outVars;
-        int[] indices;
-
-        public static SafeAsyncTask<Projector>
-        createTask(RowOperations rowOps, SafeAsyncTask<List<String>> outTask, Results<?> upstream) {
-            SafeCompletableAsyncTask<Projector> task = new SafeCompletableAsyncTask<>();
-            outTask.whenComplete((outVars, err) -> {
-                List<String> upstreamVars = upstream.vars().get();
-                if (err != null) {
-                    task.completeExceptionally(err);
-                } else if (upstreamVars.equals(outVars)) {
-                    task.complete(new Projector(rowOps, upstreamVars, outVars, new int[0]));
-                } else {
-                    int size = outVars.size();
-                    int[] indices = new int[size];
-                    for (int i = 0; i < size; i++)
-                        indices[i] = upstreamVars.indexOf(outVars.get(i));
-                    task.complete(new Projector(rowOps, upstreamVars, outVars, indices));
-                }
-            });
-            return task;
+        public Projector(RowOperations rowOps, List<String> outVars, List<String> upstreamVars) {
+            this.rowOps = rowOps;
+            this.upstreamVars = upstreamVars;
+            this.outVars = outVars;
+            this.indices = VarUtils.projectionIndices(outVars, upstreamVars);
         }
 
-        Object project(Object upstreamRow) {
+        public Object project(Object upstreamRow) {
             if (indices.length == 0 && !outVars.isEmpty())
                 return upstreamRow;
             Object projection = rowOps.createEmpty(outVars);
@@ -117,7 +85,7 @@ public class SimpleUnion  implements Union {
     @Slf4j
     private static class UnionPublisher<R> implements Publisher<R> {
         private final RowOperations rowOps;
-        private final SafeAsyncTask<List<String>> outVars;
+        private final List<String> outVars;
         private final List<Results<R>> sources;
         private final boolean parallel;
         private boolean terminated, distributing;
@@ -125,7 +93,7 @@ public class SimpleUnion  implements Union {
         private final List<UpstreamSubscriber> upstream;
         private @MonotonicNonNull Subscriber<? super R> downstream;
 
-        public UnionPublisher(RowOperations rowOps, SafeAsyncTask<List<String>> unionVars,
+        public UnionPublisher(RowOperations rowOps, List<String> unionVars,
                               List<Results<R>> sources, boolean parallel) {
             this.rowOps = rowOps;
             this.outVars = unionVars;
@@ -146,20 +114,20 @@ public class SimpleUnion  implements Union {
             } else {
                 downstream = s;
                 for (Results<R> results : sources) {
-                    SafeAsyncTask<Projector> task = Projector.createTask(rowOps, outVars, results);
+                    Projector task = new Projector(rowOps, outVars, results.vars());
                     results.publisher().subscribe(new UpstreamSubscriber(task));
                 }
             }
         }
 
         private class  UpstreamSubscriber implements Subscriber<R> {
-            private final SafeAsyncTask<Projector> projectorTask;
+            private final Projector projector;
             private long requested = 0;
             private boolean active = false;
             private Subscription subscription;
 
-            private UpstreamSubscriber(SafeAsyncTask<Projector> projectorTask) {
-                this.projectorTask = projectorTask;
+            private UpstreamSubscriber(Projector projectorTask) {
+                this.projector = projectorTask;
             }
 
             /* --- --- --- control methods --- --- --- */
@@ -240,7 +208,7 @@ public class SimpleUnion  implements Union {
                 if (requested > 0)
                     --requested;
                 //noinspection unchecked
-                downstream.onNext((R)projectorTask.get().project(upstreamRow));
+                downstream.onNext((R) projector.project(upstreamRow));
             }
 
             @Override public synchronized void onError(Throwable t) {

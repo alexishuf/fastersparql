@@ -30,7 +30,7 @@ public class SimpleSlice implements Slice {
             return new Results<>(input.vars(), input.rowClass(),
                                  new SlicingProcessor<>(input.publisher(), offset, limit));
         } catch (Throwable t) {
-            return Results.forError(Object.class, t);
+            return Results.error(Object.class, t);
         }
     }
 

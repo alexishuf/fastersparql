@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
-import com.github.alexishuf.fastersparql.operators.impl.SparqlBind;
+import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import lombok.Value;
 
 import java.util.Map;
@@ -32,6 +32,6 @@ public class LeafPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new LeafPlan<>(configuration, client, SparqlBind.bind(query, var2ntValue));
+        return new LeafPlan<>(configuration, client, SparqlUtils.bind(query, var2ntValue));
     }
 }

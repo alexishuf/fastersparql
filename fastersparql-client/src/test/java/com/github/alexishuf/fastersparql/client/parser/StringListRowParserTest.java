@@ -1,15 +1,12 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.client.parser.row.StringListRowParser.INSTANCE;
@@ -37,20 +34,13 @@ class StringListRowParserTest {
         return bytesList;
     }).collect(toList());
 
-    private SafeCompletableAsyncTask<List<String>> varsFuture;
-
-    @BeforeEach
-    void setUp() {
-        varsFuture = new SafeCompletableAsyncTask<>();
-    }
+    private static final List<String> vasrList = asList("x", "y");
 
     private void checkResults(Publisher<List<String>> publisher) {
         checkResults(publisher, false);
     }
 
     private void checkResults(Publisher<List<String>> publisher, boolean expectSame) {
-        varsFuture.complete(Arrays.asList("x", "y"));
-
         List<List<String>> actual = Flux.from(publisher).collectList().block();
         assertNotNull(actual);
         assertEquals(actual, STRING_LISTS);
@@ -63,28 +53,28 @@ class StringListRowParserTest {
     @Test
     void testParseStringArray() {
         Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
-        Results<String[]> results = new Results<>(varsFuture, String[].class, inputFlux);
+        Results<String[]> results = new Results<>(vasrList, String[].class, inputFlux);
         checkResults(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringList() {
         Flux<List<String>> inputFlux = Flux.fromIterable(STRING_LISTS);
-        Results<List<String>> results = new Results<>(varsFuture, List.class, inputFlux);
+        Results<List<String>> results = new Results<>(vasrList, List.class, inputFlux);
         checkResults(INSTANCE.parseStringsList(results), true);
     }
 
     @Test
     void testParseBytesArray() {
         Flux<byte[][]> inputFlux = Flux.fromIterable(BYTES_ARRAYS);
-        Results<byte[][]> results = new Results<>(varsFuture, byte[][].class, inputFlux);
+        Results<byte[][]> results = new Results<>(vasrList, byte[][].class, inputFlux);
         checkResults(INSTANCE.parseBytesArray(results));
     }
 
     @Test
     void testParseBytesList() {
         Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
-        Results<List<byte[]>> results = new Results<>(varsFuture, List.class, inputFlux);
+        Results<List<byte[]>> results = new Results<>(vasrList, List.class, inputFlux);
         checkResults(INSTANCE.parseBytesList(results));
     }
 }

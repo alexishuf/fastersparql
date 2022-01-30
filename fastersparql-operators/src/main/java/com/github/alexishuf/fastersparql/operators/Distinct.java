@@ -32,7 +32,7 @@ public interface Distinct extends Operator {
         try {
             return checkedRun(input);
         } catch (Throwable t) {
-            return Results.forError(Object.class, t);
+            return Results.error(Object.class, t);
         }
     }
 }

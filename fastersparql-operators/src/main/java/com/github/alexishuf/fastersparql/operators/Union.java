@@ -33,7 +33,7 @@ public interface Union extends Operator {
         try {
             return checkedRun(inputs);
         } catch (Throwable t) {
-            return Results.forError(Object.class, t);
+            return Results.error(Object.class, t);
         }
     }
 }

@@ -81,7 +81,7 @@ class ResultsData {
         } else {
             compareRows(actual);
         }
-        assertEquals(vars(), results.vars().get());
+        assertEquals(vars(), results.vars());
     }
 
     public List<String> vars() {

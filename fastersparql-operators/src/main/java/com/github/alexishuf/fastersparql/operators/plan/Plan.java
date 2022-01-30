@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.operators.impl.BindHelpers;
+import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -40,7 +40,7 @@ public interface Plan<R> {
      * @return a non-null {@link Plan} with the named variables replaced with the given values.
      */
     default Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return bind(BindHelpers.toMap(vars, ntValues));
+        return bind(VarUtils.toMap(vars, ntValues));
     }
 
     /**
@@ -53,6 +53,6 @@ public interface Plan<R> {
      * @return a non-null {@link Plan} with the named variables replaced with the given values.
      */
     default Plan<R> bind(List<String> vars, String[] ntValues) {
-        return bind(BindHelpers.toMap(vars, ntValues));
+        return bind(VarUtils.toMap(vars, ntValues));
     }
 }

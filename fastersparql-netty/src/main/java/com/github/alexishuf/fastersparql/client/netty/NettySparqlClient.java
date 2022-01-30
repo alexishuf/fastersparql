@@ -15,6 +15,8 @@ import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
+import com.github.alexishuf.fastersparql.client.util.sparql.Projector;
+import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
@@ -33,7 +35,6 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
 import java.util.ArrayDeque;
-import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ExecutionException;
@@ -69,12 +70,12 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
     @Override
     public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
+        List<String> vars = SparqlUtils.publicVars(sparql);
         Throwable cause;
         try {
             SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
             SparqlMethod method = eff.methods().get(0);
             HttpMethod nettyMethod = method2netty(method);
-            SafeCompletableAsyncTask<List<String>> vars = new SafeCompletableAsyncTask<>();
             PublisherShim<String[]> publisher = new PublisherShim<>();
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
@@ -92,8 +93,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         } catch (Throwable t) {
             cause = t;
         }
-        return new Results<>(Async.wrap(Collections.emptyList()), rowParser.rowClass(),
-                             new EmptyPublisher<>(cause));
+        return new Results<>(vars, rowParser.rowClass(), new EmptyPublisher<>(cause));
     }
 
     @Override
@@ -275,20 +275,22 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     /**
      * Listens as a {@link ResultsParserConsumer} and feeds a {@link PublisherShim}.
      */
+
     @RequiredArgsConstructor
     private static class ResultsParserAdapter implements ResultsParserConsumer {
-        private final SafeCompletableAsyncTask<List<String>> varsTask;
+        private final List<String> expectedVars;
         private final PublisherShim<String[]> publisher;
+        private Projector projector = Projector.IDENTITY;
 
-        @Override public void vars(List<String> vars) { varsTask.complete(vars);}
-        @Override public void row(@Nullable String[] row) { publisher.feed(row); }
+        @Override public void vars(List<String> vars) {
+            projector = Projector.createFor(expectedVars, vars);
+        }
+        @Override public void row(@Nullable String[] row) {
+            publisher.feed(projector.project(row));
+        }
         @Override public void end() { publisher.end(); }
-        @Override public void onError(String message) { error(new InvalidSparqlResultsException(message)); }
-
-        public void error(Throwable cause) {
-            if (!varsTask.isDone())
-                varsTask.complete(Collections.emptyList());
-            publisher.error(cause);
+        @Override public void onError(String message) {
+            publisher.error(new InvalidSparqlResultsException(message));
         }
     }
 
@@ -329,11 +331,11 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             this.channel = channel;
         }
 
-        public void setupResults(Channel channel, SafeCompletableAsyncTask<List<String>> varsTask,
+        public void setupResults(Channel channel, List<String> outVars,
                                  PublisherShim<String[]> rowPublisher) {
             reset(channel);
             this.channel = channel;
-            this.resultsAdapter = new ResultsParserAdapter(varsTask, rowPublisher);
+            this.resultsAdapter = new ResultsParserAdapter(outVars, rowPublisher);
             rowPublisher.handler(this);
         }
 
@@ -416,7 +418,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            if (resultsAdapter != null) resultsAdapter.error(cause);
+            if (resultsAdapter != null) resultsAdapter.publisher.error(cause);
             if (mediaTypeTask != null && !mediaTypeTask.isDone())
                 mediaTypeTask.complete(null);
             if (fragmentPublisher != null) fragmentPublisher.error(cause);

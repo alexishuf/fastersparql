@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
@@ -109,10 +107,10 @@ public class UnionTest {
         List<Plan<List<String>>> inPlans = new ArrayList<>();
         for (int i = 0; i < inputs.size(); i++) {
             List<List<String>> rows = inputs.get(i);
-            SafeAsyncTask<List<String>> varsTask = Async.wrap(varsLists.get(i));
+            List<String> vars = varsLists.get(i);
             inPlans.add(new Plan<List<String>>() {
                 @Override public Results<List<String>> execute() {
-                    return new Results<>(varsTask, List.class, new IterablePublisher<>(rows));
+                    return new Results<>(vars, List.class, new IterablePublisher<>(rows));
                 }
 
                 @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {

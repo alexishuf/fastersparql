@@ -1,9 +1,8 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
+import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Project;
@@ -14,7 +13,9 @@ import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
 import org.checkerframework.checker.index.qual.NonNegative;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 @Value
 public class SimpleProject implements Project {
@@ -41,41 +42,30 @@ public class SimpleProject implements Project {
         if (varsSet.size() < vars.size())
             vars = new ArrayList<>(varsSet);
         Results<R> input = inputPlan.execute();
-        return new Results<>(Async.wrap(vars), input.rowClass(),
+        return new Results<>(vars, input.rowClass(),
                              new ProjectingProcessor<>(input, vars, rowOperations));
     }
 
     private static final class ProjectingProcessor<T> extends AbstractProcessor<T, T> {
         private final List<String> outVars;
         private final RowOperations rowOps;
-        private final SafeAsyncTask<int[]> indicesTask;
-        private List<String> inVars = Collections.emptyList();
+        private final int[] indices;
+        private final List<String> inVars;
 
         public ProjectingProcessor(Results<? extends T> source, List<String> outVars,
                                    RowOperations rowOps) {
             super(source.publisher());
             this.outVars = outVars;
             this.rowOps = rowOps;
-            this.indicesTask = Async.wrapSafe(source.vars().handle((list, err) -> {
-                int size = outVars.size();
-                int[] indices = new int[size];
-                if (list == null) {
-                    Arrays.fill(indices, -1);
-                } else {
-                    inVars = list;
-                    for (int i = 0; i < size; i++)
-                        indices[i] = list.indexOf(outVars.get(i));
-                }
-                return indices;
-            }));
+            this.inVars = source.vars();
+            this.indices = VarUtils.projectionIndices(outVars, inVars);
         }
 
         @Override protected void handleOnNext(T item) {
-            int[] inputIndices = indicesTask.get();
             @SuppressWarnings("unchecked")
             T row = (T)rowOps.createEmpty(outVars);
-            for (int i = 0; i < inputIndices.length; i++) {
-                int inIdx = inputIndices[i];
+            for (int i = 0; i < indices.length; i++) {
+                int inIdx = indices[i];
                 if (inIdx >= 0)
                     rowOps.set(row, i, outVars.get(i), rowOps.get(item, inIdx, inVars.get(inIdx)));
             }
