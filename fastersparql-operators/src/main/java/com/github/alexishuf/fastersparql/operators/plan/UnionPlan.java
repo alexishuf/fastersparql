@@ -3,11 +3,12 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.Union;
 import lombok.Value;
+import lombok.experimental.Accessors;
 
 import java.util.List;
 import java.util.Map;
 
-@Value
+@Value @Accessors(fluent = true)
 public class UnionPlan<R> implements Plan<R> {
     Union op;
     List<Plan<R>> inputs;

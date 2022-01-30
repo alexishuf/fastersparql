@@ -4,11 +4,12 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
 import lombok.Value;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.*;
 
-@Value
+@Value @Accessors(fluent = true)
 public class FilterPlan<R> implements Plan<R> {
     Filter op;
     Plan<R> input;

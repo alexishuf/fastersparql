@@ -3,11 +3,12 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.LeftJoin;
 import lombok.Value;
+import lombok.experimental.Accessors;
 
 import java.util.List;
 import java.util.Map;
 
-@Value
+@Value @Accessors(fluent = true)
 public class LeftJoinPlan<R> implements Plan<R> {
     LeftJoin op;
     Plan<R> left, right;

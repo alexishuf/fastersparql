@@ -3,11 +3,12 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.Join;
 import lombok.Value;
+import lombok.experimental.Accessors;
 
 import java.util.List;
 import java.util.Map;
 
-@Value
+@Value @Accessors(fluent = true)
 public class JoinPlan<R> implements Plan<R> {
     Join op;
     List<Plan<R>> operands;

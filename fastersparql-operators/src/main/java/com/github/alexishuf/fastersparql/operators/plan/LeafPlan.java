@@ -7,12 +7,14 @@ import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.List;
 import java.util.Map;
 
-@Getter @EqualsAndHashCode @ToString
+@Getter @Accessors(fluent = true)
+@EqualsAndHashCode @ToString
 public class LeafPlan<R> implements Plan<R> {
     private final CharSequence query;
     private final SparqlClient<R, ?> client;
