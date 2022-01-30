@@ -16,6 +16,10 @@ public class MinusPlan<R> implements Plan<R> {
         return op.run(left, right);
     }
 
+    @Override public List<String> vars() {
+        return PlanHelpers.varsUnion(left, right);
+    }
+
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
         return new MinusPlan<>(op, left.bind(var2ntValue), right.bind(var2ntValue));
     }

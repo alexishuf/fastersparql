@@ -12,6 +12,10 @@ public class DistinctPlan<R> implements Plan<R> {
     Distinct op;
     Plan<R> input;
 
+    @Override public List<String> vars() {
+        return input.vars();
+    }
+
     @Override public Results<R> execute() {
         return op.run(input);
     }

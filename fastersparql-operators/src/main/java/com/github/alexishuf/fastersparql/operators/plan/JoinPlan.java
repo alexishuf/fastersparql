@@ -12,6 +12,10 @@ public class JoinPlan<R> implements Plan<R> {
     Join op;
     List<Plan<R>> operands;
 
+    @Override public List<String> vars() {
+        return PlanHelpers.varsUnion(operands);
+    }
+
     @Override public Results<R> execute() {
         return op.run(operands);
     }

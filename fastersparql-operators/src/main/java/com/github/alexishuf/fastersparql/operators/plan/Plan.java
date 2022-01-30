@@ -12,6 +12,14 @@ import java.util.Map;
  */
 public interface Plan<R> {
     /**
+     * The would-be value of {@link Results#vars()} upon {@link Plan#execute()}.
+     *
+     * @return a non-null (but possibly empty) list of non-null and non-empty variable names
+     *         (i.e., no leading {@code ?} or {@code $}).
+     */
+    List<String> vars();
+
+    /**
      * Create a {@link Results} from this plan.
      *
      * {@link Results#vars()} is not required to be ready and {@link Results#publisher()} may only

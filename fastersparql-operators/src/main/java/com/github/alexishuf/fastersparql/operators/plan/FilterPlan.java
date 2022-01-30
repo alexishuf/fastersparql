@@ -34,6 +34,10 @@ public class FilterPlan<R> implements Plan<R> {
         this.filters = filters;
     }
 
+    @Override public List<String> vars() {
+        return input.vars();
+    }
+
     @Override public Results<R> execute() {
         return op.run(input, filters);
     }

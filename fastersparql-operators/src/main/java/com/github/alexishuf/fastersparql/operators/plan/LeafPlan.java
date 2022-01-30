@@ -4,15 +4,20 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import lombok.Value;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.ToString;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
+import java.util.List;
 import java.util.Map;
 
-@Value
+@Getter @EqualsAndHashCode @ToString
 public class LeafPlan<R> implements Plan<R> {
-    CharSequence query;
-    SparqlClient<R, ?> client;
-    SparqlConfiguration configuration;
+    private final CharSequence query;
+    private final SparqlClient<R, ?> client;
+    private final SparqlConfiguration configuration;
+    private @MonotonicNonNull List<String> vars;
 
     public LeafPlan(CharSequence query, SparqlClient<R, ?> client,
                     SparqlConfiguration configuration) {
@@ -25,6 +30,10 @@ public class LeafPlan<R> implements Plan<R> {
         this.query = query;
         this.client = client;
         this.configuration = config;
+    }
+
+    @Override public List<String> vars() {
+        return vars == null ? (vars = SparqlUtils.publicVars(query)) : vars;
     }
 
     @Override public Results<R> execute() {

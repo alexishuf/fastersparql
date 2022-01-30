@@ -19,6 +19,10 @@ public class ProjectPlan<R> implements Plan<R> {
         return op.run(input, vars);
     }
 
+    @Override public List<String> vars() {
+        return input.vars();
+    }
+
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
         return new ProjectPlan<>(op, input.bind(var2ntValue), removeBound(var2ntValue.keySet()));
     }

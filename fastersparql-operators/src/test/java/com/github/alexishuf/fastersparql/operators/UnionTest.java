@@ -109,6 +109,10 @@ public class UnionTest {
             List<List<String>> rows = inputs.get(i);
             List<String> vars = varsLists.get(i);
             inPlans.add(new Plan<List<String>>() {
+                @Override public List<String> vars() {
+                    return vars;
+                }
+
                 @Override public Results<List<String>> execute() {
                     return new Results<>(vars, List.class, new IterablePublisher<>(rows));
                 }
