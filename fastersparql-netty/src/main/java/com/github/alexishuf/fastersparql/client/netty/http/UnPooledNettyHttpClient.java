@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.*;
@@ -65,17 +66,15 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
                         HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         @Nullable Setup<T> setup) throws Exception {
-        HttpRequest req = null;
-        if (bodyGenerator != null) {
-            ByteBuf bb = bodyGenerator.apply(ch.alloc());
-            if (bb != null) {
-                req = new DefaultFullHttpRequest(HTTP_1_1, method, firstLine.toString(), bb);
-                req.headers().set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
-            }
-        }
-        if (req == null)
-            req = new DefaultHttpRequest(HTTP_1_1, method, firstLine.toString());
+        ByteBuf bb = null;
+        if (bodyGenerator != null)
+            bb = bodyGenerator.apply(ch.alloc());
+        if (bb == null)
+            bb = Unpooled.EMPTY_BUFFER;
+        HttpRequest req = new DefaultFullHttpRequest(HTTP_1_1, method, firstLine.toString(), bb);
         HttpHeaders headers = req.headers();
+        if (bb.readableBytes() > 0)
+            headers.set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
         headers.set(HttpHeaderNames.HOST, host);
         headers.set(HttpHeaderNames.CONNECTION, connection);
         @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");

@@ -155,6 +155,8 @@ public class SparqlClientTest {
         for (SparqlEndpoint ep : asList(hdtss(), fuseki())) {
             try (SparqlClient<String[], byte[]> client = factory.createFor(ep)) {
                 data.assertExpected(client.query(data.sparql(), data.config()));
+                // a second query with the same client should work
+                data.assertExpected(client.query(data.sparql(), data.config()));
             }
         }
 
