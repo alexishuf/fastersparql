@@ -216,13 +216,16 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         }
 
         @Override public void subscribe(Subscriber<? super T> s) {
-            boolean active = this.subscriber == null;
-            SubscriptionHandle handle = new SubscriptionHandle(active);
-            s.onSubscribe(handle);
-            if (active)
+            if (this.subscriber != null) {
+                s.onSubscribe(new Subscription() {
+                    @Override public void request(long n) { }
+                    @Override public void cancel() { }
+                });
+                s.onError(new IllegalStateException(this+" can only be subscribed once"));
+            } else {
                 this.subscriber = s;
-            else
-                handle.error(new IllegalStateException(this + "can only be subscribed once"));
+                s.onSubscribe(new SubscriptionHandle(active));
+            }
         }
 
         public void handler(Handler handler) {
