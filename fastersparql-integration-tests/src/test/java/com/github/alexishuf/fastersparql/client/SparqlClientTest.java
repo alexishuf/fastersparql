@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.client;
 
+import com.github.alexishuf.fastersparql.FusekiContainer;
+import com.github.alexishuf.fastersparql.HdtssContainer;
 import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
@@ -10,22 +12,14 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.row.*;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.testcontainers.containers.BindMode;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.output.Slf4jLogConsumer;
-import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
-import java.io.File;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -34,54 +28,17 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.client.GraphData.graph;
 import static com.github.alexishuf.fastersparql.client.ResultsData.results;
 import static com.github.alexishuf.fastersparql.client.util.async.Async.async;
-import static java.lang.String.format;
 import static java.util.Arrays.asList;
 
 @SuppressWarnings("SameParameterValue")
 @Testcontainers
 @Slf4j
 public class SparqlClientTest {
-    private static final String TEST_QUERY = "SELECT * WHERE { ?s a <http://example.org/Dummy>}";
-    private static final String ENC_TEST_QUERY = UriUtils.escapeQueryParam(TEST_QUERY);
-    private static final File DATA_HDT = TestUtils.extract(SparqlClientTest.class, "data.hdt");
-    private static final File DATA_TTL = TestUtils.extract(SparqlClientTest.class, "data.ttl");
 
-    @Container @SuppressWarnings("rawtypes")
-    private static final GenericContainer HDTSS =
-            new GenericContainer<>(DockerImageName.parse("alexishuf/hdtss"))
-                    .withFileSystemBind(DATA_HDT.getAbsolutePath(),
-                                        "/data/data.hdt", BindMode.READ_ONLY)
-                    .withExposedPorts(8080)
-                    .withLogConsumer(new Slf4jLogConsumer(log)
-                            .withSeparateOutputStreams()
-                            .withPrefix("HDTSS container"))
-                    .withCommand("-port=8080", "/data/data.hdt")
-                    .withStartupTimeout(Duration.ofSeconds(30))
-                    .waitingFor(Wait.forHttp("/sparql?query="+ENC_TEST_QUERY));
-
-    @Container @SuppressWarnings("rawtypes")
-    private static final GenericContainer FUSEKI =
-            new GenericContainer<>(DockerImageName.parse("alexishuf/fuseki:3.17.0"))
-                    .withFileSystemBind(DATA_TTL.getAbsolutePath(),
-                            "/data/data.ttl", BindMode.READ_ONLY)
-                    .withExposedPorts(3030)
-                    .withLogConsumer(new Slf4jLogConsumer(log)
-                            .withSeparateOutputStreams()
-                            .withPrefix("Fuseki container"))
-                    .withCommand("--file", "/data/data.ttl", "--port", "3030", "/ds")
-                    .withStartupTimeout(Duration.ofSeconds(30))
-                    .waitingFor(Wait.forHttp("/ds"));
-
-    private static SparqlEndpoint hdtss() {
-        return SparqlEndpoint.parse(format("http://%s:%d/sparql",
-                HDTSS.getHost(), HDTSS.getMappedPort(8080)));
-    }
-
-    private static SparqlEndpoint fuseki() {
-        return SparqlEndpoint.parse(format("http://%s:%d/ds/sparql",
-                FUSEKI.getHost(), FUSEKI.getMappedPort(3030)));
-    }
-
+    @Container private static final HdtssContainer HDTSS =
+            new HdtssContainer(SparqlClientTest.class, "data.hdt", log);
+    @Container private static final FusekiContainer FUSEKI =
+            new FusekiContainer(SparqlClientTest.class, "data.ttl", log);
 
     private static Stream<Arguments> resultsData() {
         List<ResultsData> seed = asList(
@@ -152,7 +109,7 @@ public class SparqlClientTest {
 
     private void testResults(ResultsData data, String clientTag) throws ExecutionException {
         SparqlClientFactory factory = FasterSparql.factory(clientTag);
-        for (SparqlEndpoint ep : asList(hdtss(), fuseki())) {
+        for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
             try (SparqlClient<String[], byte[]> client = factory.createFor(ep)) {
                 data.assertExpected(client.query(data.sparql(), data.config()));
                 // a second query with the same client should work
@@ -164,7 +121,7 @@ public class SparqlClientTest {
         ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
         List<RowParser<?>> rowParsers = asList(StringListRowParser.INSTANCE,
                 CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
-        for (SparqlEndpoint ep : asList(hdtss(), fuseki())) {
+        for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
             for (RowParser<?> rowParser : rowParsers) {
                 futures.add(async(() -> {
                     try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, bytesP)) {
@@ -184,7 +141,7 @@ public class SparqlClientTest {
 
     private void testGraph(GraphData data, String tag) throws ExecutionException {
         SparqlClientFactory factory = FasterSparql.factory(tag);
-        try (SparqlClient<String[], byte[]> client = factory.createFor(fuseki())) {
+        try (SparqlClient<String[], byte[]> client = factory.createFor(FUSEKI.asEndpoint())) {
             data.assertExpected(client.queryGraph(data.sparql(), data.config()));
         }
         List<AsyncTask<?>> futures = new ArrayList<>();
@@ -192,7 +149,8 @@ public class SparqlClientTest {
         for (FragmentParser<?> fragP : asList(CharSequenceFragmentParser.INSTANCE,
                 StringFragmentParser.INSTANCE)) {
             futures.add(async(() -> {
-                try (SparqlClient<String[], ?> client = factory.createFor(fuseki(), rowP, fragP)) {
+                try (SparqlClient<String[], ?> client =
+                             factory.createFor(FUSEKI.asEndpoint(), rowP, fragP)) {
                     data.assertExpected(client.queryGraph(data.sparql(), data.config()));
                 }
             }));

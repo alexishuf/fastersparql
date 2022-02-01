@@ -124,6 +124,22 @@ public class VarUtils {
         return new ArrayList<>(set);
     }
 
+    /**
+     * Create a distinct list of all variables in {@code left} and {@code right}, preserving
+     * the order in which the variables appear (left comes first).
+     *
+     * @param left first list of variables. If {@code null} will treat as empty.
+     * @param right second list of variables. If {@code null} will treat as empty
+     * @return a non-null, list of non-null variable names preserving the order of inputs.
+     */
+    public static List<String> union(List<String> left, List<String> right) {
+        int sum = left.size() + right.size();
+        LinkedHashSet<String> set = new LinkedHashSet<>(sum + (sum/2 + 1));
+        set.addAll(left);
+        set.addAll(right);
+        return new ArrayList<>(set);
+    }
+
     /***
      * Create an {@code int[]} where the i-th element is the index of the i-th {@code outVar}
      * in {@code inVars}, or -1 if it is not found.
