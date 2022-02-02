@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.Projector;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
@@ -23,20 +24,17 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
-import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
-import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
-import java.util.ArrayDeque;
 import java.util.List;
-import java.util.Queue;
 import java.util.concurrent.ExecutionException;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
@@ -76,7 +74,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
             SparqlMethod method = eff.methods().get(0);
             HttpMethod nettyMethod = method2netty(method);
-            PublisherShim<String[]> publisher = new PublisherShim<>();
+            PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
@@ -87,13 +85,16 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                         handler.setupResults(ch, vars, publisher);
                     });
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
-            return new Results<>(vars, rowParser.rowClass(), rowParser.parseStringsArray(raw));
+            Publisher<R> parsedPub = rowParser.parseStringsArray(raw);
+            if (parsedPub == raw.publisher()) //noinspection unchecked
+                return (Results<R>) raw;
+            return new Results<>(vars, rowParser.rowClass(), parsedPub);
         } catch (ExecutionException e) {
             cause = e.getCause() == null ? e : e.getCause();
         } catch (Throwable t) {
             cause = t;
         }
-        return new Results<>(vars, rowParser.rowClass(), new EmptyPublisher<>(cause));
+        return Results.error(vars, rowParser.rowClass(), cause);
     }
 
     @Override
@@ -104,7 +105,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             SparqlMethod method = eff.methods().get(0);
             HttpMethod nettyMethod = method2netty(method);
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
-            PublisherShim<byte[]> publisher = new PublisherShim<>();
+            PublisherAdapter<byte[]> publisher = new PublisherAdapter<>();
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     (ch, request, handler) -> {
@@ -115,7 +116,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                         handler.setupGraph(ch, mtTask, publisher);
                     });
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
-            return new Graph<>(mtTask, fragParser.fragmentClass(), fragParser.parseBytes(raw));
+            Publisher<F> parsedPub = fragParser.parseBytes(raw);
+            if (parsedPub == raw.publisher()) //noinspection unchecked
+                return (Graph<F>) raw;
+            return new Graph<>(mtTask, fragParser.fragmentClass(), parsedPub);
         } catch (ExecutionException e) {
             cause = e.getCause() == null ? e : e.getCause();
         } catch (Throwable t) {
@@ -172,117 +176,31 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     }
 
     /* --- --- --- inner classes  --- --- ---  */
-    private static class PublisherShim<T> implements Publisher<T> {
-        private static final Logger log = LoggerFactory.getLogger(PublisherShim.class);
-        private @MonotonicNonNull Handler handler;
-        private long requested = 0;
-        private boolean active = true;
-        private Subscriber<? super T> subscriber;
-        private final Queue<T> earlyRows = new ArrayDeque<>();
-
-        @AllArgsConstructor
-        private class SubscriptionHandle implements Subscription {
-            private boolean active;
-
-            private void error(Throwable t) {
-                if (active && PublisherShim.this.active) {
-                    subscriber.onError(t);
-                    active = false;
-                }
-            }
-
-            @Override public void request(long n) {
-                if (n <= 0) {
-                    error(new IllegalArgumentException("request("+n+"): n must be > 0"));
-                } else if (active) {
-                    for (; active && n > 0 && !earlyRows.isEmpty(); --n)
-                        callNext(earlyRows.remove());
-                    if (active && n > 0) {
-                        synchronized (PublisherShim.this) {
-                            requested += n;
-                            if (handler != null) handler.autoRead(true);
-                        }
-                    }
-                }
-            }
-
-            @Override public void cancel() {
-                if (active) {
-                    active = false;
-                    Handler copy = PublisherShim.this.handler;
-                    if (copy != null) copy.abort();
-                }
-            }
-        }
-
-        @Override public void subscribe(Subscriber<? super T> s) {
-            if (this.subscriber != null) {
-                s.onSubscribe(new Subscription() {
-                    @Override public void request(long n) { }
-                    @Override public void cancel() { }
-                });
-                s.onError(new IllegalStateException(this+" can only be subscribed once"));
-            } else {
-                this.subscriber = s;
-                s.onSubscribe(new SubscriptionHandle(active));
-            }
-        }
-
-        public void handler(Handler handler) {
-            if (this.handler != null) throw new IllegalArgumentException("handler already set");
-            this.handler = handler;
-        }
-
-        public void end() {
-            if (active) {
-                subscriber.onComplete();
-                active = false;
-            }
-        }
-
-        public void error(Throwable cause) {
-            if (active) {
-                subscriber.onError(cause);
-                active = false;
-            } else {
-                log.info("Ignoring {} since !active", cause, cause);
-            }
-        }
-
-        public void feed(T row) {
-            assert handler != null : "feed() with null handler";
-            synchronized (this) {
-                if (requested == 0)
-                    handler.autoRead(false); // propagate backpressure
-                else
-                    --requested;
-            }
-            if      (subscriber == null) earlyRows.add(row);
-            else if (active            ) callNext(row);
-            else                         log.debug("feed({}): dropping", row);
-        }
-
-        private void callNext(T row) {
-            try {
-                subscriber.onNext(row);
-            } catch (Throwable t) {
-                log.error("{}.onNext({}) threw {}. treating as Subscription.cancel()",
-                          subscriber, row, t, t);
-                active = false;
-                assert handler != null;
-                handler.abort();
-            }
-        }
-    }
 
     /**
-     * Listens as a {@link ResultsParserConsumer} and feeds a {@link PublisherShim}.
+     * The {@link Publisher} exposed by {@link NettySparqlClient} query methods
+     * (when no row/fragment parser is used)
      */
-
+    @Setter @Accessors(fluent = true)
+    private static class PublisherAdapter<T> extends CallbackPublisher<T> {
+        private @MonotonicNonNull Handler handler;
+        @Override protected void onRequest(long n) {
+            if (handler != null) handler.autoRead(true);
+        }
+        @Override protected void onBackpressure() {
+            if (handler != null) handler.autoRead(false);
+        }
+        @Override protected void onCancel() {
+            if (handler != null) handler.abort();
+        }
+    }
+    /**
+     * Listens as a {@link ResultsParserConsumer} and feeds a {@link PublisherAdapter}.
+     */
     @RequiredArgsConstructor
     private static class ResultsParserAdapter implements ResultsParserConsumer {
         private final List<String> expectedVars;
-        private final PublisherShim<String[]> publisher;
+        private final PublisherAdapter<String[]> publisher;
         private Projector projector = Projector.IDENTITY;
 
         @Override public void vars(List<String> vars) {
@@ -291,9 +209,9 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         @Override public void row(@Nullable String[] row) {
             publisher.feed(projector.project(row));
         }
-        @Override public void end() { publisher.end(); }
+        @Override public void end() { publisher.complete(null); }
         @Override public void onError(String message) {
-            publisher.error(new InvalidSparqlResultsException(message));
+            publisher.complete(new InvalidSparqlResultsException(message));
         }
     }
 
@@ -305,7 +223,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         private Channel channel;
         private Throwable failure;
         private ResultsParserAdapter resultsAdapter;
-        private PublisherShim<byte[]> fragmentPublisher;
+        private PublisherAdapter<byte[]> fragmentPublisher;
         private SafeCompletableAsyncTask<MediaType> mediaTypeTask;
         private ResultsParser resultsParser;
         private MediaType mediaType;
@@ -316,10 +234,12 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         }
 
         protected void responseEnded() {
-            if (resultsParser != null) resultsParser.end();
-            if (resultsAdapter != null) resultsAdapter.end();
-            if (fragmentPublisher != null) fragmentPublisher.end();
-            channel = null;
+            synchronized (this) {
+                if (resultsParser != null) resultsParser.end();
+                if (resultsAdapter != null) resultsAdapter.end();
+                if (fragmentPublisher != null) fragmentPublisher.complete(null);
+                channel = null;
+            }
             if (onResponseEnd != null) onResponseEnd.run();
         }
 
@@ -334,28 +254,29 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             this.channel = channel;
         }
 
-        public void setupResults(Channel channel, List<String> outVars,
-                                 PublisherShim<String[]> rowPublisher) {
+        public synchronized void setupResults(Channel channel, List<String> outVars,
+                                              PublisherAdapter<String[]> rowPublisher) {
             reset(channel);
             this.channel = channel;
             this.resultsAdapter = new ResultsParserAdapter(outVars, rowPublisher);
             rowPublisher.handler(this);
         }
 
-        public void setupGraph(Channel channel, SafeCompletableAsyncTask<MediaType> mediaTypeTask,
-                               PublisherShim<byte[]> fragmentPublisher) {
+        public synchronized void setupGraph(Channel channel,
+                                            SafeCompletableAsyncTask<MediaType> mediaTypeTask,
+                                            PublisherAdapter<byte[]> fragmentPublisher) {
             reset(channel);
             this.channel = channel;
             this.mediaTypeTask = mediaTypeTask;
             (this.fragmentPublisher = fragmentPublisher).handler(this);
         }
 
-        public void autoRead(boolean value) {
+        public synchronized void autoRead(boolean value) {
             assert channel != null : "autoRead() before setup()";
             channel.config().setAutoRead(value);
         }
 
-        public void abort() {
+        public synchronized void abort() {
             assert channel != null : "abort() before setup()";
             channel.close();
         }
@@ -421,10 +342,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            if (resultsAdapter != null) resultsAdapter.publisher.error(cause);
+            if (resultsAdapter != null) resultsAdapter.publisher.complete(cause);
             if (mediaTypeTask != null && !mediaTypeTask.isDone())
                 mediaTypeTask.complete(null);
-            if (fragmentPublisher != null) fragmentPublisher.error(cause);
+            if (fragmentPublisher != null) fragmentPublisher.complete(cause);
             failure = cause;
             ctx.close();
         }
