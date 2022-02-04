@@ -308,14 +308,14 @@ public class MergePublisher<T> implements Publisher<T> {
                 onComplete();
             } else {
                 log.trace("Source {} received error from upstream", id, t);
+                queue.sendComplete(t);
                 synchronized (MergePublisher.this) {
                     sources.remove(this);
                 }
                 synchronized (this) {
                     terminated = true;
                 }
-
-                queue.sendComplete(t).flush();
+                queue.flush();
             }
         }
 
