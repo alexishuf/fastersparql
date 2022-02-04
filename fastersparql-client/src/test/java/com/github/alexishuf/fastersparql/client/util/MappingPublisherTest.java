@@ -18,7 +18,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -30,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class MappingPublisherTest {
+    private static final int LARGE = FasterSparqlProperties.reactiveQueueCapacity() + 16;
+
     @AllArgsConstructor @Data @Accessors(fluent = true, chain = true)
     private static class Spec {
         int size;
@@ -65,12 +68,13 @@ class MappingPublisherTest {
     }
 
     static Stream<Arguments> noDropSpecs() {
+
         List<Arguments> list = new ArrayList<>();
         boolean drop = false;
-        for (Integer size : asList(0, 1, 2, 3, 4, 8, 16, 8192)) {
+        for (Integer size : asList(0, 1, 2, 3, 4, 8, 16, LARGE)) {
             list.add(arguments(new Spec(size, false, false, drop)));
         }
-        for (Integer size : asList(0, 1, 2, 8192)) {
+        for (Integer size : asList(0, 1, 2, LARGE)) {
             list.add(arguments(new Spec(size, true, false, drop)));
             list.add(arguments(new Spec(size, true, false, drop)));
             list.add(arguments(new Spec(size, true, true, drop)));
@@ -80,7 +84,7 @@ class MappingPublisherTest {
 
     static Stream<Arguments> fewNoDropSpecs() {
         List<Spec> list = new ArrayList<>();
-        for (Integer size : asList(0, 1, 8192)) {
+        for (Integer size : asList(0, 1, LARGE)) {
             list.add(new Spec(size, false, false, false));
             list.add(new Spec(size, true,  false, false));
             list.add(new Spec(size, false, true,  false));
@@ -93,37 +97,6 @@ class MappingPublisherTest {
         MappingPublisher<Integer, Integer> pub = spec.createPublisher(i -> i*-1);
         List<Integer> expected = spec.createExpected(i -> i * -1);
         assertEquals(expected, Flux.from(pub).collectList().block());
-    }
-
-    @ParameterizedTest @MethodSource("noDropSpecs")
-    void testConsumeAllFourTimes(Spec spec) {
-        MappingPublisher<Integer, Integer> pub = spec.createPublisher(i -> i*-1);
-        List<Integer> expected = spec.createExpected(i -> i * -1);
-        for (int i = 0; i < 4; i++)
-            assertEquals(expected, Flux.from(pub).collectList().block(), "i="+i);
-    }
-
-    @ParameterizedTest @MethodSource("noDropSpecs")
-    void testConsumeAllInParallel(Spec spec) throws InterruptedException {
-        MappingPublisher<Integer, Integer> pub = spec.createPublisher(i -> i*-1);
-        List<Integer> expected = spec.createExpected(i -> i * -1);
-        ExecutorService exec = Executors.newCachedThreadPool();
-        int threads = Runtime.getRuntime().availableProcessors() * 10;
-        boolean failing = false;
-        try {
-            List<Future<?>> futures = new ArrayList<>();
-            for (int i = 0; i < threads; i++) {
-                futures.add(exec.submit(() ->
-                        assertEquals(expected, Flux.from(pub).collectList().block())));
-            }
-            for (Future<?> f : futures)
-                f.get();
-        } catch (Throwable t) {
-            failing = true;
-        } finally {
-            assertTrue(failing || exec.shutdownNow().isEmpty());
-            assertTrue(failing || exec.awaitTermination(1, TimeUnit.SECONDS));
-        }
     }
 
     @ParameterizedTest @MethodSource("fewNoDropSpecs")
