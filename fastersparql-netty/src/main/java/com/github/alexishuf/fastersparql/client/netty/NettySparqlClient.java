@@ -242,7 +242,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         protected void responseEnded() {
             synchronized (this) {
                 if (resultsParser != null) resultsParser.end();
-                if (resultsAdapter != null) resultsAdapter.end();
+                else if (resultsAdapter != null) resultsAdapter.end();
                 if (fragmentPublisher != null) fragmentPublisher.complete(null);
                 channel = null;
             }
