@@ -306,16 +306,21 @@ class MergePublisherTest {
         return list.stream();
     }
 
+    private static final AtomicInteger testMethodCall = new AtomicInteger(1);
+
     @ParameterizedTest @MethodSource
     void test(List<Publisher<Integer>> sources, boolean asyncRequest, boolean ignoreUpstreamErrors,
               boolean eager, boolean subscribeEarly, @Nullable Class<? extends Throwable> error,
               Collection<Integer> expected) throws ExecutionException {
+        String baseName = "test-" + testMethodCall.getAndIncrement();
         for (int i = 0; i < N_ITERATIONS; i++) {
+            String iterationName = baseName+"[i="+i;
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int j = 0; j < N_THREADS; j++) {
+                String threadName = iterationName+", j="+j+"]";
                 tasks.add(Async.asyncThrowing(() -> {
-                    MergePublisher<Integer> merger =
-                            new MergePublisher<>(eager, asyncRequest, ignoreUpstreamErrors);
+                    MergePublisher<Integer> merger = new MergePublisher<>(threadName,
+                            eager, asyncRequest, ignoreUpstreamErrors);
                     IterableAdapter<Integer> subscriber = new IterableAdapter<>(merger, QUEUE);
                     if (subscribeEarly)
                         subscriber.start();

@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -86,7 +87,12 @@ class CallbackPublisherTest {
 
     @Setter @Accessors(fluent = true)
     private static class TestPublisher extends CallbackPublisher<Integer> implements Callback{
+        private static final AtomicInteger nextId = new AtomicInteger(1);
         private @MonotonicNonNull Producer producer;
+
+        public TestPublisher() {
+            super("TestPublisher-"+nextId.getAndIncrement());
+        }
 
         /* --- --- --- CallbackPublisher methods --- --- --- */
 

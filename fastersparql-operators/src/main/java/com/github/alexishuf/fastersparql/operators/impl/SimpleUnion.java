@@ -13,9 +13,11 @@ import lombok.Value;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Value
 public class SimpleUnion  implements Union {
+    private static final AtomicInteger nextId = new AtomicInteger(1);
     RowOperations rowOps;
     boolean parallel;
 
@@ -32,7 +34,10 @@ public class SimpleUnion  implements Union {
 
     @Override public <R> Results<R> checkedRun(List<Plan<R>> plans) {
         List<String> unionVars = PlanHelpers.varsUnion(plans);
-        MergePublisher<R> merge = parallel ? MergePublisher.async() : MergePublisher.eager();
+        String name = "SimpleUnion-"+nextId.getAndIncrement();
+        MergePublisher<R> merge = parallel ?
+                MergePublisher.async(name) :
+                MergePublisher.eager(name);
         Class<? super R> rCls = Object.class;
         for (Plan<R> p : plans) {
             Results<R> results = p.execute();

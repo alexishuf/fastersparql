@@ -7,6 +7,8 @@ import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * A single-subscriber {@link Publisher} that can be safely fed from a callback-based producer
  *
@@ -29,19 +31,26 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class CallbackPublisher<T> implements Publisher<T> {
     private static final Logger log = LoggerFactory.getLogger(CallbackPublisher.class);
+    private static final AtomicInteger nextAnonId = new AtomicInteger(1);
 
-    private final ReactiveEventQueue<T> queue = new ReactiveEventQueue<T>() {
-        @Override protected void pause() {
-            onBackpressure();
-        }
-        @Override protected void onRequest(long n) {
-            CallbackPublisher.this.onRequest(n);
-        }
-        @Override protected void onTerminate(Throwable cause, boolean cancel) {
-            if (cancel)
-                onCancel();
-        }
-    };
+    private final String name;
+    private final ReactiveEventQueue<T> queue;
+
+    public CallbackPublisher(@Nullable String name) {
+        this.name = name != null ? name : "CallbackPublisher-"+nextAnonId.getAndIncrement();
+        queue = new ReactiveEventQueue<T>(this.name) {
+            @Override protected void pause() {
+                onBackpressure();
+            }
+            @Override protected void onRequest(long n) {
+                CallbackPublisher.this.onRequest(n);
+            }
+            @Override protected void onTerminate(Throwable cause, boolean cancel) {
+                if (cancel)
+                    onCancel();
+            }
+        };
+    }
 
     /* --- --- --- methods called by the callback adapter --- --- --- */
 
@@ -55,6 +64,7 @@ public abstract class CallbackPublisher<T> implements Publisher<T> {
      * @param item the item to deliver to {@link Subscriber#onNext(Object)}.
      */
     public void feed(T item) {
+        log.trace("{}.feed({})", this, item);
         queue.send(item).flush();
     }
 
@@ -67,6 +77,10 @@ public abstract class CallbackPublisher<T> implements Publisher<T> {
     public void complete(@Nullable Throwable error) {
         log.trace("{}.complete({})", this, error);
         queue.sendComplete(error).flush();
+    }
+
+    @Override public String toString() {
+        return name;
     }
 
     /* --- --- --- Event methods to be implemented --- --- --- */

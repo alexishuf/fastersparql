@@ -36,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
@@ -183,6 +184,11 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
      */
     @Setter @Accessors(fluent = true)
     private static class PublisherAdapter<T> extends CallbackPublisher<T> {
+        private static final AtomicInteger nextId = new AtomicInteger(1);
+        public PublisherAdapter() {
+            super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement());
+        }
+
         private @MonotonicNonNull Handler handler;
         @Override protected void onRequest(long n) {
             if (handler != null) handler.autoRead(true);
@@ -272,13 +278,13 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         }
 
         public synchronized void autoRead(boolean value) {
-            assert channel != null : "autoRead() before setup()";
-            channel.config().setAutoRead(value);
+            if (channel != null)
+                channel.config().setAutoRead(value);
         }
 
         public synchronized void abort() {
-            assert channel != null : "abort() before setup()";
-            channel.close();
+            if (channel != null)
+                channel.close();
         }
 
         @Override

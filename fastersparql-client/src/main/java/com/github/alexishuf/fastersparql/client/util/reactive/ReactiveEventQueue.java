@@ -14,8 +14,9 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Slf4j @Accessors(fluent = true)
+@RequiredArgsConstructor @Slf4j @Accessors(fluent = true)
 abstract class ReactiveEventQueue<T> {
+    private final String name;
     private long requested;
     private @Getter @Setter @MonotonicNonNull Subscriber<? super T> subscriber;
     private @Getter boolean terminated;
@@ -42,13 +43,13 @@ abstract class ReactiveEventQueue<T> {
     }
 
     public ReactiveEventQueue<T> send(T o) {
-        log.trace("send({})", o);
+        log.trace("{}: send({})", name, o);
         queue.add(o);
         return this;
     }
 
     public ReactiveEventQueue<T> sendComplete(@Nullable Throwable error) {
-        log.trace("sendComplete({}{})", "", error);
+        log.trace("{}: sendComplete({})", name, error);
         queue.add(new TerminateMessage(this, error));
         return this;
     }
@@ -63,19 +64,19 @@ abstract class ReactiveEventQueue<T> {
     }
 
     protected void pause() {
-        log.trace("pause()");
+        log.trace("{}: pause()", name);
         /* no op */
     }
 
     protected void resume() {
-        log.trace("resume()");
+        log.trace("{}: resume()", name);
         /* no op */
     }
 
     protected abstract void onRequest(long n);
 
     protected void onTerminate(Throwable cause, boolean cancel) {
-        log.trace("onTerminate({}, {})", cause, cancel);
+        log.trace("{}: onTerminate({}, {})", name, cause, cancel);
         /* no op */
     }
 
@@ -90,7 +91,7 @@ abstract class ReactiveEventQueue<T> {
             subscriber = s;
             s.onSubscribe(new Subscription() {
                 @Override public void request(long n) {
-                    log.trace("request({})", n);
+                    log.trace("{}: request({})", name, n);
                     if (n < 0) {
                         sendComplete(new IllegalArgumentException("request("+n+"), expected > 0"));
                     } else if (!terminated) {

@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -11,6 +12,9 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static java.lang.Math.max;
 
 /**
  * A {@link Publisher} that emits items from multiple upstream {@link Publisher}s.
@@ -19,7 +23,14 @@ import java.util.List;
  */
 public class MergePublisher<T> implements Publisher<T> {
     private static final Logger log = LoggerFactory.getLogger(MergePublisher.class);
+    private static final AtomicInteger nextAnonId = new AtomicInteger(1);
+
+    private final String name;
     private final boolean eager, asyncRequest, ignoreUpstreamErrors;
+    private final ReactiveEventQueue<T> queue;
+    protected long undistributedRequests;
+    private boolean canComplete;
+    private final ArrayList<Source> sources = new ArrayList<>();
 
     /**
      * Create a new {@link MergePublisher}
@@ -43,39 +54,39 @@ public class MergePublisher<T> implements Publisher<T> {
      *                             any upstream error termination will cause the
      *                             {@link MergePublisher} to terminate with an error event as well.
      */
-    public MergePublisher(boolean eager, boolean asyncRequest, boolean ignoreUpstreamErrors) {
+    public MergePublisher(@Nullable String name, boolean eager, boolean asyncRequest,
+                          boolean ignoreUpstreamErrors) {
+        this.name = name != null ? name : "MergePublisher-"+nextAnonId.getAndIncrement();
         this.eager = eager;
         this.asyncRequest = asyncRequest;
         this.ignoreUpstreamErrors = ignoreUpstreamErrors;
-    }
-
-    public static <U> MergePublisher<U> async() {
-        return new MergePublisher<>(false, true, false);
-    }
-
-    public static <U> MergePublisher<U> eager() {
-        return new MergePublisher<>(true, false, false);
-    }
-
-    private final ReactiveEventQueue<T> queue = new ReactiveEventQueue<T>() {
-        @Override protected void onRequest(long n) {
-            distributeRequests(n);
-            MergePublisher.this.onRequest(n);
-        }
-        @Override protected void onTerminate(Throwable cause, boolean cancel) {
-            List<Source> copy;
-            synchronized (MergePublisher.this) {
-                copy = new ArrayList<>(sources);
-                sources.clear();
+        this.queue = new ReactiveEventQueue<T>(this.name) {
+            @Override protected void onRequest(long n) {
+                distributeRequests(n);
+                MergePublisher.this.onRequest(n);
             }
-            for (Source source : copy)
-                source.cancel();
-            MergePublisher.this.onTerminate(cause, cancel);
-        }
-    };
-    protected long undistributedRequests;
-    private boolean canComplete;
-    private final ArrayList<Source> sources = new ArrayList<>();
+            @Override protected void onTerminate(Throwable cause, boolean cancel) {
+                List<Source> copy;
+                synchronized (MergePublisher.this) {
+                    copy = new ArrayList<>(sources);
+                    sources.clear();
+                }
+                for (Source source : copy)
+                    source.cancel();
+                MergePublisher.this.onTerminate(cause, cancel);
+            }
+        };
+    }
+
+    public static <U> MergePublisher<U> async(@Nullable String name) {
+        return new MergePublisher<>(name, false, true, false);
+    }
+
+    public static <U> MergePublisher<U> eager(@Nullable String name) {
+        return new MergePublisher<>(name, true, false, false);
+    }
+
+
 
     /**
      * Adds a {@link Publisher} for concurrent consumption and delivery of items to
@@ -144,6 +155,10 @@ public class MergePublisher<T> implements Publisher<T> {
         queue.subscribe(s);
     }
 
+    @Override public String toString() {
+        return name;
+    }
+
     /* --- --- --- implementation details --- --- --- */
 
     protected void distributeRequests(long additionalRequest) {
@@ -153,8 +168,8 @@ public class MergePublisher<T> implements Publisher<T> {
         long rejected = 0;
         do {
             synchronized (this) {
-                log.trace("distributeRequests({}), undistributed={}, rejected={}",
-                          additionalRequest, undistributedRequests, rejected);
+                log.trace("{}.distributeRequests({}), undistributed={}, rejected={}",
+                          this, additionalRequest, undistributedRequests, rejected);
                 undistributedRequests += additionalRequest + rejected;
                 if (queue.terminated() || undistributedRequests == 0 || sources.isEmpty())
                     return;
@@ -171,14 +186,15 @@ public class MergePublisher<T> implements Publisher<T> {
             }
             rejected = 0;
             for (int i = 0, size = copy.size(); i < size; i++) {
-                if (!copy.get(i).tryRequest(chunks[i]))
-                    rejected += chunks[i];
+                long chunk = eager ? chunks[0] : chunks[i];
+                if (!copy.get(i).tryRequest(chunk))
+                    rejected += chunk;
             }
         } while (rejected > 0);
     }
 
     protected synchronized long takeRequests() {
-        long chunk = eager ? undistributedRequests : undistributedRequests / sources.size();
+        long chunk = eager ? undistributedRequests : undistributedRequests/max(1, sources.size());
         if (chunk == 0)
             chunk = undistributedRequests;
         undistributedRequests -= chunk;
@@ -196,6 +212,10 @@ public class MergePublisher<T> implements Publisher<T> {
             this.publisher = publisher;
         }
 
+        @Override public String toString() {
+            return name+"[source="+id+"]";
+        }
+
         @Override public synchronized void onSubscribe(Subscription s) {
             assert upstream == null;
             upstream = s;
@@ -208,7 +228,7 @@ public class MergePublisher<T> implements Publisher<T> {
             long unsatisfied = 0;
             synchronized (this) {
                 if (!terminated) {
-                    log.trace("Source {} cancel()ed", id);
+                    log.trace("{} cancel()ed", this);
                     terminated = true;
                     call = upstream != null && requested == 0;
                     unsatisfied = requested + futureRequest;
@@ -227,7 +247,7 @@ public class MergePublisher<T> implements Publisher<T> {
          * @return true iff request was or will be called. false if terminated or not yet subscribed
          */
         public boolean tryRequest(long n) {
-            log.trace("Source {}: tryRequest({})", id, n);
+            log.trace("{}: tryRequest({})", this, n);
             assert n >= 0 : "negative tryRequest()";
             if (n <= 0)
                 return true;
@@ -242,8 +262,8 @@ public class MergePublisher<T> implements Publisher<T> {
                     publisher.subscribe(this);
                 }
                 if (asyncRequest) {
-                    log.trace("Source {}: tryRequest({}) terminated={}, requestThreadAlive={}",
-                              id, n, terminated, requestThreadAlive);
+                    log.trace("{}: tryRequest({}) terminated={}, requestThreadAlive={}",
+                              this, n, terminated, requestThreadAlive);
                     call = false;
                     futureRequest += n;
                     if (!requestThreadAlive) {
@@ -254,7 +274,7 @@ public class MergePublisher<T> implements Publisher<T> {
                     call = requested == 0;
                     if (call) requested = n;
                     else      futureRequest += n;
-                    log.trace("Source {}: tryRequest({}) call={}", id, n, call);
+                    log.trace("{}: tryRequest({}) call={}", this, n, call);
                 }
             }
             if (call)
@@ -268,8 +288,8 @@ public class MergePublisher<T> implements Publisher<T> {
             while (true) {
                 long n;
                 synchronized (this) {
-                    log.trace("requestThread() for Source {}: requested={}, futureRequest={}, terminated={}",
-                              id, requested, futureRequest, terminated);
+                    log.trace("{} requestThread(): requested={}, futureRequest={}, terminated={}",
+                              this, requested, futureRequest, terminated);
                     requested += n = futureRequest;
                     futureRequest = 0;
                     if (n == 0 || terminated) {
@@ -282,11 +302,11 @@ public class MergePublisher<T> implements Publisher<T> {
         }
 
         @Override public void onNext(T item) {
-            log.trace("Source {}: onNext({})", id, item);
+            log.trace("{}: onNext({})", this, item);
             assert upstream != null && subscribed;
             long requestSize;
             synchronized (this) {
-                requested = Math.max(0, requested - 1 + (requestSize = futureRequest));
+                requested = max(0, requested - 1 + (requestSize = futureRequest));
                 futureRequest = 0;
                 if (requested == 0 && requestSize == 0 && !terminated)
                     requested = requestSize = takeRequests();
@@ -307,7 +327,7 @@ public class MergePublisher<T> implements Publisher<T> {
                 log.debug("Treating {} from {} as a normal complete", t, publisher);
                 onComplete();
             } else {
-                log.trace("Source {} received error from upstream", id, t);
+                log.trace("{} received error from upstream", this, t);
                 queue.sendComplete(t);
                 synchronized (MergePublisher.this) {
                     sources.remove(this);
@@ -332,10 +352,10 @@ public class MergePublisher<T> implements Publisher<T> {
                 }
             }
             if (complete) {
-                log.trace("Source {} completed causing MergePublisher completion", id);
+                log.trace("{} completed causing MergePublisher completion", this);
                 queue.sendComplete(null).flush();
             } else if (unsatisfied > 0) {
-                log.trace("Source {} completed with {} unsatisfied requests", id, unsatisfied);
+                log.trace("{} completed with {} unsatisfied requests", this, unsatisfied);
                 distributeRequests(unsatisfied);
             }
         }
