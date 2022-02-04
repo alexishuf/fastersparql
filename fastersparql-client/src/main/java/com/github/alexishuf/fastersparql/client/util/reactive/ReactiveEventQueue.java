@@ -23,7 +23,7 @@ abstract class ReactiveEventQueue<T> {
     private final AtomicInteger flushing = new AtomicInteger();
     private final Queue<Object> queue = new ConcurrentLinkedDeque<>();
 
-    public synchronized ReactiveEventQueue<T> request(long n) {
+    public ReactiveEventQueue<T> request(long n) {
         synchronized (this) {
             if (!terminated) {
                 if (n < 0) {
@@ -53,10 +53,12 @@ abstract class ReactiveEventQueue<T> {
         return this;
     }
 
-    public synchronized void cancel() {
-        terminated = true;
-        requested = 0;
-        queue.clear();
+    public void cancel() {
+        synchronized (this) {
+            terminated = true;
+            requested = 0;
+            queue.clear();
+        }
         onTerminate(null, true);
     }
 
@@ -129,6 +131,7 @@ abstract class ReactiveEventQueue<T> {
                             log.error("{}.onNext({}) threw {}. Treating as cancelled",
                                       subscriber, obj, t, t);
                             terminated = true;
+                            onTerminate(null, true);
                             queue.clear();
                         }
                     }
