@@ -16,6 +16,8 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.ssl.SslContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.util.function.Supplier;
@@ -25,6 +27,7 @@ import static com.github.alexishuf.fastersparql.client.netty.http.UnPooledNettyH
 
 public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
         implements NettyHttpClient<H> {
+    private static final Logger log = LoggerFactory.getLogger(PooledNettyHttpClient.class);
     private static final String CONNECTION = "keep-alive";
 
     private final EventLoopGroupHolder groupHolder;
@@ -43,7 +46,12 @@ public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
             this.host = address.getHostString();
             boolean lifo = !FasterSparqlNettyProperties.poolFIFO();
             this.pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
+                @Override public void channelAcquired(Channel ch) {
+                    log.trace("channelAcquired({})", ch);
+                }
+
                 @Override public void channelCreated(Channel ch) {
+                    log.trace("channelCreated({})", ch);
                     activeChannels.add(ch);
                     setupPipeline(ch, sslContext, hFactory).onResponseEnd(() -> release(ch));
                 }

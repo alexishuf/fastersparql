@@ -28,7 +28,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public interface NettyHttpClient<H extends ReusableHttpClientInboundHandler> extends AutoCloseable {
     @FunctionalInterface
     interface Setup<H2 extends ReusableHttpClientInboundHandler> {
-        void setup(SocketChannel ch, HttpRequest request, H2 handler) throws Exception ;
+        void setup(SocketChannel ch, HttpRequest request, H2 handler);
     }
 
     /**

@@ -107,31 +107,44 @@ public class SparqlClientTest {
         return expanded.stream().map(Arguments::arguments);
     }
 
-    private void testResults(ResultsData data, String clientTag) throws ExecutionException {
-        SparqlClientFactory factory = FasterSparql.factory(clientTag);
-        for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
-            try (SparqlClient<String[], byte[]> client = factory.createFor(ep)) {
-                data.assertExpected(client.query(data.sparql(), data.config()));
-                // a second query with the same client should work
-                data.assertExpected(client.query(data.sparql(), data.config()));
-            }
-        }
-
+    private void testResults(ResultsData d, String clientTag) throws ExecutionException {
+        int threads = Runtime.getRuntime().availableProcessors() + 1;
         List<AsyncTask<?>> futures = new ArrayList<>();
-        ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
-        List<RowParser<?>> rowParsers = asList(StringListRowParser.INSTANCE,
-                CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
-        for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
-            for (RowParser<?> rowParser : rowParsers) {
-                futures.add(async(() -> {
-                    try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, bytesP)) {
-                        data.assertExpected(client.query(data.sparql(), data.config()));
-                    }
-                }));
+        SparqlClientFactory factory = FasterSparql.factory(clientTag);
+        List<SparqlClient<?, ?>> clients = new ArrayList<>();
+        try {
+            for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
+                SparqlClient<String[], byte[]> client = factory.createFor(ep);
+                clients.add(client);
+                d.assertExpected(client.query(d.sparql(), d.config()));
+                // a second query should work
+                d.assertExpected(client.query(d.sparql(), d.config()));
             }
+            // concurrent queries using no row parser
+            for (SparqlClient<?, ?> client : clients) {
+                for (int i = 0; i < threads; i++)
+                    futures.add(async(() -> d.assertExpected(client.query(d.sparql(), d.config()))));
+            }
+
+            // concurrent queries for each (endpoint, rowParser) pair
+            ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
+            List<RowParser<?>> rowParsers = asList(StringListRowParser.INSTANCE,
+                    CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
+            for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
+                for (RowParser<?> rowParser : rowParsers) {
+                    futures.add(async(() -> {
+                        try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, bytesP)) {
+                            d.assertExpected(client.query(d.sparql(), d.config()));
+                        }
+                    }));
+                }
+            }
+            // check all concurrent queries
+            for (AsyncTask<?> future : futures)
+                future.get();
+        } finally {
+            for (SparqlClient<?, ?> client : clients) client.close();
         }
-        for (AsyncTask<?> future : futures)
-            future.get();
     }
 
     @ParameterizedTest @MethodSource("resultsData")

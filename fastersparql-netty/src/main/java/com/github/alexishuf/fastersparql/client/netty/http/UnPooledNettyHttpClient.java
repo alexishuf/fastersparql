@@ -14,6 +14,7 @@ import io.netty.handler.ssl.SslContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
@@ -78,6 +79,19 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
         headers.set(HttpHeaderNames.HOST, host);
         headers.set(HttpHeaderNames.CONNECTION, connection);
         @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");
+        EventLoop loop = ch.eventLoop();
+        if (setup == null)
+            ch.writeAndFlush(req);
+        else if (handler == null)
+            loop.schedule(() -> setupAndSend(ch, setup, req), 1, TimeUnit.MICROSECONDS);
+        else
+            loop.execute(() -> setupAndSend(ch, setup, req));
+    }
+
+    private static <T extends ReusableHttpClientInboundHandler>
+    void setupAndSend(SocketChannel ch, @Nullable Setup<T> setup, HttpRequest req)  {
+        @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");
+        assert handler != null;
         if (setup != null)
             setup.setup(ch, req, handler);
         ch.writeAndFlush(req);

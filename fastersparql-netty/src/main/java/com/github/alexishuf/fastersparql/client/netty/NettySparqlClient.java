@@ -22,11 +22,10 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.EventLoop;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
@@ -37,18 +36,24 @@ import java.nio.charset.Charset;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     private static final Logger log = LoggerFactory.getLogger(NettySparqlClient.class);
+    private final AtomicLong nextHandler = new AtomicLong(1);
     private final SparqlEndpoint endpoint;
     private final AsyncTask<NettyHttpClient<Handler>> netty;
     private final RowParser<R> rowParser;
     private final FragmentParser<F> fragParser;
+    private final Supplier<Handler> handlerFactory =
+            () -> new Handler(this +"-"+nextHandler.getAndIncrement());
 
 
     public NettySparqlClient(SparqlEndpoint endpoint, RowParser<R> rowParser,
@@ -58,13 +63,17 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         if (fragmentParser == null) throw new NullPointerException("fragmentParser is null");
         this.endpoint = withoutUnsupportedResultFormats(endpoint, ResultsParserRegistry.get());
         this.netty = endpoint.resolvedHost().thenApplyThrowing(a ->
-                new NettyHttpClientBuilder().build(endpoint.protocol(), a, Handler::new));
+                new NettyHttpClientBuilder().build(endpoint.protocol(), a, handlerFactory));
         this.rowParser = rowParser;
         this.fragParser = fragmentParser;
     }
 
     @Override public SparqlEndpoint endpoint() {
         return endpoint;
+    }
+
+    @Override public String toString() {
+        return String.format("NettySparqlClient[%s]@%x", endpoint.uri(), identityHashCode(this));
     }
 
     @Override
@@ -182,22 +191,32 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
      * The {@link Publisher} exposed by {@link NettySparqlClient} query methods
      * (when no row/fragment parser is used)
      */
-    @Setter @Accessors(fluent = true)
     private static class PublisherAdapter<T> extends CallbackPublisher<T> {
+        private static final  Logger log = LoggerFactory.getLogger(PublisherAdapter.class);
         private static final AtomicInteger nextId = new AtomicInteger(1);
+        private boolean pendingAutoRead, pendingCancel;
+        private @MonotonicNonNull Handler handler;
         public PublisherAdapter() {
             super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement());
         }
-
-        private @MonotonicNonNull Handler handler;
+        public void handler(Handler handler) {
+            this.handler = handler;
+            if (pendingCancel)
+                this.handler.abort();
+            else if (pendingAutoRead)
+                this.handler.autoRead(true);
+        }
         @Override protected void onRequest(long n) {
+            log.trace("{}.onRequest({}), handler={}", this, n, handler);
             if (handler != null) handler.autoRead(true);
+            else                 pendingAutoRead = true;
         }
         @Override protected void onBackpressure() {
             if (handler != null) handler.autoRead(false);
         }
         @Override protected void onCancel() {
             if (handler != null) handler.abort();
+            else                 pendingCancel = true;
         }
     }
     /**
@@ -225,8 +244,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     private static class Handler extends SimpleChannelInboundHandler<HttpObject>
             implements ReusableHttpClientInboundHandler {
         private static final Logger log = LoggerFactory.getLogger(Handler.class);
+        private final String name;
+        private int cycle;
         private Runnable onResponseEnd;
-        private Channel channel;
+        private @MonotonicNonNull Channel channel;
         private Throwable failure;
         private ResultsParserAdapter resultsAdapter;
         private PublisherAdapter<byte[]> fragmentPublisher;
@@ -235,21 +256,26 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         private MediaType mediaType;
         private Charset charset = UTF_8;
 
-        @Override public void onResponseEnd(Runnable runnable) {
-            this.onResponseEnd = runnable;
-        }
+        public Handler(String name) { this.name = name; }
+
+        @Override public String toString() { return name; }
+
+        @Override public void onResponseEnd(Runnable runnable) { this.onResponseEnd = runnable; }
 
         protected void responseEnded() {
-            synchronized (this) {
-                if (resultsParser != null) resultsParser.end();
-                else if (resultsAdapter != null) resultsAdapter.end();
-                if (fragmentPublisher != null) fragmentPublisher.complete(null);
-                channel = null;
-            }
+            assert channel != null : "responseEnded() channelRegistered()";
+            assert channel.eventLoop().inEventLoop() : "responseEnded() not run in eventLoop()";
+            if (resultsParser != null) resultsParser.end();
+            else if (resultsAdapter != null) resultsAdapter.end();
+            if (fragmentPublisher != null) fragmentPublisher.complete(null);
+            ++cycle; //abort/autoRead() scheduled no longer apply
+            channel.config().setAutoRead(true);
             if (onResponseEnd != null) onResponseEnd.run();
         }
 
         private void reset(Channel channel) {
+            assert channel != null : "reset() before channelRegistered()";
+            assert channel.eventLoop().inEventLoop(): "reset() not running in event loop";
             this.failure = null;
             this.mediaType = null;
             this.charset = null;
@@ -257,34 +283,51 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             this.mediaTypeTask = null;
             this.resultsParser = null;
             this.resultsAdapter = null;
+            assert this.channel == null || this.channel == channel;
             this.channel = channel;
         }
 
-        public synchronized void setupResults(Channel channel, List<String> outVars,
+        public void setupResults(Channel channel, List<String> outVars,
                                               PublisherAdapter<String[]> rowPublisher) {
             reset(channel);
-            this.channel = channel;
             this.resultsAdapter = new ResultsParserAdapter(outVars, rowPublisher);
             rowPublisher.handler(this);
         }
 
-        public synchronized void setupGraph(Channel channel,
+        public void setupGraph(Channel channel,
                                             SafeCompletableAsyncTask<MediaType> mediaTypeTask,
                                             PublisherAdapter<byte[]> fragmentPublisher) {
             reset(channel);
-            this.channel = channel;
             this.mediaTypeTask = mediaTypeTask;
             (this.fragmentPublisher = fragmentPublisher).handler(this);
         }
 
-        public synchronized void autoRead(boolean value) {
-            if (channel != null)
+        public void autoRead(boolean value) {
+            assert channel != null;
+            EventLoop el = channel.eventLoop();
+            if (el.inEventLoop()) {
                 channel.config().setAutoRead(value);
+            } else {
+                int callCycle = this.cycle;
+                el.execute(() -> {
+                    if (cycle == callCycle)
+                        channel.config().setAutoRead(value);
+                });
+            }
         }
 
-        public synchronized void abort() {
-            if (channel != null)
+        public void abort() {
+            assert channel != null;
+            EventLoop el = channel.eventLoop();
+            if (el.inEventLoop()) {
                 channel.close();
+            } else {
+                int callCycle = this.cycle;
+                el.execute(() -> {
+                    if (cycle == callCycle)
+                        channel.close();
+                });
+            }
         }
 
         @Override
@@ -324,15 +367,20 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                 assert fragmentPublisher != null : "no publisher set";
                 readFragments(msg);
             }
-            if (msg instanceof LastHttpContent)
+            if (msg instanceof LastHttpContent) {
+                log.trace("{}.channelRead0: LastHttpContent", this);
                 responseEnded();
+            }
         }
 
         private void readRows(HttpObject msg) throws NoParserException {
             if (msg instanceof HttpResponse)
                 resultsParser = ResultsParserRegistry.get().createFor(mediaType, resultsAdapter);
-            if (msg instanceof HttpContent)
-                resultsParser.feed(((HttpContent) msg).content().toString(charset));
+            if (msg instanceof HttpContent) {
+                String string = ((HttpContent) msg).content().toString(charset);
+                log.trace("{} << {}", this, string);
+                resultsParser.feed(string);
+            }
         }
 
         private void readFragments(HttpObject msg) {
@@ -344,10 +392,19 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             }
         }
 
-        @Override public void channelInactive(ChannelHandlerContext ctx) { responseEnded(); }
+        @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+            channel = ctx.channel();
+            super.channelRegistered(ctx);
+        }
+
+        @Override public void channelInactive(ChannelHandlerContext ctx) {
+            log.trace("{}.channelInactive", this);
+            responseEnded();
+        }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            log.debug("{}.exceptionCaught({})", this, cause);
             if (resultsAdapter != null) resultsAdapter.publisher.complete(cause);
             if (mediaTypeTask != null && !mediaTypeTask.isDone())
                 mediaTypeTask.complete(null);
