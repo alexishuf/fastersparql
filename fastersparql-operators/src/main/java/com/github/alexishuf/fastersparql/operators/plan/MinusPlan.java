@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.Minus;
 import lombok.Value;
 import lombok.experimental.Accessors;
@@ -17,8 +18,12 @@ public class MinusPlan<R> implements Plan<R> {
         return op.run(left, right);
     }
 
-    @Override public List<String> vars() {
-        return PlanHelpers.varsUnion(left, right);
+    @Override public List<String> publicVars() {
+        return VarUtils.union(left.publicVars(), right.publicVars());
+    }
+
+    @Override public List<String> allVars() {
+        return VarUtils.union(left.allVars(), right.allVars());
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

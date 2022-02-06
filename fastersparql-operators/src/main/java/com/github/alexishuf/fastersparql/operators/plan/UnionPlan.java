@@ -17,8 +17,12 @@ public class UnionPlan<R> implements Plan<R> {
         return op.run(inputs);
     }
 
-    @Override public List<String> vars() {
-        return PlanHelpers.varsUnion(inputs);
+    @Override public List<String> publicVars() {
+        return PlanHelpers.publicVarsUnion(inputs);
+    }
+
+    @Override public List<String> allVars() {
+        return PlanHelpers.allVarsUnion(inputs);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

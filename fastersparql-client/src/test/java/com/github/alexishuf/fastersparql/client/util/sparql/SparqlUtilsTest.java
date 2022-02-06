@@ -347,6 +347,63 @@ class SparqlUtilsTest {
         assertEquals(expected, SparqlUtils.publicVars(sparql));
     }
 
+    static Stream<Arguments> testAllVars() {
+        List<List<String>> base = asList(
+                // simple triple patterns
+                asList("?s ?p ?o", "s,p,o"),
+                asList("?s <p> ?o", "s,o"),
+                asList("?s <?p> ?o", "s,o"),
+                asList("?s :p '?o'", "s"),
+                asList("?s :p '''?o'''", "s"),
+                asList("?s :p \"?o\"", "s"),
+                asList("?s :p \"\"\"?o\"\"\"", "s"),
+                asList("_:s :p ?o", "o"),
+
+                // no variables
+                asList("<s> :p \"?o\"", ""),
+                asList("<s> :p \"\"\"?o\"\"\"", ""),
+                asList("<s> :p '?o'", ""),
+                asList("<s> :p '''?o'''", ""),
+                asList("_:s :p '$o'", ""),
+
+                // variables in second triple
+                asList("_:s <p> \"?s\\\"$x\", ?y; :q $z", "y,z"),
+                asList("_:s <p> \"\"\"?s\"$x\"\"\", ?y; :q $z", "y,z"),
+                asList("_:s <p> '?s\\'$x', ?y; :q $z", "y,z"),
+                asList("_:s <p> '''?s'$x''', ?y; :q $z", "y,z"),
+
+                // variables in filter clause
+                asList("_s :p ?age FILTER(?age > ?limit)", "age,limit"),
+                asList("_s :p ?age FILTER EXISTS {[] :q ?age FILTER (?age > ?limit)}", "age,limit")
+        );
+        List<String> prefixes = asList(
+                "",
+                "PREFIX : <http://example.org/?not=$aVar>\n",
+                "# not ?a $var ?comment\n",
+                "SELECT ?x WHERE {",
+                "ASK {",
+                "PREFIX : <http://example.org/?not=$aVar>\n# not ?a $var ?comment\nASK {"
+        );
+        return prefixes.stream().flatMap(prefix -> base.stream().map(b -> {
+            List<String> expected = b.get(1).isEmpty() ? emptyList()
+                                  : asList(b.get(1).split(","));
+            String effPrefix = prefix;
+            if (prefix.equals("SELECT ?x WHERE {")) {
+                if (expected.isEmpty())
+                    effPrefix = "SELECT * WHERE {";
+                else
+                    effPrefix = effPrefix.replace("?x", expected.get(0));
+            }
+            String sparql = effPrefix + b.get(0) + (effPrefix.isEmpty() ? "" : "}");
+            return arguments(sparql, expected);
+        }));
+    }
+
+    @ParameterizedTest @MethodSource
+    void testAllVars(String sparql, List<String> expected) {
+        assertEquals(expected, SparqlUtils.allVars(sparql));
+    }
+
     static Stream<Arguments> testReadProjection() {
         List<List<String>> base = asList(
                 // single var

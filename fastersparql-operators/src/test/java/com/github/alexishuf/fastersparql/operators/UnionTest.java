@@ -109,14 +109,11 @@ public class UnionTest {
             List<List<String>> rows = inputs.get(i);
             List<String> vars = varsLists.get(i);
             inPlans.add(new Plan<List<String>>() {
-                @Override public List<String> vars() {
-                    return vars;
-                }
-
+                @Override public List<String> publicVars() { return vars; }
+                @Override public List<String> allVars() { return vars; }
                 @Override public Results<List<String>> execute() {
                     return new Results<>(vars, List.class, new IterablePublisher<>(rows));
                 }
-
                 @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {
                     throw new UnsupportedOperationException();
                 }

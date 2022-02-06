@@ -17,7 +17,18 @@ public interface Plan<R> {
      * @return a non-null (but possibly empty) list of non-null and non-empty variable names
      *         (i.e., no leading {@code ?} or {@code $}).
      */
-    List<String> vars();
+    List<String> publicVars();
+
+    /**
+     * All vars used within this plan, not only those exposed in results.
+     *
+     * This is the list of variables that should be used with {@link Plan#bind(Map)} and related
+     * methods.
+     *
+     * @return a non-null (possibly empty) list of non-null and non-empty variable names
+     *         (i.e., no preceding {@code ?} or {@code $}).
+     */
+    List<String> allVars();
 
     /**
      * Create a {@link Results} from this plan.

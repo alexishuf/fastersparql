@@ -18,8 +18,12 @@ public class SlicePlan<R> implements Plan<R> {
         return op.run(input, offset, limit);
     }
 
-    @Override public List<String> vars() {
-        return input.vars();
+    @Override public List<String> publicVars() {
+        return input.publicVars();
+    }
+
+    @Override public List<String> allVars() {
+        return input.allVars();
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

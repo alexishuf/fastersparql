@@ -70,6 +70,22 @@ public class SparqlUtils {
     public static List<@MinLen(1) String> publicVars(CharSequence sparql) {
         List<String> list = findProjection(sparql);
         if (list != null) return list;
+        return allVars(sparql);
+    }
+
+    /**
+     * Get a list of all variables used within the given sparql query, including those excluded
+     * by a projection clause (non-* SELECT or ASK).
+     *
+     * If the given sparql is a whole SPARQL query with a projection clause, the projected
+     * variables will appear first in the results, followed by internal variables excluded
+     * by the projection.
+     *
+     * @param sparql a SPARQL query, a sparql fragment or a SPARQL expression.
+     * @return a non-null (bu possibly empty) list of non-null, distinct variable names
+     *         (i.e., not followed by {@code ?} or {@code $}).
+     */
+    public static List<@MinLen(1) String> allVars(CharSequence sparql) {
         LinkedHashSet<String> set = new LinkedHashSet<>();
         for (int consumed = 0, len = sparql.length(), end; consumed < len; consumed = end) {
             int begin = nextVar(sparql, consumed, len);
@@ -77,9 +93,9 @@ public class SparqlUtils {
             if (end > begin+1)
                 set.add(sparql.subSequence(begin+1, end).toString());
         }
-        list = new ArrayList<>(set);
-        assert list.stream().noneMatch(String::isEmpty) : "empty var names, fix me!";
-        return list.isEmpty() ? emptyList() : list;
+        if (set.isEmpty()) return emptyList();
+        assert set.stream().noneMatch(String::isEmpty) : "empty var names, fix me!";
+        return new ArrayList<>(set);
     }
 
     /* --- --- --- private helper methods --- --- --- */

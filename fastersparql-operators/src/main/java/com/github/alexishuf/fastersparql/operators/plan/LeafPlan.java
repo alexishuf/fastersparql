@@ -19,7 +19,12 @@ public class LeafPlan<R> implements Plan<R> {
     private final CharSequence query;
     private final SparqlClient<R, ?> client;
     private final SparqlConfiguration configuration;
-    private @MonotonicNonNull List<String> vars;
+    private @MonotonicNonNull List<String> publicVars;
+    private @MonotonicNonNull List<String> allVars;
+
+    public LeafPlan(CharSequence query, SparqlClient<R, ?> client) {
+        this(query, client, SparqlConfiguration.EMPTY);
+    }
 
     public LeafPlan(CharSequence query, SparqlClient<R, ?> client,
                     SparqlConfiguration configuration) {
@@ -34,8 +39,12 @@ public class LeafPlan<R> implements Plan<R> {
         this.configuration = config;
     }
 
-    @Override public List<String> vars() {
-        return vars == null ? (vars = SparqlUtils.publicVars(query)) : vars;
+    @Override public List<String> publicVars() {
+        return publicVars == null ? (publicVars = SparqlUtils.publicVars(query)) : publicVars;
+    }
+
+    @Override public List<String> allVars() {
+        return allVars == null ? (allVars = SparqlUtils.allVars(query)) : allVars;
     }
 
     @Override public Results<R> execute() {

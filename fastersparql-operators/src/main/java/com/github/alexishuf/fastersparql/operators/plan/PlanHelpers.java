@@ -9,18 +9,15 @@ import java.util.Map;
 
 public class PlanHelpers {
 
-    public static <R> List<String> varsUnion(Plan<R> left, Plan<R> right) {
-        List<String> lv = left.vars(), rv = right.vars();
-        int sum = lv.size() + rv.size();
-        LinkedHashSet<String> set = new LinkedHashSet<>(sum + (sum/2 + 1));
-        set.addAll(lv);
-        set.addAll(rv);
+    public static <R> List<String> publicVarsUnion(List<Plan<R>> plans) {
+        LinkedHashSet<String> set = new LinkedHashSet<>(16 * plans.size());
+        for (Plan<R> plan : plans) set.addAll(plan.publicVars());
         return new ArrayList<>(set);
     }
 
-    public static <R> List<String> varsUnion(List<Plan<R>> plans) {
+    public static <R> List<String> allVarsUnion(List<Plan<R>> plans) {
         LinkedHashSet<String> set = new LinkedHashSet<>(16 * plans.size());
-        for (Plan<R> plan : plans) set.addAll(plan.vars());
+        for (Plan<R> plan : plans) set.addAll(plan.allVars());
         return new ArrayList<>(set);
     }
 

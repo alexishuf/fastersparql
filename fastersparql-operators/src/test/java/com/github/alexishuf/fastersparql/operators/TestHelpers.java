@@ -17,9 +17,13 @@ public class TestHelpers {
 
     public static Plan<List<String>> asPlan(Collection<List<String>> collection) {
         return new Plan<List<String>>() {
-            @Override public List<String> vars() {
+            @Override public List<String> publicVars() {
                 int width = collection.isEmpty() ? 0 : collection.iterator().next().size();
                 return generateVars(width);
+            }
+
+            @Override public List<String> allVars() {
+                return publicVars();
             }
 
             @Override public Results<List<String>> execute() {
