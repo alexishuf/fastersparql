@@ -199,22 +199,22 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         public PublisherAdapter() {
             super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement());
         }
-        public void handler(Handler handler) {
+        public synchronized void handler(Handler handler) {
             this.handler = handler;
             if (pendingCancel)
                 this.handler.abort();
             else if (pendingAutoRead)
                 this.handler.autoRead(true);
         }
-        @Override protected void onRequest(long n) {
+        @Override protected synchronized void onRequest(long n) {
             log.trace("{}.onRequest({}), handler={}", this, n, handler);
             if (handler != null) handler.autoRead(true);
             else                 pendingAutoRead = true;
         }
-        @Override protected void onBackpressure() {
+        @Override protected synchronized void onBackpressure() {
             if (handler != null) handler.autoRead(false);
         }
-        @Override protected void onCancel() {
+        @Override protected synchronized void onCancel() {
             if (handler != null) handler.abort();
             else                 pendingCancel = true;
         }
