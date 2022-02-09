@@ -75,7 +75,7 @@ abstract class ReactiveEventQueue<T> {
         if (done)
             onTerminate(null, true);
         else
-            log.debug("{}.cancel(): already terminated, skipped onTerminate(null, true)", this);
+            log.trace("{}.cancel(): already terminated, skipped onTerminate(null, true)", this);
     }
 
     protected void pause() {
