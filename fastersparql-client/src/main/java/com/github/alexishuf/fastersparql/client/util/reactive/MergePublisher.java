@@ -198,19 +198,19 @@ public class MergePublisher<T> implements Publisher<T> {
 
     protected void distributeRequests(long additionalRequests) {
         ArrayList<Source> copy = new ArrayList<>(sources.size());
-        long taken, chunk, distributed, redistribute = 0, lastGen = sourcesGen-1;
+        long taken, chunk, dist, redist = 0, lastGen = sourcesGen-1;
         while (true) {
             synchronized (this) {
-                this.undistributedRequests += additionalRequests + redistribute;
+                this.undistributedRequests += additionalRequests + redist;
                 if (this.undistributedRequests == 0 || sources.isEmpty() || lastGen == sourcesGen) {
                     log.trace("{}.distributeRequests({}) leaving redistribute={} lastGen={} {}",
-                              this, additionalRequests, redistribute, lastGen, dumpIfTrace());
+                              this, additionalRequests, redist, lastGen, dumpIfTrace());
                     return;
                 } else {
                     log.trace("{}.distributeRequests({}) redistribute={} lastGen={} {}",
-                              this, additionalRequests, redistribute, lastGen, dumpIfTrace());
+                              this, additionalRequests, redist, lastGen, dumpIfTrace());
                 }
-                additionalRequests = redistribute = distributed = 0;
+                additionalRequests = redist = dist = 0;
                 copy.clear();
                 copy.addAll(sources);
                 lastGen = sourcesGen;
@@ -223,12 +223,14 @@ public class MergePublisher<T> implements Publisher<T> {
                     this.undistributedRequests -= taken;
                 }
                 assert chunk*copy.size() >= taken;
+                assert chunk <= taken;
             }
-            for (int i = 0, size = copy.size(); distributed+redistribute < taken && i < size; i++) {
-                if (copy.get(i).tryRequest(chunk)) distributed  += chunk;
-                else                               redistribute += chunk;
+            for (int i = 0, size = copy.size(); dist+redist+chunk <= taken && i < size; i++) {
+                if (copy.get(i).tryRequest(chunk))   dist += chunk;
+                else                               redist += chunk;
             }
-            assert distributed + redistribute == taken;
+            redist += Math.max(0, taken-(dist+redist));
+            assert dist + redist == taken;
         }
     }
 
