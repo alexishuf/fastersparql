@@ -92,6 +92,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                         request.headers().set(HttpHeaderNames.ACCEPT, accept);
                         if (method.hasRequestBody())
                             request.headers().set(CONTENT_TYPE, method.contentType());
+                        ch.eventLoop().execute(() -> ch.config().setAutoRead(true));
                         handler.setupResults(ch, vars, publisher);
                     });
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
@@ -196,26 +197,29 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         private static final AtomicInteger nextId = new AtomicInteger(1);
         private boolean pendingAutoRead, pendingCancel;
         private @MonotonicNonNull Handler handler;
+        private int cycle = -1;
         public PublisherAdapter() {
             super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement());
         }
-        public synchronized void handler(Handler handler) {
+        public synchronized void handler(Handler handler, int cycle) {
+            log.trace("{}.handler({})", this, handler);
             this.handler = handler;
+            this.cycle = cycle;
             if (pendingCancel)
-                this.handler.abort();
+                this.handler.abort(cycle);
             else if (pendingAutoRead)
-                this.handler.autoRead(true);
+                this.handler.autoRead(cycle, true);
         }
         @Override protected synchronized void onRequest(long n) {
             log.trace("{}.onRequest({}), handler={}", this, n, handler);
-            if (handler != null) handler.autoRead(true);
+            if (handler != null) handler.autoRead(cycle, true);
             else                 pendingAutoRead = true;
         }
         @Override protected synchronized void onBackpressure() {
-            if (handler != null) handler.autoRead(false);
+            if (handler != null) handler.autoRead(cycle, false);
         }
         @Override protected synchronized void onCancel() {
-            if (handler != null) handler.abort();
+            if (handler != null) handler.abort(cycle);
             else                 pendingCancel = true;
         }
     }
@@ -245,7 +249,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             implements ReusableHttpClientInboundHandler {
         private static final Logger log = LoggerFactory.getLogger(Handler.class);
         private final String name;
-        private int cycle;
+        private int cycle = 0;
         private Runnable onResponseEnd;
         private @MonotonicNonNull Channel channel;
         private Throwable failure;
@@ -258,18 +262,23 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
         public Handler(String name) { this.name = name; }
 
-        @Override public String toString() { return name; }
+        @Override public String toString() {
+            if (resultsAdapter != null) return name+"["+resultsAdapter.publisher+"]";
+            return name;
+        }
 
         @Override public void onResponseEnd(Runnable runnable) { this.onResponseEnd = runnable; }
 
         protected void responseEnded() {
+            // as the Channel may be reused, from this point onwards refuse abort()/setAutoRead()
+            // from the PublisherAdapter
+            ++cycle;
             assert channel != null : "responseEnded() channelRegistered()";
             assert channel.eventLoop().inEventLoop() : "responseEnded() not run in eventLoop()";
             if (resultsParser != null) resultsParser.end();
             else if (resultsAdapter != null) resultsAdapter.end();
             if (fragmentPublisher != null) fragmentPublisher.complete(null);
-            ++cycle; //abort/autoRead() scheduled no longer apply
-            channel.config().setAutoRead(true);
+            channel.config().setAutoRead(true); //return to pool with autoRead enabled
             if (onResponseEnd != null) onResponseEnd.run();
         }
 
@@ -291,7 +300,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                                               PublisherAdapter<String[]> rowPublisher) {
             reset(channel);
             this.resultsAdapter = new ResultsParserAdapter(outVars, rowPublisher);
-            rowPublisher.handler(this);
+            rowPublisher.handler(this, cycle);
         }
 
         public void setupGraph(Channel channel,
@@ -299,34 +308,44 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                                             PublisherAdapter<byte[]> fragmentPublisher) {
             reset(channel);
             this.mediaTypeTask = mediaTypeTask;
-            (this.fragmentPublisher = fragmentPublisher).handler(this);
+            (this.fragmentPublisher = fragmentPublisher).handler(this, cycle);
         }
 
-        public void autoRead(boolean value) {
+        public void autoRead(int cycle, boolean value) {
             assert channel != null;
             EventLoop el = channel.eventLoop();
-            if (el.inEventLoop()) {
+            if (el.inEventLoop())
+                doAutoRead("", cycle, value);
+            else
+                el.execute(() -> doAutoRead(" runnable", cycle, value));
+        }
+
+        private void doAutoRead(String suffix, int cycle, boolean value) {
+            assert this.channel.eventLoop().inEventLoop();
+            if (this.cycle == cycle) {
+                log.trace("{}.autoRead({}){}: setting", this, value, suffix);
                 channel.config().setAutoRead(value);
             } else {
-                int callCycle = this.cycle;
-                el.execute(() -> {
-                    if (cycle == callCycle)
-                        channel.config().setAutoRead(value);
-                });
+                log.trace("{}.autoRead({}){}: stale cycle", this, value, suffix);
             }
         }
 
-        public void abort() {
+        public void abort(int cycle) {
             assert channel != null;
             EventLoop el = channel.eventLoop();
-            if (el.inEventLoop()) {
+            if (el.inEventLoop())
+                doAbort("", cycle);
+            else
+                el.execute(() -> doAbort(" runnable", cycle));
+        }
+
+        private void doAbort(String suffix, int cycle) {
+            assert this.channel.eventLoop().inEventLoop();
+            if (this.cycle == cycle) {
+                log.trace("{}.abort(){}: close()ing", this, suffix);
                 channel.close();
             } else {
-                int callCycle = this.cycle;
-                el.execute(() -> {
-                    if (cycle == callCycle)
-                        channel.close();
-                });
+                log.trace("{}.abort(){}: stale cycle", this, suffix);
             }
         }
 
