@@ -35,9 +35,7 @@ public class SimpleUnion  implements Union {
     @Override public <R> Results<R> checkedRun(List<Plan<R>> plans) {
         List<String> unionVars = PlanHelpers.publicVarsUnion(plans);
         String name = "SimpleUnion-"+nextId.getAndIncrement();
-        MergePublisher<R> merge = parallel ?
-                MergePublisher.async(name) :
-                MergePublisher.eager(name);
+        MergePublisher<R> merge = parallel ? MergePublisher.async(name) : MergePublisher.eager(name);
         Class<? super R> rCls = Object.class;
         for (Plan<R> p : plans) {
             Results<R> results = p.execute();

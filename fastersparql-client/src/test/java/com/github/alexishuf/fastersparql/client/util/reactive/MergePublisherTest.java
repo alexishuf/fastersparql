@@ -100,7 +100,7 @@ class MergePublisherTest {
                         if (item == failBefore) {
                             downstream.onError(new TestException("failBefore="+item));
                             terminated = true;
-                        } else {
+                        } else if (item < failBefore) {
                             downstream.onNext(item);
                         }
                     }
@@ -282,9 +282,7 @@ class MergePublisherTest {
         }
 
         List<Arguments> list = new ArrayList<>();
-        for (int asyncType : asList(1, 2, 3)) {
-            boolean asyncRequest = asyncType == 2;
-            boolean eager = asyncType == 3;
+        for (boolean eager : asList(false, true)) {
             for (Boolean ignoreUpstreamErrors : asList(false, true)) {
                 for (Boolean subscribeEarly : asList(false, true)) {
                     for (Boolean asyncSource : asList(false, true)) {
@@ -296,7 +294,7 @@ class MergePublisherTest {
                             Class<? extends Throwable> error =
                                     ranges.stream()
                                     .anyMatch(Range::hasError) ? TestException.class : null;
-                            list.add(arguments(sources, asyncRequest, ignoreUpstreamErrors,
+                            list.add(arguments(sources, ignoreUpstreamErrors,
                                                eager, subscribeEarly, error, expected));
                         }
                     }
@@ -309,7 +307,7 @@ class MergePublisherTest {
     private static final AtomicInteger testMethodCall = new AtomicInteger(1);
 
     @ParameterizedTest @MethodSource
-    void test(List<Publisher<Integer>> sources, boolean asyncRequest, boolean ignoreUpstreamErrors,
+    void test(List<Publisher<Integer>> sources, boolean ignoreUpstreamErrors,
               boolean eager, boolean subscribeEarly, @Nullable Class<? extends Throwable> error,
               Collection<Integer> expected) throws ExecutionException {
         String baseName = "test-" + testMethodCall.getAndIncrement();
@@ -319,8 +317,9 @@ class MergePublisherTest {
             for (int j = 0; j < N_THREADS; j++) {
                 String threadName = iterationName+", j="+j+"]";
                 tasks.add(Async.asyncThrowing(() -> {
-                    MergePublisher<Integer> merger = new MergePublisher<>(threadName,
-                            eager, asyncRequest, ignoreUpstreamErrors);
+                    MergePublisher<Integer> merger =
+                            new MergePublisher<>(threadName, ignoreUpstreamErrors);
+                    merger.setTargetParallelism(eager ? 1 : sources.size());
                     IterableAdapter<Integer> subscriber = new IterableAdapter<>(merger, QUEUE);
                     if (subscribeEarly)
                         subscriber.start();

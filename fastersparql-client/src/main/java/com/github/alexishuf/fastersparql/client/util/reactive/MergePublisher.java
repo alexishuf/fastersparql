@@ -10,11 +10,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.lang.Math.max;
+import static java.lang.Thread.currentThread;
 
 /**
  * A {@link Publisher} that emits items from multiple upstream {@link Publisher}s.
@@ -26,39 +26,26 @@ public class MergePublisher<T> implements Publisher<T> {
     private static final AtomicInteger nextAnonId = new AtomicInteger(1);
 
     private final String name;
-    private final boolean eager, asyncRequest, ignoreUpstreamErrors;
+    private final boolean ignoreUpstreamErrors;
+    private int parallelism = -1;
     private final ReactiveEventQueue<T> queue;
-    protected long undistributedRequests;
+    protected long undistributedRequests, sourcesGen = 0;
     private boolean canComplete;
+    private int nextSourceId = 1;
     private final ArrayList<Source> sources = new ArrayList<>();
 
     /**
      * Create a new {@link MergePublisher}
      *
-     * @param eager if {@code true}, when there is a request of {@code n} items from downstream
-     *              (or from an upstream publisher that terminated before fulfilling its assigned
-     *              requests) the first non-terminated upstream publisher will have all of them
-     *              allocated. If {@code false}, will try to divide the requests between all
-     *              non-terminated upstream publishers.
-     * @param asyncRequest if {@code true}, {@link Subscription#request(long)} for upstream
-     *                     publishers will be called from a dedicated thread. This ensures
-     *                     that publishers which block inside {@code request} do not end up
-     *                     blocking other publishers. If the goal is to have parallel consumption,
-     *                     this should be {@code true} and {@code eager} should be {@code false}.
-     *                     If this is {@code true} and {@code request} for upstream publishers
-     *                     does not block, the dedicated threads will be returned to a pool
-     *                     when they have no work, allowing their reuse by other tasks.
      * @param ignoreUpstreamErrors if {@code true}, when an upstream publisher delivers an
      *                             {@link Subscriber#onError(Throwable)} event, will interpret the
      *                             event as a {@link Subscriber#onComplete()}. If {@code false},
      *                             any upstream error termination will cause the
      *                             {@link MergePublisher} to terminate with an error event as well.
      */
-    public MergePublisher(@Nullable String name, boolean eager, boolean asyncRequest,
+    public MergePublisher(@Nullable String name,
                           boolean ignoreUpstreamErrors) {
         this.name = name != null ? name : "MergePublisher-"+nextAnonId.getAndIncrement();
-        this.eager = eager;
-        this.asyncRequest = asyncRequest;
         this.ignoreUpstreamErrors = ignoreUpstreamErrors;
         this.queue = new ReactiveEventQueue<T>(this.name) {
             @Override protected void onRequest(long n) {
@@ -70,6 +57,7 @@ public class MergePublisher<T> implements Publisher<T> {
                 synchronized (MergePublisher.this) {
                     copy = new ArrayList<>(sources);
                     sources.clear();
+                    ++sourcesGen;
                 }
                 for (Source source : copy)
                     source.cancel();
@@ -79,13 +67,37 @@ public class MergePublisher<T> implements Publisher<T> {
     }
 
     public static <U> MergePublisher<U> async(@Nullable String name) {
-        return new MergePublisher<>(name, false, true, false);
+        return new MergePublisher<>(name, false);
     }
 
     public static <U> MergePublisher<U> eager(@Nullable String name) {
-        return new MergePublisher<>(name, true, false, false);
+        return new MergePublisher<U>(name, false).setTargetParallelism(1);
     }
 
+    /**
+     * Sets the target for parallel consumption of sources.
+     *
+     * Let {@code req} be the accumulated number of items requested via
+     * {@link Subscription#request(long)} from this {@link MergePublisher} not yet delivered
+     * via {@link Subscriber#onNext(Object)} by this {@link MergePublisher}. If the number of
+     * sources is less than {@code n}, each source will nevertheless receive a request
+     * for {@code req/n} (or 1 if that division yields zero). If the number of sources is
+     * {@code m > n} then each source will receive a request for {@code req/m},
+     *
+     * If this method is not called, the number of sources will be used when partitioning work.
+     *
+     * This method SHOULD be called if the intent is to distribute work amoung multiple sources.
+     * With the default behavior, no matter how many sources are added, the first source to be
+     * added will receive all the accumulated requests for items, leaving sources added
+     * microseconds later stalled.
+     *
+     * @param n the number of sources to consider when distributing work
+     * @return this {@link MergePublisher}
+     */
+    public MergePublisher<T> setTargetParallelism(int n) {
+        parallelism = n;
+        return this;
+    }
 
 
     /**
@@ -95,11 +107,11 @@ public class MergePublisher<T> implements Publisher<T> {
      * @param publisher the publisher to subscribe to
      */
     public void addPublisher(Publisher<? extends T> publisher) {
-        Source source = new Source(publisher);
         synchronized (this) {
+            Source source = new Source(publisher, nextSourceId++);
             log.trace("{}.addPublisher({})", this, publisher);
             sources.add(source);
-            source.id = sources.size();
+            ++sourcesGen;
         }
         if (queue.subscriber() != null)
             distributeRequests(0);
@@ -161,81 +173,126 @@ public class MergePublisher<T> implements Publisher<T> {
 
     /* --- --- --- implementation details --- --- --- */
 
-    protected void distributeRequests(long additionalRequest) {
-        int sizeHint = this.sources.size() + 8;
-        ArrayList<Source> copy = new ArrayList<>(sizeHint);
-        long[] chunks = new long[sizeHint];
-        long rejected = 0;
-        do {
-            synchronized (this) {
-                log.trace("{}.distributeRequests({}), undistributed={}, rejected={}",
-                          this, additionalRequest, undistributedRequests, rejected);
-                undistributedRequests += additionalRequest + rejected;
-                if (queue.terminated() || undistributedRequests == 0 || sources.isEmpty())
-                    return;
-                additionalRequest = 0;
-                copy.clear();
-                int size = sources.size();
-                copy.ensureCapacity(size);
-                if (chunks.length < size)
-                    chunks = Arrays.copyOf(chunks, size);
-                for (int i = 0; i < size; i++) {
-                    copy.add(sources.get(i));
-                    chunks[i] = takeRequests();
+    private String dumpIfTrace() {
+        if (!log.isTraceEnabled()) return "";
+        StringBuilder b = new StringBuilder();
+        synchronized (this) {
+            b.append("undistributed=").append(undistributedRequests);
+            b.append(queue.terminated() ? ", " : ", !").append("terminated");
+            b.append(" sources=[");
+            for (Source s : sources) {
+                //noinspection SynchronizationOnLocalVariableOrMethodParameter
+                synchronized (s) {
+                    b.append(s.id).append(s.terminated ? "{" : "{!").append("term")
+                            .append(", sub=").append(s.subscribedStage)
+                            .append(", req=").append(s.requested)
+                            .append(", futReq=").append(s.futureRequest)
+                            .append("}, ");
                 }
             }
-            rejected = 0;
-            for (int i = 0, size = copy.size(); i < size; i++) {
-                long chunk = eager ? chunks[0] : chunks[i];
-                if (!copy.get(i).tryRequest(chunk))
-                    rejected += chunk;
-            }
-        } while (rejected > 0);
+            if (!sources.isEmpty())
+                b.setLength(b.length()-2);
+        }
+        return b.append(']').toString();
     }
 
-    protected synchronized long takeRequests() {
-        long chunk = eager ? undistributedRequests : undistributedRequests/max(1, sources.size());
-        if (chunk == 0)
-            chunk = undistributedRequests;
+    protected void distributeRequests(long additionalRequests) {
+        ArrayList<Source> copy = new ArrayList<>(sources.size());
+        long taken, chunk, distributed, redistribute = 0, lastGen = sourcesGen-1;
+        while (true) {
+            synchronized (this) {
+                this.undistributedRequests += additionalRequests + redistribute;
+                if (this.undistributedRequests == 0 || sources.isEmpty() || lastGen == sourcesGen) {
+                    log.trace("{}.distributeRequests({}) leaving redistribute={} lastGen={} {}",
+                              this, additionalRequests, redistribute, lastGen, dumpIfTrace());
+                    return;
+                } else {
+                    log.trace("{}.distributeRequests({}) redistribute={} lastGen={} {}",
+                              this, additionalRequests, redistribute, lastGen, dumpIfTrace());
+                }
+                additionalRequests = redistribute = distributed = 0;
+                copy.clear();
+                copy.addAll(sources);
+                lastGen = sourcesGen;
+                long div = parallelism > 0 ? parallelism : Math.max(1, copy.size());
+                chunk = this.undistributedRequests / div;
+                if (chunk == 0) {
+                    this.undistributedRequests -= chunk = taken = this.undistributedRequests;
+                } else {
+                    taken = Math.min(this.undistributedRequests, chunk * copy.size());
+                    this.undistributedRequests -= taken;
+                }
+                assert chunk*copy.size() >= taken;
+            }
+            for (int i = 0, size = copy.size(); distributed+redistribute < taken && i < size; i++) {
+                if (copy.get(i).tryRequest(chunk)) distributed  += chunk;
+                else                               redistribute += chunk;
+            }
+            assert distributed + redistribute == taken;
+        }
+    }
+
+    private synchronized long takeChunk() {
+        long chunk = undistributedRequests
+                   / (parallelism > 0 ? parallelism : sources.size());
+        if (chunk == 0) chunk = undistributedRequests;
         undistributedRequests -= chunk;
+        log.trace("{}.takeChunk()={} now undistributedRequests={}",
+                  this, chunk, undistributedRequests);
         return chunk;
     }
+
+    private static final int ST_NOT_SUBSCRIBED   = 0;
+    private static final int ST_SUBSCRIBE_CALLED = 1;
+    private static final int ST_SUBSCRIBED       = 2;
 
     private final class Source implements Subscriber<T> {
         private final Publisher<? extends T> publisher;
         private @MonotonicNonNull Subscription upstream;
-        private long requested = 0, futureRequest = 0;
-        private int id = -1;
-        private boolean terminated, subscribed, requestThreadAlive;
+        private long requested = 0, futureRequest = 0, declaredFutureRequest;
+        private final int id;
+        private int subscribedStage = ST_NOT_SUBSCRIBED;
+        private boolean terminated, eventThreadAlive, futureFlush;
+        private Thread eventThread = null;
 
-        public Source(Publisher<? extends T> publisher) {
+        public Source(Publisher<? extends T> publisher, int id) {
             this.publisher = publisher;
+            this.id = id;
         }
 
         @Override public String toString() {
             return name+"[source="+id+"]";
         }
 
-        @Override public synchronized void onSubscribe(Subscription s) {
-            assert upstream == null;
-            upstream = s;
-            if (terminated)
-                s.cancel();
+        @Override public void onSubscribe(Subscription s) {
+            long n = 0;
+            synchronized (this) {
+                assert upstream == null;
+                assert subscribedStage == ST_SUBSCRIBE_CALLED;
+                subscribedStage = ST_SUBSCRIBED;
+                upstream = s;
+                if (futureRequest > 0) {
+                    n = futureRequest;
+                    futureRequest = 0;
+                }
+                if (terminated)
+                    s.cancel();
+            }
+            if (n > 0 && !tryRequest(n))
+                distributeRequests(n);
         }
 
         public void cancel() {
-            boolean call = false;
             long unsatisfied = 0;
             synchronized (this) {
                 if (!terminated) {
                     log.trace("{} cancel()ed", this);
                     terminated = true;
-                    call = upstream != null && requested == 0;
                     unsatisfied = requested + futureRequest;
-                    requested = futureRequest = 0;
+                    requested = futureRequest = declaredFutureRequest = 0;
                 }
             }
-            if (call)
+            if (upstream != null)
                 upstream.cancel();
             //else: cancel on next onNext() call
             if (unsatisfied > 0)
@@ -247,95 +304,137 @@ public class MergePublisher<T> implements Publisher<T> {
          * @return true iff request was or will be called. false if terminated or not yet subscribed
          */
         public boolean tryRequest(long n) {
-            log.trace("{}: tryRequest({})", this, n);
             assert n >= 0 : "negative tryRequest()";
             if (n <= 0)
                 return true;
-            boolean call;
+            boolean subscribe = false;
             synchronized (this) {
-
                 if (terminated) {
+                    log.trace("{}.tryRequest({}): terminated", this, n);
                     return false;
-                }
-                if (!subscribed) {
-                    subscribed = true;
-                    publisher.subscribe(this);
-                }
-                if (asyncRequest) {
-                    log.trace("{}: tryRequest({}) terminated={}, requestThreadAlive={}",
-                              this, n, terminated, requestThreadAlive);
-                    call = false;
-                    futureRequest += n;
-                    if (!requestThreadAlive) {
-                        requestThreadAlive = true;
-                        Async.async(this::requestThread);
-                    }
                 } else {
-                    call = requested == 0;
-                    if (call) requested = n;
-                    else      futureRequest += n;
-                    log.trace("{}: tryRequest({}) call={}", this, n, call);
+                    futureRequest += n;
+                    if (subscribedStage == ST_NOT_SUBSCRIBED) {
+                        log.trace("{}.tryRequest({}): subscribing", this, n);
+                        subscribedStage = ST_SUBSCRIBE_CALLED;
+                        subscribe = true;
+                    } else if (subscribedStage == ST_SUBSCRIBE_CALLED) {
+                        log.trace("{}.tryRequest({}), waiting onSubscribe", this, n);
+                    } else {
+                        log.trace("{}.tryRequest({}), will request from eventThread()", this, n);
+                        wakeEventThread(false);
+                    }
                 }
             }
-            if (call)
-                upstream.request(requested);
-
+            if (subscribe)
+                publisher.subscribe(this);
             return true;
         }
 
-        private void requestThread() {
-            assert requestThreadAlive;
+        private void eventThread() {
+            assert eventThreadAlive;
+            assert eventThread == null;
+            eventThread = currentThread();
             while (true) {
-                long n;
+                boolean mustFlush;
+                long requestSize;
                 synchronized (this) {
-                    log.trace("{} requestThread(): requested={}, futureRequest={}, terminated={}",
-                              this, requested, futureRequest, terminated);
-                    requested += n = futureRequest;
-                    futureRequest = 0;
-                    if (n == 0 || terminated) {
-                        requestThreadAlive = false;
+                    log.trace("{}.eventThread(): requested={}, futureRequest={}, terminated={}",
+                            this, requested, futureRequest, terminated);
+                    if (upstream == null) {
+                        requestSize = 0;
+                    } else {
+                        requestSize = futureRequest + declaredFutureRequest;
+                        requested += futureRequest;
+                        futureRequest = declaredFutureRequest = 0;
+                    }
+                    mustFlush = futureFlush;
+                    futureFlush = false;
+                    if (requestSize == 0 && !mustFlush) {
+                        log.trace("{}.eventThread() leaving: requested={}, futureRequest={}, terminated={}",
+                                  this, requested, futureRequest, terminated);
+                        eventThreadAlive = false;
+                        eventThread = null;
                         break;
                     }
                 }
-                upstream.request(n);
+                try {
+                    if (mustFlush)
+                        queue.flush();
+                    if (requestSize > 0) {
+                        upstream.request(requestSize);
+                        queue.flush(); // always flush after a request instead of waiting on*()
+                    }
+                } catch (Throwable t) {
+                    log.error("Exception on {}.eventThread()", this, t);
+                }
+            }
+        }
+
+        private void wakeEventThread(boolean flush) {
+            synchronized (this) {
+                futureFlush |= flush;
+                assert futureRequest >= 0;
+                assert declaredFutureRequest >= 0;
+                assert requested >= 0;
+                boolean hasWork = flush || futureRequest > 0 || declaredFutureRequest > 0;
+                if (hasWork) {
+                    if (!eventThreadAlive) {
+                        log.trace("{}.wakeEventThread({}) starting thread", this, flush);
+                        eventThreadAlive = true;
+                        Async.async(this::eventThread);
+                    } else {
+                        log.trace("{}.wakeEventThread({}) {}", this, flush,
+                                  eventThread == currentThread() ? "in thread" : "thread alive");
+                    }
+                }
             }
         }
 
         @Override public void onNext(T item) {
-            log.trace("{}: onNext({})", this, item);
-            assert upstream != null && subscribed;
-            long requestSize;
-            synchronized (this) {
-                requested = max(0, requested - 1 + (requestSize = futureRequest));
-                futureRequest = 0;
-                if (requested == 0 && requestSize == 0 && !terminated)
-                    requested = requestSize = takeRequests();
-                assert !terminated || requestSize == 0 : "terminated==true with futureRequest > 0";
-            }
-            if (terminated) {
-                upstream.cancel();
+            assert upstream != null && subscribedStage == ST_SUBSCRIBED;
+            long takenChunk = 0;
+            if (!terminated && requested+futureRequest == 1) {
+                takenChunk = takeChunk();
+                log.trace("{}.onNext({}) takenChunk={}", this, item, takenChunk);
             } else {
-                queue.send(item).flush();
-                if (requestSize > 0)
-                    upstream.request(requestSize);
-
+                log.trace("{}.onNext({})", this, item);
             }
+            boolean returnTaken;
+            synchronized (this) {
+                assert terminated || requested > 0 : "onNext() without backing request";
+                returnTaken = terminated && takenChunk > 0;
+                long requestSize = futureRequest + (returnTaken ? 0 : takenChunk);
+                futureRequest = 0;
+                requested = max(0, requested - 1 + requestSize);
+                declaredFutureRequest += requestSize;
+            }
+            if (returnTaken) {
+                log.trace("{}.onNext({}) returning {} takenChunk", this, item, takenChunk);
+                distributeRequests(takenChunk);
+            }
+            queue.send(item);
+            wakeEventThread(true);
         }
 
         @Override public void onError(Throwable t) {
+            log.trace("{}.onError({})", this, t);
             if (ignoreUpstreamErrors) {
                 log.debug("Treating {} from {} as a normal complete", t, publisher);
                 onComplete();
             } else {
-                log.trace("{} received error from upstream", this, t);
-                queue.sendComplete(t);
                 synchronized (MergePublisher.this) {
-                    sources.remove(this);
+                    synchronized (this) {
+                        sources.remove(this);
+                        ++sourcesGen;
+                        terminated = true;
+                        undistributedRequests += requested + futureRequest;
+                        requested = futureRequest = declaredFutureRequest = 0;
+                        log.trace("{}.onError({}): set terminate {}", this, t, dumpIfTrace());
+                    }
                 }
-                synchronized (this) {
-                    terminated = true;
-                }
-                queue.flush();
+                queue.sendComplete(t);
+                wakeEventThread(true);
             }
         }
 
@@ -345,18 +444,21 @@ public class MergePublisher<T> implements Publisher<T> {
             synchronized (MergePublisher.this) {
                 synchronized (this) {
                     terminated = true;
-                    unsatisfied = requested + futureRequest;
-                    requested = futureRequest = 0;
+                    undistributedRequests += unsatisfied = requested + futureRequest;
+                    requested = futureRequest = declaredFutureRequest = 0;
                     sources.remove(this);
+                    ++sourcesGen;
                     complete = canComplete && sources.isEmpty();
+                    log.trace("{}.onComplete(): updated state {}", this, dumpIfTrace());
                 }
             }
             if (complete) {
                 log.trace("{} completed causing MergePublisher completion", this);
-                queue.sendComplete(null).flush();
-            } else if (unsatisfied > 0) {
+                queue.sendComplete(null);
+                wakeEventThread(true);
+            } else {
                 log.trace("{} completed with {} unsatisfied requests", this, unsatisfied);
-                distributeRequests(unsatisfied);
+                distributeRequests(0);
             }
         }
     }
