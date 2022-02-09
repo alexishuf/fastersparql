@@ -48,7 +48,7 @@ public class SimpleSlice implements Slice {
             if (itemsReceived++ >= offset) {
                 if (itemsReceived-offset <= limit) {
                     emit(item);
-                } else if (!terminated) {
+                } else if (!terminated.get()) {
                     cancelUpstream();
                     completeDownstream(null);
                 }

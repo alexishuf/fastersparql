@@ -20,7 +20,7 @@ abstract class ReactiveEventQueue<T> {
     private final String name;
     private long requested;
     private @Getter @Setter @MonotonicNonNull Subscriber<? super T> subscriber;
-    private @Getter boolean terminated;
+    private final AtomicBoolean terminated = new AtomicBoolean();
     private boolean paused;
     private final AtomicInteger flushing = new AtomicInteger();
     private final Queue<Object> queue = new ConcurrentLinkedDeque<>();
@@ -31,7 +31,7 @@ abstract class ReactiveEventQueue<T> {
 
     public ReactiveEventQueue<T> request(long n) {
         synchronized (this) {
-            if (!terminated) {
+            if (!terminated.get()) {
                 if (n < 0) {
                     sendComplete(new IllegalArgumentException("request(" + n + "), expected > 0"));
                 } else if (n > 0) {
@@ -49,6 +49,10 @@ abstract class ReactiveEventQueue<T> {
         return this;
     }
 
+    public boolean terminated() {
+        return terminated.get();
+    }
+
     public ReactiveEventQueue<T> send(T o) {
         log.trace("{}.send({})", this, o);
         queue.add(o);
@@ -62,12 +66,16 @@ abstract class ReactiveEventQueue<T> {
     }
 
     public void cancel() {
+        boolean done;
         synchronized (this) {
-            terminated = true;
+            done = terminated.compareAndSet(false, true);
             requested = 0;
             queue.clear();
         }
-        onTerminate(null, true);
+        if (done)
+            onTerminate(null, true);
+        else
+            log.debug("{}.cancel(): already terminated, skipped onTerminate(null, true)", this);
     }
 
     protected void pause() {
@@ -136,8 +144,12 @@ abstract class ReactiveEventQueue<T> {
                         } catch (Throwable t) {
                             log.error("{}.onNext({}) threw {}. Treating as cancelled",
                                       subscriber, obj, t, t);
-                            terminated = true;
-                            onTerminate(null, true);
+                            if (terminated.compareAndSet(false, true)) {
+                                onTerminate(null, true);
+                            } else {
+                                log.warn("Skipped {}.onTerminate(null, true) after failed {}.onNext({}): previously terminated",
+                                         this, subscriber, obj);
+                            }
                             queue.clear();
                         }
                     }
@@ -151,7 +163,7 @@ abstract class ReactiveEventQueue<T> {
 
     private synchronized @Nullable Object dequeueRequested() {
         Object o = null;
-        if (subscriber == null || terminated) {
+        if (subscriber == null || terminated.get()) {
             return null;
         } else if (requested > 0) {
             if ((o = queue.poll()) != null)
@@ -173,22 +185,25 @@ abstract class ReactiveEventQueue<T> {
         private final @Nullable Throwable error;
 
         void execute() {
-            synchronized (queue) {
-                if (queue.terminated)
-                    return;
-                queue.terminated = true;
+            boolean done;
+            done = queue.terminated.compareAndSet(false, true);
+            if (done) {
+                queue.onTerminate(error, false);
+                assert queue.subscriber != null : "null subscriber, should not have called me!";
+                try {
+                    if (error != null)
+                        queue.subscriber.onError(error);
+                    else
+                        queue.subscriber.onComplete();
+                } catch (Throwable t) {
+                    log.warn("Ignoring {} thrown by {}.{}({})",
+                             t, queue.subscriber, error == null ? "onComplete" : "onError", error);
+                }
+            } else {
+                log.debug("Skipped {}.onTerminate({}, false) and {}.onError/onComplete(): already terminated",
+                          queue, error, queue.subscriber);
             }
-            queue.onTerminate(error, false);
-            assert queue.subscriber != null : "null subscriber, should not have called me!";
-            try {
-                if (error != null)
-                    queue.subscriber.onError(error);
-                else
-                    queue.subscriber.onComplete();
-            } catch (Throwable t) {
-                log.warn("Ignoring {} thrown by {}.{}({})",
-                        t, queue.subscriber, error == null ? "onComplete" : "onError", error);
-            }
+
         }
     }
 }

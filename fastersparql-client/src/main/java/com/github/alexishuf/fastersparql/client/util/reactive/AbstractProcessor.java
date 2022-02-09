@@ -8,11 +8,13 @@ import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
     private static final Logger log = LoggerFactory.getLogger(AbstractProcessor.class);
 
     private final Publisher<? extends U> source;
-    protected boolean terminated;
+    protected AtomicBoolean terminated = new AtomicBoolean(false);
     protected Subscription upstream;
     protected Subscriber<? super D> downstream;
 
@@ -34,14 +36,12 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
     protected Subscription createDownstreamSubscription() {
         return new Subscription() {
             @Override public void request(long n) {
-                if (!terminated)
+                if (!terminated.get())
                     upstream.request(n);
             }
             @Override public void cancel() {
-                if (!terminated)  {
-                    terminated = true;
-                    upstream.cancel();
-                }
+                if (terminated.compareAndSet(false, true))
+                    cancelUpstream();
             }
         };
     }
@@ -70,10 +70,12 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
      */
     protected void emit(D item) {
         try {
-            if (terminated)
+            if (terminated.get()) {
                 log.debug("Discarding emit({}) after terminated.", item);
-            else
+            } else {
+                log.trace("{}.emit({})", this, item);
                 downstream.onNext(item);
+            }
         } catch (Throwable t) {
             assert false : "Unexpected Throwable";
             log.error("downstream={} threw {} on onNext({}). Treating as a Subscription.cancel().",
@@ -103,8 +105,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
     protected void completeDownstream(@Nullable Throwable cause) {
         log.trace("{}.completeDownstream({})", this, cause);
         try {
-            if (!terminated) {
-                terminated = true;
+            if (terminated.compareAndSet(false, true)) {
                 if (cause != null)
                     downstream.onError(cause);
                 else
@@ -141,7 +142,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
 
     @Override public void onNext(U item) {
         try {
-            if (!terminated)
+            if (!terminated.get())
                 handleOnNext(item);
         } catch (Throwable t) {
             cancelUpstream();
