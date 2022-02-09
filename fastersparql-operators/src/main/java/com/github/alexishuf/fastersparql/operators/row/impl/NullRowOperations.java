@@ -21,6 +21,10 @@ public class NullRowOperations implements RowOperations {
         return null;
     }
 
+    @Override public @Nullable String getNT(@Nullable Object row, int idx, String var) {
+        return null;
+    }
+
     @Override public Object createEmpty(List<String> vars) {
         throw new UnsupportedOperationException(
                 format("%s cannot createEmpty(%s)", this, vars));

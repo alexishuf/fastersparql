@@ -37,6 +37,22 @@ public interface RowOperations {
     @Nullable Object get(@Nullable Object row, int idx, String var);
 
     /**
+     * Same as {@link RowOperations#get(Object, int, String)}, but converts the returned object
+     * to a String representing the RDF term in N-Triples syntax.
+     *
+     * @param row the row from where to get the value. If {@code null}, must return {@code null}
+     * @param idx the index of the variable to read in the {@link Results#vars()} from which
+     *            the row originated.
+     * @param var the name of the variable to be read
+     * @return the value of the variable in the given row as an RDF term in N-Triples syntax,
+     *         which may be null.
+     * @throws IndexOutOfBoundsException if {@code idx} is out of bounds or if var is not
+     *         expected for this row (e.g., it was not present in
+     *         {@link RowOperations#createEmpty(List)}).
+     */
+    @Nullable String getNT(@Nullable Object row, int idx, String var);
+
+    /**
      * Create a new row with {@code null} set for each variable in {@code vars}.
      *
      * @param vars the variables of the row. The order of this list determines the ordering

@@ -1,0 +1,45 @@
+@prefix : <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+###########################################################
+#                     Simple scenario                     #
+###########################################################
+
+:left1 :p1 5 .
+:left2 :p1 2, 3 .
+:left3 :p1 23 .
+
+:right1 :q1 5 .
+:right2 :q1 3 .
+:right3 :q1 46 .
+
+###########################################################
+#          Many left rows, each with 0-1 matches          #
+###########################################################
+
+:lleft1  :p2 11, 12, 13, 14, 15, 16, 17, 18 .
+:lleft2  :p2 21, 22, 23, 24, 25, 26, 27, 28 .
+
+:lright1 :q2 11,     13,     15,     17 .
+:lright2 :q2 21,     23,     25,     27 .
+:lright3 :q2 21,     23,     25,     27 .
+
+
+###########################################################
+#          Few left rows, each with 0-8 matches           #
+###########################################################
+
+:kleft    :p3 1, 2, 3, 4 .
+
+:kright1  :q3 1,    3 .
+:kright2  :q3    2, 3 .
+:kright3  :q3 1,    3 .
+:kright4  :q3    2, 3 .
+:kright5  :q3 1,    3 .
+:kright6  :q3    2, 3 .
+:kright7  :q3 1,    3 .
+:kright8  :q3    2, 3 .

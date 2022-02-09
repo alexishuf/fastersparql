@@ -29,6 +29,11 @@ public class ArrayOperations implements RowOperations {
         return row != null ? ((Object[]) row)[idx] : null;
     }
 
+    @Override public @Nullable String getNT(@Nullable Object row, int idx, String var) {
+        Object value = get(row, idx, var);
+        return value == null ? null : value.toString();
+    }
+
     @Override public Object createEmpty(List<String> vars) {
         return new Object[vars.size()];
     }

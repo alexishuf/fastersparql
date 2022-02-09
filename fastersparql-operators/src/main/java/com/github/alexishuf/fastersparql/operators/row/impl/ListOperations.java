@@ -30,6 +30,11 @@ public class ListOperations implements RowOperations {
         return row == null ? null : ((List<?>)row).get(idx);
     }
 
+    @Override public @Nullable String getNT(@Nullable Object row, int idx, String var) {
+        Object value = get(row, idx, var);
+        return value == null ? null : value.toString();
+    }
+
     @Override public Object createEmpty(List<String> vars) {
         int size = vars.size();
         ArrayList<?> row = new ArrayList<>(size);

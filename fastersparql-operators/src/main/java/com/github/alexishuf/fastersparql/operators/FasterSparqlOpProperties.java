@@ -7,9 +7,11 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
 
     /* --- --- --- property names --- --- --- */
     public static final String OP_DISTINCT_WINDOW = "fastersparql.op.distinct.window";
+    public static final String OP_BIND_CONCURRENCY = "fastersparql.op.bind.concurrency";
 
     /* --- --- --- default values --- --- --- */
     public static final int DEF_OP_DISTINCT_WINDOW = 16384;
+    public static final int DEF_OP_BIND_CONCURRENCY = 2;
 
     /* --- --- --- accessors --- --- --- */
 
@@ -25,5 +27,19 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
      */
     public static @Positive int distinctWindow() {
         return readPositiveInt(OP_DISTINCT_WINDOW, DEF_OP_DISTINCT_WINDOW);
+    }
+
+    /**
+     * When executing a bind (left) join or bind minus, execute at most this number of
+     * concurrent requests against the same source (considering only the current operator
+     * execution: if this property has the value {@code n} and there are {@code m} executions
+     * of a bind-implemented operator, then there may be up to {@code n*m} executions to a
+     * single source if all operator executions target the same source).
+     *
+     * @return the maximum concurrency for bound operations in each execution of a bind-implemented
+     *         operator.
+     */
+    public static @Positive int bindConcurrency() {
+        return readPositiveInt(OP_BIND_CONCURRENCY, DEF_OP_BIND_CONCURRENCY);
     }
 }
