@@ -101,6 +101,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
      * will happen.
      */
     protected void completeDownstream(@Nullable Throwable cause) {
+        log.trace("{}.completeDownstream({})", this, cause);
         try {
             if (!terminated) {
                 terminated = true;

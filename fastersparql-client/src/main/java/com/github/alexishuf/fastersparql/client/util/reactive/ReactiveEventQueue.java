@@ -12,6 +12,7 @@ import org.reactivestreams.Subscription;
 
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @RequiredArgsConstructor @Slf4j @Accessors(fluent = true)
@@ -23,6 +24,10 @@ abstract class ReactiveEventQueue<T> {
     private boolean paused;
     private final AtomicInteger flushing = new AtomicInteger();
     private final Queue<Object> queue = new ConcurrentLinkedDeque<>();
+
+    @Override public String toString() {
+        return name;
+    }
 
     public ReactiveEventQueue<T> request(long n) {
         synchronized (this) {
@@ -36,6 +41,8 @@ abstract class ReactiveEventQueue<T> {
                         resume();
                     }
                 }
+            } else {
+                log.debug("{}.request({}): ignoring since terminated", this, n);
             }
         }
         if (n > 0) onRequest(n);
@@ -43,13 +50,13 @@ abstract class ReactiveEventQueue<T> {
     }
 
     public ReactiveEventQueue<T> send(T o) {
-        log.trace("{}: send({})", name, o);
+        log.trace("{}.send({})", this, o);
         queue.add(o);
         return this;
     }
 
     public ReactiveEventQueue<T> sendComplete(@Nullable Throwable error) {
-        log.trace("{}: sendComplete({})", name, error);
+        log.trace("{}.sendComplete({})", this, error);
         queue.add(new TerminateMessage(this, error));
         return this;
     }
@@ -64,19 +71,19 @@ abstract class ReactiveEventQueue<T> {
     }
 
     protected void pause() {
-        log.trace("{}: pause()", name);
+        log.trace("{}.pause()", this);
         /* no op */
     }
 
     protected void resume() {
-        log.trace("{}: resume()", name);
+        log.trace("{}.resume()", this);
         /* no op */
     }
 
     protected abstract void onRequest(long n);
 
     protected void onTerminate(Throwable cause, boolean cancel) {
-        log.trace("{}: onTerminate({}, {})", name, cause, cancel);
+        log.trace("{}.onTerminate({}, {})", this, cause, cancel);
         /* no op */
     }
 
@@ -91,14 +98,12 @@ abstract class ReactiveEventQueue<T> {
             subscriber = s;
             s.onSubscribe(new Subscription() {
                 @Override public void request(long n) {
-                    log.trace("{}: request({})", name, n);
-                    if (n < 0) {
-                        sendComplete(new IllegalArgumentException("request("+n+"), expected > 0"));
-                    } else if (!terminated) {
-                        ReactiveEventQueue.this.request(n).flush();
-                    }
+                    log.trace("{}.Subscription.request({})", ReactiveEventQueue.this, n);
+                    ReactiveEventQueue.this.request(n);
+                    flush();
                 }
                 @Override public void cancel() {
+                    log.trace("{}.Subscription.cancel()", ReactiveEventQueue.this);
                     ReactiveEventQueue.this.cancel();
                 }
             });
