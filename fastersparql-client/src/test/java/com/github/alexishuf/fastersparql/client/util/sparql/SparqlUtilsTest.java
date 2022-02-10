@@ -1,21 +1,21 @@
 package com.github.alexishuf.fastersparql.client.util.sparql;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils.*;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class SparqlUtilsTest {
@@ -209,9 +209,19 @@ class SparqlUtilsTest {
         doTestNextVar(expected, in);
     }
 
-    @ParameterizedTest @MethodSource("testNextVar")
-    void testNextVarAsCharSequence(int expected, String in) {
-        doTestNextVar(expected, new StringBuilder(in));
+    @Test
+    void testNextVarAsCharSequence() {
+        List<Arguments> rows = testNextVar().collect(Collectors.toList());
+        List<AssertionError> errors = IntStream.range(0, rows.size()).parallel().mapToObj(i -> {
+            Object[] args = rows.get(i).get();
+            try {
+                doTestNextVar((int) args[0], new StringBuilder((String) args[1]));
+                return null;
+            } catch (Throwable t) {
+                return new AssertionError("Failed at " + i + "-th test row (" + Arrays.toString(args), t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        assertEquals(emptyList(), errors);
     }
 
     private void doTestNextVar(int expected, CharSequence in) {
@@ -409,26 +419,18 @@ class SparqlUtilsTest {
                 // single var
                 asList("?x", "x"),
                 asList("?x ", "x"),
-                asList("?x WHERE", "x"),
-                asList("?x {", "x"),
 
                 //single var with $
                 asList("$x", "x"),
                 asList("$x ", "x"),
-                asList("$x WHERE", "x"),
-                asList("$x {", "x"),
 
                 //two vars
                 asList("?x ?y", "x,y"),
                 asList("?x $y ", "x,y"),
-                asList("?x $y WHERE", "x,y"),
-                asList("$x ?y{", "x,y"),
 
                 //two vars, reverse alphabetic order
                 asList("$y ?x", "y,x"),
                 asList("$y $x ", "y,x"),
-                asList("$y $x WHERE", "y,x"),
-                asList("$y ?x{", "y,x"),
 
                 //start with AS
                 asList("(avg(?a) + ?o AS ?expr) ?b", "expr,b"),
@@ -454,23 +456,41 @@ class SparqlUtilsTest {
                 asList(" * ", null)
         );
         List<String> prefixes = asList("", "\n\t ", "#not ?var\n", " DISTINCT ");
-        List<String> suffixes = asList("", "#not $var", " WHERE {", "{", " { ?x");
-        return prefixes.stream().flatMap(prefix -> suffixes.stream().flatMap(suffix -> base.stream()
-                .map(b -> {
+        return prefixes.stream().flatMap(prefix -> base.stream().map(b -> {
                     List<String> vars;
                     if (b.get(1) == null)        vars = null;
                     else if (b.get(1).isEmpty()) vars = emptyList();
                     else                         vars = asList(b.get(1).split(" *, *"));
                     assert vars == null || vars.stream().noneMatch(String::isEmpty);
-                    return arguments(prefix + b.get(0) + suffix, vars);
-                })));
+                    return arguments(prefix + b.get(0), vars);
+                }));
     }
 
     @ParameterizedTest @MethodSource
-    void testReadProjection(String string, List<String> expected) {
-        assertEquals(expected, readProjection(string, 0));
-        String ignore = "?atPrefix ";
-        assertEquals(expected, readProjection(ignore+string, ignore.length()));
+    void testReadProjection(String string, List<String> expectedVars) {
+        if (expectedVars != null) {
+            for (String prefix : asList("SELECT ", "ASK ", "ask ", "?ignore select ")) {
+                for (String suffix : asList("", "\n{ ?blob", "\nWHERE { ?blob")) {
+                    boolean isAsk = prefix.contains("ASK") || prefix.contains("ask");
+                    int begin = prefix.startsWith("?ignore ") ? 8 : 0;
+                    int end = prefix.length() + string.length();
+                    if (suffix.indexOf('{') > 0)
+                        end += suffix.indexOf('{');
+                    String sparql = prefix + string + suffix;
+                    ProjectionInfo ac = readProjection(sparql, begin, isAsk);
+                    assertNotNull(ac);
+                    assertEquals(isAsk,        ac.isAsk);
+                    assertEquals(begin,        ac.begin);
+                    assertEquals(end,          ac.end);
+                    assertEquals(expectedVars, ac.vars);
+                }
+            }
+        } else {
+            assertNull(readProjection("SELECT "+string, 0, false));
+            assertNull(readProjection("ASK "+string, 0, true));
+            assertNull(readProjection("select "+string, 0, false));
+            assertNull(readProjection("ask "+string, 0, true));
+        }
     }
 
     static Stream<Arguments> testFindProjection() {
@@ -503,8 +523,14 @@ class SparqlUtilsTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testFindProjection(String string, @Nullable List<String> expected) {
-        assertEquals(expected, SparqlUtils.findProjection(string));
+    void testFindProjection(String string, @Nullable List<String> expectedVars) {
+        ProjectionInfo info = findProjection(string);
+        if (expectedVars == null) {
+            assertNull(info);
+        } else {
+            assertNotNull(info);
+            assertEquals(expectedVars, info.vars);
+        }
     }
 
     static Stream<Arguments> testFindBodyOpen() {
@@ -569,7 +595,13 @@ class SparqlUtilsTest {
         /*  8 */asList("SELECT ?en ?s WHERE {?en :p \"?en\"@en; :q ?en; :r ?s.}", "en=<a>",
                        "SELECT  ?s WHERE {<a> :p \"?en\"@en; :q <a>; :r ?s.}"),
         /*  9 */asList("SELECT ?s ?en WHERE {?en :p \"?en\"@en; :q ?en; :r ?s.}", "en=<a>",
-                       "SELECT ?s  WHERE {<a> :p \"?en\"@en; :q <a>; :r ?s.}")
+                       "SELECT ?s  WHERE {<a> :p \"?en\"@en; :q <a>; :r ?s.}"),
+        /* 10 */asList("SELECT ?s WHERE {?s :p ?o}", "s=<a>",
+                        "ASK {<a> :p ?o}"),
+        /* 11 */asList("SELECT ?s ?o WHERE {?s :p ?o}", "s=<a>,o=<b>",
+                       "ASK {<a> :p <b>}"),
+        /* 12 */asList("SELECT * WHERE {?s :p ?o}", "s=<a>,o=<b>",
+                       "SELECT * WHERE {<a> :p <b>}")
         ).map(l -> {
             Map<String, String> map = new HashMap<>();
             for (String kvString : l.get(1).split(",")) {

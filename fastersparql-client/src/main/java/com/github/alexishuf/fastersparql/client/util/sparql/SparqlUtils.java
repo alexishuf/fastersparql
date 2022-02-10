@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util.sparql;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.value.qual.MinLen;
 
@@ -27,11 +28,32 @@ public class SparqlUtils {
      */
     public static CharSequence bind(CharSequence input, Map<String, String> varName2ntTerm) {
         VarUtils.checkBind(varName2ntTerm);
-        if (varName2ntTerm == null || varName2ntTerm.isEmpty()) return input.toString();
+        if (varName2ntTerm == null || varName2ntTerm.isEmpty())
+            return input.toString();
         boolean change = false;
-        int openBody = findBodyOpen(input);
         StringBuilder builder = new StringBuilder();
-        for (int consumed = 0, len = input.length(), e; consumed < input.length(); consumed = e) {
+        @NonNegative int consumed = 0, openBody = 0;
+
+        // check if this bind will transform a SELECT into an ASK
+        // this is necessary as "SELECT WHERE" is invalid syntax and must thus become "ASK"
+        ProjectionInfo projection = findProjection(input);
+        if (projection != null && !projection.isAsk) {
+            boolean becomesAsk = true;
+            for (int i = 0, size = projection.vars.size(); becomesAsk && i < size; ++i)
+                becomesAsk = varName2ntTerm.containsKey(projection.vars.get(i));
+            if (becomesAsk) {
+                change = true;
+                builder.append(input, 0, projection.begin).append("ASK {");
+                consumed = openBody = projection.end+1;
+            }
+        }
+
+        // if did not transform a SELECT into an ASK, find the body start
+        if (openBody == 0)
+            openBody = findBodyOpen(input);
+
+        // scan for vars and replace them.
+        for (int e, len = input.length(); consumed < input.length(); consumed = e) {
             int b = nextVar(input, consumed, len);
             builder.append(input, consumed, b);
             e = varEnd(input, b+1, len);
@@ -68,8 +90,8 @@ public class SparqlUtils {
      *         not include {@code ?} or {@code $} markers).
      */
     public static List<@MinLen(1) String> publicVars(CharSequence sparql) {
-        List<String> list = findProjection(sparql);
-        if (list != null) return list;
+        ProjectionInfo info = findProjection(sparql);
+        if (info != null) return info.vars;
         return allVars(sparql);
     }
 
@@ -125,7 +147,26 @@ public class SparqlUtils {
 
     private static final char[] PROLOGUE_FIRST = "\"#$'(<?AS[as{".toCharArray();
 
-    static @Nullable List<String> findProjection(CharSequence sparql) {
+
+    static class ProjectionInfo {
+        /** Whether this is an ASK ({@code true}) or SELECT query ({@code false})  */
+        boolean isAsk;
+        /** Index where {@code SELECT} or {@code ASK} starts */
+        int begin;
+        /** Index where of the '{' ending the projection */
+        int end;
+        /** List of all var names exposed by the projection */
+        List<@MinLen(1) String> vars;
+
+        public ProjectionInfo(boolean isAsk, int begin, int end, List<String> vars) {
+            this.isAsk = isAsk;
+            this.begin = begin;
+            this.end = end;
+            this.vars = vars;
+        }
+    }
+
+    static @Nullable ProjectionInfo findProjection(CharSequence sparql) {
         for (int consumed = 0, len = sparql.length(), i; consumed < len; consumed = ++i) {
             i = skipUntil(sparql, consumed, PROLOGUE_FIRST);
             char c = i < len ? sparql.charAt(i) : '\0';
@@ -141,11 +182,16 @@ public class SparqlUtils {
                 c1 = sparql.charAt(i+3); c2 = sparql.charAt(i+4);
                 if (c1 != 'e' && c1 != 'E' && c2 != 'c' && c2 != 'C') continue;
                 c1 = sparql.charAt(i+5);
-                if (c1 == 't' || c1 == 'T') return readProjection(sparql, i+6);
+                if (c1 == 't' || c1 == 'T') {
+                    return readProjection(sparql, i, false);
+                }
             } else if (c == 'a' || c == 'A') {
                 if (i+2 >= len) return null;
                 char c1 = sparql.charAt(i+1), c2 = sparql.charAt(i+2);
-                if ((c1 == 's' || c1 == 'S') && (c2 == 'k' || c2 == 'K')) return emptyList();
+                if ((c1 == 's' || c1 == 'S') && (c2 == 'k' || c2 == 'K')) {
+                    int end = skipUntil(sparql, i + 2, '{');
+                    return new ProjectionInfo(true, i, end, emptyList());
+                }
             } else { // i == end or c is not expected in prologue
                 return null;
             }
@@ -155,10 +201,13 @@ public class SparqlUtils {
 
     private static final char[] PROJECTION_FIRST = "#$()*?{".toCharArray();
 
-    static @Nullable List<@MinLen(1) String> readProjection(CharSequence sparql, int begin) {
+    static @Nullable ProjectionInfo readProjection(CharSequence sparql, int begin, boolean isAsk) {
+
         Set<@MinLen(1) String> set = new LinkedHashSet<>();
-        int lastVarName = -1, depth = 0;
-        for (int consumed = begin, len = sparql.length(), i; consumed < len; consumed = i+1) {
+        int consumed = begin + (isAsk ? 3 : 6), len = sparql.length(), lastVarName = -1, depth = 0;
+        if (consumed > len)
+            return null;
+        for (int i; consumed < len; consumed = i+1) {
             i = skipUntilIn(sparql, consumed, len, PROJECTION_FIRST);
             char c = i == len ? '\0' : sparql.charAt(i);
             if (c == '(') {
@@ -173,8 +222,10 @@ public class SparqlUtils {
                         set.add(sparql.subSequence(lastVarName, e).toString());
                 }
             } else if (c == '{') {
-                if (depth == 0)
+                if (depth == 0) {
+                    consumed = i;
                     break; // end of projection
+                }
             } else if (c == '*') {
                 if (depth == 0)
                     return null;
@@ -188,7 +239,8 @@ public class SparqlUtils {
                 }
             }
         }
-        return new ArrayList<>(set);
+
+        return new ProjectionInfo(isAsk, begin, consumed, new ArrayList<>(set));
     }
 
     private static final char[] NEXT_VAR_FIRST = "\"#$'<?".toCharArray();
