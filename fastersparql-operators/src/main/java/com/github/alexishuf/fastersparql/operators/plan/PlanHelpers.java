@@ -9,7 +9,7 @@ import java.util.Map;
 
 public class PlanHelpers {
 
-    public static <R> List<String> publicVarsUnion(List<Plan<R>> plans) {
+    public static <R> List<String> publicVarsUnion(List<? extends Plan<R>> plans) {
         LinkedHashSet<String> set = new LinkedHashSet<>(16 * plans.size());
         for (Plan<R> plan : plans) set.addAll(plan.publicVars());
         return new ArrayList<>(set);

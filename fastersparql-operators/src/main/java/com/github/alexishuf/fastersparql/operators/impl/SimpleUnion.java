@@ -32,7 +32,7 @@ public class SimpleUnion  implements Union {
         }
     }
 
-    @Override public <R> Results<R> checkedRun(List<Plan<R>> plans) {
+    @Override public <R> Results<R> checkedRun(List<? extends Plan<R>> plans) {
         List<String> unionVars = PlanHelpers.publicVarsUnion(plans);
         String name = "SimpleUnion-"+nextId.getAndIncrement();
         MergePublisher<R> merge = parallel ? MergePublisher.async(name) : MergePublisher.eager(name);

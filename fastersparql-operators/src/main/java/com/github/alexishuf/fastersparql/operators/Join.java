@@ -35,13 +35,13 @@ public interface Join extends Operator {
      * @param <R> the row type
      * @return a non-null {@link Results} with the join result.
      */
-    <R> Results<R> checkedRun(List<Plan<R>> operands);
+    <R> Results<R> checkedRun(List<? extends Plan<R>> operands);
 
     /**
      * Same as {@link Join#checkedRun(List)}, but returns errors via
      * {@link Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(List<Plan<R>> operands) {
+    default <R> Results<R> run(List<? extends Plan<R>> operands) {
         try {
             return checkedRun(operands);
         } catch (Throwable t) {
