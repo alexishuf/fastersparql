@@ -10,7 +10,7 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
-import com.github.alexishuf.fastersparql.operators.impl.LeftBindJoin;
+import com.github.alexishuf.fastersparql.operators.impl.bind.LeftBindJoin;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.LeftJoinProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
@@ -31,7 +31,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils.publicVars;
@@ -154,8 +153,7 @@ class LeftJoinTest {
         List<Long> flags = asList(0L, ASYNC);
         return factories.stream().flatMap(fac -> providers.stream().flatMap(prov -> flags.stream()
                         .flatMap(flag -> base.stream()
-                                .map(testData -> arguments(fac, prov, flag, testData)))))
-                .collect(Collectors.toList()).stream();
+                                .map(testData -> arguments(fac, prov, flag, testData)))));
     }
 
     @ParameterizedTest @MethodSource("test")
@@ -179,18 +177,21 @@ class LeftJoinTest {
               TestData testData) throws ExecutionException {
         if (provider.bid(flags) == BidCosts.UNSUPPORTED)
             return;
-        SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint());
-        LeafPlan<String[]> leftPlan = new LeafPlan<>(testData.left(), client);
-        LeafPlan<String[]> rightPlan = new LeafPlan<>(testData.right(), client);
-        List<AsyncTask<?>> futures = new ArrayList<>();
-        for (int thread = 0; thread < N_THREADS; thread++) {
-            futures.add(Async.async(() -> {
+        LeafPlan<String[]> leftPlan;
+        LeafPlan<String[]> rightPlan;
+        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
+            leftPlan = new LeafPlan<>(testData.left(), client);
+            rightPlan = new LeafPlan<>(testData.right(), client);
+            List<AsyncTask<?>> futures = new ArrayList<>();
+            for (int thread = 0; thread < N_THREADS; thread++) {
+                futures.add(Async.async(() -> {
                 for (int i = 0; i < N_ITERATIONS; i++) {
                     LeftJoin op = provider.create(flags, ArrayOperations.INSTANCE);
                     testData.assertExpected(op.checkedRun(leftPlan, rightPlan));
                 }
-            }));
+                }));
+            }
+            for (AsyncTask<?> future : futures) future.get();
         }
-        for (AsyncTask<?> future : futures) future.get();
     }
 }

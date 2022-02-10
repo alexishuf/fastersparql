@@ -1,17 +1,28 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
+import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
+import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
+import com.github.alexishuf.fastersparql.operators.reorder.NullJoinReorderStrategy;
 import org.checkerframework.checker.index.qual.Positive;
 
+@SuppressWarnings("UnusedReturnValue")
 public class FasterSparqlOpProperties extends FasterSparqlProperties {
 
     /* --- --- --- property names --- --- --- */
     public static final String OP_DISTINCT_WINDOW = "fastersparql.op.distinct.window";
     public static final String OP_BIND_CONCURRENCY = "fastersparql.op.bind.concurrency";
+    public static final String OP_JOIN_REORDER = "fastersparql.op.join.reorder";
+    public static final String OP_JOIN_REORDER_BIND = "fastersparql.op.join.reorder.bind";
+    public static final String OP_JOIN_REORDER_HASH = "fastersparql.op.join.reorder.hash";
+    public static final String OP_JOIN_REORDER_WCO = "fastersparql.op.join.reorder.wco";
 
     /* --- --- --- default values --- --- --- */
     public static final int DEF_OP_DISTINCT_WINDOW = 16384;
     public static final int DEF_OP_BIND_CONCURRENCY = 2;
+    public static final String DEF_OP_JOIN_REORDER = "AvoidCartesian";
+    public static final String DEF_OP_JOIN_REORDER_WCO = "Null";
+
 
     /* --- --- --- accessors --- --- --- */
 
@@ -41,5 +52,57 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
      */
     public static @Positive int bindConcurrency() {
         return readPositiveInt(OP_BIND_CONCURRENCY, DEF_OP_BIND_CONCURRENCY);
+    }
+
+
+    private static final class JoinReorderStrategyParser implements Parser<JoinReorderStrategy> {
+        private static final JoinReorderStrategyParser INSTANCE = new JoinReorderStrategyParser();
+        @Override
+        public JoinReorderStrategy parse(String src,
+                                         String val) throws IllegalArgumentException {
+            JoinReorderStrategy s = JoinHelpers.loadStrategy(val);
+            if (s == null)
+                throw new IllegalArgumentException("No JoinReorderStrategy found for "+src+"="+val);
+            return s;
+        }
+    }
+
+    /**
+     * The {@link JoinReorderStrategy} to use for joins implemented with bind.
+     *
+     * The default strategy is {@link AvoidCartesianJoinReorderStrategy}, which only tries to
+     * avoid cartesian products, retaining the original operand order as much as possible
+     * (i.e., minimal optimization).
+     *
+     * @return a non-null {@link JoinReorderStrategy} implementation.
+     */
+    public static JoinReorderStrategy bindJoinReorder() {
+        JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
+        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_BIND, null, p);
+        if (s == null)
+            s = readProperty(OP_JOIN_REORDER, AvoidCartesianJoinReorderStrategy.INSTANCE, p);
+        return s;
+    }
+
+    /**
+     * Same as {@link FasterSparqlOpProperties#bindJoinReorder()} but for hash-based joins.
+     */
+    public static JoinReorderStrategy hashJoinReorder() {
+        JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
+        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_HASH, null, p);
+        if (s == null)
+            s = readProperty(OP_JOIN_REORDER, AvoidCartesianJoinReorderStrategy.INSTANCE, p);
+        return s;
+    }
+
+    /**
+     * Same as {@link FasterSparqlOpProperties#bindJoinReorder()} but for worst-case optimal joins.
+     */
+    public static JoinReorderStrategy wcoJoinReorder() {
+        JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
+        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_WCO, null, p);
+        if (s == null)
+            s = readProperty(OP_JOIN_REORDER, NullJoinReorderStrategy.INSTANCE, p);
+        return s;
     }
 }

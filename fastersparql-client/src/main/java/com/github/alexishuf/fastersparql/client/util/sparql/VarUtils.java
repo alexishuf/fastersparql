@@ -125,6 +125,22 @@ public class VarUtils {
     }
 
     /**
+     * Tests whether two sets of variables have at least one intersecting variable.
+     *
+     * @param a one set of variable names
+     * @param b another set of variable names
+     * @return true if {@code a} and {@code b} intersect.
+     */
+    public static boolean hasIntersection(Collection<String> a, Collection<String> b) {
+        if (a instanceof Set) {
+            for (String name : b) if (a.contains(name)) return true;
+        } else {
+            for (String name : a) if (b.contains(name)) return true;
+        }
+        return false;
+    }
+
+    /**
      * Create a distinct list of all variables in {@code left} and {@code right}, preserving
      * the order in which the variables appear (left comes first).
      *

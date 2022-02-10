@@ -50,6 +50,12 @@ public class Merger<R> {
         }
     }
 
+    public List<String> outVars() { return outVars; }
+
+    public boolean isProduct() { return joinVars.isEmpty(); }
+
+    public List<String> joinVars() { return joinVars; }
+
     public Plan<R> bind(@Nullable R leftRow) {
         Map<String, String> var2nt = new HashMap<>(this.mapCapacity);
         for (int i = 0, size = joinVars.size(); i < size; i++) {

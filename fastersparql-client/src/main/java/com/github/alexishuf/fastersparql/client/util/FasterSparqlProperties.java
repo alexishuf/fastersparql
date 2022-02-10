@@ -48,6 +48,13 @@ public class FasterSparqlProperties {
         });
     }
 
+    protected static String readTrimmedString(String propertyName, String defaultValue) {
+        return readProperty(propertyName, defaultValue, (src, val) -> {
+            if (val == null) throw new IllegalArgumentException(src+"=null: null not allowed");
+            return val.trim();
+        });
+    }
+
     /**
      * The size of the queue used to convert {@link org.reactivestreams.Publisher}s into
      * {@link Iterable}s
