@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 
 public class ListOperations implements RowOperations {
-    private static final ListOperations INSTANCE = new ListOperations();
+    public static final ListOperations INSTANCE = new ListOperations();
     public static class Provider implements RowOperationsProvider {
         @Override public RowOperations get() { return INSTANCE; }
         @Override public Class<?> rowClass() { return List.class; }

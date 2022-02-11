@@ -24,21 +24,16 @@
     <artifactId>fastersparql-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
   </parent>
-  <artifactId>fastersparql-integration-tests</artifactId>
+  <artifactId>fastersparql-operators-jena</artifactId>
   <packaging>jar</packaging>
 
-  <name>fastersparql-integration-tests</name>
+  <name>fastersparql-operators-jena</name>
 
   <dependencies>
     <dependency>
-      <groupId>com.github.alexishuf.fastersparql</groupId>
-      <artifactId>fastersparql-client</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.github.alexishuf.fastersparql</groupId>
-      <artifactId>fastersparql-netty</artifactId>
-      <version>${project.version}</version>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.github.alexishuf.fastersparql</groupId>
@@ -46,12 +41,12 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>com.github.alexishuf.fastersparql</groupId>
-      <artifactId>fastersparql-operators-jena</artifactId>
-      <version>${project.version}</version>
+      <groupId>org.apache.jena</groupId>
+      <artifactId>jena-arq</artifactId>
+      <version>4.4.0</version>
     </dependency>
 
-    <!--  test stuff  -->
+    <!-- test stuff  -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -61,44 +56,22 @@
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
     </dependency>
-    <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.jena</groupId>
-      <artifactId>apache-jena-libs</artifactId>
-      <type>pom</type>
-      <version>4.3.2</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>1.16.3</version>
-      <scope>test</scope>
-      <exclusions>
-        <!-- Do not pull 2.10.3 as jena will pull 2.13.0 via jackson-databind-->
-        <exclusion>
-          <groupId>com.fasterxml.jackson.core</groupId>
-          <artifactId>jackson-annotations</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
   </dependencies>
 
   <build>
     <plugins>
       <plugin>
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok-maven-plugin</artifactId>
-        <executions>
-          <execution>
-            <phase>generate-sources</phase>
-            <goals><goal>delombok</goal></goals>
-          </execution>
-        </executions>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+              <version>1.18.22</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
       </plugin>
     </plugins>
   </build>

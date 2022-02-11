@@ -64,6 +64,7 @@
     <module>fastersparql-client</module>
     <module>fastersparql-netty</module>
     <module>fastersparql-operators</module>
+    <module>fastersparql-operators-jena</module>
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-bom</module>
   </modules>
