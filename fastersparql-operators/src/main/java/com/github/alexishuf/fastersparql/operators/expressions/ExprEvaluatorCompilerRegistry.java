@@ -45,7 +45,7 @@ public class ExprEvaluatorCompilerRegistry {
     public ExprEvaluatorCompiler preferred(@Nullable String orName) {
         if (name2provider.isEmpty())
             registerAll();
-        orName = orName == null ? null : orName.trim().toLowerCase();
+        orName = orName == null ? "" : orName.trim().toLowerCase();
         ExprEvaluatorCompilerProvider provider = name2provider.getOrDefault(orName, null);
         if (provider == null)
             provider = preferred;

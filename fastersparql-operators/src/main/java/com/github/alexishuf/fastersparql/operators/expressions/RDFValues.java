@@ -1,5 +1,10 @@
 package com.github.alexishuf.fastersparql.operators.expressions;
 
+import com.github.alexishuf.fastersparql.client.util.CSUtils;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.util.regex.Pattern;
+
 @SuppressWarnings("unused")
 public class RDFValues {
     public static final String XSD = "http://www.w3.org/2001/XMLSchema#";
@@ -43,4 +48,45 @@ public class RDFValues {
 
     public static final String TRUE = "\"true\"^^<"+BOOLEAN+">";
     public static final String FALSE = "\"false\"^^<"+BOOLEAN+">";
+
+    private static final String NON_ZERO_RX = "[-+]?[1-9]\\d*\\.?\\d*";
+    private static final Pattern TRUE_RX = Pattern.compile("(?i)^\\s*(?:" +
+            "true$|\"true\"|'true'|"+NON_ZERO_RX+"|\""+NON_ZERO_RX+"\"|'"+NON_ZERO_RX+"')"
+    );
+    private static final Pattern FALSE_RX = Pattern.compile("(?i)^\\s*(?:" +
+            "false$|\"false\"|'false'|[-+]?0+$|\"[-+]?0+\"|'[-+]?0+')"
+    );
+    private static final char[] NUMERIC_EXTRA = "+-.Ee".toCharArray();
+
+    public static boolean coerceToBool(@Nullable CharSequence ntValue) {
+        if      (ntValue          ==  null) return false;
+        else if (ntValue.length() ==     0) return false;
+        else if (ntValue          ==  TRUE) return true;
+        else if (ntValue          == FALSE) return false;
+
+        String nt = ntValue.toString().trim();
+        if      ( TRUE_RX.matcher(ntValue).find()) return true;
+        else if (FALSE_RX.matcher(ntValue).find()) return false;
+
+        char first = nt.charAt(0);
+        if (first == '"' || first == '\'') {
+            int end = nt.lastIndexOf(first);
+            if (end < 1)
+                throw new IllegalArgumentException("Cannot coerce "+nt+" to a xsd:boolean");
+            if (nt.length() == 2) return false;
+            nt = nt.substring(1, end);
+        }
+
+        boolean numeric = true;
+        for (int i = 0, len = nt.length(); numeric && i < len; i++) {
+            char c = nt.charAt(i);
+            numeric = (c >= '0' && c <= '9') || CSUtils.charInSorted(c, NUMERIC_EXTRA);
+        }
+        if (numeric) {
+            try {
+                return Double.parseDouble(nt) != 0;
+            } catch (NumberFormatException ignored) { }
+        }
+        throw new IllegalArgumentException("Cannot coerce "+nt+" to a xsd:boolean");
+    }
 }

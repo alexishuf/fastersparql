@@ -21,17 +21,18 @@ public interface ExprEvaluatorCompiler {
      */
     <R> ExprEvaluator<R> compile(Class<? super R> rowClass, RowOperations rowOperations,
                                  List<String> rowVarNames,
-                                 String sparqlExpression);
+                                 CharSequence sparqlExpression);
 
     /**
-     * Shorthand for {@link ExprEvaluatorCompiler#compile(Class, RowOperations, List, String)}
+     * Shorthand for {@link ExprEvaluatorCompiler#compile(Class, RowOperations, List, CharSequence)}
      * taking the {@link RowOperations} from {@link RowOperationsRegistry}.
      *
      * @throws NoRowOperationsException if there is no {@link RowOperations} registered for
      *                                  {@code rowClass}
      */
     default <R> ExprEvaluator<R> compile(Class<? super R> rowClass, List<String> rowVarNames,
-                                         String sparqlExpression) throws NoRowOperationsException {
+                                         CharSequence sparqlExpression)
+            throws NoRowOperationsException {
         RowOperations ro = RowOperationsRegistry.get().forClass(rowClass);
         return compile(rowClass, ro, rowVarNames, sparqlExpression);
     }

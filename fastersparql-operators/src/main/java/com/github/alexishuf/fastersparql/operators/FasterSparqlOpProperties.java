@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
+import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluatorCompilerProvider;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.NullJoinReorderStrategy;
@@ -16,12 +17,14 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
     public static final String OP_JOIN_REORDER_BIND = "fastersparql.op.join.reorder.bind";
     public static final String OP_JOIN_REORDER_HASH = "fastersparql.op.join.reorder.hash";
     public static final String OP_JOIN_REORDER_WCO = "fastersparql.op.join.reorder.wco";
+    public static final String OP_FILTER_PREFERRED_COMPILER = "fastersparql.op.filter.compiler";
 
     /* --- --- --- default values --- --- --- */
     public static final int DEF_OP_DISTINCT_WINDOW = 16384;
     public static final int DEF_OP_BIND_CONCURRENCY = 2;
     public static final String DEF_OP_JOIN_REORDER = "AvoidCartesian";
     public static final String DEF_OP_JOIN_REORDER_WCO = "Null";
+    public static final String DEF_OP_FILTER_PREFERRED_COMPILER = null;
 
 
     /* --- --- --- accessors --- --- --- */
@@ -104,5 +107,15 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
         if (s == null)
             s = readProperty(OP_JOIN_REORDER, NullJoinReorderStrategy.INSTANCE, p);
         return s;
+    }
+
+    /**
+     * Name of the preferred {@link ExprEvaluatorCompilerProvider}.
+     *
+     * The default value is null, so that the provider with lowest
+     * {@link ExprEvaluatorCompilerProvider#order()} will be selected.
+     */
+    public static String preferredExprCompiler() {
+        return readTrimmedString(OP_FILTER_PREFERRED_COMPILER, null);
     }
 }

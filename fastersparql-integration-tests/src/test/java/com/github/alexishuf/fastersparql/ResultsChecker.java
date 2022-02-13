@@ -58,6 +58,8 @@ public class ResultsChecker {
                     row = new ArrayList<>(columns);
                 }
             }
+            if (!row.isEmpty())
+                throw new IllegalArgumentException("column / terms mismatch");
         }
     }
 
