@@ -3,14 +3,12 @@ package com.github.alexishuf.fastersparql.client.parser.results;
 import com.github.alexishuf.fastersparql.client.parser.results.JsonParser.Field;
 import com.google.gson.Gson;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -361,13 +359,24 @@ class JsonParserTest {
         return expanded.stream();
     }
 
-    @ParameterizedTest @MethodSource("parseData")
-    void testSanityJsonIsValid(int chunkSize, String json, List<String> vars, List<String[]> rows) {
-        if (vars == null || rows == null || rows.contains(null))
-            return;
-        if (json.startsWith("["))
-            return;
-        assertDoesNotThrow(() -> new Gson().fromJson(json, Map.class));
+    @Test
+    void testSanityJsonIsValid() throws Throwable {
+        Gson gson = new Gson();
+        Throwable error = parseData().parallel().map(a -> {
+            String json = (String) a.get()[1];
+            Object vars = a.get()[2];
+            List<?> rows = (List<?>) a.get()[3];
+            if (vars != null && rows != null && !rows.contains(null) && !json.startsWith("[")) {
+                try {
+                    gson.fromJson(json, Map.class);
+                } catch (Throwable t) {
+                    return t;
+                }
+            }
+            return null;
+        }).filter(Objects::nonNull).findAny().orElse(null);
+        if (error != null)
+            throw error;
     }
 
     private void doTestParse(Function<String, CharSequence> str2cs,

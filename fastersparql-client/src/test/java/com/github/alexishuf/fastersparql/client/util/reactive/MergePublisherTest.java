@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class MergePublisherTest {
-    private static final int N_THREADS = Runtime.getRuntime().availableProcessors()*4;
+    private static final int N_THREADS = Runtime.getRuntime().availableProcessors()*2;
     private static final int N_ITERATIONS = 3;
     private static final int QUEUE = 4;
 
@@ -311,14 +311,14 @@ class MergePublisherTest {
               boolean eager, boolean subscribeEarly, @Nullable Class<? extends Throwable> error,
               Collection<Integer> expected) throws ExecutionException {
         String baseName = "test-" + testMethodCall.getAndIncrement();
-        for (int i = 0; i < N_ITERATIONS; i++) {
-            String iterationName = baseName+"[i="+i;
-            List<AsyncTask<?>> tasks = new ArrayList<>();
-            for (int j = 0; j < N_THREADS; j++) {
-                String threadName = iterationName+", j="+j+"]";
-                tasks.add(Async.asyncThrowing(() -> {
+        List<AsyncTask<?>> tasks = new ArrayList<>();
+        for (int thread = 0; thread < N_THREADS; thread++) {
+            String threadName = baseName+"[, ]thread="+thread;
+            tasks.add(Async.asyncThrowing(() -> {
+                for (int i = 0; i < N_ITERATIONS; i++) {
+                    String iterationName = threadName + ", i=" + i + "]";
                     MergePublisher<Integer> merger =
-                            new MergePublisher<>(threadName, ignoreUpstreamErrors);
+                            new MergePublisher<>(iterationName, ignoreUpstreamErrors);
                     merger.setTargetParallelism(eager ? 1 : sources.size());
                     IterableAdapter<Integer> subscriber = new IterableAdapter<>(merger, QUEUE);
                     if (subscribeEarly)
@@ -330,9 +330,9 @@ class MergePublisherTest {
                             !ignoreUpstreamErrors && error != null && sources.size() > 1;
                     Class<? extends Throwable> exError = ignoreUpstreamErrors ? null : error;
                     assertExpected(subscriber, exError, expected, allowIncompleteIfError);
-                }));
-            }
-            for (AsyncTask<?> task : tasks) task.get();
+                }
+            }));
         }
+        for (AsyncTask<?> task : tasks) task.get();
     }
 }

@@ -7,14 +7,13 @@ import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.opentest4j.AssertionFailedError;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -24,6 +23,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class DistinctTest {
@@ -71,15 +71,32 @@ class DistinctTest {
         return new ArrayList<>(new LinkedHashSet<>(in));
     }
 
-    @ParameterizedTest @MethodSource("data")
-    void test(DistinctProvider provider, List<List<String>> inputs, long flags,
-              List<List<String>> expected) {
+//    @ParameterizedTest @MethodSource("data")
+    private void test(DistinctProvider provider, List<List<String>> inputs, long flags,
+                      List<List<String>> expected) {
         if (provider.bid(flags) == BidCosts.UNSUPPORTED)
             return; //silently skip
         List<String> expectedVars = TestHelpers.generateVars(expected);
         Distinct op = provider.create(flags, RowOperationsRegistry.get().forClass(List.class));
         Plan<List<String>> plan = op.asPlan(TestHelpers.asPlan(inputs));
         checkRows(expected, expectedVars, null, plan, true);
+    }
+    @Test
+    void parallelTest() {
+        List<AssertionFailedError> errors = data().parallel().map(Arguments::get).map(a -> {
+            DistinctProvider provider = (DistinctProvider) a[0];
+            @SuppressWarnings("unchecked") List<List<String>> inputs = (List<List<String>>) a[1];
+            long flags = (long) a[2];
+            @SuppressWarnings("unchecked") List<List<String>> expected = (List<List<String>>) a[3];
+            try {
+                test(provider, inputs, flags, expected);
+                return null;
+            } catch (Throwable t) {
+                return new AssertionFailedError("Test Failed for " + Arrays.toString(a), t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        if (!errors.isEmpty())
+            fail(errors.get(0));
     }
 
     @ParameterizedTest @ValueSource(longs = {

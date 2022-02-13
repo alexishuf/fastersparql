@@ -4,13 +4,11 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
-import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.opentest4j.AssertionFailedError;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
@@ -99,8 +97,8 @@ public class UnionTest {
                 .map(TestData::asArguments);
     }
 
-    @ParameterizedTest @MethodSource
-    public void test(List<List<List<String>>> inputs, List<List<String>> varsLists,
+//    @ParameterizedTest @MethodSource
+    private void test(List<List<List<String>>> inputs, List<List<String>> varsLists,
                      long flags,
                      List<List<String>> expected, List<String> expectedVars) {
         Union op = FasterSparqlOps.create(Union.class, flags, List.class);
@@ -122,4 +120,23 @@ public class UnionTest {
         Plan<List<String>> plan = op.asPlan(inPlans);
         checkRows(expected, expectedVars, null, plan, false);
     }
+    @Test @SuppressWarnings("unchecked")
+    void parallelTest() {
+        List<AssertionFailedError> errors = test().parallel().map(Arguments::get).map(a -> {
+            List<List<List<String>>> inputs = (List<List<List<String>>>) a[0];
+            List<List<String>> varsLists = (List<List<String>>) a[1];
+            long flags = (long) a[2];
+            List<List<String>> expected = (List<List<String>>) a[3];
+            List<String> expectedVars = (List<String>) a[4];
+            try {
+                test(inputs, varsLists, flags, expected, expectedVars);
+                return null;
+            } catch (Throwable t) {
+                return new AssertionFailedError("Failed for test case " + Arrays.toString(a), t);
+            }
+        }).filter(Objects::nonNull).collect(toList());
+        if (!errors.isEmpty())
+            throw errors.get(0);
+    }
+
 }

@@ -1,6 +1,9 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.client.util.async.Async;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import io.netty.channel.EventLoopGroup;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -11,8 +14,24 @@ import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EventLoopGroupHolderTest {
+    static AsyncTask<?> keepAlive1Second;
+    static AsyncTask<?> noKeepAlive;
+    static AsyncTask<?> concurrency;
+
+    @BeforeAll
+    static void beforeAll() {
+        EventLoopGroupHolderTest instance = new EventLoopGroupHolderTest();
+        keepAlive1Second = Async.asyncThrowing(instance::doTestKeepAlive1Second);
+        noKeepAlive = Async.asyncThrowing(instance::doTestNoKeepAlive);
+        concurrency = Async.asyncThrowing(instance::doTestConcurrency);
+    }
+
     @Test
-    void testKeepAlive1Second() throws InterruptedException {
+    void testKeepAlive1Second() throws ExecutionException {
+        keepAlive1Second.get();
+    }
+
+    private void doTestKeepAlive1Second() throws InterruptedException {
         EventLoopGroupHolder holder = EventLoopGroupHolder.builder().keepAlive(500)
                 .keepAliveTimeUnit(TimeUnit.MILLISECONDS).transport(NettyTransport.NIO).build();
         EventLoopGroup elg = holder.acquire();
@@ -44,7 +63,11 @@ class EventLoopGroupHolderTest {
     }
 
     @Test
-    void testNoKeepAlive() {
+    void testNoKeepAlive() throws ExecutionException {
+        noKeepAlive.get();
+    }
+
+    private void doTestNoKeepAlive() {
         EventLoopGroupHolder holder = EventLoopGroupHolder.builder().transport(NettyTransport.NIO).keepAlive(0).build();
         EventLoopGroup elg1 = holder.acquire();
         assertFalse(elg1.isShutdown());
@@ -71,7 +94,11 @@ class EventLoopGroupHolderTest {
     }
 
     @Test
-    void testConcurrency() throws InterruptedException, ExecutionException {
+    void testConcurrency() throws ExecutionException {
+        concurrency.get();
+    }
+
+    private void doTestConcurrency() throws InterruptedException, ExecutionException {
         EventLoopGroupHolder holder = EventLoopGroupHolder.builder().build();
         int tasks = Runtime.getRuntime().availableProcessors() * 64;
         List<Future<Integer>> futures = new ArrayList<>(tasks);

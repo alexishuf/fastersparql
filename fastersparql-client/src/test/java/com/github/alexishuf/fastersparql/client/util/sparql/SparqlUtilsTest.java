@@ -70,7 +70,7 @@ class SparqlUtilsTest {
         assertEquals(expectedPrefix,   stringEnd(prefixed, 1, prefixed.length()));
     }
 
-    static Stream<Arguments> testNextVar() {
+    static Stream<Arguments> testNextVarData() {
         List<String[]> base = Stream.of(
                 // cases where input is just before a variable
                 "0  | ?x",
@@ -204,21 +204,31 @@ class SparqlUtilsTest {
                 })));
     }
 
-    @ParameterizedTest @MethodSource
-    void testNextVar(int expected, String in) {
-        doTestNextVar(expected, in);
+    @Test
+    void testNextVar() {
+        List<Arguments> rows = testNextVarData().collect(Collectors.toList());
+        List<AssertionError> errors = IntStream.range(0, rows.size()).parallel().mapToObj(i -> {
+            Object[] args = rows.get(i).get();
+            try {
+                doTestNextVar((int) args[0], (String) args[1]);
+                return null;
+            } catch (Throwable t) {
+                return new AssertionError("Failed at " + i + "-th test row " + Arrays.toString(args), t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        assertEquals(Collections.emptyList(), errors);
     }
 
     @Test
     void testNextVarAsCharSequence() {
-        List<Arguments> rows = testNextVar().collect(Collectors.toList());
+        List<Arguments> rows = testNextVarData().collect(Collectors.toList());
         List<AssertionError> errors = IntStream.range(0, rows.size()).parallel().mapToObj(i -> {
             Object[] args = rows.get(i).get();
             try {
                 doTestNextVar((int) args[0], new StringBuilder((String) args[1]));
                 return null;
             } catch (Throwable t) {
-                return new AssertionError("Failed at " + i + "-th test row (" + Arrays.toString(args), t);
+                return new AssertionError("Failed at "+i+"-th test row "+Arrays.toString(args), t);
             }
         }).filter(Objects::nonNull).collect(Collectors.toList());
         assertEquals(emptyList(), errors);
@@ -352,9 +362,22 @@ class SparqlUtilsTest {
                 }));
     }
 
-    @ParameterizedTest @MethodSource
-    void testPublicVars(String sparql, List<String> expected) {
-        assertEquals(expected, SparqlUtils.publicVars(sparql));
+//    @ParameterizedTest @MethodSource
+//    void testPublicVars(String sparql, List<String> expected) {
+//        assertEquals(expected, SparqlUtils.publicVars(sparql));
+//    }
+    @Test
+    void parallelTestPublicVars() throws Throwable {
+        List<Throwable> errors = testPublicVars().parallel().map(Arguments::get).map(a -> {
+            try {
+                assertEquals(a[1], publicVars((String) a[0]));
+                return null;
+            } catch (Throwable t) {
+                return new AssertionError("Failed at row " + Arrays.toString(a), t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        if (!errors.isEmpty())
+            throw errors.get(0);
     }
 
     static Stream<Arguments> testAllVars() {
@@ -569,9 +592,22 @@ class SparqlUtilsTest {
                 })));
     }
 
-    @ParameterizedTest @MethodSource
-    void testFindBodyOpen(String sparql, int expected) {
-        assertEquals(expected, SparqlUtils.findBodyOpen(sparql));
+//    @ParameterizedTest @MethodSource
+//    void testFindBodyOpen(String sparql, int expected) {
+//        assertEquals(expected, SparqlUtils.findBodyOpen(sparql));
+//    }
+    @Test
+    void parallelTestFindBodyOpen() throws Throwable {
+        List<Throwable> errors = testFindBodyOpen().parallel().map(Arguments::get).map(a -> {
+            try {
+                assertEquals(a[1], findBodyOpen((String) a[0]));
+                return null;
+            } catch (Throwable t) {
+                return new AssertionError("Failed for " + Arrays.toString(a), t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        if (!errors.isEmpty())
+            throw errors.get(0);
     }
 
     static Stream<Arguments> testBind() {

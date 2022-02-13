@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.model;
 
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.client.util.async.Async.asyncThrowing;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -68,7 +70,12 @@ class SparqlEndpointTest {
     }
 
     @Test
-    void testUnresolvableHost() {
+    void testUnresolvableHost() throws ExecutionException {
+        unresolvableHost.get();
+    }
+    private static final AsyncTask<?> unresolvableHost =
+            asyncThrowing(SparqlEndpointTest::doTestUnresolvableHost);
+    private static void doTestUnresolvableHost() {
         //load class and initialize static fields
         SparqlEndpoint ep = new SparqlEndpoint("http://example.org/sparql");
         assertFalse(ep.hasQuery()); // use above value

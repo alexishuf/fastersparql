@@ -20,7 +20,9 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+import lombok.var;
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -30,14 +32,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -200,7 +203,7 @@ public class JoinTest {
                 return super.bid(flags);
             }
             @Override public Join create(long flags, RowOperations ro) {
-                return new BindJoin(ro, (flags & ASYNC) != 0 ? 23 : 1);
+                return new BindJoin(ro, (flags & ASYNC) != 0 ? 32 : 1);
             }
             @Override public String toString() {
                 return super.toString()+"[bindConcurrency=32]";
@@ -212,18 +215,25 @@ public class JoinTest {
                         data -> arguments(fac, prov, flags, data)))));
     }
 
-    @ParameterizedTest @MethodSource("test")
-    void selfTest(SparqlClientFactory clientFactory, JoinProvider provider, long flags,
-                  TestData data) {
-        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            for (String sparql : data.operands) {
-                IterableAdapter<String[]> a = new IterableAdapter<>(client.query(sparql).publisher());
-                AtomicBoolean empty = new AtomicBoolean(true);
-                a.forEach(r -> empty.set(false));
-                if (a.hasError())
-                    fail(a.error());
-                if (!data.expected().isEmpty())
-                    assertFalse(empty.get());
+    @Test
+    void selfTest() throws ExecutionException {
+        var factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<String> queries = test().map(a -> (TestData) a.get()[3])
+                                    .flatMap(d -> d.operands.stream()).collect(toSet());
+        for (SparqlClientFactory factory : factories) {
+            List<AsyncTask<?>> tasks = new ArrayList<>();
+            try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
+                for (String query : queries) {
+                    tasks.add(Async.async(() -> {
+                        var a = new IterableAdapter<>(client.query(query).publisher());
+                        List<String[]> list = new ArrayList<>();
+                        a.forEach(list::add);
+                        if (a.hasError())
+                            fail(a.error());
+                        assertFalse(list.isEmpty());
+                    }));
+                }
+                for (AsyncTask<?> task : tasks) task.get();
             }
         }
     }

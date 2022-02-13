@@ -14,11 +14,10 @@ import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -28,10 +27,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
+import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -140,12 +141,23 @@ public class MinusTest {
                         data -> arguments(fac, prov, flags, data)))));
     }
 
-    @ParameterizedTest @MethodSource("test")
-    void selfTest(SparqlClientFactory clientFactory, MinusProvider provider, long flags,
-                  TestData testData) {
-        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            checkQuery(client, testData.left);
-            checkQuery(client, testData.right);
+    @Test
+    void selfTest() throws ExecutionException {
+        val factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<String> queries = test().map(a -> (TestData) a.get()[3])
+                                    .flatMap(d -> Stream.of(d.left, d.right)).collect(toSet());
+        for (SparqlClientFactory factory : factories) {
+            try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
+                List<AsyncTask<?>> tasks = new ArrayList<>();
+                for (String query : queries) {
+                    tasks.add(Async.async(() -> {
+                        var a = new IterableAdapter<>(client.query(query).publisher());
+                        if (a.hasError())
+                            fail(a.error());
+                    }));
+                }
+                for (AsyncTask<?> task : tasks) task.get();
+            }
         }
     }
 

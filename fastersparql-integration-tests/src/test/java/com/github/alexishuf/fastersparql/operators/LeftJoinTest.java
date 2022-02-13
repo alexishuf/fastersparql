@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.ResultsChecker;
 import com.github.alexishuf.fastersparql.TestUtils;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
-import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
@@ -15,12 +14,10 @@ import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.LeftJoinProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
+import lombok.*;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -30,13 +27,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils.publicVars;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.ASYNC;
 import static java.util.Arrays.asList;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static java.util.stream.Collectors.toSet;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @Slf4j
@@ -156,20 +155,25 @@ class LeftJoinTest {
                                 .map(testData -> arguments(fac, prov, flag, testData)))));
     }
 
-    @ParameterizedTest @MethodSource("test")
-    void selfTest(SparqlClientFactory clientFactory, LeftJoinProvider ignoredProvider,
-                  long ignoredFlags, TestData testData) {
-        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            checkQuery(testData.left(), client);
-            checkQuery(testData.right(), client);
+    @Test
+    void selfTest() throws ExecutionException {
+        val factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<String> queries = test().map(a -> (TestData) a.get()[3])
+                                    .flatMap(d -> Stream.of(d.left, d.right)).collect(toSet());
+        for (SparqlClientFactory factory : factories) {
+            try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
+                List<AsyncTask<?>> tasks = new ArrayList<>();
+                for (String query : queries) {
+                    tasks.add(Async.async(() -> {
+                        val a = new IterableAdapter<>(client.query(query).publisher());
+                        a.forEach(r -> {});
+                        if (a.hasError())
+                            fail(a.error());
+                    }));
+                }
+                for (AsyncTask<?> task : tasks) task.get();
+            }
         }
-    }
-
-    private void checkQuery(String sparql, SparqlClient<String[], byte[]> client) {
-        Results<String[]> results = client.query(sparql);
-        IterableAdapter<String[]> adapter = new IterableAdapter<>(results.publisher());
-        adapter.forEach(r -> {});
-        assertFalse(adapter.hasError());
     }
 
     @ParameterizedTest @MethodSource
