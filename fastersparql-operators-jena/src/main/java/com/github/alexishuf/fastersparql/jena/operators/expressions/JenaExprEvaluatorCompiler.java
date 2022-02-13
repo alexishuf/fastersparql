@@ -29,7 +29,8 @@ public class JenaExprEvaluatorCompiler implements ExprEvaluatorCompiler {
 
     @Override
     public <R> ExprEvaluator<R> compile(Class<? super R> rowClass, RowOperations rowOperations,
-                                        List<String> rowVarNames, String expr) {
+                                        List<String> rowVarNames, CharSequence inExpr) {
+        String expr = inExpr.toString();
         StringBuilder b = new StringBuilder(HOST_SPARQL.length() + expr.length() + 16);
         b.append(HOST_SPARQL).append("FILTER(").append(expr).append(")}");
         Query query;
@@ -49,6 +50,6 @@ public class JenaExprEvaluatorCompiler implements ExprEvaluatorCompiler {
         });
         if (out[0] == null)
             throw new ExprSyntaxException(expr, "no expression found");
-        return new JenaExprEvaluator<>(out[0], rowOperations, rowVarNames);
+        return new JenaExprEvaluator<>(expr, out[0], rowOperations, rowVarNames);
     }
 }

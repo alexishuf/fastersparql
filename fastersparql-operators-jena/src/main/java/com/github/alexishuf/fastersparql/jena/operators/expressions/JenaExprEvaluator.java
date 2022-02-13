@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
+import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
@@ -15,27 +16,43 @@ import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.NodeValue;
+import org.apache.jena.sparql.expr.VariableNotBoundException;
 import org.apache.jena.sparql.function.FunctionEnvBase;
 import org.apache.jena.sparql.util.Context;
 
 import java.util.*;
 import java.util.function.BiConsumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
-    private final NodeFormatterNT formatter = new NodeFormatterNT();
-    private final DatasetGraph dsg = DatasetFactory.create().asDatasetGraph();
-    private final Context jCtx = Context.setupContextForDataset(ARQ.getContext(), dsg);
-    private final FunctionEnvBase fnEnv = new FunctionEnvBase(jCtx, dsg.getDefaultGraph(), dsg);
+    private static final Pattern VAR = Pattern.compile(" \\?([^ ,?]+)");
+    private static final NodeFormatterNT formatter = new NodeFormatterNT();
+    private static final DatasetGraph dsg = DatasetFactory.create().asDatasetGraph();
+    private static final Context jCtx = Context.setupContextForDataset(ARQ.getContext(), dsg);
+    private static final FunctionEnvBase fnEnv = new FunctionEnvBase(jCtx, dsg.getDefaultGraph(), dsg);
+
+    private final String exprString;
     private final Expr expr;
     private final RowBinding binding;
 
-    public JenaExprEvaluator(Expr expr, RowOperations rowOperations, List<String> varNames) {
+
+    public JenaExprEvaluator(String exprString, Expr expr, RowOperations rowOperations, List<String> varNames) {
+        this.exprString = exprString;
         this.expr = expr;
         this.binding = new RowBinding(rowOperations, varNames);
     }
 
     @Override public String evaluate(R row) {
-        NodeValue value = expr.eval(binding.setValues(row), fnEnv);
+        NodeValue value;
+        try {
+            value = expr.eval(binding.setValues(row), fnEnv);
+        } catch (VariableNotBoundException e) {
+            List<String> unbound = new ArrayList<>();
+            for (Matcher m = VAR.matcher(e.getMessage()); m.find(); )
+                unbound.add(m.group(1));
+            throw new UnboundVariablesException(exprString, unbound);
+        }
         StringWriterI writer = new StringWriterI();
         formatter.format(writer, value.asNode());
         return writer.toString();
