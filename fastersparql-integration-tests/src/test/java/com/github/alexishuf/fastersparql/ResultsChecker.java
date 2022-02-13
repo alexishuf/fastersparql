@@ -39,14 +39,24 @@ public class ResultsChecker {
 
     public ResultsChecker(List<String> vars, String... values) {
         this.vars = vars;
-        int columns = vars.size();
         this.expected = new ArrayList<>();
-        List<String> row = new ArrayList<>(columns);
-        for (String value : values) {
-            row.add(expandVars(value));
-            if (row.size() == columns) {
-                this.expected.add(row);
-                row = new ArrayList<>(columns);
+        int columns = vars.size();
+        if (columns == 0) {
+            if (values.length > 1) {
+                throw new IllegalArgumentException("Too many values given for zero vars");
+            } else if (values.length == 1) {
+                if (!values[0].trim().isEmpty())
+                    throw new IllegalArgumentException("Non-empty string for zero vars");
+                this.expected.add(Collections.emptyList());
+            }
+        } else {
+            List<String> row = new ArrayList<>(columns);
+            for (String value : values) {
+                row.add(expandVars(value));
+                if (row.size() == columns) {
+                    this.expected.add(row);
+                    row = new ArrayList<>(columns);
+                }
             }
         }
     }

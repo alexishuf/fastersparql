@@ -10,6 +10,7 @@ public enum OperatorName {
     DISTINCT,
     PROJECT,
     FILTER,
+    FILTER_EXISTS,
     MINUS;
 
     public Class<? extends Operator> asClass() {
@@ -28,6 +29,8 @@ public enum OperatorName {
                 return Project.class;
             case FILTER:
                 return Filter.class;
+            case FILTER_EXISTS:
+                return FilterExists.class;
             case MINUS:
                 return Minus.class;
             default:
@@ -51,6 +54,8 @@ public enum OperatorName {
                 return ProjectProvider.class;
             case FILTER:
                 return FilterProvider.class;
+            case FILTER_EXISTS:
+                return FilterExistsProvider.class;
             case MINUS:
                 return MinusProvider.class;
             default:

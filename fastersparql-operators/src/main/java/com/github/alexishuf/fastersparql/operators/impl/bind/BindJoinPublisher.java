@@ -14,13 +14,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 class BindJoinPublisher<R> extends MergePublisher<R> {
     public enum JoinType {
         INNER,
         LEFT,
-        MINUS;
+        MINUS,
+        FILTER_NOT_EXISTS,
+        FILTER_EXISTS;
 
         public <R> @Nullable R finalRow(boolean emptyRightSide, Merger<R> merger, R leftRow) {
             switch (this) {
@@ -29,10 +32,23 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 case LEFT:
                     return emptyRightSide ? merger.merge(leftRow, null) : null;
                 case MINUS:
+                case FILTER_NOT_EXISTS:
                     return emptyRightSide ? leftRow : null;
+                case FILTER_EXISTS:
+                    return emptyRightSide ? null : leftRow;
             }
             String msg = "No finalRow() implementation for " + this + " fix me";
             throw new UnsupportedOperationException(msg);
+        }
+
+        public boolean isExistsFilter() {
+            switch (this) {
+                case MINUS:
+                case FILTER_NOT_EXISTS:
+                case FILTER_EXISTS:
+                    return true;
+            }
+            return false;
         }
 
         public String operatorName() {
@@ -43,6 +59,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                     return "LeftBindJoin";
                 case MINUS:
                     return "Minus";
+                case FILTER_NOT_EXISTS:
+                    return "FilterNotExists";
+                case FILTER_EXISTS:
+                    return "FilterExists";
             }
             throw new UnsupportedOperationException("No operatorName for "+this+". Fix me");
         }
@@ -160,6 +180,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         private volatile boolean empty = true;
         private long requested;
         private @Nullable R finalRow;
+        private final AtomicBoolean logicalCompleted = new AtomicBoolean(false);
 
         public RightProcessor(R leftRow) {
             super(merger.bind(leftRow).execute().publisher());
@@ -207,34 +228,42 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 requested = Math.max(0, requested-1);
                 empty = false;
             }
-            if (joinType == JoinType.MINUS) {
+            if (joinType.isExistsFilter()) {
                 cancelUpstream();
-                completeDownstream(null);
+                logicalComplete();
             } else {
                 emit(merger.merge(leftRow, rightRow));
             }
         }
 
+        private void logicalComplete() {
+            if (logicalCompleted.compareAndSet(false, true)) {
+                R emitRow;
+                boolean complete = true;
+                synchronized (this) {
+                    emitRow = joinType.finalRow(empty, merger, leftRow);
+                    if (emitRow != null) { // inject a row
+                        if (requested > 0) { //deliver final row now
+                            requested--;
+                        } else { // wait for next request to deliver finalRow
+                            finalRow = emitRow;
+                            emitRow = null;
+                            complete = false;
+                        }
+                    } //else: no final row generated, just complete
+                }
+                if (emitRow != null)
+                    emit(emitRow);
+                if (complete)
+                    completeDownstream(null);
+            } else {
+                log.trace("{}.logicalComplete(): no-op", this);
+            }
+        }
+
         @Override public void onComplete() {
             log.trace("{}.onComplete()", this);
-            R emitRow;
-            boolean complete = true;
-            synchronized (this) {
-                emitRow = joinType.finalRow(empty, merger, leftRow);
-                if (emitRow != null) { // inject a row
-                    if (requested > 0) { //deliver final row now
-                        requested--;
-                    } else { // wait for next request to deliver finalRow
-                        finalRow = emitRow;
-                        emitRow = null;
-                        complete = false;
-                    }
-                } //else: no final row generated, just complete
-            }
-            if (emitRow != null)
-                emit(emitRow);
-            if (complete)
-                completeDownstream(null);
+            logicalComplete();
         }
 
         @Override protected void completeDownstream(@Nullable Throwable cause) {

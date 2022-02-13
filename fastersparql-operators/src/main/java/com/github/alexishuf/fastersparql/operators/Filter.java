@@ -35,6 +35,10 @@ public interface Filter extends Operator {
      */
     <R> Results<R> checkedRun(Plan<R> input, @Nullable Collection<? extends CharSequence> filters);
 
+    /**
+     * Equivalent to {@link Filter#checkedRun(Plan, Collection)}, but returns exceptions thrown
+     * by the method through {@link Results#publisher()}.
+     */
     default <R> Results<R> run(Plan<R> input, @Nullable Collection<? extends CharSequence> filters) {
         try {
             return checkedRun(input, filters);

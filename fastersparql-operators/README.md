@@ -17,7 +17,12 @@ The following interfaces for operators are offered:
 - `Distinct(S)`
 - `Project(S, variables)`
 - `Filter(S, expr)` 
+- `FilterExists(S, negated, F)` 
 - `Minus(L, R)` (removes from `L` all solutions compatible with at least one solution in `R`)
+
+> Since fastersparql does not model namespaces, `FilterExists`, which 
+> corresponds to `FILTER EXISTS` and `FILTER NOT EXSITS` takes a whole query 
+> as filter. The filter query can be a SELECT or ASK.
 
 All these operators have `run` amd `checkedRun` methods that receives the inputs
 listed within parenthesis above and return a `Results`. These two methods 
