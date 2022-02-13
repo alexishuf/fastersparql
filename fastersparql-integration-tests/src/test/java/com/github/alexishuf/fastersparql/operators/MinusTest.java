@@ -33,6 +33,7 @@ import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toSet;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -127,6 +128,7 @@ public class MinusTest {
         List<SparqlClientFactory> factories = TestUtils.allClientFactories();
         List<MinusProvider> providers = new ArrayList<>();
         ServiceLoader.load(MinusProvider.class).forEach(providers::add);
+        assertFalse(providers.isEmpty());
         providers.add(new BindMinus.Provider() {
             @Override public Minus create(long flags, RowOperations ro) {
                 return new BindMinus(ro, (flags & OperatorFlags.ASYNC) != 0 ? 32 : 1);

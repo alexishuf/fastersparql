@@ -35,6 +35,7 @@ import static com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils.p
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.ASYNC;
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toSet;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -144,6 +145,7 @@ class LeftJoinTest {
         List<SparqlClientFactory> factories = TestUtils.allClientFactories();
         List<LeftJoinProvider> providers = new ArrayList<>();
         ServiceLoader.load(LeftJoinProvider.class).forEach(providers::add);
+        assertFalse(providers.isEmpty());
         providers.add(new LeftBindJoin.Provider() {
             @Override public LeftJoin create(long flags, RowOperations rowOperations) {
                 return new LeftBindJoin(rowOperations, (flags & ASYNC) != 0 ? 32 : 1);

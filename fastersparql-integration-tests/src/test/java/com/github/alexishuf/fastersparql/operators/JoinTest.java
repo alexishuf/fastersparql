@@ -197,6 +197,7 @@ public class JoinTest {
         List<SparqlClientFactory> factories = TestUtils.allClientFactories();
         List<JoinProvider> providers = new ArrayList<>();
         ServiceLoader.load(JoinProvider.class).forEach(providers::add);
+        assertFalse(providers.isEmpty());
         providers.add(new BindJoin.Provider() {
             @Override public @NonNegative int bid(long flags) {
                 if ((flags & ASYNC) == 0) return BidCosts.UNSUPPORTED;
