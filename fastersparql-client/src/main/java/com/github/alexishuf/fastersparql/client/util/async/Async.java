@@ -31,6 +31,19 @@ public class Async {
     }
 
     /**
+     * Create an {@link AsyncTask} in the completed exceptionally state with the given {@code cause}.
+     *
+     * @param cause the cause of failure
+     * @param <T> the type of return that would be expected upon success
+     * @return a new {@link AsyncTask} completed with the given {@link Throwable}.
+     */
+    public static <T> AsyncTask<T> failed(Throwable cause) {
+        CompletableAsyncTask<T> task = new CompletableAsyncTask<>();
+        task.completeExceptionally(cause);
+        return task;
+    }
+
+    /**
      * Get an {@link AsyncTask} that completes when and  as {@code future} completes.
      *
      * If {@code future} does not happen to implement the {@link CompletionStage} interface,
