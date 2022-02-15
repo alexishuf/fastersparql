@@ -219,9 +219,7 @@ public class Async {
 
     @RequiredArgsConstructor
     private static class Factory implements ThreadFactory {
-        private final ThreadGroup group = System.getSecurityManager() == null
-                ? Thread.currentThread().getThreadGroup()
-                : System.getSecurityManager().getThreadGroup();
+        private final ThreadGroup group = Thread.currentThread().getThreadGroup();
         private final AtomicInteger lastThreadId = new AtomicInteger(0);
         private final String factoryName;
         @Override public Thread newThread(@NonNull Runnable r) {

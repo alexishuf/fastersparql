@@ -131,7 +131,7 @@ public final class MediaType {
 
     /**
      * Sanitizes and parses a media type according to the {@code media-type} production in
-     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-3.7">RFC2616</>
+     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-3.7">RFC2616</a>
      *
      * Sanitization:
      * <ul>

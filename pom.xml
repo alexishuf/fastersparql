@@ -58,6 +58,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>8</maven.compiler.source>
     <maven.compiler.target>8</maven.compiler.target>
+    <lombok.version>1.18.22</lombok.version>
   </properties>
 
   <modules>
@@ -84,7 +85,7 @@
       <dependency> <!-- Code generation, mostly for @Value and @Builder  -->
         <groupId>org.projectlombok</groupId>
         <artifactId>lombok</artifactId>
-        <version>1.18.22</version>
+        <version>${lombok.version}</version>
         <scope>provided</scope>
       </dependency>
       <dependency> <!-- Annotations from checkerframework.org -->
@@ -157,18 +158,50 @@
     </pluginManagement>
 
     <plugins>
+      <!-- Expand lombok-annotated code into generated-sources/delombok -->
+      <plugin>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok-maven-plugin</artifactId>
+        <dependencies>
+          <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+          </dependency>
+        </dependencies>
+        <configuration>
+          <sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
+          <addOutputDirectory>false</addOutputDirectory>
+        </configuration>
+        <executions>
+          <execution>
+            <phase>generate-sources</phase>
+            <goals><goal>delombok</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <source>${maven.compiler.source}</source>
           <target>${maven.compiler.target}</target>
+          <annotationProcessorPaths>
+            <path> <!-- expand lombok annotations into the bytecode -->
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+              <version>1.18.22</version>
+            </path>
+          </annotationProcessorPaths>
         </configuration>
       </plugin>
+      <!-- Generate javadoc over delomboked sources -->
       <plugin>
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
+          <sourcepath>${project.build.directory}/generated-sources/delombok</sourcepath>
           <javadocExecutable>${java.home}/bin/javadoc</javadocExecutable>
           <source>8</source>
+          <!-- Enable all warnings but the missing documentation -->
           <additionalJOption>-Xdoclint:all</additionalJOption>
           <additionalJOption>-Xdoclint:-missing</additionalJOption>
         </configuration>

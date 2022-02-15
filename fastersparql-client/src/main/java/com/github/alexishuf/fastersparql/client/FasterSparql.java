@@ -24,7 +24,7 @@ public class FasterSparql {
 
     /**
      * Get the highest-{@link SparqlClientFactory#order()} {@link SparqlClientFactory} instance
-     * whose {@link SparqlClientFactory#tag()} or {@link SparqlClientFactory#getClass()} appears
+     * whose {@link SparqlClientFactory#tag()} or {@link Object#getClass()} appears
      * first in the given {@code preferredTagsOrClassNames} list.
      *
      * @param preferredTagsOrClassNames a list of {@link SparqlClientFactory#tag()}s,
