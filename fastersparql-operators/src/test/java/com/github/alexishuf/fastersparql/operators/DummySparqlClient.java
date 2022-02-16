@@ -8,6 +8,16 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class DummySparqlClient<R,F> implements SparqlClient<R,F> {
+    @Override public Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) Object.class;
+    }
+
+    @Override public Class<F> fragmentClass() {
+        //noinspection unchecked
+        return (Class<F>) Object.class;
+    }
+
     @Override public SparqlEndpoint endpoint() {
         throw new UnsupportedOperationException();
     }

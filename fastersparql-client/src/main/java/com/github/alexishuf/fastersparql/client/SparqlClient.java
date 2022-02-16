@@ -35,6 +35,16 @@ import org.reactivestreams.Subscriber;
 public interface SparqlClient<R, F> extends AutoCloseable {
 
     /**
+     * The {@link Class} for the {@code R} type parameter.
+     */
+    Class<R> rowClass();
+
+    /**
+     * The {@link Class} for the {@code F} type parameter.
+     */
+    Class<F> fragmentClass();
+
+    /**
      * The endpoint queried by this {@link SparqlClient}.
      *
      * @return a non-null {@link SparqlEndpoint}.

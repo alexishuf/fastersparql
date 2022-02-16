@@ -68,6 +68,16 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         this.fragParser = fragmentParser;
     }
 
+    @Override public Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowParser.rowClass();
+    }
+
+    @Override public Class<F> fragmentClass() {
+        //noinspection unchecked
+        return (Class<F>) fragParser.fragmentClass();
+    }
+
     @Override public SparqlEndpoint endpoint() {
         return endpoint;
     }
