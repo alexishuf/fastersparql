@@ -206,6 +206,30 @@ class AsyncTaskTest {
     }
 
     @Test
+    void testCompleteWithStage() throws ExecutionException {
+        CompletableAsyncTask<Integer> ok = new CompletableAsyncTask<>();
+        CompletableAsyncTask<Integer> fail = new CompletableAsyncTask<>();
+        CompletableFuture<Integer> okFuture = new CompletableFuture<>();
+        CompletableFuture<Integer> failFuture = new CompletableFuture<>();
+
+        assertSame(ok, ok.completeWhen(okFuture));
+        assertSame(fail, fail.completeWhen(failFuture));
+
+        assertFalse(ok.isDone());
+        assertFalse(fail.isDone());
+
+        ok.complete(23);
+        RuntimeException cause = new RuntimeException("fail");
+        fail.completeExceptionally(cause);
+
+        assertTrue(ok.isDone());
+        assertTrue(fail.isDone());
+
+        assertEquals(23, ok.get());
+        assertThrows(ExecutionException.class, fail::get);
+    }
+
+    @Test
     void testHandle() throws ExecutionException, InterruptedException {
         String value = "value";
         IllegalArgumentException cause = new IllegalArgumentException();
