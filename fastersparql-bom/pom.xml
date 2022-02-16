@@ -57,22 +57,22 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.github.fastersparql</groupId>
+                <groupId>com.github.alexishuf.fastersparql</groupId>
                 <artifactId>fastersparql-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.github.fastersparql</groupId>
+                <groupId>com.github.alexishuf.fastersparql</groupId>
                 <artifactId>fastersparql-netty</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.github.fastersparql</groupId>
+                <groupId>com.github.alexishuf.fastersparql</groupId>
                 <artifactId>fastersparql-operators</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.github.fastersparql</groupId>
+                <groupId>com.github.alexishuf.fastersparql</groupId>
                 <artifactId>fastersparql-operators-jena</artifactId>
                 <version>${project.version}</version>
             </dependency>
