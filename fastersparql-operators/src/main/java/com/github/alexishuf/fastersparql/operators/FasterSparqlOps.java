@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 public class FasterSparqlOps {
@@ -45,6 +46,18 @@ public class FasterSparqlOps {
                                   Class<?> rowClass) throws NoOperatorProviderException {
         RowOperations ops = RowOperationsRegistry.get().forClass(rowClass);
         return registry.get(name, flags).create(flags, ops);
+    }
+
+    public static <R> EmptyPlan<R> empty(List<String> publicVars, List<String> allVars,
+                                         Class<? super R> rowClass) {
+        return new EmptyPlan<>(publicVars, allVars, rowClass);
+    }
+    public static <R> EmptyPlan<R> empty(List<String> publicVars,
+                                         Class<? super R> rowClass) {
+        return new EmptyPlan<>(publicVars, publicVars, rowClass);
+    }
+    public static <R> EmptyPlan<R> empty(Class<? super R> rowClass) {
+        return new EmptyPlan<>(Collections.emptyList(), Collections.emptyList(), rowClass);
     }
 
     public static <R> JoinPlan<R> join(List<Plan<R>> operands, Class<? super R> rowClass, long flags) {
