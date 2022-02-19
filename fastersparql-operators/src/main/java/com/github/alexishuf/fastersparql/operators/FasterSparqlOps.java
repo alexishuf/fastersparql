@@ -87,11 +87,11 @@ public class FasterSparqlOps {
     }
 
     public static <R> ProjectPlan<R> project(Plan<R> input, List<String> vars,
-                                             Class<? extends R> rowClass, long flags) {
+                                             Class<? super R> rowClass, long flags) {
         return new ProjectPlan<>(create(Project.class, flags, rowClass), input, vars);
     }
     public static <R> ProjectPlan<R> project(Plan<R> input, List<String> vars,
-                                             Class<? extends R> rowClass) {
+                                             Class<? super R> rowClass) {
         return project(input, vars, rowClass, 0L);
     }
 
