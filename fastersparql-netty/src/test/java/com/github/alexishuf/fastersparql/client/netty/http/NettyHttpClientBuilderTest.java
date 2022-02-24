@@ -271,13 +271,22 @@ class NettyHttpClientBuilderTest {
                     NettyHttpClient<ClientHandler> client =
                             builder.build(Protocol.HTTP, address, ClientHandler::new);
                     CompletableFuture<String> response = new CompletableFuture<>();
-                    client.request(HttpMethod.POST, "/endpoint?x="+id, a -> {
+                    client.request(HttpMethod.POST, "/endpoint?x=" + id, a -> {
                         ByteBuf bb = a.buffer();
-                        bb.writeCharSequence(""+payloadSize, UTF_8);
+                        bb.writeCharSequence("" + payloadSize, UTF_8);
                         return bb;
-                    }, (ch, req, handler) -> {
-                        req.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/x.payload+req");
-                        handler.setup(response, id, payloadSize);
+                    }, new NettyHttpClient.Setup<ClientHandler>() {
+                        @Override
+                        public void setup(Channel ch, HttpRequest req, ClientHandler handler) {
+                            req.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/x.payload+req");
+                            handler.setup(response, id, payloadSize);
+                        }
+                        @Override public void connectionError(Throwable cause) {
+                            response.completeExceptionally(cause);
+                        }
+                        @Override public void requestError(Throwable cause) {
+                            response.completeExceptionally(cause);
+                        }
                     });
                     return response.get();
                 }));

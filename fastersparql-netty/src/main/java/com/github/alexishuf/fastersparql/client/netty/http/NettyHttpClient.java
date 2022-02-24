@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClient
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.channel.Channel;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
@@ -26,9 +27,10 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * @param <H> the application-specific HTTP response handler.
  */
 public interface NettyHttpClient<H extends ReusableHttpClientInboundHandler> extends AutoCloseable {
-    @FunctionalInterface
     interface Setup<H2 extends ReusableHttpClientInboundHandler> {
-        void setup(SocketChannel ch, HttpRequest request, H2 handler);
+        void setup(Channel ch, HttpRequest request, H2 handler);
+        void connectionError(Throwable cause);
+        void requestError(Throwable cause);
     }
 
     /**
@@ -39,7 +41,7 @@ public interface NettyHttpClient<H extends ReusableHttpClientInboundHandler> ext
      *
      * Additional setup to change the behavior of the {@link SocketChannel}-specific handler for
      * inbound data can be done using the {@code setup} parameter.
-     * {@link Setup#setup(SocketChannel, HttpRequest, ReusableHttpClientInboundHandler)} will be
+     * {@link Setup#setup(Channel, HttpRequest, ReusableHttpClientInboundHandler)} will be
      * called before request data is sent over the wire. Thus, the request can be changed and the
      * handler will be ready once response data arrives.
      *

@@ -11,6 +11,7 @@ import io.netty.channel.*;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.concurrent.Future;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
@@ -63,47 +64,57 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     }
 
     static <T extends ReusableHttpClientInboundHandler>
-    void doRequestSetup(SocketChannel ch, String host, String connection,
+    void doRequestSetup(Future<?> chFuture, String host, String connection,
                         HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
-                        @Nullable Setup<T> setup) throws Exception {
-        ByteBuf bb = null;
-        if (bodyGenerator != null)
-            bb = bodyGenerator.apply(ch.alloc());
-        if (bb == null)
-            bb = Unpooled.EMPTY_BUFFER;
-        HttpRequest req = new DefaultFullHttpRequest(HTTP_1_1, method, firstLine.toString(), bb);
-        HttpHeaders headers = req.headers();
-        if (bb.readableBytes() > 0)
-            headers.set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
-        headers.set(HttpHeaderNames.HOST, host);
-        headers.set(HttpHeaderNames.CONNECTION, connection);
-        @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");
-        EventLoop loop = ch.eventLoop();
-        if (setup == null)
-            ch.writeAndFlush(req);
-        else if (handler == null)
-            loop.schedule(() -> setupAndSend(ch, setup, req), 1, TimeUnit.MICROSECONDS);
-        else
-            loop.execute(() -> setupAndSend(ch, setup, req));
+                        Setup<T> setup) {
+        Channel ch;
+        try {
+            if (chFuture instanceof ChannelFuture)
+                ch = ((ChannelFuture)chFuture).channel();
+            else
+                ch = (Channel) chFuture.get();
+        } catch (Throwable t) {
+            setup.connectionError(t);
+            return;
+        }
+        try {
+            ByteBuf bb = null;
+            if (bodyGenerator != null)
+                bb = bodyGenerator.apply(ch.alloc());
+            if (bb == null)
+                bb = Unpooled.EMPTY_BUFFER;
+            HttpRequest req = new DefaultFullHttpRequest(HTTP_1_1, method, firstLine.toString(), bb);
+            HttpHeaders headers = req.headers();
+            if (bb.readableBytes() > 0)
+                headers.set(HttpHeaderNames.CONTENT_LENGTH, bb.readableBytes());
+            headers.set(HttpHeaderNames.HOST, host);
+            headers.set(HttpHeaderNames.CONNECTION, connection);
+            @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");
+            EventLoop loop = ch.eventLoop();
+            if (handler == null)
+                loop.schedule(() -> setupAndSend(ch, setup, req), 1, TimeUnit.MICROSECONDS);
+            else
+                loop.execute(() -> setupAndSend(ch, setup, req));
+        } catch (Throwable t) {
+            setup.requestError(t);
+        }
     }
 
     private static <T extends ReusableHttpClientInboundHandler>
-    void setupAndSend(SocketChannel ch, @Nullable Setup<T> setup, HttpRequest req)  {
+    void setupAndSend(Channel ch, Setup<T> setup, HttpRequest req)  {
         @SuppressWarnings("unchecked") T handler = (T) ch.pipeline().get("handler");
         assert handler != null;
-        if (setup != null)
-            setup.setup(ch, req, handler);
+        setup.setup(ch, req, handler);
         ch.writeAndFlush(req);
     }
 
     @Override
     public void request(HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
-                        @Nullable Setup<H> setup) {
+                        Setup<H> setup) {
         bootstrap.connect().addListener(f ->
-                doRequestSetup((SocketChannel)((ChannelFuture)f).channel(), host, CONNECTION,
-                               method, firstLine, bodyGenerator, setup));
+                doRequestSetup(f, host, CONNECTION, method, firstLine, bodyGenerator, setup));
     }
 
     @Override public void close() {

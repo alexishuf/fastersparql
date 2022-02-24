@@ -95,16 +95,10 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             SparqlMethod method = eff.methods().get(0);
             HttpMethod nettyMethod = method2netty(method);
             PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
+            String accept = resultsAcceptString(eff.resultsAccepts());
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                    (ch, request, handler) -> {
-                        String accept = resultsAcceptString(eff.resultsAccepts());
-                        request.headers().set(HttpHeaderNames.ACCEPT, accept);
-                        if (method.hasRequestBody())
-                            request.headers().set(CONTENT_TYPE, method.contentType());
-                        ch.eventLoop().execute(() -> ch.config().setAutoRead(true));
-                        handler.setupResults(ch, vars, publisher);
-                    });
+                    new QueryHandlerSetup(vars, accept, method, publisher));
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
             Publisher<R> parsedPub = rowParser.parseStringsArray(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
@@ -127,15 +121,11 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             HttpMethod nettyMethod = method2netty(method);
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             PublisherAdapter<byte[]> publisher = new PublisherAdapter<>();
+            MediaType errorMT = eff.rdfAccepts().get(0);
+            String accept = rdfAcceptString(eff.rdfAccepts());
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                    (ch, request, handler) -> {
-                        String accept = rdfAcceptString(eff.rdfAccepts());
-                        request.headers().set(HttpHeaderNames.ACCEPT, accept);
-                        if (method.hasRequestBody())
-                            request.headers().set(CONTENT_TYPE, method.contentType());
-                        handler.setupGraph(ch, mtTask, publisher);
-                    });
+                    new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
             Publisher<F> parsedPub = fragParser.parseBytes(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
@@ -197,6 +187,75 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     }
 
     /* --- --- --- inner classes  --- --- ---  */
+
+    @RequiredArgsConstructor
+    private abstract static class HandlerSetupBase<T> implements NettyHttpClient.Setup<Handler> {
+        protected final String accept;
+        protected final SparqlMethod method;
+        protected final PublisherAdapter<T> publisher;
+
+        @Override public void setup(Channel ch, HttpRequest request, Handler handler) {
+            request.headers().set(HttpHeaderNames.ACCEPT, accept);
+            if (method.hasRequestBody())
+                request.headers().set(CONTENT_TYPE, method.contentType());
+            ch.eventLoop().execute(() -> ch.config().setAutoRead(true));
+            setupHandler(ch, handler);
+        }
+
+        protected abstract void setupHandler(Channel ch, Handler handler);
+
+        @Override public void connectionError(Throwable cause) {
+            log.debug("connectionError, completing the publisher", cause);
+            publisher.complete(cause);
+        }
+
+        @Override public void requestError(Throwable cause) {
+            log.error("Unexpected error when building the request on a connected channel", cause);
+            publisher.complete(cause);
+        }
+    }
+
+
+    private static final class QueryHandlerSetup extends HandlerSetupBase<String[]> {
+        private final List<String> vars;
+
+        public QueryHandlerSetup(List<String> vars, String accept, SparqlMethod method,
+                                 PublisherAdapter<String[]> publisher) {
+            super(accept, method, publisher);
+            this.vars = vars;
+        }
+
+        @Override protected void setupHandler(Channel ch, Handler handler) {
+            handler.setupResults(ch, vars, publisher);
+        }
+    }
+
+    private static final class GraphHandlerSetup extends HandlerSetupBase<byte[]> {
+        private final SafeCompletableAsyncTask<MediaType> mtTask;
+        private final MediaType mtOnEarlyError;
+
+        public GraphHandlerSetup(SafeCompletableAsyncTask<MediaType>  mtTask,
+                                 MediaType mtOnEarlyError, String accept,
+                                 SparqlMethod method, PublisherAdapter<byte[]> publisher) {
+            super(accept, method, publisher);
+            this.mtTask = mtTask;
+            this.mtOnEarlyError = mtOnEarlyError;
+        }
+
+        @Override protected void setupHandler(Channel ch, Handler handler) {
+            handler.setupGraph(ch, mtTask, publisher);
+        }
+
+        @Override public void connectionError(Throwable cause) {
+            mtTask.complete(mtOnEarlyError);
+            super.connectionError(cause);
+        }
+
+        @Override public void requestError(Throwable cause) {
+            mtTask.complete(mtOnEarlyError);
+            super.requestError(cause);
+        }
+    }
 
     /**
      * The {@link Publisher} exposed by {@link NettySparqlClient} query methods

@@ -12,7 +12,6 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
 import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
-import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.ssl.SslContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -71,7 +70,7 @@ public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     public void request(HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         @Nullable Setup<H> setup) {
-        pool.acquire().addListener(f -> doRequestSetup((SocketChannel)f.get(), host, CONNECTION,
+        pool.acquire().addListener(f -> doRequestSetup(f, host, CONNECTION,
                                                        method, firstLine, bodyGenerator, setup));
     }
 
