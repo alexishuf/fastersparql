@@ -15,6 +15,9 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher.concurrent;
+import static com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher.eager;
+
 @Value
 public class SimpleUnion  implements Union {
     private static final AtomicInteger nextId = new AtomicInteger(1);
@@ -35,7 +38,8 @@ public class SimpleUnion  implements Union {
     @Override public <R> Results<R> checkedRun(List<? extends Plan<R>> plans) {
         List<String> unionVars = PlanHelpers.publicVarsUnion(plans);
         String name = "SimpleUnion-"+nextId.getAndIncrement();
-        MergePublisher<R> merge = parallel ? MergePublisher.async(name) : MergePublisher.eager(name);
+        MergePublisher<R> merge = (parallel ? eager().name(name) : concurrent(plans.size()))
+                .name(name).build();
         Class<? super R> rCls = Object.class;
         for (Plan<R> p : plans) {
             Results<R> results = p.execute();

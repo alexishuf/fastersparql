@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -32,7 +34,7 @@ import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
-class MergePublisherTest {
+class MultiThreadedMergePublisherTest {
     private static final int N_THREADS = Runtime.getRuntime().availableProcessors()*2;
     private static final int N_ITERATIONS = 3;
     private static final int QUEUE = 4;
@@ -313,10 +315,36 @@ class MergePublisherTest {
         return list.stream();
     }
 
+    private static BoundedEventLoopPool pool;
+    private static int poolThreads;
+
+    @BeforeAll
+    static void beforeAll() {
+        poolThreads = Math.max(8, Runtime.getRuntime().availableProcessors());
+        String poolName = MultiThreadedMergePublisherTest.class.getSimpleName() + "-pool";
+        pool = new BoundedEventLoopPool(poolName, poolThreads);
+    }
+
+    @AfterAll
+    static void afterAll() {
+        try {
+            Semaphore semaphore = new Semaphore(0);
+            long start = System.nanoTime();
+            for (int i = 0; i < poolThreads; i++)
+                pool.chooseExecutor().execute(semaphore::release);
+            semaphore.acquireUninterruptibly(poolThreads);
+            double elapsedMs = (System.nanoTime() - start) / 1000000.0;
+            assertTrue(elapsedMs < 200,
+                    elapsedMs + "ms is too slow, possible leftover tasks");
+        } finally {
+            pool.close();
+        }
+    }
+
     @ParameterizedTest @ValueSource(ints = {1, 2, 4})
     void testEmpty(int concurrency) throws ExecutionException {
-        MergePublisher<Object> pub = MergePublisher.concurrent(concurrency)
-                .name("empty-" + concurrency).build();
+        MultiThreadedMergePublisher<Object> pub = MultiThreadedMergePublisher.concurrent(concurrency)
+                .pool(pool).name("empty-" + concurrency).build();
         AsyncTask<List<Object>> task = Async.async(() -> consume(pub));
         assertNull(task.orElse(null, 100, TimeUnit.MILLISECONDS));
         pub.markCompletable();
@@ -337,7 +365,7 @@ class MergePublisherTest {
 
     @Test
     void testSingleSource() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
+        MultiThreadedMergePublisher<Object> pub = MultiThreadedMergePublisher.eager().pool(pool).name("test").build();
         pub.addPublisher(Flux.range(0, 3));
         pub.markCompletable();
         assertEquals(asList(0, 1, 2), consume(pub));
@@ -345,7 +373,7 @@ class MergePublisherTest {
 
     @Test
     void testTwoSourcesSerial() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
+        MultiThreadedMergePublisher<Object> pub = MultiThreadedMergePublisher.eager().pool(pool).name("test").build();
         pub.addPublisher(Flux.range(0, 3));
         pub.addPublisher(Flux.range(3, 3));
         pub.markCompletable();
@@ -354,7 +382,7 @@ class MergePublisherTest {
 
     @Test
     void testSecondSourceFails() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
+        MultiThreadedMergePublisher<Object> pub = MultiThreadedMergePublisher.eager().pool(pool).name("test").build();
         pub.addPublisher(Flux.range(0, 3));
         RuntimeException exception = new RuntimeException("err");
         pub.addPublisher(Mono.error(exception));
@@ -364,7 +392,7 @@ class MergePublisherTest {
 
     @Test
     void testIgnoreFailure() {
-        MergePublisher<Object> pub = MergePublisher.eager()
+        MultiThreadedMergePublisher<Object> pub = MultiThreadedMergePublisher.eager().pool(pool)
                 .name("ignore-fail").ignoreUpstreamErrors(true).build();
         pub.addPublisher(Flux.range(0, 2));
         pub.addPublisher(Mono.error(new RuntimeException("ignored")));
@@ -375,7 +403,7 @@ class MergePublisherTest {
 
     @Test
     void testConsumeBeforeAddingPublishers() throws ExecutionException {
-        MergePublisher<Integer> pub = MergePublisher.eager().name("test").build();
+        MultiThreadedMergePublisher<Integer> pub = MultiThreadedMergePublisher.eager().pool(pool).name("test").build();
         AsyncTask<List<Integer>> consumeTask = Async.async(() -> consume(pub));
         assertNull(consumeTask.orElse(null, 40, TimeUnit.MILLISECONDS));
         pub.addPublisher(Flux.range(0, 2));
@@ -390,7 +418,7 @@ class MergePublisherTest {
     void testSerialSources(int sources) {
         int size = 16, repetitions = 32;
         for (int repetition = 0; repetition < repetitions; repetition++) {
-            MergePublisher<Integer> pub = MergePublisher.eager().name("test-" + sources).build();
+            MultiThreadedMergePublisher<Integer> pub = MultiThreadedMergePublisher.eager().name("test-" + sources).build();
             for (int i = 0; i < sources; i++)
                 pub.addPublisher(Flux.range(i*size, size));
             AsyncTask<List<Integer>> actual = Async.async(() -> consume(pub));
@@ -406,7 +434,7 @@ class MergePublisherTest {
     void testTargetConcurrency(int sleepMs) throws InterruptedException, ExecutionException {
         int sourceSize = 32, sources = 32, repetitions = 8;
         for (int repetition = 0; repetition < repetitions; repetition++) {
-            MergePublisher<Integer> pub = MergePublisher.concurrent(2)
+            MultiThreadedMergePublisher<Integer> pub = MultiThreadedMergePublisher.concurrent(2)
                     .name("test-"+sleepMs+"-"+repetition+"").build();
             AsyncTask<List<Integer>> actual = Async.async(() -> consume(pub));
             for (int i = 0; i < sources; i++) {
@@ -425,7 +453,7 @@ class MergePublisherTest {
         for (int thread = 0; thread < N_THREADS; thread++) {
             tasks.add(Async.async(() -> {
                 for (int i = 0; i < 16; i++) {
-                    MergePublisher<Integer> pub = MergePublisher.concurrent(128000)
+                    MultiThreadedMergePublisher<Integer> pub = MultiThreadedMergePublisher.concurrent(128000)
                             .name("test").build();
                     pub.addPublisher(Flux.range(0, 1));
                     pub.addPublisher(Flux.range(1, 2));
@@ -439,7 +467,7 @@ class MergePublisherTest {
 
     @Test
     void testHugeTargetFewSourcesSerial() {
-        MergePublisher<Integer> pub = MergePublisher.eager().name("test").build();
+        MultiThreadedMergePublisher<Integer> pub = MultiThreadedMergePublisher.eager().name("test").build();
         pub.addPublisher(Flux.range(0, 1));
         pub.addPublisher(Flux.range(1, 2));
         pub.markCompletable();
@@ -459,8 +487,8 @@ class MergePublisherTest {
             tasks.add(Async.asyncThrowing(() -> {
                 for (int i = 0; i < N_ITERATIONS; i++) {
                     String iterationName = threadName + ", i=" + i + "]";
-                    MergePublisher<Integer> merger = MergePublisher.builder()
-                            .concurrency(concurrency).name(iterationName)
+                    MultiThreadedMergePublisher<Integer> merger = MultiThreadedMergePublisher.builder()
+                            .concurrency(concurrency).name(iterationName).pool(pool)
                             .ignoreUpstreamErrors(ignoreErrors).build();
                     IterableAdapter<Integer> subscriber = new IterableAdapter<>(merger, QUEUE);
                     if (subscribeEarly)

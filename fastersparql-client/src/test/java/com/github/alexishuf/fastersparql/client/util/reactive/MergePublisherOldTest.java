@@ -4,21 +4,16 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -28,11 +23,10 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
-class MergePublisherTest {
+class MergePublisherOldTest {
     private static final int N_THREADS = Runtime.getRuntime().availableProcessors()*2;
     private static final int N_ITERATIONS = 3;
     private static final int QUEUE = 4;
@@ -288,8 +282,7 @@ class MergePublisherTest {
         }
 
         List<Arguments> list = new ArrayList<>();
-
-        for (int concurrency : asList(1, -1, 2, 65536)) {
+        for (boolean eager : asList(false, true)) {
             for (Boolean ignoreUpstreamErrors : asList(false, true)) {
                 for (Boolean subscribeEarly : asList(false, true)) {
                     for (Boolean asyncSource : asList(false, true)) {
@@ -301,10 +294,8 @@ class MergePublisherTest {
                             Class<? extends Throwable> error =
                                     ranges.stream()
                                     .anyMatch(Range::hasError) ? TestException.class : null;
-                            int effConcurrency = concurrency < 0
-                                               ? Math.max(1, sources.size()) : concurrency;
                             list.add(arguments(sources, ignoreUpstreamErrors,
-                                               effConcurrency, subscribeEarly, error, expected));
+                                               eager, subscribeEarly, error, expected));
                         }
                     }
                 }
@@ -313,144 +304,11 @@ class MergePublisherTest {
         return list.stream();
     }
 
-    @ParameterizedTest @ValueSource(ints = {1, 2, 4})
-    void testEmpty(int concurrency) throws ExecutionException {
-        MergePublisher<Object> pub = MergePublisher.concurrent(concurrency)
-                .name("empty-" + concurrency).build();
-        AsyncTask<List<Object>> task = Async.async(() -> consume(pub));
-        assertNull(task.orElse(null, 100, TimeUnit.MILLISECONDS));
-        pub.markCompletable();
-        assertEquals(Collections.emptyList(), task.get());
-    }
-
-    private <T> List<T> consume(Publisher<T> pub) {
-        return consume(pub, null);
-    }
-
-    private <T> List<T> consume(Publisher<T> pub, @Nullable Throwable expectedError) {
-        List<T> list = new ArrayList<>();
-        IterableAdapter<T> a = new IterableAdapter<>(pub);
-        a.forEach(list::add);
-        assertEquals(expectedError, a.error());
-        return list;
-    }
-
-    @Test
-    void testSingleSource() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
-        pub.addPublisher(Flux.range(0, 3));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2), consume(pub));
-    }
-
-    @Test
-    void testTwoSourcesSerial() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
-        pub.addPublisher(Flux.range(0, 3));
-        pub.addPublisher(Flux.range(3, 3));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2, 3, 4, 5), consume(pub));
-    }
-
-    @Test
-    void testSecondSourceFails() {
-        MergePublisher<Object> pub = MergePublisher.eager().name("test").build();
-        pub.addPublisher(Flux.range(0, 3));
-        RuntimeException exception = new RuntimeException("err");
-        pub.addPublisher(Mono.error(exception));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2), consume(pub, exception));
-    }
-
-    @Test
-    void testIgnoreFailure() {
-        MergePublisher<Object> pub = MergePublisher.eager()
-                .name("ignore-fail").ignoreUpstreamErrors(true).build();
-        pub.addPublisher(Flux.range(0, 2));
-        pub.addPublisher(Mono.error(new RuntimeException("ignored")));
-        pub.addPublisher(Flux.range(2, 2));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2, 3), consume(pub));
-    }
-
-    @Test
-    void testConsumeBeforeAddingPublishers() throws ExecutionException {
-        MergePublisher<Integer> pub = MergePublisher.eager().name("test").build();
-        AsyncTask<List<Integer>> consumeTask = Async.async(() -> consume(pub));
-        assertNull(consumeTask.orElse(null, 40, TimeUnit.MILLISECONDS));
-        pub.addPublisher(Flux.range(0, 2));
-        assertNull(consumeTask.orElse(null, 20, TimeUnit.MILLISECONDS));
-        pub.addPublisher(Flux.range(2, 2));
-        pub.addPublisher(Flux.range(4, 2));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2, 3, 4, 5), consumeTask.get());
-    }
-
-    @ParameterizedTest @ValueSource(ints = {1, 4, 8, 16, 64})
-    void testSerialSources(int sources) {
-        int size = 16, repetitions = 32;
-        for (int repetition = 0; repetition < repetitions; repetition++) {
-            MergePublisher<Integer> pub = MergePublisher.eager().name("test-" + sources).build();
-            for (int i = 0; i < sources; i++)
-                pub.addPublisher(Flux.range(i*size, size));
-            AsyncTask<List<Integer>> actual = Async.async(() -> consume(pub));
-            for (int i = sources; i < 2*sources; i++)
-                pub.addPublisher(Flux.range(i*size, size));
-            pub.markCompletable();
-            assertEquals(IntStream.range(0, size*2*sources).boxed().collect(toList()),
-                    actual.fetch());
-        }
-    }
-
-    @ParameterizedTest @ValueSource(ints = {0, 1, 5})
-    void testTargetConcurrency(int sleepMs) throws InterruptedException, ExecutionException {
-        int sourceSize = 32, sources = 32, repetitions = 8;
-        for (int repetition = 0; repetition < repetitions; repetition++) {
-            MergePublisher<Integer> pub = MergePublisher.concurrent(2)
-                    .name("test-"+sleepMs+"-"+repetition+"").build();
-            AsyncTask<List<Integer>> actual = Async.async(() -> consume(pub));
-            for (int i = 0; i < sources; i++) {
-                pub.addPublisher(Flux.range(i*sourceSize, sourceSize));
-                if (sleepMs > 0) Thread.sleep(1);
-            }
-            pub.markCompletable();
-            assertEquals(IntStream.range(0, sourceSize*sources).boxed().collect(toSet()),
-                    new HashSet<>(actual.get()));
-        }
-    }
-
-    @Test
-    void testHugeTargetFewSources() {
-        List<AsyncTask<?>> tasks = new ArrayList<>();
-        for (int thread = 0; thread < N_THREADS; thread++) {
-            tasks.add(Async.async(() -> {
-                for (int i = 0; i < 16; i++) {
-                    MergePublisher<Integer> pub = MergePublisher.concurrent(128000)
-                            .name("test").build();
-                    pub.addPublisher(Flux.range(0, 1));
-                    pub.addPublisher(Flux.range(1, 2));
-                    pub.markCompletable();
-                    assertEquals(new HashSet<>(asList(0, 1, 2)), new HashSet<>(consume(pub)));
-                }
-            }));
-        }
-        for (AsyncTask<?> task : tasks) task.fetch();
-    }
-
-    @Test
-    void testHugeTargetFewSourcesSerial() {
-        MergePublisher<Integer> pub = MergePublisher.eager().name("test").build();
-        pub.addPublisher(Flux.range(0, 1));
-        pub.addPublisher(Flux.range(1, 2));
-        pub.markCompletable();
-        assertEquals(asList(0, 1, 2), consume(pub));
-    }
-
     private static final AtomicInteger testMethodCall = new AtomicInteger(1);
 
     @ParameterizedTest @MethodSource
-    void test(List<Publisher<Integer>> sources, boolean ignoreErrors,
-              int concurrency, boolean subscribeEarly, @Nullable Class<? extends Throwable> error,
+    void test(List<Publisher<Integer>> sources, boolean ignoreUpstreamErrors,
+              boolean eager, boolean subscribeEarly, @Nullable Class<? extends Throwable> error,
               Collection<Integer> expected) throws ExecutionException {
         String baseName = "test-" + testMethodCall.getAndIncrement();
         List<AsyncTask<?>> tasks = new ArrayList<>();
@@ -459,9 +317,9 @@ class MergePublisherTest {
             tasks.add(Async.asyncThrowing(() -> {
                 for (int i = 0; i < N_ITERATIONS; i++) {
                     String iterationName = threadName + ", i=" + i + "]";
-                    MergePublisher<Integer> merger = MergePublisher.builder()
-                            .concurrency(concurrency).name(iterationName)
-                            .ignoreUpstreamErrors(ignoreErrors).build();
+                    MergePublisherOld<Integer> merger =
+                            new MergePublisherOld<>(iterationName, ignoreUpstreamErrors);
+                    merger.setTargetParallelism(eager ? 1 : sources.size());
                     IterableAdapter<Integer> subscriber = new IterableAdapter<>(merger, QUEUE);
                     if (subscribeEarly)
                         subscriber.start();
@@ -469,8 +327,8 @@ class MergePublisherTest {
                         merger.addPublisher(source);
                     merger.markCompletable();
                     boolean allowIncompleteIfError =
-                            !ignoreErrors && error != null && sources.size() > 1;
-                    Class<? extends Throwable> exError = ignoreErrors ? null : error;
+                            !ignoreUpstreamErrors && error != null && sources.size() > 1;
+                    Class<? extends Throwable> exError = ignoreUpstreamErrors ? null : error;
                     assertExpected(subscriber, exError, expected, allowIncompleteIfError);
                 }
             }));

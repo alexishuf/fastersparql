@@ -48,7 +48,9 @@ public class FasterSparqlProperties {
         });
     }
 
-    protected static String readTrimmedString(String propertyName, String defaultValue) {
+    protected static String readTrimmedString(
+            String propertyName,
+            @SuppressWarnings("SameParameterValue") String defaultValue) {
         return readProperty(propertyName, defaultValue, (src, val) -> {
             if (val == null) throw new IllegalArgumentException(src+"=null: null not allowed");
             return val.trim();

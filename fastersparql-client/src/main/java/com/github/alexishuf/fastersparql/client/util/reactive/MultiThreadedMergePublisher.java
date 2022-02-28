@@ -20,13 +20,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Accessors(fluent = true)
-public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
+public class MultiThreadedMergePublisher<T> implements ExecutorBoundPublisher<T> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     /* --- --- --- Immutable state --- --- --- */
     @Getter private final String name;
     private final CallbackPublisher<T> cbp;
     private final boolean ignoreUpstreamErrors;
+    private final BoundedEventLoopPool pool;
     @Getter private final @Positive int maxConcurrency;
     @Getter private final @Positive int tgtConcurrency;
 
@@ -35,6 +36,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     private boolean completable, terminated, cancelled, subscribed;
 
     /* --- --- --- request distribution state --- --- --- */
+    private boolean redistributing;
     private long undistributed;
 
     /* --- --- --- Sources  state --- --- --- */
@@ -48,15 +50,14 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         private int maxConcurrency = Integer.MAX_VALUE;
         private @Positive int targetConcurrency = 1;
         private boolean ignoreUpstreamErrors;
-        private Executor executor;
+        private BoundedEventLoopPool pool;
 
         public Builder concurrency(int targetAndMaxConcurrency) {
             return targetConcurrency(targetConcurrency).maxConcurrency(targetAndMaxConcurrency);
         }
 
-        public <T> MergePublisher<T> build() {
-            return new MergePublisher<>(name, maxConcurrency, targetConcurrency,
-                                         ignoreUpstreamErrors, executor);
+        public <T> MultiThreadedMergePublisher<T> build() {
+            return new MultiThreadedMergePublisher<>(name, maxConcurrency, targetConcurrency, ignoreUpstreamErrors, pool);
         }
     }
 
@@ -71,8 +72,8 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
                             .targetConcurrency(targetAndMaxConcurrency);
     }
 
-    public MergePublisher(@Nullable String name, int maxConcurrency, int targetConcurrency,
-                          boolean ignoreUpstreamErrors, @Nullable Executor executor) {
+    public MultiThreadedMergePublisher(@Nullable String name, int maxConcurrency, int targetConcurrency,
+                                       boolean ignoreUpstreamErrors, @Nullable BoundedEventLoopPool pool) {
         this.name = name == null ? "MergePublisher-"+nextId.getAndIncrement() : name;
         this.ignoreUpstreamErrors = ignoreUpstreamErrors;
         if (maxConcurrency < 1) {
@@ -89,12 +90,11 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         }
         this.maxConcurrency = maxConcurrency;
         this.tgtConcurrency = targetConcurrency;
-        executor = executor == null ? BoundedEventLoopPool.get().chooseExecutor() : executor;
-
-        this.cbp = new CallbackPublisher<T>(name, executor) {
-            @Override protected void onRequest(long n) { MergePublisher.this.onRequest(n); }
+        this.pool = pool == null ? BoundedEventLoopPool.get() : pool;
+        this.cbp = new CallbackPublisher<T>(name, this.pool.chooseExecutor()) {
+            @Override protected void onRequest(long n) { redistribute(n, "onRequest"); }
             @Override protected void  onBackpressure() { }
-            @Override protected void        onCancel() { MergePublisher.this.onCancel(); }
+            @Override protected void        onCancel() { tryComplete(null, null, true, 0); }
         };
         // when this terminates with an error, all sources will be cancelled, but until
         // the cancellation takes effect, not failed sources will try to feed() new items, which
@@ -103,10 +103,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     }
 
     @Override public void moveTo(Executor executor) {
-        if (subscribed)
-            throw new IllegalStateException("cannot move executor after subscribed");
         cbp.moveTo(executor);
-
     }
 
     @Override public Executor executor() {
@@ -125,7 +122,10 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
      */
     public void addPublisher(Publisher<? extends T> publisher) {
         log.trace("{}.addPublisher({})", this, publisher);
-        executor().execute(() -> addPublisherTask(publisher));
+        synchronized (this) {
+            publishersQueue.add(publisher);
+            redistribute(0, "addPublisher()");
+        }
     }
 
     /**
@@ -139,54 +139,31 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
      * Note that a completion may be emitted from within this method.
      */
     public void markCompletable() {
-        executor().execute(markCompletableTask);
+        boolean changed;
+        synchronized (this) {
+            changed = !completable;
+            if (changed)
+                completable = true;
+        }
+        if (changed && !tryComplete(null, null, false, 0)) {
+            log.debug("{}.markCompletable(), activeSources={}, {} queued, undistributed={}",
+                      this, activeSources, publishersQueue.size(), undistributed);
+        }
     }
 
     @Override public void subscribe(Subscriber<? super T> s) {
         cbp.subscribe(s);
-        executor().execute(subscribedTask);
+        synchronized (this) {
+            subscribed = true;
+            redistribute(0, "subscribe()");
+        }
     }
 
     @Override public String toString() {
         return name;
     }
 
-
-    /* --- --- --- protected methods overridable by subclasses --- --- --- */
-
-    protected void onRequest(long n) {
-        redistribute(n, "onRequest");
-    }
-    protected void onCancel() {
-        tryComplete(null, null, true, 0);
-    }
-    protected void onComplete(Throwable cause, boolean cancelled) { }
-
-    /* --- --- --- in-executor tasks for public interface methods --- --- --- */
-
-    private void addPublisherTask(Publisher<? extends T> publisher) {
-        publishersQueue.add(publisher);
-        redistribute(0, "addPublisher()");
-    }
-
-    private final Runnable markCompletableTask = () -> {
-        if (!completable) {
-            completable = true;
-            if (!tryComplete(null, null, false, 0)) {
-                log.debug("{}.markCompletable(), activeSources={}, {} queued, undistributed={}",
-                          this, activeSources, publishersQueue.size(), undistributed);
-            }
-        }
-    };
-
-    private final Runnable subscribedTask = () -> {
-        subscribed = true;
-        redistribute(0, "subscribe()");
-    };
-
-
     /* --- --- --- implementation details --- --- --- */
-
 
     private void innerAddPublisher(Publisher<? extends T> publisher) {
         assert activeSources < maxConcurrency;
@@ -197,35 +174,38 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
 
     private boolean tryComplete(@Nullable Throwable cause, @Nullable Source source,
                              boolean cancel, long additionalUndistributed) {
-        // trivial cases (but lengthy log logic)
-        if (!removeSource(source)) return terminated;
-        if (!checkUnterminated(cause, source, cancel)) return terminated;
+        boolean callComplete, result;
+        synchronized (this) {
+            // remove the source
+            if (!removeSource(source)) return terminated;
+            if (!checkUnterminated(cause, source, cancel)) return terminated;
 
-        if (ignoreUpstreamErrors && cause != null)
-            log.info("Ignoring upstream error {} from {}", cause, source);
-
-        boolean complete = (cause != null && !ignoreUpstreamErrors)
+            if (ignoreUpstreamErrors && cause != null)
+                log.info("Ignoring upstream error {} from {}", cause, source);
+            callComplete = (cause != null && !ignoreUpstreamErrors)
                         || (completable && activeSources == 0 && publishersQueue.isEmpty());
-        if (complete || cancel) {
-            terminationCause = ignoreUpstreamErrors ? null : cause;
-            log.debug("{} completing{} with error={} from source={}",
-                      this, cancel ? " by cancel()" : "", terminationCause, source);
-            terminated = true;
-            if (cancel) {
-                cancelled = true;
-                for (Source src : sources.keySet())
-                    src.cancel();
-                assert activeSources == sources.size() : "activeSources != #sources";
-                activeSources = 0;
-                sources.clear();
+            if (callComplete || cancel) {
+                terminationCause = ignoreUpstreamErrors ? null : cause;
+                log.debug("{} completing{} with error={} from source={}",
+                          this, cancel ? " by cancel()" : "", terminationCause, source);
+                terminated = true;
+                if (cancel) {
+                    cancelled = true;
+                    for (Source src : sources.keySet())
+                        src.cancel();
+                    assert activeSources == sources.size() : "activeSources != #sources";
+                    activeSources = 0;
+                    sources.clear();
+                }
+            } else {
+                assert !terminated;
+                redistribute(additionalUndistributed, "tryComplete");
             }
-            cbp.complete(terminationCause);
-            onComplete(terminationCause, cancel);
-        } else {
-            assert !terminated;
-            redistribute(additionalUndistributed, "tryComplete");
+            result = terminated;
         }
-        return terminated;
+        if (callComplete)
+            cbp.complete(terminationCause);
+        return result;
     }
 
     private boolean checkUnterminated(@Nullable Throwable cause, @Nullable Source source,
@@ -267,13 +247,14 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
      *    <li>Distribute work among sources via {@link Source#request(long)}</li>
      * </ol>
      */
-    private void redistribute(long additional, String caller) {
+    private synchronized void redistribute(long additional, String caller) {
         assert additional >= 0 : "Negative additional";
         undistributed += additional;
         if (redistributeSpecialCases(additional, caller))
             return;
         log.trace("{}.redistribute({}) from {}: updated undistributed={}, activeSources={}",
                   this, additional, caller, undistributed, activeSources);
+        redistributing = true;
         long distributed = 0, total = undistributed;
         undistributed = 0;
         try {
@@ -284,9 +265,11 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
             }
             distributed = redistributeToSources(total);
         } finally {
+            redistributing = false;
             assert distributed <= total;
-            if (distributed < total)
+            if (distributed < total) {
                 undistributed += total - distributed;
+            }
         }
     }
 
@@ -313,10 +296,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
                 remainder = 0;
             distributed += n;
             assert distributed <= total;
-            if (src.active)
-                src.request(n);
-            else
-                assert false : "satale source in sources";
+            src.request(n);
         }
         assert distributed <= total;
         return distributed;
@@ -329,6 +309,10 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         } else if (!subscribed) {
             log.trace("{}.redistribute({}) from {}: not yet subscribe()d",
                       this, additional, caller);
+        } else if (redistributing) {
+            log.trace("{}.redistribute({}) from {}: reentrant call, adding to undistributed={}",
+                      this, additional, caller, undistributed);
+            undistributed += additional;
         } else if (undistributed == 0) {
             log.trace("{}.redistribute({}) from {}: nothing to distribute",
                       this, additional, caller);
@@ -359,37 +343,48 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         private @MonotonicNonNull Subscription upstream;
 
         public Source(Publisher<? extends T> publisher, int number) {
-            this.upstreamPublisher = ExecutorBoundPublisher.bind(publisher, executor());
+            Executor executor = pool.chooseExecutor();
+            this.upstreamPublisher = ExecutorBoundPublisher.bind(publisher, executor);
             this.number = number;
             this.upstreamPublisher.subscribe(this);
         }
 
         public void request(long n) {
-            if (!active) {
-                log.error("{}.request({}): not active", this, n);
-                redistribute(n, "rejected Source.request()");
-            } else if (n <= 0) {
-                log.error("{}.request({}): n <= 0", this, n);
-            } else {
-                log.trace("{}.request({})", this, n);
-                undelivered += n;
-                upstream.request(n);
+            boolean accept;
+            synchronized (this) {
+                accept = active;
+                if (accept) {
+                    if (n > 0) {
+                        undelivered += n;
+                        upstream.request(n);
+                    } else {
+                        assert false : "n <= 0";
+                    }
+                }
             }
+            log.trace("{}.request({}): {}", this, n, accept ? "accepted" : "rejected");
+            if (!accept)
+                redistribute(n, "rejected Source.request");
         }
 
         public void cancel() {
-            if (!active) {
-                log.trace("{}.cancel()", this);
+            boolean accept;
+            synchronized (this) {
+                accept = active;
                 active = false;
-                upstream.cancel();
             }
+            if (accept)
+                upstream.cancel();
         }
 
         private void complete(@Nullable Throwable cause) {
             log.trace("{}.complete({})", this, cause);
-            active = false;
-            long n = undelivered;
-            undelivered = 0;
+            long n;
+            synchronized (this) {
+                active = false;
+                n = undelivered;
+                undelivered = 0;
+            }
             tryComplete(cause, this, false, n);
         }
 
@@ -399,7 +394,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         @Override public void  onComplete()                { complete(null); }
 
         @Override public String toString() {
-            return MergePublisher.this+"["+number+"="+upstreamPublisher+"]";
+            return MultiThreadedMergePublisher.this+"["+number+"="+upstreamPublisher+"]";
         }
     }
 }

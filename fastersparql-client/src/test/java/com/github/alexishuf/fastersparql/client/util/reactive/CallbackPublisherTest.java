@@ -156,6 +156,7 @@ class CallbackPublisherTest {
         assertEquals(expected, actual);
     }
 
+
     @ParameterizedTest @MethodSource("data")
     public void testSubscribeEarlyWaitSubscriber(int count, int errorAt, Throwable cause)
             throws ExecutionException {
@@ -163,13 +164,15 @@ class CallbackPublisherTest {
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int j = 0; j < N_THREADS; j++) {
                 tasks.add(Async.async(() -> {
-                    TestPublisher pub = new TestPublisher();
-                    Producer producer = new Producer(count, errorAt, cause, pub);
-                    pub.producer(producer);
-                    IterableAdapter<Integer> iterable = subscribe(pub);
-                    producer.start();
-                    assertExpected(count, errorAt, cause, iterable);
-                    assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
+                    for (int k = 0; k < N_ITERATIONS; k++) {
+                        TestPublisher pub = new TestPublisher();
+                        Producer producer = new Producer(count, errorAt, cause, pub);
+                        pub.producer(producer);
+                        IterableAdapter<Integer> iterable = subscribe(pub);
+                        producer.start();
+                        assertExpected(count, errorAt, cause, iterable);
+                        assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
+                    }
                 }));
             }
             for (AsyncTask<?> task : tasks)
@@ -184,13 +187,15 @@ class CallbackPublisherTest {
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int j = 0; j < N_THREADS; j++) {
                 tasks.add(Async.async(() -> {
-                    TestPublisher pub = new TestPublisher();
-                    Producer producer = new Producer(count, errorAt, cause, pub);
-                    pub.producer(producer);
-                    producer.start();
-                    IterableAdapter<Integer> iterable = subscribe(pub);
-                    assertExpected(count, errorAt, cause, iterable);
-                    assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
+                    for (int k = 0; k < N_ITERATIONS; k++) {
+                        TestPublisher pub = new TestPublisher();
+                        Producer producer = new Producer(count, errorAt, cause, pub);
+                        pub.producer(producer);
+                        producer.start();
+                        IterableAdapter<Integer> iterable = subscribe(pub);
+                        assertExpected(count, errorAt, cause, iterable);
+                        assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
+                    }
                 }));
             }
             for (AsyncTask<?> task : tasks)
@@ -202,17 +207,22 @@ class CallbackPublisherTest {
     public void testSubscribeLateWaitSubscriber(int count, int errorAt, Throwable cause)
             throws ExecutionException {
         List<AsyncTask<?>> tasks = new ArrayList<>();
-        for (int i = 0; i < N_THREADS; i++) {
-            tasks.add(Async.asyncThrowing(() -> {
-                TestPublisher pub = new TestPublisher();
-                Producer producer = new Producer(count, errorAt, cause, pub);
-                pub.producer(producer);
-                producer.start();
-                Thread.sleep(50);
-                IterableAdapter<Integer> iterable = subscribe(pub);
-                assertExpected(count, errorAt, cause, iterable);
-                assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
-            }));
+        for (int i = 0; i < N_ITERATIONS; i++) {
+            for (int j = 0; j < N_THREADS; j++) {
+                tasks.add(Async.asyncThrowing(() -> {
+                    for (int k = 0; k < N_ITERATIONS; k++) {
+
+                        TestPublisher pub = new TestPublisher();
+                        Producer producer = new Producer(count, errorAt, cause, pub);
+                        pub.producer(producer);
+                        producer.start();
+                        Thread.sleep(50);
+                        IterableAdapter<Integer> iterable = subscribe(pub);
+                        assertExpected(count, errorAt, cause, iterable);
+                        assertTimeout(Duration.ofMillis(100), () -> producer.cancel().sync());
+                    }
+                }));
+            }
         }
         for (AsyncTask<?> task : tasks)
             task.get();

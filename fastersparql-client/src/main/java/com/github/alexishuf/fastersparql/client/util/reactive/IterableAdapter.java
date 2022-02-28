@@ -7,10 +7,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 
 /**
  * A single-use {@link Iterable} over a {@link Publisher}
@@ -18,13 +20,16 @@ import java.util.concurrent.LinkedBlockingQueue;
  * @param <T> the value type of the {@link Iterable}
  */
 public class IterableAdapter<T> implements AsyncIterable<T> {
-    private final BlockingQueue<Optional<T>> queue = new LinkedBlockingQueue<>();
+    private static final Logger log = LoggerFactory.getLogger(IterableAdapter.class);
+    private final BlockingQueue<Optional<T>> queue;
     private final int capacity, requestSize;
     private int requested = 0;
     private final Publisher<? extends T> publisher;
     private @Nullable Subscription subscription;
-    private boolean iterating, complete, closed;
-    private Throwable error;
+    private final Subscriber<T> subscriber = new AdapterSubscriber();
+    private boolean subscribed, iterating, closed;
+    private final boolean complete = false;
+    private volatile Throwable error = null;
 
     /**
      * Create a new {@link IterableAdapter} with default queue capacity.
@@ -50,20 +55,9 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
      */
     public IterableAdapter(Publisher<? extends T> publisher, @Positive int capacity) {
         this.capacity = capacity;
+        this.queue = new ArrayBlockingQueue<>(capacity+8);
         this.requestSize = Math.max(capacity/2, 1);
         this.publisher = publisher;
-    }
-
-    private synchronized void enqueue(T value) {
-        assert subscription != null;
-        assert !complete;
-        if (value == null) {
-            error = new IllegalArgumentException(publisher+" produced a null value");
-            subscription.cancel();
-        } else {
-            queue.add(Optional.of(value));
-            --requested;
-        }
     }
 
     private synchronized void ensureRequest() {
@@ -76,15 +70,63 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
         }
     }
 
-    private synchronized void signalComplete(@Nullable Throwable t) {
-        if (t != null) {
-            if (error == null)
-                error = t;
-            else
-                error.addSuppressed(t);
+    private void signalComplete(@Nullable Throwable cause) {
+        synchronized (this) {
+            if (complete && !(cause instanceof AsyncIterableCancelled)
+                    && !(error instanceof AsyncIterableCancelled)) {
+                Object c = cause == null ? "onComplete" : "onError", ca = cause == null ? "" : cause;
+                Object p = error == null ? "onComplete" : "onError", pa = error == null ? "" : error;
+                log.warn("{}.{}({}): previous {}({})", this, c, ca, p, pa);
+            }
+            if (cause != null) {
+                if (error == null) error = cause;
+                else               error.addSuppressed(cause);
+            }
         }
-        complete = true;
         queue.add(Optional.empty());
+    }
+
+    private class AdapterSubscriber implements Subscriber<T> {
+        @Override public void onSubscribe(Subscription s) {
+            synchronized (IterableAdapter.this) {
+                subscription = s;
+                IterableAdapter.this.notifyAll();
+            }
+            // release monitor to allow wait()ing start() to wake up
+            ensureRequest();
+        }
+        @Override public void onNext(T t) {
+            synchronized (IterableAdapter.this) {
+                assert subscription != null;
+                if (complete && !(error instanceof AsyncIterableCancelled)) {
+                    log.error("{}.onNext({}) after {}({})", this, t,
+                              error == null ? "onComplete" : "onError", error == null ? "" : error);
+                } else if (t == null) {
+                    subscription.cancel();
+                    signalComplete(new IllegalArgumentException(publisher+" produced a null"));
+                } else {
+                    --requested;
+                    if (requested == -1) {
+                        log.warn("{}.onNext({}): element delivered beyond requested", this, t);
+                    } else if (requested < -1) {
+                        log.trace("{}.onNext({}): {}th element delivered beyond requested",
+                                  this, t, Math.abs(requested));
+                    }
+                    queue.add(Optional.of(t));
+                }
+                ensureRequest();
+            }
+        }
+        @Override public void onError(Throwable cause) {
+            signalComplete(cause);
+        }
+        @Override public void onComplete() {
+            signalComplete(null);
+        }
+
+        @Override public String toString() {
+            return IterableAdapter.this.toString();
+        }
     }
 
     /**
@@ -93,27 +135,30 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
      * @return this {@link IterableAdapter} instance, for chaining of other methods.
      */
     @Override @SuppressWarnings("UnusedReturnValue")
-    public synchronized IterableAdapter<T> start() {
-        if (subscription != null)
-            return this;
-        if (closed)
-            throw new IllegalStateException("close() already called for "+this);
-        publisher.subscribe(new Subscriber<T>() {
-            @Override public void onSubscribe(Subscription s) {
-                subscription = s;
-                ensureRequest();
+    public IterableAdapter<T> start() {
+        synchronized (this) {
+            if (subscribed)
+                return this;
+            if (closed)
+                throw new IllegalStateException("close() already called for " + this);
+            subscribed = true;
+        }
+        publisher.subscribe(subscriber);
+        synchronized (this) {
+            boolean interrupted = false;
+            boolean waited = subscription == null;
+            if (waited)
+                log.trace("{}: async {}.subscribe(), waiting onSubscribe()", this, publisher);
+            while (subscription == null) {
+                try {
+                    wait();
+                } catch (InterruptedException e) { interrupted = true; }
             }
-            @Override public void onNext(T t) {
-                enqueue(t);
-                ensureRequest();
-            }
-            @Override public void onError(Throwable t) {
-                signalComplete(t);
-            }
-            @Override public void onComplete() {
-                signalComplete(null);
-            }
-        });
+            if (waited)
+                log.trace("{}: received onSubscribe({})", this, subscription);
+            if (interrupted)
+                Thread.currentThread().interrupt();
+        }
         return this;
     }
 
@@ -181,6 +226,9 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
     }
 
     @Override public String toString() {
-        return "IterableAdapter{capacity=" + capacity + ", publisher=" + publisher + "}";
+        return String.format("IterableAdapter{capacity=%d, %scomplete, error=%s, publisher=%s}@%x",
+                             capacity, complete ? "" : "!",
+                             error == null ? "null" : error.getClass().getSimpleName(),
+                             publisher, System.identityHashCode(this));
     }
 }

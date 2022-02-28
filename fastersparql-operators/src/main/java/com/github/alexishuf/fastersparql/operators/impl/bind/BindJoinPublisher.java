@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
-import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.ExecutorBoundPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
+import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
@@ -14,7 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 class BindJoinPublisher<R> extends MergePublisher<R> {
@@ -68,111 +70,107 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         }
     }
 
+    /* --- --- --- constants and class-level state --- --- --- */
+
     private static final Logger log = LoggerFactory.getLogger(BindJoinPublisher.class);
     private static final AtomicInteger nextId = new AtomicInteger(1);
-    private final int bindConcurrency;
+
+    /* --- --- --- immutable state state --- --- --- */
+
+    private final @Positive int bindConcurrency;
     private final Publisher<R> leftPublisher;
     private final Merger<R> merger;
     private final JoinType joinType;
-    private boolean terminated;
-    private int leftRequested;
-    private boolean requesterThread;
-    private boolean leftTerminated;
+
+    /* --- --- --- left-side state --- --- --- */
+
+    private @NonNegative int leftRequested;
+    private boolean leftActive;
     private @MonotonicNonNull Subscription leftSubscription;
+
+    /* --- --- --- constructors --- --- --- */
 
     public BindJoinPublisher(int bindConcurrency, Publisher<R> leftPublisher, Merger<R> merger,
                              JoinType joinType) {
-        super(joinType.operatorName()+"-"+nextId.getAndIncrement(), false);
-        setTargetParallelism(bindConcurrency);
+        super(joinType.operatorName()+"-"+nextId.getAndIncrement(),
+                bindConcurrency, bindConcurrency, false, null);
         this.joinType = joinType;
         this.bindConcurrency = bindConcurrency;
-        this.leftPublisher = leftPublisher;
+        this.leftPublisher = ExecutorBoundPublisher.bind(leftPublisher, executor());
         this.merger = merger;
     }
 
-    @Override protected synchronized void onTerminate(Throwable cause, boolean cancelled) {
-        if (!terminated) {
-            terminated = true;
-            if (leftSubscription != null)
-                leftSubscription.cancel();
+    /* --- --- --- public interface --- --- --- */
+
+    @Override public void subscribe(Subscriber<? super R> downstream) {
+        if (leftSubscription == null)
+            leftPublisher.subscribe(leftSubscriber);
+        //else: super will deliver error to downstream
+        super.subscribe(downstream);
+    }
+
+    /* --- --- --- hooks --- --- --- */
+
+    @Override protected void onRequest(long n) {
+        super.onRequest(n);
+        requestLeft(0);
+    }
+
+    @Override protected void onComplete(Throwable cause, boolean cancelled) {
+        super.onComplete(cause, cancelled);
+        if (leftActive && (cancelled || cause != null)) {
+            leftActive = false;
+            leftSubscription.cancel();
         }
     }
 
-    private void runRequestLoop() {
-        while (true) {
-            int n = 0;
-            synchronized (this) {
-                if (!leftTerminated)
-                    n = bindConcurrency - Math.min(bindConcurrency, leftRequested);
-                leftRequested += n;
-                if (n == 0) {
-                    requesterThread = false;
-                    return;
-                }
-            }
+    /* --- --- --- left subscription management --- --- --- */
+
+    private final Subscriber<R> leftSubscriber = new Subscriber<R>() {
+        @Override public void onSubscribe(Subscription s) {
+            assert leftSubscription == null : "already has leftSubscription!";
+            leftSubscription = s;
+            leftActive = true;
+            requestLeft(0);
+        }
+        @Override public void onError(Throwable error) {
+            log.trace("{}.onError({})", this, Objects.toString(error));
+            addPublisher(new EmptyPublisher<>(error));
+        }
+        @Override public void onComplete() {
+            log.trace("{}.onComplete()", this);
+            leftActive = false;
+            markCompletable();
+        }
+        @Override public void onNext(R leftRow) {
+            addPublisher(new RightProcessor(leftRow));
+        }
+        @Override public String toString() { return BindJoinPublisher.this+"leftSubscriber"; }
+    };
+
+    private void innerRequestLeft(@NonNegative int completed) {
+        assert leftSubscription != null : "requestLeft called before subscribe";
+        assert completed <= leftRequested : "more completions than requested";
+        assert leftRequested <= bindConcurrency : "leftRequested above allowed concurrency";
+        if (leftActive) {
+            int n = bindConcurrency - (leftRequested -= completed);
             if (n > 0) {
-                log.trace(this+".leftSubscription.request({})", n);
+                leftRequested += n;
                 leftSubscription.request(n);
-            }
-        }
-    }
-
-    public void requestLeft(int completed) {
-        if (bindConcurrency > 1) {
-            synchronized (this) {
-                assert completed <= leftRequested;
-                if (!terminated && !leftTerminated) {
-                    leftRequested = Math.max(0, leftRequested - completed);
-                    if (!requesterThread) {
-                        requesterThread = true;
-                        Async.async(this::runRequestLoop);
-                    }
-                }
             }
         } else {
-            int n;
-            synchronized (this) {
-                assert completed <= leftRequested;
-                if (terminated || leftTerminated)
-                    n = 0;
-                else
-                    leftRequested = n = bindConcurrency - (leftRequested - completed);
-
-            }
-            if (n > 0)
-                leftSubscription.request(n);
+            log.debug("{}.requestLeft({}): left subscription not active anymore", this, completed);
         }
     }
 
-    @Override public void subscribe(Subscriber<? super R> s) {
-        super.subscribe(s);
-        if (leftSubscription != null)
-            return; // super has already notified error
-        leftPublisher.subscribe(new Subscriber<R>() {
-            @Override public void onSubscribe(Subscription s) {
-                leftSubscription = s;
-                if (terminated)
-                    s.cancel();
-                else
-                    requestLeft(0);
-            }
-            @Override public void onError(Throwable t) {
-                log.trace(BindJoinPublisher.this+".leftSubscriber.onError({})", t, t);
-                onTerminate(t, false); // do not make new requests
-                addPublisher(new EmptyPublisher<>(t));
-            }
-            @Override public void onComplete() {
-                synchronized (BindJoinPublisher.this) {
-                    log.trace(BindJoinPublisher.this+".leftSubscriber.onComplete()");
-                    leftTerminated = true;
-                }
-                markCompletable();
-            }
-            @Override public void onNext(R leftRow) {
-                log.trace(BindJoinPublisher.this+".leftSubscriber.onNext({})", leftRow);
-                addPublisher(new RightProcessor(leftRow));
-            }
-        });
+    private void requestLeft(@NonNegative int completed) {
+        executor().execute(() -> innerRequestLeft(completed));
+    }
+
+    /* --- --- --- right subscription management --- --- --- */
+
+    private ExecutorBoundPublisher<R> createRightUpstream(R leftRow) {
+        return ExecutorBoundPublisher.bind(merger.bind(leftRow).execute().publisher(), executor());
     }
 
     private final class RightProcessor extends AbstractProcessor<R, R> {
@@ -180,10 +178,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         private volatile boolean empty = true;
         private long requested;
         private @Nullable R finalRow;
-        private final AtomicBoolean logicalCompleted = new AtomicBoolean(false);
+        private boolean logicalCompleted;
 
         public RightProcessor(R leftRow) {
-            super(merger.bind(leftRow).execute().publisher());
+            super(createRightUpstream(leftRow));
             this.leftRow = leftRow;
         }
 
@@ -194,13 +192,12 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                         completeDownstream(new IllegalArgumentException("negative request of "+n));
                     if (n == 0) return;
                     R emitRow = null;
-                    synchronized (RightProcessor.this) {
-                        if (terminated.get()) return;
-                        requested += n;
-                        if (finalRow != null) {
-                            emitRow = finalRow;
-                            finalRow = null;
-                        }
+                    if (terminated.get())
+                        return;
+                    requested += n;
+                    if (finalRow != null) {
+                        emitRow = finalRow;
+                        finalRow = null;
                     }
                     if (emitRow != null) {
                         emit(emitRow);
@@ -221,13 +218,11 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
 
         @Override protected void handleOnNext(R rightRow) {
             log.trace("{}.handleOnNext({}) {}term requested={} empty={}", this, rightRow,
-                    terminated.get() ? "" : "!", requested, empty);
-            synchronized (this) {
-                assert finalRow == null;
-                assert requested > 0;
-                requested = Math.max(0, requested-1);
-                empty = false;
-            }
+                      terminated.get() ? "" : "!", requested, empty);
+            assert finalRow == null;
+            assert requested > 0;
+            requested = Math.max(0, requested-1);
+            empty = false;
             if (joinType.isExistsFilter()) {
                 cancelUpstream();
                 logicalComplete();
@@ -237,28 +232,27 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         }
 
         private void logicalComplete() {
-            if (logicalCompleted.compareAndSet(false, true)) {
-                R emitRow;
-                boolean complete = true;
-                synchronized (this) {
-                    emitRow = joinType.finalRow(empty, merger, leftRow);
-                    if (emitRow != null) { // inject a row
-                        if (requested > 0) { //deliver final row now
-                            requested--;
-                        } else { // wait for next request to deliver finalRow
-                            finalRow = emitRow;
-                            emitRow = null;
-                            complete = false;
-                        }
-                    } //else: no final row generated, just complete
-                }
-                if (emitRow != null)
-                    emit(emitRow);
-                if (complete)
-                    completeDownstream(null);
-            } else {
+            if (logicalCompleted) {
                 log.trace("{}.logicalComplete(): no-op", this);
+                return;
             }
+            logicalCompleted = true;
+            R emitRow;
+            boolean complete = true;
+            emitRow = joinType.finalRow(empty, merger, leftRow);
+            if (emitRow != null) { // inject a row
+                if (requested > 0) { //deliver final row now
+                    requested--;
+                } else { // wait for next request to deliver finalRow
+                    finalRow = emitRow;
+                    emitRow = null;
+                    complete = false;
+                }
+            } //else: no final row generated, just complete
+            if (emitRow != null)
+                emit(emitRow);
+            if (complete)
+                completeDownstream(null);
         }
 
         @Override public void onComplete() {

@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @RequiredArgsConstructor @Slf4j @Accessors(fluent = true)
+@Deprecated
 abstract class ReactiveEventQueue<T> {
     private final String name;
     private long requested;
