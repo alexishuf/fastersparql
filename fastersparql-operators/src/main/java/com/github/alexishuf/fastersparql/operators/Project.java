@@ -31,24 +31,23 @@ public interface Project extends Operator {
      *         be included in the output but all rows will have {@code null}s as value.</li>
      * </ul>
      *
-     * @param input the input {@link Plan}
-     * @param vars {@link Results#vars()} of the returned {@link Results}.
+     * @param plan the {@link ProjectPlan} to execute
      * @param <R> the row type
      * @return a non-null {@link Results} with the given vars
      *
      * @throws IllegalOperatorArgumentException if there are {@code null}s in {@code vars}
      */
-    <R> Results<R> checkedRun(Plan<R> input, List<String> vars);
+    <R> Results<R> checkedRun(ProjectPlan<R> plan);
 
     /**
-     * Same as {@link Project#checkedRun(Plan, List)}, but any {@link Throwable} is wrapped in
+     * Same as {@link Project#checkedRun(ProjectPlan)}, but any {@link Throwable} is wrapped in
      * the returned an {@link Results}.
      */
-    default <R> Results<R> run(Plan<R> input, List<String> vars) {
+    default <R> Results<R> run(ProjectPlan<R> plan) {
         try {
-            return checkedRun(input, vars);
+            return checkedRun(plan);
         } catch (Throwable t) {
-            List<String> sanitized = vars.stream().filter(Objects::nonNull).distinct()
+            List<String> sanitized = plan.vars().stream().filter(Objects::nonNull).distinct()
                                          .collect(Collectors.toList());
             return Results.error(sanitized, Object.class, t);
         }

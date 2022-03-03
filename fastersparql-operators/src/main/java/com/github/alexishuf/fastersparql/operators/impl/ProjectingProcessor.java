@@ -3,26 +3,49 @@ package com.github.alexishuf.fastersparql.operators.impl;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
+import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
+import static java.lang.System.nanoTime;
+
 public final class ProjectingProcessor<T> extends AbstractProcessor<T, T> {
+    private final @Nullable Plan<Object> originalPlan;
+    private final @Nullable Class<Object> rowClass;
     private final List<String> outVars, inVars;
     private final RowOperations rowOps;
     private final int[] indices;
 
     public ProjectingProcessor(Results<? extends T> source, List<String> outVars,
-                               RowOperations rowOps) {
-        this(source.publisher(), outVars, source.vars(), rowOps);
+                           RowOperations rowOps) {
+        this(source, outVars, rowOps, null);
     }
+
+    public ProjectingProcessor(Results<? extends T> source, List<String> outVars,
+                               RowOperations rowOps, Plan<T> plan) {
+        //noinspection unchecked
+        this(source.publisher(), outVars, source.vars(), rowOps,
+                (Plan<Object>)plan, (Class<Object>) source.rowClass());
+    }
+
     public ProjectingProcessor(Publisher<? extends T> source, List<String> outVars,
-                               List<String> inVars, RowOperations rowOps) {
+                               List<String> inVars, RowOperations rowOps,
+                               @Nullable Plan<Object> originalPlan,
+                               @Nullable Class<Object> rowClass) {
         super(source);
         this.outVars = outVars;
         this.inVars = inVars;
         this.rowOps = rowOps;
+        this.originalPlan = originalPlan;
+        this.rowClass = rowClass;
+        if (originalPlan != null && rowClass == null)
+            throw new NullPointerException("originalPlan != null, but rowClass is null");
         this.indices = VarUtils.projectionIndices(outVars, inVars);
     }
 
@@ -35,5 +58,12 @@ public final class ProjectingProcessor<T> extends AbstractProcessor<T, T> {
                 rowOps.set(row, i, outVars.get(i), rowOps.get(item, inIdx, inVars.get(inIdx)));
         }
         emit(row);
+    }
+
+    @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
+        if (originalPlan != null && hasGlobalMetricsListeners()) {
+            sendMetrics(new PlanMetrics<>(originalPlan, rowClass, rows,
+                                          start, nanoTime(), error, cancelled));
+        }
     }
 }

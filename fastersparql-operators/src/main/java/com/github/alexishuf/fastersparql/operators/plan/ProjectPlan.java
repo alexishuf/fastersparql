@@ -17,7 +17,7 @@ public class ProjectPlan<R> implements Plan<R> {
     List<String> vars;
 
     @Override public Results<R> execute() {
-        return op.run(input, vars);
+        return op.run(this);
     }
 
     @Override public List<String> publicVars() {

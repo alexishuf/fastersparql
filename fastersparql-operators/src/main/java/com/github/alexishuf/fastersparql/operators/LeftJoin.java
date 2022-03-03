@@ -18,21 +18,19 @@ public interface LeftJoin extends Operator {
     /**
      * Execute {@code LeftJoin(left, right)} from SPARQL algebra
      *
-     * @param left left operand, whose rows are included even if there is no compatible row in
-     *             {@code right}
-     * @param right right operand, whose rows will be joined with left when possible.
+     * @param plan the {@link LeftJoinPlan} to execute
      * @param <R> thr row type
      * @return a non-null {@link Results} with the left join rows.
      */
-    <R>Results<R> checkedRun(Plan<R> left, Plan<R> right);
+    <R>Results<R> checkedRun(LeftJoinPlan<R> plan);
 
     /**
-     * Same as {@link LeftJoin#checkedRun(Plan, Plan)} but reports exceptions via
+     * Same as {@link LeftJoin#checkedRun(LeftJoinPlan)} but reports exceptions via
      * {@link Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(Plan<R> left, Plan<R> right) {
+    default <R> Results<R> run(LeftJoinPlan<R> plan) {
         try {
-            return checkedRun(left, right);
+            return checkedRun(plan);
         } catch (Throwable t) {
             return Results.error(Object.class, t);
         }

@@ -15,13 +15,13 @@ public class PlanHelpers {
         return new ArrayList<>(set);
     }
 
-    public static <R> List<String> allVarsUnion(List<Plan<R>> plans) {
+    public static <R> List<String> allVarsUnion(List<? extends Plan<R>> plans) {
         LinkedHashSet<String> set = new LinkedHashSet<>(16 * plans.size());
         for (Plan<R> plan : plans) set.addAll(plan.allVars());
         return new ArrayList<>(set);
     }
 
-    public static <R> List<Plan<R>> bindAll(List<Plan<R>>  plans,
+    public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
                                             List<String> vars, String[] ntValues) {
         VarUtils.checkBind(vars, ntValues);
         List<Plan<R>> bound = new ArrayList<>(plans.size());
@@ -29,7 +29,7 @@ public class PlanHelpers {
         return bound;
     }
 
-    public static <R> List<Plan<R>> bindAll(List<Plan<R>>  plans,
+    public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
                                             List<String> vars, List<String> ntValues) {
         VarUtils.checkBind(vars, ntValues);
         List<Plan<R>> bound = new ArrayList<>(plans.size());
@@ -37,7 +37,7 @@ public class PlanHelpers {
         return bound;
     }
 
-    public static <R> List<Plan<R>> bindAll(List<Plan<R>>  plans,
+    public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
                                             Map<String, String> var2ntValue) {
         VarUtils.checkBind(var2ntValue);
         List<Plan<R>> bound = new ArrayList<>(plans.size());

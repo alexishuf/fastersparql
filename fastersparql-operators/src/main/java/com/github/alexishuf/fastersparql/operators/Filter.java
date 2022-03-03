@@ -22,26 +22,22 @@ public interface Filter extends Operator {
      * Create a {@link Results} without rows that fail any of the SPARQL filters in
      * {@code filters} or any of the predicates in {@code predicates}.
      *
-     * @param input the input whose rows will be evaluated
-     * @param filters a collection of strings, each being a SPARQL boolean expression. The
-     *                strings may use the {@code xsd}, {@code rdf}, {@code rdfs} and {@code owl}
-     *                prefixes, which are mapped to their conventional URIs. Any other IRI
-     *                references must be explicit. If {@code null}, will treat as an empty set.
+     * @param plan The {@link FilterPlan} to execute
      * @param <R> the row type
      * @return a non-null {@link Results} with only rows that are accepted by all filters predicates.
      *
      * @throws IllegalSPARQLFilterException if any filter in {@code filter} is not a valid
      *         SPARQL boolean expression
      */
-    <R> Results<R> checkedRun(Plan<R> input, @Nullable Collection<? extends CharSequence> filters);
+    <R> Results<R> checkedRun(FilterPlan<R> plan);
 
     /**
-     * Equivalent to {@link Filter#checkedRun(Plan, Collection)}, but returns exceptions thrown
+     * Equivalent to {@link Filter#checkedRun(FilterPlan)}, but returns exceptions thrown
      * by the method through {@link Results#publisher()}.
      */
-    default <R> Results<R> run(Plan<R> input, @Nullable Collection<? extends CharSequence> filters) {
+    default <R> Results<R> run(FilterPlan<R> plan) {
         try {
-            return checkedRun(input, filters);
+            return checkedRun(plan);
         } catch (Throwable t) {
             return Results.error(Object.class, t);
         }

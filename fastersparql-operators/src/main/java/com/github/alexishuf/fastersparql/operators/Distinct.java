@@ -18,17 +18,17 @@ public interface Distinct extends Operator {
     /**
      * Creates a new {@link Results} whose publisher does not produce duplicate rows.
      *
-     * @param input the input {@link Results}.
+     * @param distinctPlan the {@link DistinctPlan} to execute
      * @param <R> the row type
      * @return A non-null {@link Results} without duplicate rows
      */
-    <R> Results<R> checkedRun(Plan<R> input);
+    <R> Results<R> checkedRun(DistinctPlan<R> distinctPlan);
 
     /**
-     * Same as {@link Distinct#checkedRun(Plan)}, but reports any {@link Throwable} via
+     * Same as {@link Distinct#checkedRun(DistinctPlan)}, but reports any {@link Throwable} via
      * {@link Subscriber#onError(Throwable)}
      */
-    default <R> Results<R> run(Plan<R> input) {
+    default <R> Results<R> run(DistinctPlan<R> input) {
         try {
             return checkedRun(input);
         } catch (Throwable t) {

@@ -19,19 +19,19 @@ public interface Union extends Operator {
     /**
      * Create a {@link Results} with all rows from all inputs.
      *
-     * @param inputs a list of input {@link Results}
+     * @param plan the {@link UnionPlan} to execute
      * @param <R> the row type
      * @return a non-null {@link Results}
      */
-    <R> Results<R> checkedRun(List<? extends Plan<R>> inputs);
+    <R> Results<R> checkedRun(UnionPlan<R> plan);
 
     /**
-     * Similar to {@link Union#checkedRun(List)}, but anything thrown by the method itself
+     * Similar to {@link Union#checkedRun(UnionPlan)}, but anything thrown by the method itself
      * will be delivered via {@link org.reactivestreams.Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(List<? extends Plan<R>> inputs) {
+    default <R> Results<R> run(UnionPlan<R> plan) {
         try {
-            return checkedRun(inputs);
+            return checkedRun(plan);
         } catch (Throwable t) {
             return Results.error(Object.class, t);
         }

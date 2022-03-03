@@ -14,9 +14,12 @@ import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
-import lombok.*;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -153,7 +156,7 @@ public class MinusTest {
                 List<AsyncTask<?>> tasks = new ArrayList<>();
                 for (String query : queries) {
                     tasks.add(Async.async(() -> {
-                        var a = new IterableAdapter<>(client.query(query).publisher());
+                        val a = new IterableAdapter<>(client.query(query).publisher());
                         if (a.hasError())
                             fail(a.error());
                     }));
@@ -183,7 +186,7 @@ public class MinusTest {
                 futures.add(Async.async(() -> {
                     for (int i = 0; i < N_ITERATIONS; i++) {
                         Minus minus = provider.create(flags, ArrayOperations.INSTANCE);
-                        testData.assertExpected(minus.checkedRun(left, right));
+                        testData.assertExpected(minus.checkedRun(minus.asPlan(left, right)));
                     }
                 }));
             }

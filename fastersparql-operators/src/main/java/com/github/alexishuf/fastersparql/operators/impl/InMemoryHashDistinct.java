@@ -4,17 +4,23 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Distinct;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
+import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.AllArgsConstructor;
+import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 
 import java.util.HashSet;
 import java.util.function.Function;
 
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
+import static java.lang.System.nanoTime;
 import static java.util.function.Function.identity;
 
 public class InMemoryHashDistinct implements Distinct {
@@ -40,9 +46,10 @@ public class InMemoryHashDistinct implements Distinct {
         this.wrap = rowOps.needsCustomHash() ? r -> new HashAdapter(rowOps, r) : identity();
     }
 
-    @Override public <R> Results<R> checkedRun(Plan<R> inputPlan) {
-        Results<R> in = inputPlan.execute();
-        return new Results<>(in.vars(), in.rowClass(), new Hasher<>(in.publisher(), wrap));
+    @Override public <R> Results<R> checkedRun(DistinctPlan<R> plan) {
+        Results<R> in = plan.input().execute();
+        val hasher = new Hasher<>(in.publisher(), wrap, plan, in.rowClass());
+        return new Results<>(in.vars(), in.rowClass(), hasher);
     }
 
     @AllArgsConstructor
@@ -57,17 +64,29 @@ public class InMemoryHashDistinct implements Distinct {
     }
 
     private static class Hasher<R> extends AbstractProcessor<R, R> {
+        private final DistinctPlan<R> distinctPlan;
+        private final Class<? super R> rowClass;
         private final HashSet<Object> set = new HashSet<>();
         private final Function<Object, ?> wrap;
 
-        public Hasher(Publisher<? extends R> source, Function<Object, ?> wrap) {
+        public Hasher(Publisher<? extends R> source, Function<Object, ?> wrap,
+                      DistinctPlan<R> distinctPlan, Class<? super R> rowClass) {
             super(source);
             this.wrap = wrap;
+            this.distinctPlan = distinctPlan;
+            this.rowClass = rowClass;
         }
 
         @Override protected void handleOnNext(R item) {
             if (set.add(wrap.apply(item)))
                 emit(item);
+        }
+
+        @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
+            if (hasGlobalMetricsListeners()) {
+                sendMetrics(new PlanMetrics<>(distinctPlan, rowClass, rows,
+                                              start, nanoTime(), error, cancelled));
+            }
         }
     }
 }

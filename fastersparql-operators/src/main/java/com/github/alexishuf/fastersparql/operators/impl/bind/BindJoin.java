@@ -1,11 +1,13 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
 import com.github.alexishuf.fastersparql.operators.Join;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
+import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.providers.JoinProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
@@ -20,6 +22,7 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperti
 import static com.github.alexishuf.fastersparql.operators.JoinHelpers.executeReorderedLeftAssociative;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.LARGE_FIRST;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.SMALL_SECOND;
+import static java.util.Collections.emptyList;
 
 @Value @Accessors(fluent = true)
 public class BindJoin implements Join {
@@ -47,15 +50,23 @@ public class BindJoin implements Join {
         }
     }
 
-    @Override public <R> Results<R> checkedRun(List<? extends Plan<R>> unorderedOperands) {
-        return executeReorderedLeftAssociative(unorderedOperands, bindJoinReorder(),
+    @Override public <R> Results<R> checkedRun(JoinPlan<R> plan) {
+        return executeReorderedLeftAssociative(plan, bindJoinReorder(),
                                                true, this::execute);
     }
 
-    private <R> Results<R> execute(Results<R> left, Plan<R> right) {
-        Merger<R> merger = new Merger<>(rowOps, left.vars(), right);
+    private <R> Results<R> execute(JoinPlan<R> plan) {
+        List<? extends Plan<R>> operands = plan.operands();
+        switch (operands.size()) {
+            case 0: return new Results<>(emptyList(), Object.class, new EmptyPublisher<>());
+            case 1: return operands.get(0).execute();
+            case 2: break;
+            default: throw new IllegalArgumentException("expected <= 2 operands");
+        }
+        Results<R> left = plan.operands().get(0).execute();
+        Merger<R> merger = new Merger<>(rowOps, left.vars(), operands.get(1));
         return new Results<>(merger.outVars(), left.rowClass(),
                 new BindJoinPublisher<>(bindConcurrency, left.publisher(), merger,
-                                         BindJoinPublisher.JoinType.INNER));
+                                        BindJoinPublisher.JoinType.INNER, plan));
     }
 }

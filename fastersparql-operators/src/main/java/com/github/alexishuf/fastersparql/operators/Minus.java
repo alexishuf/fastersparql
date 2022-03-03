@@ -18,20 +18,19 @@ public interface Minus extends Operator {
     /**
      * Returns the result of SPARQL algebra {@code Minus(left, right)} operator.
      *
-     * @param left the rows to include if no compatible row in right exists
-     * @param right the rows to use for removing rows from {@code left}
+     * @param plan the {@link MinusPlan} to execute
      * @param <R> the row type
      * @return a non-null {@link Results} with the result of the Minus operation.
      */
-    <R> Results<R> checkedRun(Plan<R> left, Plan<R> right);
+    <R> Results<R> checkedRun(MinusPlan<R> plan);
 
     /**
-     * Same as {@link Minus#checkedRun(Plan, Plan)} but reports any exception via
+     * Same as {@link Minus#checkedRun(MinusPlan)} but reports any exception via
      * {@link Subscriber#onError(Throwable)}
      */
-    default <R> Results<R> run(Plan<R> left, Plan<R> right) {
+    default <R> Results<R> run(MinusPlan<R> plan) {
         try {
-            return checkedRun(left, right);
+            return checkedRun(plan);
         } catch (Throwable t) {
             return Results.error(Object.class, t);
         }

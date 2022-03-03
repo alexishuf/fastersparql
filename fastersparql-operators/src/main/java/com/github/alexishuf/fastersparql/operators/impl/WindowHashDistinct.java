@@ -5,16 +5,19 @@ import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Distinct;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
+import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import org.checkerframework.checker.index.qual.NonNegative;
-import org.reactivestreams.Publisher;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.function.Function;
 
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 
 public class WindowHashDistinct implements Distinct {
@@ -45,24 +48,28 @@ public class WindowHashDistinct implements Distinct {
         this.overrideWindow = overrideWindow;
     }
 
-    @Override public <R> Results<R> checkedRun(Plan<R> inputPlan) {
-        Results<R> in = inputPlan.execute();
+    @Override public <R> Results<R> checkedRun(DistinctPlan<R> plan) {
+        Results<R> in = plan.input().execute();
         int window = overrideWindow >= 0 ? overrideWindow
                                          : FasterSparqlOpProperties.distinctWindow();
-        return new Results<>(in.vars(), in.rowClass(), new Hasher<>(in.publisher(), wrap, window));
+        return new Results<>(in.vars(), in.rowClass(), new Hasher<>(in, wrap, window, plan));
     }
 
     private static final class Hasher<R> extends AbstractProcessor<R, R> {
+        private final DistinctPlan<R> plan;
+        private final Class<? super R> rowClass;
         private final Function<Object, Object> wrap;
         private final int windowSize;
         private final LinkedHashSet<Object> window;
 
-        public Hasher(Publisher<? extends R> source, Function<Object, Object> wrap,
-                      int windowSize) {
-            super(source);
+        public Hasher(Results<R> results, Function<Object, Object> wrap,
+                      int windowSize, DistinctPlan<R> plan) {
+            super(results.publisher());
             this.wrap = wrap;
             this.windowSize = windowSize;
             this.window = new LinkedHashSet<>(windowSize); //underestimates actual capacity
+            this.plan = plan;
+            this.rowClass = results.rowClass();
         }
 
         @Override protected void handleOnNext(R item) {
@@ -70,6 +77,13 @@ public class WindowHashDistinct implements Distinct {
                 if (window.size() > windowSize)
                     removeOldest();
                 emit(item);
+            }
+        }
+
+        @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
+            if (hasGlobalMetricsListeners()) {
+                sendMetrics(new PlanMetrics<>(plan, rowClass, rows,
+                                              start, System.nanoTime(), error, cancelled));
             }
         }
 

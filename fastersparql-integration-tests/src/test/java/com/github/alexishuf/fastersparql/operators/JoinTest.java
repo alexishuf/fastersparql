@@ -20,7 +20,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
-import lombok.var;
+import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -218,7 +218,7 @@ public class JoinTest {
 
     @Test
     void selfTest() throws ExecutionException {
-        var factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        val factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
         Set<String> queries = test().map(a -> (TestData) a.get()[3])
                                     .flatMap(d -> d.operands.stream()).collect(toSet());
         for (SparqlClientFactory factory : factories) {
@@ -226,7 +226,7 @@ public class JoinTest {
             try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
                 for (String query : queries) {
                     tasks.add(Async.async(() -> {
-                        var a = new IterableAdapter<>(client.query(query).publisher());
+                        val a = new IterableAdapter<>(client.query(query).publisher());
                         List<String[]> list = new ArrayList<>();
                         a.forEach(list::add);
                         if (a.hasError())
@@ -253,7 +253,7 @@ public class JoinTest {
             for (int thread = 0; thread < N_THREADS; thread++) {
                 futures.add(Async.async(() -> {
                     for (int i = 0; i < N_ITERATIONS; i++) {
-                        data.assertExpected(join.checkedRun(operands));
+                        data.assertExpected(join.checkedRun(join.asPlan(operands)));
                         assertEquals(operandsCopy, operands, "operands mutated");
                     }
                 }));

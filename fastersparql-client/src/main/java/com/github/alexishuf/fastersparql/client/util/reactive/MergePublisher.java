@@ -157,10 +157,11 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     protected void onRequest(long n) {
         redistribute(n, "onRequest");
     }
-    protected void onCancel() {
+    protected   void onCancel() {
         tryComplete(null, null, true, 0);
     }
     protected void onComplete(Throwable cause, boolean cancelled) { }
+    protected void       feed(T item)                             { cbp.feed(item); }
 
     /* --- --- --- in-executor tasks for public interface methods --- --- --- */
 
@@ -394,7 +395,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         }
 
         @Override public void onSubscribe(Subscription s)  { upstream = s;         }
-        @Override public void      onNext(T item)          { cbp.feed(item);       }
+        @Override public void      onNext(T item)          { feed(item);           }
         @Override public void     onError(Throwable cause) { complete(cause);      }
         @Override public void  onComplete()                { complete(null); }
 

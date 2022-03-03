@@ -22,7 +22,7 @@ public class DistinctPlan<R> implements Plan<R> {
     }
 
     @Override public Results<R> execute() {
-        return op.run(input);
+        return op.run(this);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

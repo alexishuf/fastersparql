@@ -44,7 +44,7 @@ public class FilterPlan<R> implements Plan<R> {
     }
 
     @Override public Results<R> execute() {
-        return op.run(input, filters);
+        return op.run(this);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

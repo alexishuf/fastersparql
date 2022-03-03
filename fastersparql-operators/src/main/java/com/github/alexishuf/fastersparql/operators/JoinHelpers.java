@@ -4,25 +4,32 @@ package com.github.alexishuf.fastersparql.operators;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.operators.impl.ProjectingProcessor;
+import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.plan.PlanHelpers;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
-import com.github.alexishuf.fastersparql.operators.reorder.NullJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
+import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.*;
-import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.client.util.sparql.VarUtils.hasIntersection;
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
 
 
 /**
  * Utilities for implementers of Join
  */
 public class JoinHelpers {
+    interface JoinExecutor {
+
+    }
+
+
     /**
      * Executes the n-ary join using a left-deep tree (aka. left-associative execution).
      *
@@ -32,40 +39,40 @@ public class JoinHelpers {
      * Optionally Reorders {@code operands} and create a left-deep execution tree
      * (corresponding to a left-associative execution order).
      *
-     * @param unorderedOperands the join operands, not yet ordered (this list will not be mutated).
-     * @param joinReorderStrategy the {@link JoinReorderStrategy} that shall be used to
-     *                            rearrange the given operands seeking better performance. If null,
-     *                            the operands will not be reordered.
+     * @param plan A {@link JoinPlan} with unordered operands. It will not be modified
+     * @param reorder The {@link JoinReorderStrategy} that will be used to reorder
+     *                {@code plan.operands()} seeking lower execution time for full consumption
+     *                of results. If null, the operands will not be reordered.
      * @param useBind whether the joins will use {@link Plan#bind(Map)} this is forwarded to
      *                {@link JoinReorderStrategy#reorder(List, boolean)}.
-     * @param executor A binary function that combines a left-side {@link Results} to a right-side
-     *                 {@link Plan} into a {@link Results} of the join results.
+     * @param binaryExecutor A function that turns a {@link JoinPlan} with two operands into a
+     *                       {@link Results} instance.
      * @param <R> the row type
      * @return a {@link Results} over the results of the n-ary join.
      */
     public static <R> Results<R>
-    executeReorderedLeftAssociative(List<? extends Plan<R>> unorderedOperands,
-                                    @Nullable JoinReorderStrategy joinReorderStrategy,
+    executeReorderedLeftAssociative(JoinPlan<R> plan, @Nullable JoinReorderStrategy reorder,
                                     boolean useBind,
-                                    BiFunction<Results<R>, Plan<R>, Results<R>> executor) {
-        if (unorderedOperands.isEmpty())
-            return new Results<>(Collections.emptyList(), Object.class, new EmptyPublisher<>());
-        if (unorderedOperands.size() == 1)
-            return unorderedOperands.get(0).execute();
-        if (joinReorderStrategy == null)
-            joinReorderStrategy = NullJoinReorderStrategy.INSTANCE;
-        List<String> expectedVars = PlanHelpers.publicVarsUnion(unorderedOperands);
-        List<? extends Plan<R>> operands = joinReorderStrategy.reorder(unorderedOperands, useBind);
-        Results<R> root = executor.apply(operands.get(0).execute(), operands.get(1));
-        for (int i = 2, size = operands.size(); i < size; i++)
-            root = executor.apply(root, operands.get(i));
-        if (operands != unorderedOperands && !root.vars().equals(expectedVars)) {
-            Class<? super R> rowClass = root.rowClass();
-            RowOperations ro = RowOperationsRegistry.get().forClass(rowClass);
-            ProjectingProcessor<R> processor = new ProjectingProcessor<>(root, expectedVars, ro);
-            root = new Results<>(expectedVars, rowClass, processor);
+                                    Function<JoinPlan<R>, Results<R>> binaryExecutor) {
+        List<? extends Plan<R>> ops = reorder == null ? plan.operands()
+                                    : reorder.reorder(plan.operands(), useBind);
+        switch (ops.size()) {
+            case 0: return new Results<>(emptyList(), Object.class, new EmptyPublisher<>());
+            case 1: return ops.get(0).execute();
+            case 2: return binaryExecutor.apply(plan.op().asPlan(ops));
         }
-        return root;
+        Plan<R> root = plan.op().asPlan(asList(ops.get(0), ops.get(1)));
+        for (int i = 2; i < ops.size(); i++)
+            root = plan.op().asPlan(asList(root, ops.get(i)));
+        Results<R> results = root.execute();
+        List<String> expectedVars = plan.publicVars();
+        if (ops != plan.operands() && !root.publicVars().equals(expectedVars)) {
+            Class<? super R> rowClass = results.rowClass();
+            RowOperations ro = RowOperationsRegistry.get().forClass(rowClass);
+            val processor = new ProjectingProcessor<>(results, expectedVars, ro, null);
+            results = new Results<>(expectedVars, rowClass, processor);
+        }
+        return results;
     }
 
     private static final Pattern JRS_SUFFIX = Pattern.compile("joinreorderstrategy$");

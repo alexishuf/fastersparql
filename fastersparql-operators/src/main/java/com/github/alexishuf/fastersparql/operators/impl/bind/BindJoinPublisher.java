@@ -5,6 +5,8 @@ import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.ExecutorBoundPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
+import com.github.alexishuf.fastersparql.operators.metrics.JoinMetrics;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -18,6 +20,9 @@ import org.slf4j.LoggerFactory;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
+import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
 class BindJoinPublisher<R> extends MergePublisher<R> {
     public enum JoinType {
@@ -81,6 +86,8 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
     private final Publisher<R> leftPublisher;
     private final Merger<R> merger;
     private final JoinType joinType;
+    private final Plan<R> originalPlan;
+    private @MonotonicNonNull Class<? super R> rowClass;
 
     /* --- --- --- left-side state --- --- --- */
 
@@ -88,21 +95,27 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
     private boolean leftActive;
     private @MonotonicNonNull Subscription leftSubscription;
 
+    /* --- --- --- metrics --- --- --- */
+    private long start = Long.MAX_VALUE, rows;
+    private long leftRows, leftUnmatched, totalRightRows, maxRightRows;
+
     /* --- --- --- constructors --- --- --- */
 
     public BindJoinPublisher(int bindConcurrency, Publisher<R> leftPublisher, Merger<R> merger,
-                             JoinType joinType) {
+                             JoinType joinType, Plan<R> originalPlan) {
         super(joinType.operatorName()+"-"+nextId.getAndIncrement(),
                 bindConcurrency, bindConcurrency, false, null);
         this.joinType = joinType;
         this.bindConcurrency = bindConcurrency;
         this.leftPublisher = ExecutorBoundPublisher.bind(leftPublisher, executor());
         this.merger = merger;
+        this.originalPlan = originalPlan;
     }
 
     /* --- --- --- public interface --- --- --- */
 
     @Override public void subscribe(Subscriber<? super R> downstream) {
+        start = System.nanoTime();
         if (leftSubscription == null)
             leftPublisher.subscribe(leftSubscriber);
         //else: super will deliver error to downstream
@@ -122,6 +135,18 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
             leftActive = false;
             leftSubscription.cancel();
         }
+        if (hasGlobalMetricsListeners()) {
+            double leftUnmatchedRate = leftUnmatched / (double) rows;
+            double avgRightMatches = totalRightRows / (double) rows;
+            sendMetrics(new JoinMetrics<>(originalPlan, rowClass, rows,
+                                          start, System.nanoTime(), cause, cancelled,
+                                          leftUnmatchedRate, avgRightMatches, maxRightRows));
+        }
+    }
+
+    @Override protected void feed(R item) {
+        super.feed(item);
+        ++rows;
     }
 
     /* --- --- --- left subscription management --- --- --- */
@@ -143,6 +168,11 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
             markCompletable();
         }
         @Override public void onNext(R leftRow) {
+            if (rowClass == null) {
+                //noinspection unchecked
+                rowClass = (Class<? super R>) leftRow.getClass();
+            }
+            ++leftRows;
             addPublisher(new RightProcessor(leftRow));
         }
         @Override public String toString() { return BindJoinPublisher.this+"leftSubscriber"; }
@@ -210,8 +240,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 @Override public void cancel() {
                     log.trace("{}.Subscription.cancel() {}term", RightProcessor.this,
                             terminated.get() ? "" : "!");
-                    if (terminated.compareAndSet(false, true))
+                    if (terminated.compareAndSet(false, true)) {
                         cancelUpstream();
+                        onTerminate(null, true);
+                    }
                 }
             };
         }
@@ -237,6 +269,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 return;
             }
             logicalCompleted = true;
+            saveMetrics();
             R emitRow;
             boolean complete = true;
             emitRow = joinType.finalRow(empty, merger, leftRow);
@@ -253,6 +286,13 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 emit(emitRow);
             if (complete)
                 completeDownstream(null);
+        }
+
+        private void saveMetrics() {
+            if (empty)
+                ++leftUnmatched;
+            maxRightRows = Math.max(maxRightRows, rows);
+            totalRightRows += rows;
         }
 
         @Override public void onComplete() {

@@ -14,7 +14,7 @@ public class UnionPlan<R> implements Plan<R> {
     List<Plan<R>> inputs;
 
     @Override public Results<R> execute() {
-        return op.run(inputs);
+        return op.run(this);
     }
 
     @Override public List<String> publicVars() {

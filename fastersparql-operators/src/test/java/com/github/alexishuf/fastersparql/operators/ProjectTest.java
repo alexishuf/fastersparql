@@ -52,7 +52,7 @@ public class ProjectTest {
     void test(List<List<String>> in, List<String> vars, List<List<String>> expected) {
         for (long flags : asList(0L, ASYNC, ASYNC | ALL_LARGE)) {
             Project op = FasterSparqlOps.create(Project.class, flags, List.class);
-            Results<List<String>> out = op.checkedRun(asPlan(in), vars);
+            Results<List<String>> out = op.checkedRun(op.asPlan(asPlan(in), vars));
             checkRows(expected, vars, null, out, true);
         }
     }

@@ -15,7 +15,7 @@ public class SlicePlan<R> implements Plan<R> {
     long offset, limit;
 
     @Override public Results<R> execute() {
-        return op.run(input, offset, limit);
+        return op.run(this);
     }
 
     @Override public List<String> publicVars() {

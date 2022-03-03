@@ -13,7 +13,7 @@ public interface Join extends Operator {
     /**
      * Create a plan for {@code run(inputs)}.
      */
-    default <R> JoinPlan<R> asPlan(List<Plan<R>> inputs) {
+    default <R> JoinPlan<R> asPlan(List<? extends Plan<R>> inputs) {
        return new JoinPlan<>(this, inputs);
     }
 
@@ -31,19 +31,19 @@ public interface Join extends Operator {
      * two operands do not share variables. Implementations should avoid or delay such cartesian
      * products, but are not required to.
      *
-     * @param operands the list of operands
+     * @param plan the {@link JoinPlan} to execite
      * @param <R> the row type
      * @return a non-null {@link Results} with the join result.
      */
-    <R> Results<R> checkedRun(List<? extends Plan<R>> operands);
+    <R> Results<R> checkedRun(JoinPlan<R> plan);
 
     /**
-     * Same as {@link Join#checkedRun(List)}, but returns errors via
+     * Same as {@link Join#checkedRun(JoinPlan)}, but returns errors via
      * {@link Subscriber#onError(Throwable)}.
      */
-    default <R> Results<R> run(List<? extends Plan<R>> operands) {
+    default <R> Results<R> run(JoinPlan<R> plan) {
         try {
-            return checkedRun(operands);
+            return checkedRun(plan);
         } catch (Throwable t) {
             return Results.error(Object.class, t);
         }

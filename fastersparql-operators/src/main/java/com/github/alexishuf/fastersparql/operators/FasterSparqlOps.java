@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
+import com.github.alexishuf.fastersparql.operators.metrics.PlanMetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProvider;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProviderRegistry;
@@ -9,10 +11,54 @@ import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class FasterSparqlOps {
     private static final OperatorProviderRegistry registry
             = new OperatorProviderRegistry().registerAll();
+    private static final Queue<PlanMetricsListener> listeners = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Add a listener to receive metrics for any operator that gets executed after this call.
+     * @param listener the listener
+     */
+    public static void addGlobalMetricsListener(@lombok.NonNull PlanMetricsListener listener) {
+        if (!listeners.contains(listener))
+            listeners.add(listener);
+    }
+
+    /**
+     * Removes a listenerr previously added via
+     * {@link FasterSparqlOps#addGlobalMetricsListener(PlanMetricsListener)}.
+     *
+     * @param listener the listener to remove
+     * @return true iff the listener was previously added and previously removed (now it is removed).
+     */
+    public static boolean removeGlobalMetricsListener(PlanMetricsListener listener) {
+        if (listener == null)
+            return false;
+        return listeners.remove(listener);
+    }
+
+    /**
+     * Tests if there is at least one {@link PlanMetricsListener} added via
+     * {@link FasterSparqlOps#addGlobalMetricsListener(PlanMetricsListener)}.
+     */
+    public static boolean hasGlobalMetricsListeners() {
+        return listeners.isEmpty();
+    }
+
+    /**
+     * Delivers a {@link PlanMetrics} instance to all listeners registered via
+     * {@link FasterSparqlOps#addGlobalMetricsListener(PlanMetricsListener)}.
+     *
+     * @param metrics the metrics instance.
+     */
+    public static void sendMetrics(PlanMetrics<?> metrics) {
+        for (PlanMetricsListener listener : listeners)
+            listener.accept(metrics);
+    }
 
     /**
      * Create an instance of the given {@link Operator} interface that best matches the given flags.

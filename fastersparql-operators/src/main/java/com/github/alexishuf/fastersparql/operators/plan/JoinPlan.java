@@ -11,7 +11,7 @@ import java.util.Map;
 @Value @Accessors(fluent = true)
 public class JoinPlan<R> implements Plan<R> {
     Join op;
-    List<Plan<R>> operands;
+    List<? extends Plan<R>> operands;
 
     @Override public List<String> publicVars() {
         return PlanHelpers.publicVarsUnion(operands);
@@ -22,7 +22,7 @@ public class JoinPlan<R> implements Plan<R> {
     }
 
     @Override public Results<R> execute() {
-        return op.run(operands);
+        return op.run(this);
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {

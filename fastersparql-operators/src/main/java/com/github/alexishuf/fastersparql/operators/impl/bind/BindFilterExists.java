@@ -5,7 +5,7 @@ import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FilterExists;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
 import com.github.alexishuf.fastersparql.operators.impl.bind.BindJoinPublisher.JoinType;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.FilterExistsPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterExistsProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
@@ -29,11 +29,11 @@ public class BindFilterExists implements FilterExists {
         }
     }
 
-    @Override public <R> Results<R> checkedRun(Plan<R> input, boolean negate, Plan<R> filter) {
-        Results<R> l = input.execute();
-        Merger<R> merger = new Merger<>(rowOps, l.vars(), filter, l.vars());
-        JoinType joinType = negate ? JoinType.FILTER_NOT_EXISTS : JoinType.FILTER_EXISTS;
+    @Override public <R> Results<R> checkedRun(FilterExistsPlan<R> plan) {
+        Results<R> l = plan.input().execute();
+        Merger<R> merger = new Merger<>(rowOps, l.vars(), plan.filter(), l.vars());
+        JoinType joinType = plan.negate() ? JoinType.FILTER_NOT_EXISTS : JoinType.FILTER_EXISTS;
         return new Results<>(l.vars(), l.rowClass(),
-                new BindJoinPublisher<>(bindConcurrency, l.publisher(), merger, joinType));
+                new BindJoinPublisher<>(bindConcurrency, l.publisher(), merger, joinType, plan));
     }
 }

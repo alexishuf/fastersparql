@@ -17,6 +17,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
     protected AtomicBoolean terminated = new AtomicBoolean(false);
     protected Subscription upstream;
     protected Subscriber<? super D> downstream;
+    protected long start = System.nanoTime(), rows;
 
     public AbstractProcessor(Publisher<? extends U> source) {
         this.source = source;
@@ -40,8 +41,10 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
                     upstream.request(n);
             }
             @Override public void cancel() {
-                if (terminated.compareAndSet(false, true))
+                if (terminated.compareAndSet(false, true)) {
                     cancelUpstream();
+                    onTerminate(null, true);
+                }
             }
         };
     }
@@ -61,6 +64,8 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
      */
     protected abstract void handleOnNext(U item) throws Exception;
 
+    protected void onTerminate(@Nullable Throwable error, boolean cancelled) { /* no-op */ }
+
     /* --- --- --- Helper methods called by implementations --- --- --- */
 
     /**
@@ -69,6 +74,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
      * @param item the item to publish
      */
     protected void emit(D item) {
+        ++rows;
         try {
             if (terminated.get()) {
                 log.debug("Discarding emit({}) after terminated.", item);
@@ -81,6 +87,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
             log.error("downstream={} threw {} on onNext({}). Treating as a Subscription.cancel().",
                       downstream, t.getClass(), item, t);
             cancelUpstream();
+            onTerminate(null, true);
         }
     }
 
@@ -104,8 +111,10 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
      */
     protected void completeDownstream(@Nullable Throwable cause) {
         log.trace("{}.completeDownstream({})", this, cause);
+        boolean notify = false;
         try {
-            if (terminated.compareAndSet(false, true)) {
+            notify = terminated.compareAndSet(false, true);
+            if (notify) {
                 if (cause != null)
                     downstream.onError(cause);
                 else
@@ -115,6 +124,9 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
             assert false : "Unexpected Throwable";
             log.error("Ignoring {} thrown by onComplete() of downstream={}",
                       t.getClass(), downstream, t);
+        } finally {
+            if (notify)
+                onTerminate(cause, false);
         }
     }
 
@@ -128,6 +140,7 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
             });
             s.onError(new IllegalStateException("Multiple subscribers are not allowed for "+this));
         } else {
+            start = System.nanoTime();
             downstream = s;
             source.subscribe(this);
         }

@@ -193,7 +193,7 @@ class LeftJoinTest {
                 futures.add(Async.async(() -> {
                 for (int i = 0; i < N_ITERATIONS; i++) {
                     LeftJoin op = provider.create(flags, ArrayOperations.INSTANCE);
-                    testData.assertExpected(op.checkedRun(leftPlan, rightPlan));
+                    testData.assertExpected(op.checkedRun(op.asPlan(leftPlan, rightPlan)));
                 }
                 }));
             }

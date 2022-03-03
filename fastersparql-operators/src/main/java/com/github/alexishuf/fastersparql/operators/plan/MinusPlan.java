@@ -15,7 +15,7 @@ public class MinusPlan<R> implements Plan<R> {
     Plan<R> left, right;
 
     @Override public Results<R> execute() {
-        return op.run(left, right);
+        return op.run(this);
     }
 
     @Override public List<String> publicVars() {
