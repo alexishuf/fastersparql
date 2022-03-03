@@ -2,18 +2,37 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.operators.FilterExists;
+import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
 public class FilterExistsPlan<R> implements Plan<R> {
+    private static final AtomicInteger nextId = new AtomicInteger(1);
+    Class<? super R> rowClass;
     FilterExists op;
     Plan<R> input;
     boolean negate;
     Plan<R> filter;
+    String name;
+
+    @Builder
+    public FilterExistsPlan(@lombok.NonNull Class<? super R> rowClass,
+                            @lombok.NonNull FilterExists op, @lombok.NonNull  Plan<R> input,
+                            boolean negate, @lombok.NonNull  Plan<R> filter,
+                            @Nullable String name) {
+        this.rowClass = rowClass;
+        this.op = op;
+        this.input = input;
+        this.negate = negate;
+        this.filter = filter;
+        this.name = name == null ? "FilterExists-"+nextId.getAndIncrement() : name;
+    }
 
     @Override public List<String> publicVars() {
         return input.publicVars();
@@ -28,6 +47,7 @@ public class FilterExistsPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2value) {
-        return new FilterExistsPlan<>(op, input.bind(var2value), negate, filter.bind(var2value));
+        return new FilterExistsPlan<>(rowClass, op, input.bind(var2value), negate,
+                                      filter.bind(var2value), name);
     }
 }

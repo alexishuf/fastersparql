@@ -12,7 +12,11 @@ public interface Slice extends Operator {
      * Create a plan for {@code run(input.execute(), offset, limit)}
      */
     default <R> SlicePlan<R> asPlan(Plan<R> input, long offset, long limit) {
-        return new SlicePlan<>(this, input, offset, limit);
+        return new SlicePlan<>(rowClass(), this, input, offset, limit, null);
+    }
+
+    default <R> SlicePlan.SlicePlanBuilder<R> asPlan() {
+        return SlicePlan.<R>builder().rowClass(rowClass()).op(this);
     }
 
     /**

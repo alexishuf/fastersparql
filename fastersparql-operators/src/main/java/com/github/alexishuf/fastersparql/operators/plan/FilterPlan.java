@@ -3,36 +3,37 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
+import lombok.Builder;
+import lombok.Singular;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
 public class FilterPlan<R> implements Plan<R> {
+    private static final AtomicInteger nextId = new AtomicInteger(1);
+    Class<? super R> rowClass;
     Filter op;
     Plan<R> input;
-    Collection<? extends CharSequence> filters;
+    List<String> filters;
+    String name;
 
-    public FilterPlan(Filter op, Plan<R> input,
-                      @Nullable Collection<? extends CharSequence> filters) {
+    @Builder
+    public FilterPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Filter op,
+                      @lombok.NonNull Plan<R> input,
+                      @Singular List<String> filters,
+                      @Nullable String name) {
+        this.rowClass = rowClass;
         this.op = op;
         this.input = input;
-        if (filters == null || filters.isEmpty()) {
-            this.filters = Collections.emptyList();
-        } else {
-            ArrayList<String> filterStrings = new ArrayList<>(filters.size());
-            for (CharSequence f : filters) filterStrings.add(f.toString());
-            this.filters = filterStrings;
-        }
-    }
-
-    /** This trusts {@code filters} and its {@link CharSequence}s will nto change. */
-    private FilterPlan(Collection<? extends CharSequence> filters, Plan<R> input, Filter op) {
-        this.op = op;
-        this.input = input;
-        this.filters = filters;
+        this.filters = filters == null ? Collections.emptyList() : filters;
+        this.name = name == null ? "Filter-"+nextId.getAndIncrement()+"-"+input.name() : name;
     }
 
     @Override public List<String> publicVars() {
@@ -51,13 +52,14 @@ public class FilterPlan<R> implements Plan<R> {
         Plan<R> boundIn = input.bind(var2ntValue);
         boolean change = boundIn != input;
         if (filters.isEmpty())
-            return change ? new FilterPlan<>(op, boundIn, filters) : this;
-        List<CharSequence> boundFilters = new ArrayList<>(filters.size());
-        for (CharSequence filter : filters) {
+            return change ? new FilterPlan<>(rowClass, op, boundIn, filters, name) : this;
+        List<String> boundFilters = new ArrayList<>(filters.size());
+        for (String filter : filters) {
             String bound = SparqlUtils.bind(filter, var2ntValue).toString();
+            //noinspection StringEquality
             change |= bound != filter;
             boundFilters.add(bound);
         }
-        return change ? new FilterPlan<>(boundFilters, boundIn, op) : this;
+        return change ? new FilterPlan<>(rowClass, op, boundIn, boundFilters, name) : this;
     }
 }

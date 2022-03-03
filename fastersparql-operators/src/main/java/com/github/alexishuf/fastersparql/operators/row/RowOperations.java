@@ -7,6 +7,12 @@ import java.util.List;
 
 public interface RowOperations {
     /**
+     * Get the class of rows expected by this instance.
+     * @return a non-null class object.
+     */
+    Class<?> rowClass();
+
+    /**
      * Set the value of the {@code idx}-th {@code var} in {@code row} to {@code object}.
      *
      * @param row the row object.

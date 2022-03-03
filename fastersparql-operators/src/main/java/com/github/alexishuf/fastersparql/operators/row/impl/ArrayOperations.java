@@ -3,16 +3,40 @@ package com.github.alexishuf.fastersparql.operators.row.impl;
 import com.github.alexishuf.fastersparql.operators.row.RowMatcher;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.lang.reflect.Array;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
+@RequiredArgsConstructor
+@Getter @Accessors(fluent = true)
 public class ArrayOperations implements RowOperations {
-    public static final ArrayOperations INSTANCE = new ArrayOperations();
+    private static final ConcurrentHashMap<Class<?>, ArrayOperations> CACHE
+            = new ConcurrentHashMap<>();
+    public static final Provider PROVIDER = new Provider();
+    private final Class<?> rowClass;
 
     public static class Provider implements RowOperationsProvider {
-        @Override public RowOperations get() { return INSTANCE; }
+
+
+        @Override public RowOperations get(Class<?> specializedClass) {
+            if (!Object[].class.isAssignableFrom(specializedClass))
+                throw new IllegalArgumentException(specializedClass+" is not an object array class");
+            Function<Class<?>, ArrayOperations> fac;
+            if (String[].class.isAssignableFrom(specializedClass))
+                fac = StringArrayOperations::new;
+            else if (CharSequence[].class.isAssignableFrom(specializedClass))
+                fac = CharSequenceArrayOperations::new;
+            else
+                fac = ArrayOperations::new;
+            return CACHE.computeIfAbsent(specializedClass, fac);
+        }
         @Override public Class<?> rowClass() { return Object[].class; }
     }
 
@@ -35,7 +59,9 @@ public class ArrayOperations implements RowOperations {
     }
 
     @Override public Object createEmpty(List<String> vars) {
-        return new Object[vars.size()];
+        Class<?> componentType = rowClass.getComponentType();
+        assert componentType != null;
+        return Array.newInstance(componentType, vars.size());
     }
 
     @Override public boolean equalsSameVars(Object left, Object right) {

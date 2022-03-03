@@ -20,7 +20,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class JoinHelpersTest {
     private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>();
 
-    static Stream<Arguments> testIsProduct() {
+    @SuppressWarnings("unused") static Stream<Arguments> testIsProduct() {
         return Stream.of(
         /*  1 */arguments(singleton("x"), "SELECT ?x ?y { ?x ?p ?y}", false, false),
         /*  2 */arguments(singletonList("x"), "SELECT ?x ?y { ?x ?p ?y}", false, false),
@@ -39,11 +39,11 @@ class JoinHelpersTest {
     @ParameterizedTest @MethodSource
     public void testIsProduct(Collection<String> acc, String rightSparql, boolean useBind,
                               boolean expected) {
-        LeafPlan<String[]> right = new LeafPlan<>(rightSparql, client);
+        LeafPlan<String[]> right = LeafPlan.builder(client, rightSparql).build();
         assertEquals(expected, JoinHelpers.isProduct(acc, right, useBind));
     }
 
-    static Stream<Arguments> testLoadStrategy() {
+    @SuppressWarnings("unused") static Stream<Arguments> testLoadStrategy() {
         Class<?> n = NullJoinReorderStrategy.class;
         Class<?> a = AvoidCartesianJoinReorderStrategy.class;
         return Stream.of(

@@ -14,7 +14,7 @@ import com.github.alexishuf.fastersparql.operators.impl.bind.BindJoin;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.JoinProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -244,10 +244,10 @@ public class JoinTest {
               TestData data) throws ExecutionException {
         if (provider.bid(flags) == BidCosts.UNSUPPORTED)
             return;
-        Join join = provider.create(flags, ArrayOperations.INSTANCE);
+        Join join = provider.create(flags, StringArrayOperations.get());
         try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
             List<LeafPlan<String[]>> operands = data.operands.stream()
-                    .map(s -> new LeafPlan<>(s, client)).collect(toList());
+                    .map(s -> LeafPlan.builder(client, s).build()).collect(toList());
             ArrayList<LeafPlan<String[]>> operandsCopy = new ArrayList<>(operands);
             List<AsyncTask<?>> futures = new ArrayList<>();
             for (int thread = 0; thread < N_THREADS; thread++) {

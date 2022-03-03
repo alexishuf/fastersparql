@@ -12,7 +12,11 @@ public interface LeftJoin extends Operator {
      * Create a plan for {@code run(left, right)}.
      */
     default <R> LeftJoinPlan<R> asPlan(Plan<R> left, Plan<R> right) {
-        return new LeftJoinPlan<>(this, left, right);
+        return new LeftJoinPlan<>(rowClass(), this, left, right, null);
+    }
+
+    default <R> LeftJoinPlan.LeftJoinPlanBuilder<R> asPlan() {
+        return LeftJoinPlan.<R>builder().rowClass(rowClass()).op(this);
     }
 
     /**

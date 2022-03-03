@@ -9,6 +9,8 @@ import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -20,9 +22,11 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlo
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 
+@Accessors(fluent = true)
 public class WindowHashDistinct implements Distinct {
+    @Getter private final Class<?> rowClass;
     private final Function<Object, Object> wrap;
-    private final int overrideWindow;
+    @Getter private final int overrideWindow;
 
     public static class Provider implements DistinctProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -43,6 +47,7 @@ public class WindowHashDistinct implements Distinct {
     }
 
     public WindowHashDistinct(RowOperations rowOperations, int overrideWindow) {
+        this.rowClass = rowOperations.rowClass();
         this.wrap = !rowOperations.needsCustomHash() ? Function.identity()
                   : r -> new InMemoryHashDistinct.HashAdapter(rowOperations, r);
         this.overrideWindow = overrideWindow;
@@ -57,7 +62,6 @@ public class WindowHashDistinct implements Distinct {
 
     private static final class Hasher<R> extends AbstractProcessor<R, R> {
         private final DistinctPlan<R> plan;
-        private final Class<? super R> rowClass;
         private final Function<Object, Object> wrap;
         private final int windowSize;
         private final LinkedHashSet<Object> window;
@@ -69,7 +73,6 @@ public class WindowHashDistinct implements Distinct {
             this.windowSize = windowSize;
             this.window = new LinkedHashSet<>(windowSize); //underestimates actual capacity
             this.plan = plan;
-            this.rowClass = results.rowClass();
         }
 
         @Override protected void handleOnNext(R item) {
@@ -82,8 +85,8 @@ public class WindowHashDistinct implements Distinct {
 
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
             if (hasGlobalMetricsListeners()) {
-                sendMetrics(new PlanMetrics<>(plan, rowClass, rows,
-                                              start, System.nanoTime(), error, cancelled));
+                sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, System.nanoTime(),
+                                                  error, cancelled));
             }
         }
 

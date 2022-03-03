@@ -3,16 +3,32 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.Minus;
+import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
 public class MinusPlan<R> implements Plan<R> {
+    private static final AtomicInteger nextId = new AtomicInteger(1);
+    Class<? super R> rowClass;
     Minus op;
     Plan<R> left, right;
+    String name;
+
+    @Builder
+    public MinusPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Minus op,
+                     @lombok.NonNull Plan<R> left, @lombok.NonNull Plan<R> right,
+                     String name) {
+        this.rowClass = rowClass;
+        this.op = op;
+        this.left = left;
+        this.right = right;
+        this.name = name == null ? "Minus-"+nextId.getAndIncrement() : name;
+    }
 
     @Override public Results<R> execute() {
         return op.run(this);
@@ -27,15 +43,15 @@ public class MinusPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new MinusPlan<>(op, left.bind(var2ntValue), right.bind(var2ntValue));
+        return new MinusPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new MinusPlan<>(op, left.bind(vars, ntValues), right.bind(vars, ntValues));
+        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new MinusPlan<>(op, left.bind(vars, ntValues), right.bind(vars, ntValues));
+        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
     }
 
 }

@@ -44,13 +44,13 @@ public class RowOperationsRegistry {
      *         compatible with the given {@code cls}
      */
     public RowOperations forClass(Class<?> cls) throws NoRowOperationsException {
-        if (cls == null || cls.equals(Object.class)) return NullRowOperations.INSTANCE;
+        if (cls == null || cls.equals(Object.class)) return NullRowOperations.of(cls);
         for (Class<?> current = cls; current != null; current = current.getSuperclass()) {
             RowOperationsProvider p = providerMap.get(current);
-            if (p != null) return p.get();
+            if (p != null) return p.get(cls);
             for (Class<?> ifc : current.getInterfaces()) {
                 if ((p = providerMap.get(ifc)) != null)
-                    return p.get();
+                    return p.get(cls);
             }
         }
         throw new NoRowOperationsException(cls);

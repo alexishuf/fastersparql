@@ -25,6 +25,11 @@ public class LeftBindJoin implements LeftJoin {
         }
     }
 
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOps.rowClass();
+    }
+
     @Override public <R> Results<R> checkedRun(LeftJoinPlan<R> plan) {
         Plan<R> left = plan.left();
         Merger<R> merger = new Merger<>(rowOps, left.publicVars(), plan.right());

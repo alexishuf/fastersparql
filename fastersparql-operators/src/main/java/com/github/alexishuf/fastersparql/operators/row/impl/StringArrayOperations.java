@@ -1,15 +1,19 @@
 package com.github.alexishuf.fastersparql.operators.row.impl;
 
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
-
 import java.util.List;
 
 public class StringArrayOperations extends ArrayOperations {
-    private static final StringArrayOperations INSTANCE = new StringArrayOperations();
-    public static class Provider implements RowOperationsProvider {
-        @Override public RowOperations get() { return INSTANCE; }
+    public static class Provider extends ArrayOperations.Provider {
         @Override public Class<?> rowClass() { return String[].class; }
+    }
+
+    public static StringArrayOperations get() {
+        return (StringArrayOperations) ArrayOperations.PROVIDER.get(String[].class);
+    }
+
+    public StringArrayOperations(Class<?> rowClass) {
+        super(rowClass);
+        assert String[].class.isAssignableFrom(rowClass);
     }
 
     @Override public Object createEmpty(List<String> vars) {

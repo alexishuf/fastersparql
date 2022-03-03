@@ -13,7 +13,7 @@ import com.github.alexishuf.fastersparql.operators.impl.bind.BindMinus;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -166,26 +166,19 @@ public class MinusTest {
         }
     }
 
-    private void checkQuery(SparqlClient<String[], byte[]> client, String sparql) {
-        IterableAdapter<String[]> adapter = new IterableAdapter<>(client.query(sparql).publisher());
-        adapter.forEach(r -> {});
-        if (adapter.hasError())
-            fail(adapter.error());
-    }
-
     @ParameterizedTest @MethodSource
     void test(SparqlClientFactory clientFactory, MinusProvider provider, long flags,
               TestData testData) throws ExecutionException {
         if (provider.bid(flags) == BidCosts.UNSUPPORTED)
             return;
         try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            LeafPlan<String[]> left = new LeafPlan<>(testData.left, client);
-            LeafPlan<String[]> right = new LeafPlan<>(testData.right, client);
+            LeafPlan<String[]> left = LeafPlan.builder(client, testData.left).build();
+            LeafPlan<String[]> right = LeafPlan.builder(client, testData.right).build();
             List<AsyncTask<?>> futures = new ArrayList<>();
             for (int thread = 0; thread < N_THREADS; thread++) {
                 futures.add(Async.async(() -> {
                     for (int i = 0; i < N_ITERATIONS; i++) {
-                        Minus minus = provider.create(flags, ArrayOperations.INSTANCE);
+                        Minus minus = provider.create(flags, StringArrayOperations.get());
                         testData.assertExpected(minus.checkedRun(minus.asPlan(left, right)));
                     }
                 }));

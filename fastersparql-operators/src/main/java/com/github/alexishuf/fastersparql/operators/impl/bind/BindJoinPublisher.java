@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
 import com.github.alexishuf.fastersparql.operators.metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -87,7 +88,6 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
     private final Merger<R> merger;
     private final JoinType joinType;
     private final Plan<R> originalPlan;
-    private @MonotonicNonNull Class<? super R> rowClass;
 
     /* --- --- --- left-side state --- --- --- */
 
@@ -138,9 +138,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         if (hasGlobalMetricsListeners()) {
             double leftUnmatchedRate = leftUnmatched / (double) rows;
             double avgRightMatches = totalRightRows / (double) rows;
-            sendMetrics(new JoinMetrics<>(originalPlan, rowClass, rows,
-                                          start, System.nanoTime(), cause, cancelled,
-                                          leftUnmatchedRate, avgRightMatches, maxRightRows));
+            val metrics = new JoinMetrics(originalPlan.name(), rows,
+                                          start, System.nanoTime(), cause, cancelled, leftRows,
+                                          leftUnmatchedRate, avgRightMatches, maxRightRows);
+            sendMetrics(originalPlan, metrics);
         }
     }
 
@@ -168,10 +169,6 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
             markCompletable();
         }
         @Override public void onNext(R leftRow) {
-            if (rowClass == null) {
-                //noinspection unchecked
-                rowClass = (Class<? super R>) leftRow.getClass();
-            }
             ++leftRows;
             addPublisher(new RightProcessor(leftRow));
         }

@@ -12,6 +12,16 @@ import java.util.Map;
  */
 public interface Plan<R> {
     /**
+     * A name for this plan.
+     */
+    String name();
+
+    /**
+     * {@link Results#rowClass()} of {@link Plan#execute()};
+     */
+    Class<? super R> rowClass();
+
+    /**
      * The would-be value of {@link Results#vars()} upon {@link Plan#execute()}.
      *
      * @return a non-null (but possibly empty) list of non-null and non-empty variable names

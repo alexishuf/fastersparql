@@ -14,7 +14,11 @@ public interface Join extends Operator {
      * Create a plan for {@code run(inputs)}.
      */
     default <R> JoinPlan<R> asPlan(List<? extends Plan<R>> inputs) {
-       return new JoinPlan<>(this, inputs);
+       return new JoinPlan<>(this, rowClass(), inputs, null);
+    }
+
+    default <R> JoinPlan.JoinPlanBuilder<R> asPlan() {
+        return JoinPlan.<R>builder().op(this).rowClass(rowClass());
     }
 
     /**

@@ -65,6 +65,11 @@ public class SimpleFilter implements Filter {
         }
     }
 
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOperations.rowClass();
+    }
+
     @Override
     public <R> Results<R> checkedRun(FilterPlan<R> plan) {
         Results<R> left = plan.input().execute();
@@ -76,21 +81,19 @@ public class SimpleFilter implements Filter {
         for (CharSequence expr : filters) {
             evaluators.add(compiler.compile(rowClass, rowOperations, left.vars(), expr));
         }
-        val pub = new FilterPublisher<>(left.publisher(), evaluators, plan, left.rowClass());
+        val pub = new FilterPublisher<>(left.publisher(), evaluators, plan);
         return new Results<>(left.vars(), rowClass, pub);
     }
 
     private static class FilterPublisher<R> extends AbstractProcessor<R, R> {
         private final FilterPlan<R> plan;
-        private final Class<? super R> rowClass;
         private final List<ExprEvaluator<R>> predicates;
 
         public FilterPublisher(Publisher<? extends R> upstream, List<ExprEvaluator<R>> predicates,
-                               FilterPlan<R> plan, Class<? super R> rowClass) {
+                               FilterPlan<R> plan) {
             super(upstream);
             this.predicates = predicates;
             this.plan = plan;
-            this.rowClass = rowClass;
         }
 
         @Override protected void handleOnNext(R row) {
@@ -103,7 +106,7 @@ public class SimpleFilter implements Filter {
 
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
             if (hasGlobalMetricsListeners()) {
-                sendMetrics(new PlanMetrics<>(plan, rowClass, rows,
+                sendMetrics(plan, new PlanMetrics(plan.name(), rows,
                                               start, System.nanoTime(), error, cancelled));
             }
         }

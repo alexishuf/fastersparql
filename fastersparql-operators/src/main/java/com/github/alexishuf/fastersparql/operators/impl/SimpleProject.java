@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.operators.plan.ProjectPlan;
 import com.github.alexishuf.fastersparql.operators.providers.ProjectProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
+import lombok.experimental.Accessors;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 
@@ -16,7 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
-@Value
+@Value @Accessors(fluent = true)
 public class SimpleProject implements Project {
     RowOperations rowOperations;
 
@@ -30,6 +31,11 @@ public class SimpleProject implements Project {
         @Override public Project create(long flags, RowOperations rowOperations) {
             return new SimpleProject(rowOperations);
         }
+    }
+
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOperations.rowClass();
     }
 
     @Override public <R> Results<R> checkedRun(ProjectPlan<R> plan) {

@@ -16,36 +16,29 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMe
 import static java.lang.System.nanoTime;
 
 public final class ProjectingProcessor<T> extends AbstractProcessor<T, T> {
-    private final @Nullable Plan<Object> originalPlan;
-    private final @Nullable Class<Object> rowClass;
+    private final @Nullable Plan<?> originalPlan;
     private final List<String> outVars, inVars;
     private final RowOperations rowOps;
     private final int[] indices;
 
     public ProjectingProcessor(Results<? extends T> source, List<String> outVars,
-                           RowOperations rowOps) {
+                               RowOperations rowOps) {
         this(source, outVars, rowOps, null);
     }
 
     public ProjectingProcessor(Results<? extends T> source, List<String> outVars,
                                RowOperations rowOps, Plan<T> plan) {
-        //noinspection unchecked
-        this(source.publisher(), outVars, source.vars(), rowOps,
-                (Plan<Object>)plan, (Class<Object>) source.rowClass());
+        this(source.publisher(), outVars, source.vars(), rowOps, plan);
     }
 
     public ProjectingProcessor(Publisher<? extends T> source, List<String> outVars,
                                List<String> inVars, RowOperations rowOps,
-                               @Nullable Plan<Object> originalPlan,
-                               @Nullable Class<Object> rowClass) {
+                               @Nullable Plan<?> originalPlan) {
         super(source);
         this.outVars = outVars;
         this.inVars = inVars;
         this.rowOps = rowOps;
         this.originalPlan = originalPlan;
-        this.rowClass = rowClass;
-        if (originalPlan != null && rowClass == null)
-            throw new NullPointerException("originalPlan != null, but rowClass is null");
         this.indices = VarUtils.projectionIndices(outVars, inVars);
     }
 
@@ -62,8 +55,8 @@ public final class ProjectingProcessor<T> extends AbstractProcessor<T, T> {
 
     @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
         if (originalPlan != null && hasGlobalMetricsListeners()) {
-            sendMetrics(new PlanMetrics<>(originalPlan, rowClass, rows,
-                                          start, nanoTime(), error, cancelled));
+            sendMetrics(originalPlan, new PlanMetrics(originalPlan.name(), rows,
+                                                      start, nanoTime(), error, cancelled));
         }
     }
 }

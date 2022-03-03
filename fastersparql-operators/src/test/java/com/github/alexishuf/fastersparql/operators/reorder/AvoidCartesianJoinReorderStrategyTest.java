@@ -23,10 +23,10 @@ class AvoidCartesianJoinReorderStrategyTest {
     private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>();
 
     private Plan<String[]> asPlan(String sparql) {
-        return new LeafPlan<>(sparql, client);
+        return LeafPlan.builder(client, sparql).build();
     }
 
-    static Stream<Arguments> test() {
+    @SuppressWarnings("unused") static Stream<Arguments> test() {
         String x = "SELECT ?x WHERE {?s ?p ?x}";
         String z = "SELECT ?z WHERE {?s ?p ?z}";
         String y = "SELECT ?y WHERE {?s ?p ?y}";

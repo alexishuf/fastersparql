@@ -1,17 +1,18 @@
 package com.github.alexishuf.fastersparql.operators.row.impl;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
 public class CharSequenceArrayOperations extends ArrayOperations {
-    private static final CharSequenceArrayOperations INSTANCE = new CharSequenceArrayOperations();
-    public static class Provider implements RowOperationsProvider {
-        @Override public RowOperations get() { return INSTANCE; }
+    public static class Provider extends ArrayOperations.Provider {
         @Override public Class<?> rowClass() { return CharSequence[].class; }
+    }
+
+    public CharSequenceArrayOperations(Class<?> rowClass) {
+        super(rowClass);
+        assert CharSequence[].class.isAssignableFrom(rowClass);
     }
 
     @Override public Object createEmpty(List<String> vars) {

@@ -13,7 +13,7 @@ import com.github.alexishuf.fastersparql.operators.impl.bind.LeftBindJoin;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.LeftJoinProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import lombok.*;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
@@ -186,13 +186,13 @@ class LeftJoinTest {
         LeafPlan<String[]> leftPlan;
         LeafPlan<String[]> rightPlan;
         try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            leftPlan = new LeafPlan<>(testData.left(), client);
-            rightPlan = new LeafPlan<>(testData.right(), client);
+            leftPlan = LeafPlan.builder(client, testData.left()).build();
+            rightPlan = LeafPlan.builder(client, testData.right()).build();
             List<AsyncTask<?>> futures = new ArrayList<>();
             for (int thread = 0; thread < N_THREADS; thread++) {
                 futures.add(Async.async(() -> {
                 for (int i = 0; i < N_ITERATIONS; i++) {
-                    LeftJoin op = provider.create(flags, ArrayOperations.INSTANCE);
+                    LeftJoin op = provider.create(flags, StringArrayOperations.get());
                     testData.assertExpected(op.checkedRun(op.asPlan(leftPlan, rightPlan)));
                 }
                 }));

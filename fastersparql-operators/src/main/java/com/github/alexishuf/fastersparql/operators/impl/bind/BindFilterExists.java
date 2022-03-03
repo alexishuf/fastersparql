@@ -29,6 +29,11 @@ public class BindFilterExists implements FilterExists {
         }
     }
 
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOps.rowClass();
+    }
+
     @Override public <R> Results<R> checkedRun(FilterExistsPlan<R> plan) {
         Results<R> l = plan.input().execute();
         Merger<R> merger = new Merger<>(rowOps, l.vars(), plan.filter(), l.vars());

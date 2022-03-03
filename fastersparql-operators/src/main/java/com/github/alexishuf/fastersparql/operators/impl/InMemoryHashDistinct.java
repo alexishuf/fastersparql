@@ -9,6 +9,8 @@ import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -23,7 +25,9 @@ import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 import static java.lang.System.nanoTime;
 import static java.util.function.Function.identity;
 
+@Accessors(fluent = true)
 public class InMemoryHashDistinct implements Distinct {
+    @Getter private final Class<?> rowClass;
     private final Function<Object, Object> wrap;
 
     public static class Provider implements DistinctProvider {
@@ -43,12 +47,13 @@ public class InMemoryHashDistinct implements Distinct {
     }
 
     public InMemoryHashDistinct(RowOperations rowOps) {
+        this.rowClass = rowOps.rowClass();
         this.wrap = rowOps.needsCustomHash() ? r -> new HashAdapter(rowOps, r) : identity();
     }
 
     @Override public <R> Results<R> checkedRun(DistinctPlan<R> plan) {
         Results<R> in = plan.input().execute();
-        val hasher = new Hasher<>(in.publisher(), wrap, plan, in.rowClass());
+        val hasher = new Hasher<>(in.publisher(), wrap, plan);
         return new Results<>(in.vars(), in.rowClass(), hasher);
     }
 
@@ -64,17 +69,14 @@ public class InMemoryHashDistinct implements Distinct {
     }
 
     private static class Hasher<R> extends AbstractProcessor<R, R> {
-        private final DistinctPlan<R> distinctPlan;
-        private final Class<? super R> rowClass;
+        private final DistinctPlan<R> plan;
         private final HashSet<Object> set = new HashSet<>();
         private final Function<Object, ?> wrap;
 
-        public Hasher(Publisher<? extends R> source, Function<Object, ?> wrap,
-                      DistinctPlan<R> distinctPlan, Class<? super R> rowClass) {
-            super(source);
+        public Hasher(Publisher<? extends R> src, Function<Object, ?> wrap, DistinctPlan<R> plan) {
+            super(src);
             this.wrap = wrap;
-            this.distinctPlan = distinctPlan;
-            this.rowClass = rowClass;
+            this.plan = plan;
         }
 
         @Override protected void handleOnNext(R item) {
@@ -82,10 +84,10 @@ public class InMemoryHashDistinct implements Distinct {
                 emit(item);
         }
 
-        @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
+        @Override protected void onTerminate(@Nullable Throwable error, boolean cancel) {
             if (hasGlobalMetricsListeners()) {
-                sendMetrics(new PlanMetrics<>(distinctPlan, rowClass, rows,
-                                              start, nanoTime(), error, cancelled));
+                val metrics = new PlanMetrics(plan.name(), rows, start, nanoTime(), error, cancel);
+                sendMetrics(plan, metrics);
             }
         }
     }

@@ -3,17 +3,33 @@ package com.github.alexishuf.fastersparql.operators.row.impl;
 import com.github.alexishuf.fastersparql.operators.row.RowMatcher;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
+import lombok.Value;
+import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
+@Value @Accessors(fluent = true)
 public class ListOperations implements RowOperations {
-    public static final ListOperations INSTANCE = new ListOperations();
+    private static final ConcurrentHashMap<Class<?>, ListOperations> CACHE
+            = new ConcurrentHashMap<>();
+    public static final Provider PROVIDER = new Provider();
+    Class<?> rowClass;
+
     public static class Provider implements RowOperationsProvider {
-        @Override public RowOperations get() { return INSTANCE; }
+        @Override public RowOperations get(Class<?> specializedClass) {
+            if (!List.class.isAssignableFrom(specializedClass))
+                throw new IllegalArgumentException(specializedClass+" is not a List");
+            return CACHE.computeIfAbsent(specializedClass, ListOperations::new);
+        }
         @Override public Class<?> rowClass() { return List.class; }
+    }
+
+    public static ListOperations get() {
+        return (ListOperations) PROVIDER.get(List.class);
     }
 
     @Override public Object set(Object row, int idx, String var, Object object) {

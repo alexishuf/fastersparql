@@ -8,12 +8,13 @@ import com.github.alexishuf.fastersparql.operators.providers.OperatorProviderReg
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+@SuppressWarnings("unchecked")
 public class FasterSparqlOps {
     private static final OperatorProviderRegistry registry
             = new OperatorProviderRegistry().registerAll();
@@ -53,11 +54,12 @@ public class FasterSparqlOps {
      * Delivers a {@link PlanMetrics} instance to all listeners registered via
      * {@link FasterSparqlOps#addGlobalMetricsListener(PlanMetricsListener)}.
      *
+     * @param plan The {@link Plan} for which the {@code metrics} correspond
      * @param metrics the metrics instance.
      */
-    public static void sendMetrics(PlanMetrics<?> metrics) {
+    public static <R> void sendMetrics(Plan<R> plan, PlanMetrics metrics) {
         for (PlanMetricsListener listener : listeners)
-            listener.accept(metrics);
+            listener.accept(plan, metrics);
     }
 
     /**
@@ -94,92 +96,109 @@ public class FasterSparqlOps {
         return registry.get(name, flags).create(flags, ops);
     }
 
-    public static <R> EmptyPlan<R> empty(List<String> publicVars, List<String> allVars,
-                                         Class<? super R> rowClass) {
-        return new EmptyPlan<>(publicVars, allVars, rowClass);
-    }
-    public static <R> EmptyPlan<R> empty(List<String> publicVars,
-                                         Class<? super R> rowClass) {
-        return new EmptyPlan<>(publicVars, publicVars, rowClass);
-    }
-    public static <R> EmptyPlan<R> empty(Class<? super R> rowClass) {
-        return new EmptyPlan<>(Collections.emptyList(), Collections.emptyList(), rowClass);
+    public static <R> EmptyPlan.EmptyPlanBuilder<R> empty(Class<? super R> rowClass) {
+        return EmptyPlan.<R>builder().rowClass(rowClass);
     }
 
-    public static <R> JoinPlan<R> join(List<Plan<R>> operands, Class<? super R> rowClass, long flags) {
-        return new JoinPlan<>(create(Join.class, flags, rowClass), operands);
+    public static <R> JoinPlan.JoinPlanBuilder<R> join(List<? extends Plan<R>> inputs,
+                                                       Class<? super R> rowClass, long flags) {
+        return create(Join.class, flags, rowClass).<R>asPlan().operands(inputs);
     }
-    public static <R> JoinPlan<R> join(List<Plan<R>> operands, Class<? super R> rowClass) {
-        return join(operands, rowClass, OperatorFlags.ASYNC);
-    }
-
-    public static <R> UnionPlan<R> union(List<Plan<R>> operands, Class<? super R> rowClass, long flags) {
-        return new UnionPlan<>(create(Union.class, flags, rowClass), operands);
-    }
-    public static <R> UnionPlan<R> union(List<Plan<R>> operands, Class<? super R> rowClass) {
-        return union(operands, rowClass, OperatorFlags.ASYNC);
+    public static <R> JoinPlan.JoinPlanBuilder<R> join(List<? extends Plan<R>> inputs,
+                                                       Class<? super R> rowClass) {
+        return create(Join.class, OperatorFlags.ASYNC, rowClass).<R>asPlan().operands(inputs);
     }
 
-    public static <R> LeftJoinPlan<R> leftJoin(Plan<R> left, Plan<R> right, Class<? super R> rowClass,
-                                               long flags) {
-        return new LeftJoinPlan<>(create(LeftJoin.class, flags, rowClass), left, right);
+    public static <R> UnionPlan.UnionPlanBuilder<R> union(List<? extends Plan<R>> inputs,
+                                                          Class<? super R> rowClass, long flags) {
+        return create(Union.class, flags, rowClass).<R>asPlan().inputs(inputs);
     }
-    public static <R> LeftJoinPlan<R> leftJoin(Plan<R> left, Plan<R> right, Class<? super R> rowClass) {
-        return leftJoin(left, right, rowClass, 0L);
+    public static <R> UnionPlan.UnionPlanBuilder<R> union(List<? extends Plan<R>> inputs,
+                                                          Class<? super R> rowClass) {
+        return create(Union.class, OperatorFlags.ASYNC, rowClass).<R>asPlan().inputs(inputs);
     }
 
-    public static <R> SlicePlan<R> slice(Plan<R> input, long offset, long limit,
+    public static <R> LeftJoinPlan.LeftJoinPlanBuilder<R>
+    leftJoin(Plan<R> left, Plan<R> right, Class<? super R> rowClass, long flags) {
+        return create(LeftJoin.class, flags, rowClass).<R>asPlan().left(left).right(right);
+    }
+    public static <R> LeftJoinPlan.LeftJoinPlanBuilder<R>
+    leftJoin(Plan<R> left, Plan<R> right, Class<? super R> rowClass) {
+        return create(LeftJoin.class, 0L, rowClass).<R>asPlan().left(left).right(right);
+    }
+
+    public static <R> SlicePlan.SlicePlanBuilder<R> slice(Plan<R> input,
                                          Class<? super R> rowClass, long flags) {
-        return new SlicePlan<>(create(Slice.class, flags, rowClass), input, offset, limit);
+        return create(Slice.class, flags, rowClass).<R>asPlan().input(input);
+
     }
-    public static <R> SlicePlan<R> slice(Plan<R> input, long offset, long limit,
+    public static <R> SlicePlan.SlicePlanBuilder<R> slice(Plan<R> input,
                                          Class<? super R> rowClass) {
-        return slice(input, offset, limit, rowClass, 0L);
+        return create(Slice.class, 0L, rowClass).<R>asPlan().input(input);
     }
 
-    public static <R> DistinctPlan<R> distinct(Plan<R> input, Class<? super R> rowClass,
-                                               long flags) {
-        return new DistinctPlan<>(create(Distinct.class, flags, rowClass), input);
+    public static <R> DistinctPlan.DistinctPlanBuilder<R>
+    distinct(Plan<R> input, Class<? super R> rowClass, long flags) {
+        return create(Distinct.class, flags, rowClass).<R>asPlan().input(input);
     }
-    public static <R> DistinctPlan<R> distinct(Plan<R> input, Class<? super R> rowClass) {
-        return distinct(input, rowClass, 0L);
-    }
-
-    public static <R> ProjectPlan<R> project(Plan<R> input, List<String> vars,
-                                             Class<? super R> rowClass, long flags) {
-        return new ProjectPlan<>(create(Project.class, flags, rowClass), input, vars);
-    }
-    public static <R> ProjectPlan<R> project(Plan<R> input, List<String> vars,
-                                             Class<? super R> rowClass) {
-        return project(input, vars, rowClass, 0L);
+    public static <R> DistinctPlan.DistinctPlanBuilder<R>
+    distinct(Plan<R> input, Class<? super R> rowClass) {
+        return create(Distinct.class, 0L, rowClass).<R>asPlan().input(input);
     }
 
-    public static <R> FilterPlan<R> filter(Plan<R> input,
-                                           Collection<? extends CharSequence> filters,
-                                           Class<? super R> rowClass, long flags) {
-        return new FilterPlan<>(create(Filter.class, flags, rowClass), input, filters);
+    public static <R> ProjectPlan.ProjectPlanBuilder<R>
+    project(Plan<R> input, List<String> vars, Class<? super R> rowClass, long flags) {
+        return create(Project.class, flags, rowClass).<R>asPlan().input(input).vars(vars);
     }
-    public static <R> FilterPlan<R> filter(Plan<R> input,
-                                           Collection<? extends CharSequence> filters,
-                                           Class<? super R> rowClass) {
+    public static <R> ProjectPlan.ProjectPlanBuilder<R>
+    project(Plan<R> input, List<String> vars, Class<? super R> rowClass) {
+        return create(Project.class, 0L, rowClass).<R>asPlan().input(input).vars(vars);
+    }
+
+    public static <R> FilterPlan.FilterPlanBuilder<R>
+    filter(Plan<R> input, Collection<? extends CharSequence> filters,
+           Class<? super R> rowClass, long flags) {
+        List<String> filtersList;
+        boolean ok = false;
+        if (filters instanceof List) {
+            ok = true;
+            for (CharSequence filter : filters) {
+                if (!(filter instanceof String)) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if (ok) {
+            filtersList = (List<String>) filters;
+        } else {
+            filtersList = new ArrayList<>(filters.size());
+            for (CharSequence filter : filters) filtersList.add(filter.toString());
+        }
+        return create(Filter.class, flags, rowClass).<R>asPlan().input(input).filters(filtersList);
+    }
+    public static <R> FilterPlan.FilterPlanBuilder<R>
+    filter(Plan<R> input, Collection<? extends CharSequence> filters, Class<? super R> rowClass) {
         return filter(input, filters, rowClass, 0L);
     }
 
-    public static <R> FilterExistsPlan<R> filterExists(Plan<R> input, boolean negate,
-                                                       Plan<R> filter, Class<? super R> rowClass,
-                                                       long flags) {
-        return new FilterExistsPlan<>(create(FilterExists.class, flags, rowClass), input, negate, filter);
+    public static <R> FilterExistsPlan.FilterExistsPlanBuilder<R>
+    filterExists(Plan<R> input, boolean negate, Plan<R> filter,
+                 Class<? super R> rowClass, long flags) {
+        return create(FilterExists.class, flags, rowClass).<R>asPlan()
+                .input(input).negate(negate).filter(filter);
     }
-    public static <R> FilterExistsPlan<R> filterExists(Plan<R> input, boolean negate,
-                                                       Plan<R> filter, Class<? super R> rowClass) {
+    public static <R> FilterExistsPlan.FilterExistsPlanBuilder<R>
+    filterExists(Plan<R> input, boolean negate, Plan<R> filter, Class<? super R> rowClass) {
         return filterExists(input, negate, filter, rowClass, 0L);
     }
 
-    public static <R> MinusPlan<R> minus(Plan<R> left, Plan<R> right, Class<? super R> rowClass,
-                                         long flags) {
-        return new MinusPlan<>(create(Minus.class, flags, rowClass), left, right);
+    public static <R> MinusPlan.MinusPlanBuilder<R>
+    minus(Plan<R> left, Plan<R> right, Class<? super R> rowClass, long flags) {
+        return create(Minus.class, flags, rowClass).<R>asPlan().left(left).right(right);
     }
-    public static <R> MinusPlan<R> minus(Plan<R> left, Plan<R> right, Class<? super R> rowClass) {
-        return minus(left, right, rowClass, 0L);
+    public static <R> MinusPlan.MinusPlanBuilder<R>
+    minus(Plan<R> left, Plan<R> right, Class<? super R> rowClass) {
+        return create(Minus.class, 0L, rowClass).<R>asPlan().left(left).right(right);
     }
 }

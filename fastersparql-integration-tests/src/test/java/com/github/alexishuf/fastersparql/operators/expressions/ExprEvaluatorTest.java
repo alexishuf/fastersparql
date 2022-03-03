@@ -80,7 +80,7 @@ public class ExprEvaluatorTest {
     @ParameterizedTest @MethodSource
     void test(ExprEvaluatorCompiler compiler, TestData data) {
         ExprEvaluator<List<String>> evaluator =
-                compiler.compile(List.class, ListOperations.INSTANCE, data.vars, data.expr);
+                compiler.compile(List.class, ListOperations.get(), data.vars, data.expr);
         for (int i = 0, size = data.rows.size(); i < size; ++i) {
             TestRow row = data.rows.get(i);
             assertEquals(row.expected, evaluator.evaluate(row.values), "at row "+i);

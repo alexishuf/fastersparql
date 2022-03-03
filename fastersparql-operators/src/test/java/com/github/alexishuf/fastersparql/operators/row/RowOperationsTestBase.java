@@ -23,7 +23,7 @@ public abstract class RowOperationsTestBase {
 
     @Test
     public void testProviderClass() {
-        RowOperations ops = provider().get();
+        RowOperations ops = provider().get(provider().rowClass());
         Object row = ops.createEmpty(singletonList("x"));
         Class<?> cls = provider().rowClass();
         assertTrue(cls.isInstance(row), row+" is not a instance of "+cls);
@@ -42,7 +42,7 @@ public abstract class RowOperationsTestBase {
 
     @ParameterizedTest @MethodSource
     public void testSetAndGet(List<String> vars, int setIdx) {
-        RowOperations ops = provider().get();
+        RowOperations ops = provider().get(provider().rowClass());
         Object row = ops.createEmpty(vars);
         for (int i = 0; i < vars.size(); i++)
             assertNull(ops.get(row, i, vars.get(i)), "i="+i);
@@ -56,7 +56,7 @@ public abstract class RowOperationsTestBase {
     @ParameterizedTest @ValueSource(ints = {0, 1, 2})
     public void testGetOutOfBounds(int size) {
         List<String> vars = IntStream.range(0, size).mapToObj(i -> "x" + i).collect(toList());
-        RowOperations ops = provider().get();
+        RowOperations ops = provider().get(provider().rowClass());
         Object row = ops.createEmpty(vars);
         Object value = object1();
         for (int i = 0; i < size; i++)
@@ -70,15 +70,15 @@ public abstract class RowOperationsTestBase {
 
     @Test
     public void testGetFromNull() {
-        assertNull(provider().get().get(null, 0, "x"));
+        assertNull(provider().get(provider().rowClass()).get(null, 0, "x"));
     }
 
     @Test
     public void testSetOnNull() {
-        assertNull(provider().get().set(null, 0, "x", object1()));
+        assertNull(provider().get(provider().rowClass()).set(null, 0, "x", object1()));
     }
 
-    static Stream<Arguments> testEquals() {
+    @SuppressWarnings("unused") static Stream<Arguments> testEquals() {
         return Stream.of(
                 arguments(emptyList(), emptyList(), true),
                 arguments(singletonList("<x>"), singletonList("<x>"), true),
@@ -96,7 +96,7 @@ public abstract class RowOperationsTestBase {
         int nVars = values1.size();
         assertEquals(nVars, values2.size(), "bad test data");
         List<String> vars = IntStream.range(0, nVars).mapToObj(i -> "x" + i).collect(toList());
-        RowOperations ops = provider().get();
+        RowOperations ops = provider().get(provider().rowClass());
         Object r1 = ops.createEmpty(vars);
         Object r2 = ops.createEmpty(vars);
         for (int i = 0; i < nVars; i++) {
@@ -109,7 +109,7 @@ public abstract class RowOperationsTestBase {
 
     @Test
     public void testHash() {
-        RowOperations ops = provider().get();
+        RowOperations ops = provider().get(provider().rowClass());
         Object r1a = ops.createEmpty(singletonList("x"));
         Object r1b = ops.createEmpty(singletonList("x"));
         assertEquals(ops.hash(r1a), ops.hash(r1b));

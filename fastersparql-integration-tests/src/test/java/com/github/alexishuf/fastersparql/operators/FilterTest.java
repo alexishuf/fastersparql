@@ -12,7 +12,7 @@ import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.plan.FilterPlan;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterProvider;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -138,8 +138,8 @@ class FilterTest {
     void test(SparqlClientFactory factory, FilterProvider provider, long flags,
               TestData data) throws ExecutionException {
         try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
-            Filter filter = provider.create(flags, ArrayOperations.INSTANCE);
-            LeafPlan<String[]> leftPlan = new LeafPlan<>(data.left, client);
+            Filter filter = provider.create(flags, StringArrayOperations.get());
+            LeafPlan<String[]> leftPlan = LeafPlan.builder(client, data.left).build();
             FilterPlan<String[]> plan = filter.asPlan(leftPlan, data.filters);
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int threads = 0; threads < N_THREADS; threads++) {

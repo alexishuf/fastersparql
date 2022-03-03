@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -20,7 +20,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class MergerTest {
     private static final DummySparqlClient<String[], byte[]> client = new DummySparqlClient<>();
 
-    static Stream<Arguments> testBind() {
+    @SuppressWarnings("unused") static Stream<Arguments> testBind() {
         return Stream.of(
                 // use left[0] without changing right projection
         /* 1 */ asList("SELECT ?x WHERE {?x ?p ?in}", "in,y", "_:l0,_:l1",
@@ -48,13 +48,13 @@ class MergerTest {
     @ParameterizedTest @MethodSource
     void testBind(String rightSparql, List<String> leftVars, String[] leftRow,
                   String expectedSparql) {
-        LeafPlan<String[]> right = new LeafPlan<>(rightSparql, client);
-        Merger<String[]> merger = new Merger<>(ArrayOperations.INSTANCE, leftVars, right);
+        LeafPlan<String[]> right = LeafPlan.builder(client, rightSparql).build();
+        Merger<String[]> merger = new Merger<>(StringArrayOperations.get(), leftVars, right);
         Plan<String[]> bound = merger.bind(leftRow);
         assertEquals(expectedSparql, ((LeafPlan<String[]>)bound).query().toString());
     }
 
-    static Stream<Arguments> testMerge() {
+    @SuppressWarnings("unused") static Stream<Arguments> testMerge() {
         return Stream.of(
                 //     lVars   rVars   left          right    expected
                 asList("x,y",  "y,z",  "_:l0,_:l1",  "_:r1",  "_:l0,_:l1,_:r1"),
@@ -76,8 +76,8 @@ class MergerTest {
                    String[] left, String[] right, String[] expected) {
         String rightProjection = rightVars.stream().map(s -> "?" + s).collect(joining(" "));
         String rightQuery = "SELECT " + rightProjection + " WHERE {<s> <p> <>O}";
-        LeafPlan<String[]> rightPlan = new LeafPlan<>(rightQuery, client);
-        Merger<String[]> merger = new Merger<>(ArrayOperations.INSTANCE, leftVars, rightPlan);
+        LeafPlan<String[]> rightPlan = LeafPlan.builder(client, rightQuery).build();
+        Merger<String[]> merger = new Merger<>(StringArrayOperations.get(), leftVars, rightPlan);
         assertArrayEquals(merger.merge(left, right), expected);
     }
 

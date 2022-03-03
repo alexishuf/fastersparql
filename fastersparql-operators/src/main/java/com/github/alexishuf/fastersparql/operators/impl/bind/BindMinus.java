@@ -29,6 +29,11 @@ public class BindMinus implements Minus {
         }
     }
 
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOps.rowClass();
+    }
+
     @Override public <R> Results<R> checkedRun(MinusPlan<R> plan) {
         Plan<R> left = plan.left(), right = plan.right();
         List<String> leftVars = left.publicVars();

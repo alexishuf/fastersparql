@@ -25,10 +25,6 @@ import static java.util.Collections.emptyList;
  * Utilities for implementers of Join
  */
 public class JoinHelpers {
-    interface JoinExecutor {
-
-    }
-
 
     /**
      * Executes the n-ary join using a left-deep tree (aka. left-associative execution).
@@ -54,16 +50,22 @@ public class JoinHelpers {
     executeReorderedLeftAssociative(JoinPlan<R> plan, @Nullable JoinReorderStrategy reorder,
                                     boolean useBind,
                                     Function<JoinPlan<R>, Results<R>> binaryExecutor) {
-        List<? extends Plan<R>> ops = reorder == null ? plan.operands()
-                                    : reorder.reorder(plan.operands(), useBind);
+        List<? extends Plan<R>> inOps = plan.operands();
+        List<? extends Plan<R>> ops = reorder == null ? inOps : reorder.reorder(inOps, useBind);
         switch (ops.size()) {
             case 0: return new Results<>(emptyList(), Object.class, new EmptyPublisher<>());
             case 1: return ops.get(0).execute();
             case 2: return binaryExecutor.apply(plan.op().asPlan(ops));
         }
-        Plan<R> root = plan.op().asPlan(asList(ops.get(0), ops.get(1)));
-        for (int i = 2; i < ops.size(); i++)
-            root = plan.op().asPlan(asList(root, ops.get(i)));
+
+        int i0 = planIndex(ops.get(0), inOps), i1 = planIndex(ops.get(1), inOps);
+        Plan<R> root = plan.op().<R>asPlan().operands(asList(ops.get(0), ops.get(1)))
+                                .name(plan.name()+"["+i0+","+i1+"]").build();
+        for (int i = 2; i < ops.size(); i++) {
+            int oIdx = planIndex(ops.get(i), inOps);
+            root = plan.op().<R>asPlan().operands(asList(root, ops.get(i)))
+                            .name(plan.name()+"[*,"+oIdx+"]").build();
+        }
         Results<R> results = root.execute();
         List<String> expectedVars = plan.publicVars();
         if (ops != plan.operands() && !root.publicVars().equals(expectedVars)) {
@@ -73,6 +75,15 @@ public class JoinHelpers {
             results = new Results<>(expectedVars, rowClass, processor);
         }
         return results;
+    }
+
+    private static int planIndex(Plan<?> plan, List<? extends Plan<?>> list) {
+        for (int i = 0, size = list.size(); i < size; i++) {
+            Plan<?> candidate = list.get(i);
+            if (candidate == plan)
+                return i;
+        }
+        return -1;
     }
 
     private static final Pattern JRS_SUFFIX = Pattern.compile("joinreorderstrategy$");

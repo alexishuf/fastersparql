@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.operators.metrics;
 
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -13,9 +12,8 @@ import java.util.concurrent.TimeUnit;
 @ToString
 @EqualsAndHashCode
 @AllArgsConstructor
-public class PlanMetrics<R> {
-    private final Plan<R> plan;
-    private final Class<? super R> rowClass;
+public class PlanMetrics {
+    private final String planName;
     private final long totalRows;
     private final long executionStartNanos, executionEndNanos;
     private final Throwable error;

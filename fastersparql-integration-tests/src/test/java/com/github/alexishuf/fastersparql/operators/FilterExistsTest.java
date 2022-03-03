@@ -14,7 +14,7 @@ import com.github.alexishuf.fastersparql.operators.plan.FilterExistsPlan;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterExistsProvider;
 import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations;
+import com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -256,10 +256,10 @@ public class FilterExistsTest {
               TestData data) throws ExecutionException {
         if (provider.bid(flags) == BidCosts.UNSUPPORTED)
             return;
-        FilterExists op = provider.create(flags, ArrayOperations.INSTANCE);
+        FilterExists op = provider.create(flags, StringArrayOperations.get());
         try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            LeafPlan<String[]> left = new LeafPlan<>(data.left, client);
-            LeafPlan<String[]> filter = new LeafPlan<>(data.filter, client);
+            LeafPlan<String[]> left = LeafPlan.builder(client, data.left).build();
+            LeafPlan<String[]> filter = LeafPlan.builder(client, data.filter).build();
             FilterExistsPlan<String[]> plan = op.asPlan(left, data.negate, filter);
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int thread = 0; thread < N_THREADS; thread++) {

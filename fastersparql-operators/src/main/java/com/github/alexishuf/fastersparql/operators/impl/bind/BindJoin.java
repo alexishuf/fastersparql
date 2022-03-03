@@ -50,6 +50,11 @@ public class BindJoin implements Join {
         }
     }
 
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOps.rowClass();
+    }
+
     @Override public <R> Results<R> checkedRun(JoinPlan<R> plan) {
         return executeReorderedLeftAssociative(plan, bindJoinReorder(),
                                                true, this::execute);

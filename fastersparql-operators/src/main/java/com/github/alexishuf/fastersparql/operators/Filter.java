@@ -6,7 +6,7 @@ import com.github.alexishuf.fastersparql.operators.plan.FilterPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Collection;
+import java.util.List;
 
 public interface Filter extends Operator {
     default OperatorName name() { return OperatorName.FILTER; }
@@ -14,8 +14,12 @@ public interface Filter extends Operator {
     /**
      * Creates a plan for {@code run(input.execute(), filters, predicates)}.
      */
-    default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable Collection<String> filters) {
-        return new FilterPlan<>(this, input, filters);
+    default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable List<String> filters) {
+        return new FilterPlan<>(rowClass(), this, input, filters, null);
+    }
+
+    default <R> FilterPlan.FilterPlanBuilder<R> asPlan() {
+        return FilterPlan.<R>builder().rowClass(rowClass()).op(this);
     }
 
     /**
