@@ -62,6 +62,8 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
     @Override public void moveTo(Executor executor) {
         if (executor == null)
             throw new NullPointerException("cannot move to a executor=null");
+        if (subscriber != null)
+            throw new IllegalStateException("cannot moveTo("+executor+") after subscribed");
         this.executor = executor;
         this.loopExecutor = executor instanceof BoundedEventLoopPool.LoopExecutor
                           ? (BoundedEventLoopPool.LoopExecutor) executor : null;

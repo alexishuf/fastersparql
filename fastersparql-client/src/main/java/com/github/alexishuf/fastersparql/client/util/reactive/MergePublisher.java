@@ -11,10 +11,9 @@ import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
-import java.util.ArrayDeque;
-import java.util.IdentityHashMap;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -29,6 +28,10 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     private final boolean ignoreUpstreamErrors;
     @Getter private final @Positive int maxConcurrency;
     @Getter private final @Positive int tgtConcurrency;
+
+    /* --- --- --- thread-safety/reentrancy assertions --- --- --- */
+    private final AtomicBoolean redistributing = new AtomicBoolean();
+    private final AtomicBoolean completing     = new AtomicBoolean();
 
     /* --- --- --- start/termination  state --- --- --- */
     private Throwable terminationCause;
@@ -188,45 +191,43 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
 
     /* --- --- --- implementation details --- --- --- */
 
-
-    private void innerAddPublisher(Publisher<? extends T> publisher) {
-        assert activeSources < maxConcurrency;
-        Source src = new Source(publisher, nextSourceNumber++);
-        ++activeSources;
-        sources.put(src, this);
-    }
-
     private boolean tryComplete(@Nullable Throwable cause, @Nullable Source source,
                              boolean cancel, long additionalUndistributed) {
-        // trivial cases (but lengthy log logic)
-        if (!removeSource(source)) return terminated;
-        if (!checkUnterminated(cause, source, cancel)) return terminated;
+        assert completing.compareAndSet(false, true)
+                : "Concurrent/reentrant tryComplete";
+        try {
+            // trivial cases (but lengthy log logic)
+            if (!removeSource(source)) return terminated;
+            if (!checkUnterminated(cause, source, cancel)) return terminated;
 
-        if (ignoreUpstreamErrors && cause != null)
-            log.info("Ignoring upstream error {} from {}", cause, source);
+            if (ignoreUpstreamErrors && cause != null)
+                log.info("Ignoring upstream error {} from {}", cause, source);
 
-        boolean complete = (cause != null && !ignoreUpstreamErrors)
-                        || (completable && activeSources == 0 && publishersQueue.isEmpty());
-        if (complete || cancel) {
-            terminationCause = ignoreUpstreamErrors ? null : cause;
-            log.debug("{} completing{} with error={} from source={}",
-                      this, cancel ? " by cancel()" : "", terminationCause, source);
-            terminated = true;
-            if (cancel) {
-                cancelled = true;
-                for (Source src : sources.keySet())
-                    src.cancel();
-                assert activeSources == sources.size() : "activeSources != #sources";
-                activeSources = 0;
-                sources.clear();
+            boolean complete = (cause != null && !ignoreUpstreamErrors)
+                    || (completable && activeSources == 0 && publishersQueue.isEmpty());
+            if (complete || cancel) {
+                terminationCause = ignoreUpstreamErrors ? null : cause;
+                log.debug("{} completing{} with error={} from source={}",
+                          this, cancel ? " by cancel()" : "", terminationCause, source);
+                terminated = true;
+                if (cancel) {
+                    cancelled = true;
+                    for (Source src : sources.keySet())
+                        src.cancel();
+                    assert activeSources == sources.size() : "activeSources != #sources";
+                    activeSources = 0;
+                    sources.clear();
+                }
+                cbp.complete(terminationCause);
+                onComplete(terminationCause, cancel);
+            } else {
+                assert !terminated;
+                redistribute(additionalUndistributed, "tryComplete");
             }
-            cbp.complete(terminationCause);
-            onComplete(terminationCause, cancel);
-        } else {
-            assert !terminated;
-            redistribute(additionalUndistributed, "tryComplete");
+            return terminated;
+        } finally {
+            completing.set(false);
         }
-        return terminated;
     }
 
     private boolean checkUnterminated(@Nullable Throwable cause, @Nullable Source source,
@@ -270,24 +271,26 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
      */
     private void redistribute(long additional, String caller) {
         assert additional >= 0 : "Negative additional";
-        undistributed += additional;
-        if (redistributeSpecialCases(additional, caller))
-            return;
-        log.trace("{}.redistribute({}) from {}: updated undistributed={}, activeSources={}",
-                  this, additional, caller, undistributed, activeSources);
-        long distributed = 0, total = undistributed;
-        undistributed = 0;
+        assert redistributing.compareAndSet(false, true)
+                : "Concurrent/reentrant redistribute";
         try {
-            int started = startQueuedPublishers();
-            if (started > 0) {
-                log.trace("{}.redistribute({}) from {}: started {} sources",
-                          this, additional, caller, started);
+            undistributed += additional;
+            if (redistributeSpecialCases(additional, caller))
+                return;
+            log.trace("{}.redistribute({}) from {}: updated undistributed={}, activeSources={}",
+                      this, additional, caller, undistributed, activeSources);
+            long distributed = 0, total = undistributed;
+            undistributed = 0;
+            try {
+                startQueuedPublishers();
+                distributed = redistributeToSources(total);
+            } finally {
+                assert distributed <= total;
+                if (distributed < total)
+                    undistributed += total - distributed;
             }
-            distributed = redistributeToSources(total);
         } finally {
-            assert distributed <= total;
-            if (distributed < total)
-                undistributed += total - distributed;
+            redistributing.set(false);
         }
     }
 
@@ -343,25 +346,37 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     }
 
     /** Create {@link Source}s from queued {@link Publisher}s as {@code maxConcurrency} allows. */
-    private int startQueuedPublishers() {
-        int subscribed = 0;
-        for (;  activeSources < maxConcurrency && !publishersQueue.isEmpty(); subscribed++)
-            innerAddPublisher(publishersQueue.remove());
-        if (subscribed > 0)
-            log.trace("{}.startQueuedPublishers(): {} new sources", this, subscribed);
-        return subscribed;
+    private void startQueuedPublishers() {
+        if (activeSources >= maxConcurrency || publishersQueue.isEmpty())
+            return; // no work to do
+        List<Source> added = new ArrayList<>(maxConcurrency-activeSources);
+        while (activeSources < maxConcurrency && !publishersQueue.isEmpty()) {
+            Source src = new Source(publishersQueue.remove(), nextSourceNumber++);
+            ++activeSources;
+            sources.put(src, this);
+            added.add(src);
+        }
+        for (Source src : added)
+            src.subscribe();
+        log.trace("{}.startQueuedPublishers(): {} new sources", this, added.size());
     }
 
     private class Source implements Subscriber<T> {
         private final ExecutorBoundPublisher<? extends T> upstreamPublisher;
         private final int number;
-        private boolean active = true;
+        private boolean active = false;
         private long undelivered;
         private @MonotonicNonNull Subscription upstream;
 
         public Source(Publisher<? extends T> publisher, int number) {
             this.upstreamPublisher = ExecutorBoundPublisher.bind(publisher, executor());
             this.number = number;
+        }
+
+        public void subscribe() {
+            if (active)
+                throw new IllegalStateException("Already subscribed!");
+            active = true;
             this.upstreamPublisher.subscribe(this);
         }
 
