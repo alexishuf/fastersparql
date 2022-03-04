@@ -17,7 +17,7 @@ public interface Union extends Operator {
     }
 
     default <R> UnionPlan.UnionPlanBuilder<R> asPlan() {
-        return UnionPlan.<R>builder().rowClass(rowClass());
+        return UnionPlan.<R>builder().rowClass(rowClass()).op(this);
     }
 
     /**
