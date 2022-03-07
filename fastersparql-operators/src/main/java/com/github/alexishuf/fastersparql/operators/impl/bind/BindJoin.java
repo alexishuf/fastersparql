@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
 import com.github.alexishuf.fastersparql.operators.Join;
@@ -22,7 +21,6 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperti
 import static com.github.alexishuf.fastersparql.operators.JoinHelpers.executeReorderedLeftAssociative;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.LARGE_FIRST;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.SMALL_SECOND;
-import static java.util.Collections.emptyList;
 
 @Value @Accessors(fluent = true)
 public class BindJoin implements Join {
@@ -63,7 +61,7 @@ public class BindJoin implements Join {
     private <R> Results<R> execute(JoinPlan<R> plan) {
         List<? extends Plan<R>> operands = plan.operands();
         switch (operands.size()) {
-            case 0: return new Results<>(emptyList(), Object.class, new EmptyPublisher<>());
+            case 0: return Results.empty(Object.class);
             case 1: return operands.get(0).execute();
             case 2: break;
             default: throw new IllegalArgumentException("expected <= 2 operands");

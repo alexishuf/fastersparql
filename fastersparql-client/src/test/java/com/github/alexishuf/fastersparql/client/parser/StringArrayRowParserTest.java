@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -38,15 +39,15 @@ class StringArrayRowParserTest {
 
     @Test
     void testParseStringArray() {
-        Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
+        FSPublisher<String[]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_ARRAYS));
         Results<String[]> results = new Results<>(varsList, String[].class, inputFlux);
         checkResults(INSTANCE.parseStringsArray(results), true);
     }
 
     @Test
     void testParseStringList() {
-        Flux<List<String>> inputFlux = Flux.fromIterable(STRING_LISTS);
-        Results<List<String>> results = new Results<>(varsList, List.class, inputFlux);
+        FSPublisher<List<String>> input = FSPublisher.bindToAny(Flux.fromIterable(STRING_LISTS));
+        Results<List<String>> results = new Results<>(varsList, List.class, input);
         checkResults(INSTANCE.parseStringsList(results), false);
     }
 
@@ -57,7 +58,7 @@ class StringArrayRowParserTest {
             for (int i = 0; i < l.size(); i++) row[i] = l.get(i).getBytes(UTF_8);
             return row;
         }).collect(toList());
-        Flux<byte[][]> inputFlux = Flux.fromIterable(input);
+        FSPublisher<byte[][]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(input));
         Results<byte[][]> results = new Results<>(varsList, byte[][].class, inputFlux);
         checkResults(INSTANCE.parseBytesArray(results), false);
     }
@@ -67,7 +68,7 @@ class StringArrayRowParserTest {
         List<List<byte[]>> input = STRING_LISTS.stream()
                 .map(l -> l.stream().map(s -> s.getBytes(UTF_8)).collect(toList()))
                 .collect(toList());
-        Flux<List<byte[]>> inputFlux = Flux.fromIterable(input);
+        FSPublisher<List<byte[]>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(input));
         Results<List<byte[]>> results = new Results<>(varsList, List.class, inputFlux);
         checkResults(INSTANCE.parseBytesList(results), false);
     }

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.reactivestreams.Publisher;
 
 
@@ -37,22 +38,22 @@ public interface FragmentParser<F> {
      * @return A {@link Publisher} producing R instances from the concatenation of
      *         textual fragments.
      */
-    Publisher<F> parseStrings(Graph<? extends CharSequence> source);
+    FSPublisher<F> parseStrings(Graph<? extends CharSequence> source);
 
     /**
-     * Create a {@link Publisher} that produces {@code R} instances from one or more {@code byte[]}
+     * Create a {@link FSPublisher} that produces {@code R} instances from one or more {@code byte[]}
      * received from {@code source}.
      *
-     * Neither {@code source} nor the returned Publisher ever produce nulls. Note that the number
-     * of produces instances by the returned {@link Publisher} is not linked to the number of
+     * Neither {@code source} nor the returned FSPublisher ever produce nulls. Note that the number
+     * of produces instances by the returned {@link FSPublisher} is not linked to the number of
      * instances produces by {@code source}: One {@code byte[]} may yield many {@code R} instances
      * and one {@code R} instance may need multiple {@code byte[]} instances to assemble.
      *
-     * The returned {@link Publisher} must forward errors notified by the {@code source}
+     * The returned {@link FSPublisher} must forward errors notified by the {@code source}
      * {@link Graph#publisher()}.
      *
      * @param source the source of byte sequences in a RDF graph serialization.
-     * @return A {@link Publisher} that produces {@code R} instances from the byte sequences.
+     * @return A {@link FSPublisher} that produces {@code R} instances from the byte sequences.
      */
-    Publisher<F> parseBytes(Graph<byte[]> source);
+    FSPublisher<F> parseBytes(Graph<byte[]> source);
 }

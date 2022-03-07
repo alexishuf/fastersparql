@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher.State.*;
 
-public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> {
+public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     private static final Logger log = LoggerFactory.getLogger(CallbackPublisher.class);
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final int NEXT_BATCH   = 16;
@@ -141,6 +141,11 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
     protected abstract void onBackpressure();
     protected abstract void onCancel();
 
+    protected boolean isSubscribed() {
+        return subscriber != null;
+    }
+
+
     @Override public void subscribe(Subscriber<? super T> s) {
         if (this.subscriber != null) {
             s.onSubscribe(new Subscription() {
@@ -151,7 +156,9 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
                     log.error("Invalid subscription to {}", name);
                 }
             });
-            s.onError(new IllegalStateException(this+" already subscribed by "+this.subscriber));
+            IllegalStateException ex =
+                    new IllegalStateException(this + " already subscribed by " + this.subscriber);
+            executor.execute(() -> s.onError(ex));
         } else {
             this.subscriber = s;
             s.onSubscribe(new Subscription() {
@@ -199,7 +206,7 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
                     }
                     if (cancelled) {
                         log.debug("Ignoring {}.cancel(): prev cancel()", name);
-                    } else if (terminated) {
+                    } else if (terminated && subscriberReceivedTerminate) {
                         log.debug("Ignoring {}.cancel(): prev complete({})", name, errorString());
                     } else {
                         log.trace("{}.cancel(), wake={}", name, wake);
@@ -309,7 +316,7 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
 
     private final Runnable spin = () -> {
         workerThread = Thread.currentThread();
-        log.trace("{}: spinning from {}", this, workerThread.getName());
+//        log.trace("{}: spinning from {}", this, workerThread.getName());
         int iterations = 0;
         for (Action a = nextAction(); a != null; a = nextAction(), ++iterations) {
             try {
@@ -319,7 +326,7 @@ public abstract class CallbackPublisher<T> implements ExecutorBoundPublisher<T> 
                 log.error("Unexpected {} executing {} on {}", name, a, this, t);
             }
         }
-        log.trace("{}: leaving spin after {} iterations", this, iterations);
+//        log.trace("{}: leaving spin after {} iterations", this, iterations);
     };
 
     private boolean mustWake() {

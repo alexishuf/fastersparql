@@ -1,46 +1,58 @@
 package com.github.alexishuf.fastersparql.client.util.reactive;
 
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
 import java.util.concurrent.Executor;
 
-/**
- * An executor-bound publisher processes all subscription events and delivers all subscriber events
- * from a task that always run in the same {@link Executor}.
- *
- * Thus, interacting with the {@link Publisher} and the {@link Subscription} delivered via
- * {@link Subscriber#onSubscribe(Subscription)} after a {@link Publisher#subscribe(Subscriber)}
- * is a thread-safe operation that merely queues the actual processing within the {@link Executor}.
- *
- * Likewise, all {@link Subscriber} events are delivered from within the Executor, serially.
- */
-public interface ExecutorBoundPublisher<T> extends Publisher<T> {
-    /**
-     * Change the {@link Executor} where events triggered by {@link Subscription}s and callbacks
-     * to {@link Subscriber}s are processed.
-     *
-     * The change is asynchronous:  eventually, events will be processed in the given
-     * {@link Executor}. However, if this method is called before the first
-     * {@link Publisher#subscribe(Subscriber)} call, there is no event queued and thus the change
-     * will be complete once this method returns.
-     *
-     * @param executor the new {@link Executor} where events shall be processed.
-     */
-    void moveTo(Executor executor);
+public class ExecutorBoundPublisher<T> implements FSPublisher<T> {
+    private final Publisher<? extends T> upstreamPub;
+    private @MonotonicNonNull Subscription upstream;
+    private final CallbackPublisher<T> cbp;
+    private final String name;
 
-    /**
-     * Get the executor currently used by this {@link Publisher}
-     */
-    Executor executor();
+    public ExecutorBoundPublisher(String name,
+                                  Publisher<? extends T> publisher, Executor executor) {
+        assert !(publisher instanceof FSPublisher)
+                : "Needless wrapping of FastersparqlPublisher";
+        this.name = name;
+        this.upstreamPub = publisher;
+        this.cbp = new CallbackPublisher<T>(name+".cbp", executor) {
+            @Override protected void      onRequest(long n) { upstream.request(n); }
+            @Override protected void onBackpressure()       { }
+            @Override protected void       onCancel()       { upstream.cancel(); }
+        };
+    }
+    public ExecutorBoundPublisher(Publisher<? extends T> upstream, Executor executor) {
+        this(upstream.toString(), upstream, executor);
+        assert !(upstream instanceof FSPublisher)
+                : "Needless wrapping of FastersparqlPublisher";
+    }
 
-    static <U> ExecutorBoundPublisher<U> bind(Publisher<U> publisher, Executor executor) {
-        if (publisher instanceof ExecutorBoundPublisher) {
-            ExecutorBoundPublisher<U> bound = (ExecutorBoundPublisher<U>) publisher;
-            bound.moveTo(executor);
-            return bound;
+    @Override public void       moveTo(Executor executor) { cbp.moveTo(executor); }
+    @Override public Executor executor()                  { return cbp.executor(); }
+
+    private final Subscriber<T> upstreamSubscriber = new Subscriber<T>() {
+        @Override public void onSubscribe(Subscription s)  { upstream = s; }
+        @Override public void      onNext(T item)          { cbp.feed(item); }
+        @Override public void     onError(Throwable cause) { cbp.complete(cause); }
+        @Override public void  onComplete()                { cbp.complete(null); }
+        @Override public String toString() {
+            return ExecutorBoundPublisher.this+".upstreamSubscriber";
         }
-        return new ExecutorBoundPublisherWrapper<>(publisher, executor);
+    };
+
+    @Override public void subscribe(Subscriber<? super T> s) {
+        if (!cbp.isSubscribed()) {
+            upstreamPub.subscribe(upstreamSubscriber);
+            assert upstream != null;
+        }
+        cbp.subscribe(s);
+    }
+
+    @Override public String toString() {
+        return name;
     }
 }

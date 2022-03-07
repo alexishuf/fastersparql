@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.operators;
 
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.operators.impl.ProjectingProcessor;
 import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -18,7 +17,6 @@ import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.client.util.sparql.VarUtils.hasIntersection;
 import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
 
 
 /**
@@ -53,7 +51,7 @@ public class JoinHelpers {
         List<? extends Plan<R>> inOps = plan.operands();
         List<? extends Plan<R>> ops = reorder == null ? inOps : reorder.reorder(inOps, useBind);
         switch (ops.size()) {
-            case 0: return new Results<>(emptyList(), Object.class, new EmptyPublisher<>());
+            case 0: return Results.empty(Object.class);
             case 1: return ops.get(0).execute();
             case 2: return binaryExecutor.apply(plan.op().asPlan(ops));
         }

@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import lombok.Builder;
 import lombok.Singular;
 import lombok.Value;
@@ -31,7 +30,7 @@ public class EmptyPlan<R> implements Plan<R> {
     }
 
     @Override public Results<R> execute() {
-        return new Results<>(publicVars, rowClass, new EmptyPublisher<>());
+        return Results.empty(publicVars, rowClass);
     }
 
     @Override public Plan<R> bind(Map<String, String> ignored) {

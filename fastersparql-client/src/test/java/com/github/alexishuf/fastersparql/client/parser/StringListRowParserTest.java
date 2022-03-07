@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -52,28 +53,28 @@ class StringListRowParserTest {
 
     @Test
     void testParseStringArray() {
-        Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
+        FSPublisher<String[]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_ARRAYS));
         Results<String[]> results = new Results<>(vasrList, String[].class, inputFlux);
         checkResults(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringList() {
-        Flux<List<String>> inputFlux = Flux.fromIterable(STRING_LISTS);
+        FSPublisher<List<String>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_LISTS));
         Results<List<String>> results = new Results<>(vasrList, List.class, inputFlux);
         checkResults(INSTANCE.parseStringsList(results), true);
     }
 
     @Test
     void testParseBytesArray() {
-        Flux<byte[][]> inputFlux = Flux.fromIterable(BYTES_ARRAYS);
+        FSPublisher<byte[][]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(BYTES_ARRAYS));
         Results<byte[][]> results = new Results<>(vasrList, byte[][].class, inputFlux);
         checkResults(INSTANCE.parseBytesArray(results));
     }
 
     @Test
     void testParseBytesList() {
-        Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
+        FSPublisher<List<byte[]>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(BYTES_LISTS));
         Results<List<byte[]>> results = new Results<>(vasrList, List.class, inputFlux);
         checkResults(INSTANCE.parseBytesList(results));
     }

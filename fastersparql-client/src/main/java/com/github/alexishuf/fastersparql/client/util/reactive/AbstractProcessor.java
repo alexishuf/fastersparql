@@ -2,25 +2,36 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Processor;
-import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
+public abstract class AbstractProcessor<U, D>
+        implements Processor<U, D>, FSPublisher<D> {
     private static final Logger log = LoggerFactory.getLogger(AbstractProcessor.class);
 
-    private final Publisher<? extends U> source;
+    private final FSPublisher<? extends U> source;
     protected AtomicBoolean terminated = new AtomicBoolean(false);
     protected Subscription upstream;
     protected Subscriber<? super D> downstream;
     protected long start = System.nanoTime(), rows;
 
-    public AbstractProcessor(Publisher<? extends U> source) {
+    public AbstractProcessor(FSPublisher<? extends U> source) {
         this.source = source;
+    }
+
+    /* --- --- --- FastersparqlPublisher methods --- --- --- */
+
+    @Override public void moveTo(Executor executor) {
+        source.moveTo(executor);
+    }
+
+    @Override public Executor executor() {
+        return source.executor();
     }
 
     /* --- --- --- Behavior-changing methods --- --- --- */
@@ -138,7 +149,9 @@ public abstract class AbstractProcessor<U, D> implements Processor<U, D> {
                 @Override public void request(long n) { }
                 @Override public void cancel() { }
             });
-            s.onError(new IllegalStateException("Multiple subscribers are not allowed for "+this));
+            IllegalStateException ex
+                    = new IllegalStateException(this+" already subscribed by "+downstream);
+            executor().execute(() -> s.onError(ex));
         } else {
             start = System.nanoTime();
             downstream = s;

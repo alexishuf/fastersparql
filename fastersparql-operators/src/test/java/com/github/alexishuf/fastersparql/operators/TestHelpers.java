@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import lombok.val;
+import reactor.core.publisher.Flux;
 
 import java.util.*;
 import java.util.stream.IntStream;
@@ -46,7 +48,8 @@ public class TestHelpers {
 
     public static Results<List<String>> asResults(Collection<List<String>> collection) {
         int width = collection.isEmpty() ? 0 : collection.iterator().next().size();
-        return new Results<>(generateVars(width), List.class, new IterablePublisher<>(collection));
+        val pub = FSPublisher.bindToAny(Flux.fromIterable(collection));
+        return new Results<>(generateVars(width), List.class, pub);
     }
 
     public static List<String> generateVars(List<List<String>> rows) {

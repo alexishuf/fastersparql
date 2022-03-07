@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -53,14 +54,14 @@ public class Results<Row> {
      * iterated value must contain a null, {@code Optional.empty()} or an RDF term corresponding
      * to the i-th variable in {@link Results#vars()}.
      */
-    private final Publisher<Row> publisher;
+    private final FSPublisher<Row> publisher;
 
     public Results(List<String> vars, Class<? super Row> rowClass,
-                   Publisher<? extends Row> publisher) {
+                   FSPublisher<? extends Row> publisher) {
         this.vars = vars;
         this.rowClass = rowClass;
         //noinspection unchecked
-        this.publisher = (Publisher<Row>) publisher;
+        this.publisher = (FSPublisher<Row>) publisher;
     }
 
     /**
@@ -68,15 +69,32 @@ public class Results<Row> {
      * {@link Results#publisher()} that fails with {@code cause} upon subscription.
      */
     public static <Row> Results<Row> error(Class<? super Row> rowClass, Throwable cause) {
-        return new Results<>(Collections.emptyList(), rowClass, new EmptyPublisher<>(cause));
+        return error(Collections.emptyList(), rowClass, cause);
     }
 
     /**
      * Create a {@link Results} with given {@code vars} and {@code rowClass} with an empty
      * {@link Results#publisher()} that fails with {@code cause} upon subscription.
      */
-    public static <Row> Results<Row> error(List<String> vars, Class<? super Row> rowClass, Throwable cause) {
-        return new Results<>(vars, rowClass, new EmptyPublisher<>(cause));
+    public static <Row> Results<Row> error(List<String> vars, Class<? super Row> rowClass,
+                                           Throwable cause) {
+        return new Results<>(vars, rowClass, FSPublisher.bindToAny(new EmptyPublisher<>(cause)));
+    }
+
+    /**
+     * Create a {@link Results} with given {@code vars} and {@code rowClass} with an empty
+     * {@link Results#publisher()}.
+     */
+    public static <Row> Results<Row> empty(Class<? super Row> rowClass) {
+        return empty(Collections.emptyList(), rowClass);
+    }
+
+    /**
+     * Create a {@link Results} with given {@code vars} and {@code rowClass} with an empty
+     * {@link Results#publisher()}.
+     */
+    public static <Row> Results<Row> empty(List<String> vars, Class<? super Row> rowClass) {
+        return new Results<>(vars, rowClass, FSPublisher.bindToAny(new EmptyPublisher<>()));
     }
 
     /**

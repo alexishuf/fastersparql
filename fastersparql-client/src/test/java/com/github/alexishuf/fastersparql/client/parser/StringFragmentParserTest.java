@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -27,7 +28,8 @@ class StringFragmentParserTest {
         MediaType mt = RDFMediaTypes.TTL.toBuilder()
                 .param("charset", "utf-8").build();
         mtFuture.complete(mt);
-        Graph<String> graph = new Graph<>(mtFuture, String.class, Flux.fromIterable(STRINGS));
+        FSPublisher<String> pub = FSPublisher.bindToAny(Flux.fromIterable(STRINGS));
+        Graph<String> graph = new Graph<>(mtFuture, String.class, pub);
         Flux<String> flux = Flux.from(StringFragmentParser.INSTANCE.parseStrings(graph));
         List<String> actual = flux.collectList().block();
         assertNotNull(actual);
@@ -42,7 +44,8 @@ class StringFragmentParserTest {
         SafeCompletableAsyncTask<MediaType> mtFuture = new SafeCompletableAsyncTask<>();
         mtFuture.complete(RDFMediaTypes.TTL.toBuilder().param("charset", csName).build());
         List<byte[]> bytes = STRINGS.stream().map(s -> s.getBytes(cs)).collect(Collectors.toList());
-        Graph<byte[]> graph = new Graph<>(mtFuture, byte[].class, Flux.fromIterable(bytes));
+        FSPublisher<byte[]> pub = FSPublisher.bindToAny(Flux.fromIterable(bytes));
+        Graph<byte[]> graph = new Graph<>(mtFuture, byte[].class, pub);
         Publisher<String> publisher = StringFragmentParser.INSTANCE.parseBytes(graph);
         assertEquals(STRINGS, Flux.from(publisher).collectList().block());
     }

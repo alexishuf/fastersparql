@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.client.parser.row;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
-import org.reactivestreams.Publisher;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,28 +17,28 @@ public class CharSequenceListRowParser implements RowParser<List<CharSequence>> 
         return List.class;
     }
 
-    @SuppressWarnings("unchecked") @Override public Publisher<List<CharSequence>>
+    @SuppressWarnings("unchecked") @Override public FSPublisher<List<CharSequence>>
     parseStringsArray(Results<? extends CharSequence[]> source) {
-        return new MappingPublisher<>((Publisher<CharSequence[]>)source.publisher(), csArray);
+        return new MappingPublisher<>((FSPublisher<CharSequence[]>)source.publisher(), csArray);
     }
 
-    @SuppressWarnings("unchecked") @Override public Publisher<List<CharSequence>>
+    @SuppressWarnings("unchecked") @Override public FSPublisher<List<CharSequence>>
     parseStringsList(Results<? extends Collection<? extends CharSequence>> source) {
 
-        return new MappingPublisher<>((Publisher<Collection<CharSequence>>) source.publisher(),
+        return new MappingPublisher<>((FSPublisher<Collection<CharSequence>>) source.publisher(),
                                       csColl);
     }
 
     @SuppressWarnings("unchecked")
-    @Override public Publisher<List<CharSequence>> parseBytesArray(Results<byte[][]> source) {
-        Publisher<?> publisher = StringListRowParser.INSTANCE.parseBytesArray(source);
-        return (Publisher<List<CharSequence>>) publisher;
+    @Override public FSPublisher<List<CharSequence>> parseBytesArray(Results<byte[][]> source) {
+        FSPublisher<?> publisher = StringListRowParser.INSTANCE.parseBytesArray(source);
+        return (FSPublisher<List<CharSequence>>) publisher;
     }
 
-    @SuppressWarnings("unchecked") @Override public Publisher<List<CharSequence>>
+    @SuppressWarnings("unchecked") @Override public FSPublisher<List<CharSequence>>
     parseBytesList(Results<? extends Collection<byte[]>> source) {
-        Publisher<?> publisher = StringListRowParser.INSTANCE.parseBytesList(source);
-        return (Publisher<List<CharSequence>>) publisher;
+        FSPublisher<?> publisher = StringListRowParser.INSTANCE.parseBytesList(source);
+        return (FSPublisher<List<CharSequence>>) publisher;
     }
 
     /* --- --- --- map function instances --- --- --- */

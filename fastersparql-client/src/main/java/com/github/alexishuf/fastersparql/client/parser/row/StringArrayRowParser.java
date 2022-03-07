@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.client.parser.row;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
-import org.reactivestreams.Publisher;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
@@ -16,25 +16,25 @@ public class StringArrayRowParser implements RowParser<String[]> {
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<String[]> parseStringsArray(Results<? extends CharSequence[]> source) {
+    public FSPublisher<String[]> parseStringsArray(Results<? extends CharSequence[]> source) {
         if (source.rowClass().equals(String[].class))
-            return (Publisher<String[]>) source.publisher();
-        return new MappingPublisher<>((Publisher<CharSequence[]>) source.publisher(), csArrayMapper);
+            return (FSPublisher<String[]>) source.publisher();
+        return new MappingPublisher<>((FSPublisher<CharSequence[]>) source.publisher(), csArrayMapper);
     }
 
-    @SuppressWarnings("unchecked") @Override public Publisher<String[]>
+    @SuppressWarnings("unchecked") @Override public FSPublisher<String[]>
     parseStringsList(Results<? extends Collection<? extends CharSequence>> source) {
         return new MappingPublisher<>(
-                (Publisher<Collection<? extends CharSequence>>) source.publisher(), csCollMapper);
+                (FSPublisher<Collection<? extends CharSequence>>) source.publisher(), csCollMapper);
     }
 
-    @Override public Publisher<String[]> parseBytesArray(Results<byte[][]> source) {
+    @Override public FSPublisher<String[]> parseBytesArray(Results<byte[][]> source) {
         return new MappingPublisher<>(source.publisher(), bArrayMapper);
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<String[]> parseBytesList(Results<? extends Collection<byte[]>> source) {
-        return new MappingPublisher<>((Publisher<Collection<byte[]>>) source.publisher(),
+    public FSPublisher<String[]> parseBytesList(Results<? extends Collection<byte[]>> source) {
+        return new MappingPublisher<>((FSPublisher<Collection<byte[]>>) source.publisher(),
                                       bCollMapper);
     }
 

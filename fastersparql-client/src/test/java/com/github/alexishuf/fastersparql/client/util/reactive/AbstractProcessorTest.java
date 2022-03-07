@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
 
 import java.util.Collections;
 import java.util.List;
@@ -19,7 +19,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class AbstractProcessorTest {
     private static class Forward<T> extends AbstractProcessor<T, T> {
-        public Forward(Publisher<? extends T> source) {
+        public Forward(FSPublisher<? extends T> source) {
             super(source);
         }
 
@@ -38,12 +38,12 @@ class AbstractProcessorTest {
 
     @ParameterizedTest @MethodSource
     void testForward(List<Integer> list) {
-        Forward<Integer> processor = new Forward<>(new IterablePublisher<>(list));
+        Forward<Integer> processor = new Forward<>(FSPublisher.bindToAny(Flux.fromIterable(list)));
         assertEquals(list, new IterableAdapter<>(processor).stream().collect(toList()));
     }
 
     static class RemoveEven extends AbstractProcessor<Integer, Integer> {
-        public RemoveEven(Publisher<? extends Integer> source) { super(source); }
+        public RemoveEven(FSPublisher<? extends Integer> source) { super(source); }
 
         @Override protected void handleOnNext(Integer item) {
             if (item % 2 != 0) emit(item);
@@ -64,7 +64,7 @@ class AbstractProcessorTest {
 
     @ParameterizedTest @MethodSource
     void testRemoveEven(List<Integer> in, List<Integer> expected) {
-        RemoveEven processor = new RemoveEven(new IterablePublisher<>(in));
+        RemoveEven processor = new RemoveEven(FSPublisher.bindToAny(Flux.fromIterable(in)));
         assertEquals(expected, new IterableAdapter<>(processor).stream().collect(toList()));
     }
 

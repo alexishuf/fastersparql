@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
 import com.github.alexishuf.fastersparql.operators.Filter;
@@ -20,7 +21,6 @@ import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.reactivestreams.Publisher;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -89,7 +89,7 @@ public class SimpleFilter implements Filter {
         private final FilterPlan<R> plan;
         private final List<ExprEvaluator<R>> predicates;
 
-        public FilterPublisher(Publisher<? extends R> upstream, List<ExprEvaluator<R>> predicates,
+        public FilterPublisher(FSPublisher<? extends R> upstream, List<ExprEvaluator<R>> predicates,
                                FilterPlan<R> plan) {
             super(upstream);
             this.predicates = predicates;

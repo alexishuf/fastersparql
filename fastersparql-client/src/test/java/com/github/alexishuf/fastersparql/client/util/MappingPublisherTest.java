@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -49,7 +50,8 @@ class MappingPublisherTest {
 
         public <T> MappingPublisher<Integer, T>
         createPublisher(Throwing.Function<Integer, T> function) {
-            return new MappingPublisher<>(createFlux(), dropFailed, function);
+            FSPublisher<Integer> pub = FSPublisher.bindToAny(createFlux());
+            return new MappingPublisher<>(pub, dropFailed, function);
         }
 
         public <T> List<T> createExpected(Throwing.Function<Integer, T> function) {
@@ -221,7 +223,7 @@ class MappingPublisherTest {
             upstream = upstream.publishOn(Schedulers.boundedElastic());
 
         MappingPublisher<Integer, Integer> pub;
-        pub = new MappingPublisher<>(upstream, false, identity());
+        pub = new MappingPublisher<>(FSPublisher.bindToAny(upstream), false, identity());
         CompletableFuture<Subscription> subscriptionFuture = new CompletableFuture<>();
         CompletableFuture<Throwable> upstreamError = new CompletableFuture<>();
         List<Throwable> errors = new ArrayList<>();

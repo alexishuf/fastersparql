@@ -2,10 +2,10 @@ package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
 import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
-import org.reactivestreams.Publisher;
 
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -73,12 +73,12 @@ public class ByteArrayFragmentParser implements FragmentParser<byte[]> {
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<byte[]> parseStrings(Graph<? extends CharSequence> source) {
-        return new MappingPublisher<>((Publisher<CharSequence>) source.publisher(),
+    public FSPublisher<byte[]> parseStrings(Graph<? extends CharSequence> source) {
+        return new MappingPublisher<>((FSPublisher<CharSequence>) source.publisher(),
                                       new Encoder(source.charset()));
     }
 
-    @Override public Publisher<byte[]> parseBytes(Graph<byte[]> source) {
+    @Override public FSPublisher<byte[]> parseBytes(Graph<byte[]> source) {
         return source.publisher();
     }
 }

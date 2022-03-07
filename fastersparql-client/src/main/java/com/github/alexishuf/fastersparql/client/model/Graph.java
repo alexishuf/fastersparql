@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.CompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -69,14 +70,14 @@ public class Graph<Fragment> {
      * of these, concatenating the byte or char sequences will yield the serialization of the RDF
      * graph. Consumers should not expect fragments to end on RDF term or triple/quad borders.
      */
-    private final Publisher<Fragment> publisher;
+    private final FSPublisher<Fragment> publisher;
 
     public Graph(SafeAsyncTask<MediaType> mediaType, Class<? super Fragment> fragmentClass,
-                 Publisher<? extends Fragment> publisher) {
+                 FSPublisher<? extends Fragment> publisher) {
         this.mediaType = mediaType;
         this.fragmentClass = fragmentClass;
         //noinspection unchecked
-        this.publisher = (Publisher<Fragment>) publisher;
+        this.publisher = (FSPublisher<Fragment>) publisher;
     }
 
     /**

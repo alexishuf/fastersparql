@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Slice;
@@ -14,7 +15,6 @@ import lombok.experimental.Accessors;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.reactivestreams.Publisher;
 
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
@@ -53,7 +53,7 @@ public class SimpleSlice implements Slice {
         private final @NonNegative long offset, limit;
         private long itemsReceived = 0;
 
-        public SlicingProcessor(Publisher<? extends R> source, long offset, long limit,
+        public SlicingProcessor(FSPublisher<? extends R> source, long offset, long limit,
                                 SlicePlan<R> plan) {
             super(source);
             this.offset = offset;

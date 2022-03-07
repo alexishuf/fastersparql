@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Distinct;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
@@ -75,7 +76,7 @@ public class InMemoryHashDistinct implements Distinct {
         private final HashSet<Object> set = new HashSet<>();
         private final Function<Object, ?> wrap;
 
-        public Hasher(Publisher<? extends R> src, Function<Object, ?> wrap, DistinctPlan<R> plan) {
+        public Hasher(FSPublisher<? extends R> src, Function<Object, ?> wrap, DistinctPlan<R> plan) {
             super(src);
             this.wrap = wrap;
             this.plan = plan;

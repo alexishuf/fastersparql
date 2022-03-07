@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser.Encoder;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
+import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -33,7 +35,8 @@ class ByteArrayFragmentParserTest {
     void testParseBytes() {
         byte[] data = "test".getBytes(UTF_8);
         SafeCompletableAsyncTask<MediaType> mtFuture = new SafeCompletableAsyncTask<>();
-        Graph<byte[]> graph = new Graph<>(mtFuture, byte[].class, Mono.just(data));
+        FSPublisher<byte[]> pub = FSPublisher.bindToAny(Mono.just(data));
+        Graph<byte[]> graph = new Graph<>(mtFuture, byte[].class, pub);
         Publisher<byte[]> publisher = ByteArrayFragmentParser.INSTANCE.parseBytes(graph);
         List<byte[]> expected = Collections.singletonList(data);
         assertEquals(expected, Flux.from(publisher).collectList().block());
@@ -83,7 +86,7 @@ class ByteArrayFragmentParserTest {
 
         for (int i = 0; i < 10; i++) {
             SafeCompletableAsyncTask<MediaType> mtFuture = new SafeCompletableAsyncTask<>();
-            Flux<CharSequence> fragmentFlux = Flux.fromIterable(fragmentStrings);
+            val fragmentFlux = FSPublisher.bindToAny(Flux.fromIterable(fragmentStrings));
             Graph<CharSequence> graph = new Graph<>(mtFuture, CharSequence.class, fragmentFlux);
             Publisher<byte[]> bytesPub = ByteArrayFragmentParser.INSTANCE.parseStrings(graph);
             Thread completer = new Thread(() -> mtFuture.complete(mediaType));

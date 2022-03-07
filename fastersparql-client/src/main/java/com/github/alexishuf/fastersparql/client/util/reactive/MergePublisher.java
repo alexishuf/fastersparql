@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Accessors(fluent = true)
-public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
+public class MergePublisher<T> implements FSPublisher<T> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     /* --- --- --- Immutable state --- --- --- */
@@ -30,8 +30,11 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     @Getter private final @Positive int tgtConcurrency;
 
     /* --- --- --- thread-safety/reentrancy assertions --- --- --- */
-    private final AtomicBoolean redistributing = new AtomicBoolean();
-    private final AtomicBoolean completing     = new AtomicBoolean();
+    private final AtomicBoolean redistributing      = new AtomicBoolean();
+    private final AtomicBoolean completing          = new AtomicBoolean();
+    private final AtomicInteger completeRetries     = new AtomicInteger();
+    private final AtomicInteger redistributeRetries = new AtomicInteger();
+    private Thread completer;
 
     /* --- --- --- start/termination  state --- --- --- */
     private Throwable terminationCause;
@@ -177,7 +180,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         if (!completable) {
             completable = true;
             if (!tryComplete(null, null, false, 0)) {
-                log.debug("{}.markCompletable(), activeSources={}, {} queued, undistributed={}",
+                log.trace("{}.markCompletable(), activeSources={}, {} queued, undistributed={}",
                           this, activeSources, publishersQueue.size(), undistributed);
             }
         }
@@ -193,8 +196,18 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
 
     private boolean tryComplete(@Nullable Throwable cause, @Nullable Source source,
                              boolean cancel, long additionalUndistributed) {
-        assert completing.compareAndSet(false, true)
-                : "Concurrent/reentrant tryComplete";
+        if (completing.compareAndSet(false, true)) {
+            completer = Thread.currentThread();
+        } else {
+            if (!Thread.currentThread().equals(completer)) {
+                assert false : "Concurrent tryComplete() call";
+                log.warn("Concurrent {}.tryComplete(cause={}, source={}, cancel={}, " +
+                                "additionalUndistributed={}). scheduling retry on executor {}",
+                        this, cause, source, cancel, additionalUndistributed, executor());
+            }
+            scheduleTryComplete(cause, source, cancel, additionalUndistributed);
+            return terminated;
+        }
         try {
             // trivial cases (but lengthy log logic)
             if (!removeSource(source)) return terminated;
@@ -207,7 +220,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
                     || (completable && activeSources == 0 && publishersQueue.isEmpty());
             if (complete || cancel) {
                 terminationCause = ignoreUpstreamErrors ? null : cause;
-                log.debug("{} completing{} with error={} from source={}",
+                log.trace("{} completing{} with error={} from source={}",
                           this, cancel ? " by cancel()" : "", terminationCause, source);
                 terminated = true;
                 if (cancel) {
@@ -227,6 +240,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
             return terminated;
         } finally {
             completing.set(false);
+            completer = null;
         }
     }
 
@@ -283,7 +297,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
             undistributed = 0;
             try {
                 startQueuedPublishers();
-                distributed = redistributeToSources(total);
+                distributed = redistributeToSources(total, caller);
             } finally {
                 assert distributed <= total;
                 if (distributed < total)
@@ -295,7 +309,7 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
     }
 
     /** Distribute {@code total} among {@code request()} calls on {@code sources} */
-    private long redistributeToSources(long total) {
+    private long redistributeToSources(long total, String caller) {
         if (total == 0)
             return 0;
         long distributed = 0;
@@ -309,20 +323,23 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         long chunk = div > total ? 1 : total / div;
         assert chunk > 0;
         long remainder = Math.max(0, total - chunk * div);
+        boolean rejected = false;
         for (Source src : sources.keySet()) {
             long n = Math.min(total-distributed, chunk+remainder);
             if (n <= 0) // stop distributing once distributed >= total
                 break;
             if (remainder > 0) // first source consumes the remainder
                 remainder = 0;
-            distributed += n;
-            assert distributed <= total;
-            if (src.active)
-                src.request(n);
-            else
-                assert false : "satale source in sources";
+            if (src.request(n)) {
+                distributed += n;
+                assert distributed <= total;
+            } else {
+                rejected = true;
+            }
         }
         assert distributed <= total;
+        if (rejected)
+            scheduleRedistribute(caller);
         return distributed;
     }
 
@@ -361,36 +378,67 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
         log.trace("{}.startQueuedPublishers(): {} new sources", this, added.size());
     }
 
+    private void scheduleRedistribute(String caller) {
+        int n = redistributeRetries.incrementAndGet();
+        log.debug("Scheduled 1/{} a {}.redistribute(0, {})", n, this, caller);
+        executor().execute(() -> {
+            log.trace("Executing scheduled {}.redistribute(0, {})", this, caller);
+            redistribute(0, caller);
+            redistributeRetries.decrementAndGet();
+        });
+    }
+
+    private void scheduleTryComplete(@Nullable Throwable cause, @Nullable Source source,
+                                     boolean cancel, long additionalUndistributed) {
+        int n = completeRetries.incrementAndGet();
+        log.debug("Scheduled 1/{} {}.tryComplete(cause={}, source={}, cancel={}, " +
+                  "additionalUndistributed={})", n,
+                  this, cause, source, cancel, additionalUndistributed);
+        executor().execute(() -> {
+            log.trace("Scheduled 1/{} {}.tryComplete(cause={}, source={}, cancel={}, " +
+                      "additionalUndistributed={})", n,
+                      this, cause, source, cancel, additionalUndistributed);
+            tryComplete(cause, source, cancel, additionalUndistributed);
+            completeRetries.decrementAndGet();
+        });
+    }
+
     private class Source implements Subscriber<T> {
-        private final ExecutorBoundPublisher<? extends T> upstreamPublisher;
+        private final FSPublisher<? extends T> upstreamPublisher;
         private final int number;
         private boolean active = false;
         private long undelivered;
         private @MonotonicNonNull Subscription upstream;
+        private @MonotonicNonNull Thread subscriberThread;
+        private @MonotonicNonNull Thread onSubscribeThread;
 
         public Source(Publisher<? extends T> publisher, int number) {
-            this.upstreamPublisher = ExecutorBoundPublisher.bind(publisher, executor());
+            this.upstreamPublisher = FSPublisher.bind(publisher, executor());
             this.number = number;
         }
 
         public void subscribe() {
             if (active)
                 throw new IllegalStateException("Already subscribed!");
+            subscriberThread = Thread.currentThread();
             active = true;
             this.upstreamPublisher.subscribe(this);
         }
 
-        public void request(long n) {
+        public boolean request(long n) {
+            assert Thread.currentThread() == subscriberThread;
+            assert Thread.currentThread() == onSubscribeThread;
             if (!active) {
-                log.error("{}.request({}): not active", this, n);
-                redistribute(n, "rejected Source.request()");
+                return false;
             } else if (n <= 0) {
                 log.error("{}.request({}): n <= 0", this, n);
+                return false;
             } else {
                 log.trace("{}.request({})", this, n);
                 undelivered += n;
                 upstream.request(n);
             }
+            return true;
         }
 
         public void cancel() {
@@ -409,8 +457,17 @@ public class MergePublisher<T> implements ExecutorBoundPublisher<T> {
             tryComplete(cause, this, false, n);
         }
 
-        @Override public void onSubscribe(Subscription s)  { upstream = s;         }
-        @Override public void      onNext(T item)          { feed(item);           }
+        @Override public void onSubscribe(Subscription s)  {
+            onSubscribeThread = Thread.currentThread();
+            upstream = s;
+        }
+        @Override public void      onNext(T item)          {
+            if (undelivered == 0)
+                log.warn("{}.onNext({}) beyond requested.", this, item);
+            else
+                --undelivered;
+            feed(item);
+        }
         @Override public void     onError(Throwable cause) { complete(cause);      }
         @Override public void  onComplete()                { complete(null); }
 

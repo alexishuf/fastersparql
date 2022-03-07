@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import org.reactivestreams.Processor;
-import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +35,7 @@ public class MappingPublisher<I, O> extends AbstractProcessor<I, O> {
      */
     private final Throwing.Function<I, O> mapFunction;
 
-    public MappingPublisher(Publisher<I> upstreamPublisher,
+    public MappingPublisher(FSPublisher<I> upstreamPublisher,
                             boolean dropFailed,
                             Throwing.Function<I, O> mapFunction) {
         super(upstreamPublisher);
@@ -44,7 +43,7 @@ public class MappingPublisher<I, O> extends AbstractProcessor<I, O> {
         this.mapFunction = mapFunction;
     }
 
-    public MappingPublisher(Publisher<I> upstreamPublisher,
+    public MappingPublisher(FSPublisher<I> upstreamPublisher,
                             Throwing.Function<I, O> mapFunction) {
         this(upstreamPublisher, false, mapFunction);
     }

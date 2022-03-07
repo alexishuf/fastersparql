@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.row;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.reactivestreams.Publisher;
 
 import java.util.Collection;
@@ -38,7 +39,7 @@ public interface RowParser<R> {
      * @param source the source of solutions, as an array of RDF terms in N-Triples syntax.
      * @return a non-null {@link Publisher} producing {@code R} instances
      */
-    Publisher<R> parseStringsArray(Results<? extends CharSequence[]> source);
+    FSPublisher<R> parseStringsArray(Results<? extends CharSequence[]> source);
 
     /**
      * Create a {@link Publisher} of one {@code R} instances per solution represented by a
@@ -53,7 +54,7 @@ public interface RowParser<R> {
      * @param source the source of solutions.
      * @return a non-null {@link Publisher} of {@code R} instances
      */
-    Publisher<R> parseStringsList(Results<? extends Collection<? extends CharSequence>> source);
+    FSPublisher<R> parseStringsList(Results<? extends Collection<? extends CharSequence>> source);
 
     /**
      * Create a Publisher of one {@code R} for each array of {@code byte[]}, representing
@@ -69,7 +70,7 @@ public interface RowParser<R> {
      *               syntax encoded in UTF-8 as a {@code byte[]}.
      * @return a non-null {@link Publisher} producing {@code R} instances
      */
-    Publisher<R> parseBytesArray(Results<byte[][]> source);
+    FSPublisher<R> parseBytesArray(Results<byte[][]> source);
 
     /**
      * Create a {@link Publisher} of one {@code R} instances per solution represented by a
@@ -84,5 +85,5 @@ public interface RowParser<R> {
      * @param source the source of solutions.
      * @return a non-null {@link Publisher} of {@code R} instances
      */
-    Publisher<R> parseBytesList(Results<? extends Collection<byte[]>> source);
+    FSPublisher<R> parseBytesList(Results<? extends Collection<byte[]>> source);
 }

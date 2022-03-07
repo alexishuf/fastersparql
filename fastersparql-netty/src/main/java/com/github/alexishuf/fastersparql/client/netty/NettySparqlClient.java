@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.Projector;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import io.netty.buffer.ByteBuf;
@@ -100,7 +101,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     new QueryHandlerSetup(vars, accept, method, publisher));
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
-            Publisher<R> parsedPub = rowParser.parseStringsArray(raw);
+            FSPublisher<R> parsedPub = rowParser.parseStringsArray(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
                 return (Results<R>) raw;
             return new Results<>(vars, rowParser.rowClass(), parsedPub);
@@ -127,7 +128,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
-            Publisher<F> parsedPub = fragParser.parseBytes(raw);
+            FSPublisher<F> parsedPub = fragParser.parseBytes(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
                 return (Graph<F>) raw;
             return new Graph<>(mtTask, fragParser.fragmentClass(), parsedPub);
@@ -137,7 +138,8 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             cause = t;
         }
         SafeAsyncTask<MediaType> nullMT = Async.wrap((MediaType) null);
-        return new Graph<>(nullMT, fragParser.fragmentClass(), new EmptyPublisher<>(cause));
+        FSPublisher<F> empty = FSPublisher.bindToAny(new EmptyPublisher<>(cause));
+        return new Graph<>(nullMT, fragParser.fragmentClass(), empty);
     }
 
     @Override public void close() {

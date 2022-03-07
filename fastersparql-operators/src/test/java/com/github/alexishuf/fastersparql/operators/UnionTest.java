@@ -1,12 +1,14 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterablePublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
+import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.provider.Arguments;
 import org.opentest4j.AssertionFailedError;
+import reactor.core.publisher.Flux;
 
 import java.util.*;
 import java.util.stream.Stream;
@@ -112,7 +114,8 @@ public class UnionTest {
                 @Override public List<String> publicVars() { return vars; }
                 @Override public List<String> allVars() { return vars; }
                 @Override public Results<List<String>> execute() {
-                    return new Results<>(vars, List.class, new IterablePublisher<>(rows));
+                    val pub = FSPublisher.bindToAny(Flux.fromIterable(rows));
+                    return new Results<>(vars, List.class, pub);
                 }
                 @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {
                     throw new UnsupportedOperationException();

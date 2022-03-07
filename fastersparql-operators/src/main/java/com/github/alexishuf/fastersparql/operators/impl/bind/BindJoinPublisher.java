@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
-import com.github.alexishuf.fastersparql.client.util.reactive.ExecutorBoundPublisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher;
 import com.github.alexishuf.fastersparql.operators.impl.Merger;
 import com.github.alexishuf.fastersparql.operators.metrics.JoinMetrics;
@@ -107,7 +107,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 bindConcurrency, bindConcurrency, false, null);
         this.joinType = joinType;
         this.bindConcurrency = bindConcurrency;
-        this.leftPublisher = ExecutorBoundPublisher.bind(leftPublisher, executor());
+        this.leftPublisher = FSPublisher.bind(leftPublisher, executor());
         this.merger = merger;
         this.originalPlan = originalPlan;
     }
@@ -196,8 +196,8 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
 
     /* --- --- --- right subscription management --- --- --- */
 
-    private ExecutorBoundPublisher<R> createRightUpstream(R leftRow) {
-        return ExecutorBoundPublisher.bind(merger.bind(leftRow).execute().publisher(), executor());
+    private FSPublisher<R> createRightUpstream(R leftRow) {
+        return FSPublisher.bind(merger.bind(leftRow).execute().publisher(), executor());
     }
 
     private final class RightProcessor extends AbstractProcessor<R, R> {

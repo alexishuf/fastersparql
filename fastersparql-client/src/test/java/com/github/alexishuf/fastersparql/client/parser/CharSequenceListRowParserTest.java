@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
@@ -63,64 +64,63 @@ class CharSequenceListRowParserTest {
 
     @Test
     void testParseStringArray() {
-        Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
+        FSPublisher<String[]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_ARRAYS));
         Results<String[]> results = new Results<>(varsList, String[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringArrayAsCSArray() {
-        Flux<String[]> inputFlux = Flux.fromIterable(STRING_ARRAYS);
+        FSPublisher<String[]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_ARRAYS));
         Results<String[]> results = new Results<>(varsList, CharSequence[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseCSArray() {
-        Flux<CharSequence[]> inputFlux = Flux.fromIterable(CS_ARRAYS);
+        FSPublisher<CharSequence[]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(CS_ARRAYS));
         Results<CharSequence[]> results = new Results<>(varsList, CharSequence[].class, inputFlux);
         checkPublisher(INSTANCE.parseStringsArray(results));
     }
 
     @Test
     void testParseStringList() {
-        Flux<List<String>> inputFlux = Flux.fromIterable(STRING_LISTS);
+        FSPublisher<List<String>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(STRING_LISTS));
         Results<List<String>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results));
     }
 
     @Test
     void testParseCSList() {
-        Flux<List<CharSequence>> inputFlux = Flux.fromIterable(CS_LISTS);
+        FSPublisher<List<CharSequence>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(CS_LISTS));
         Results<List<CharSequence>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), CS_LISTS);
     }
 
     @Test
     void testParseCSListAsCollection() {
-        Flux<List<CharSequence>> inputFlux = Flux.fromIterable(CS_LISTS);
+        FSPublisher<List<CharSequence>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(CS_LISTS));
         Results<Collection<CharSequence>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), CS_LISTS);
     }
 
     @Test @SuppressWarnings("unchecked")
     void testParseStringListAsCollection() {
-        Flux<Collection<CharSequence>> inputFlux =
-                (Flux<Collection<CharSequence>>)(Flux<?>) Flux.fromIterable(STRING_LISTS);
+        FSPublisher<Collection<CharSequence>> inputFlux = FSPublisher.bindToAny(                (Flux<Collection<CharSequence>>)(Flux<?>) Flux.fromIterable(STRING_LISTS));
         Results<Collection<CharSequence>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseStringsList(results), STRING_LISTS);
     }
 
     @Test
     void testParseBytesArray() {
-        Flux<byte[][]> inputFlux = Flux.fromIterable(BYTES_ARRAYS);
+        FSPublisher<byte[][]> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(BYTES_ARRAYS));
         Results<byte[][]> results = new Results<>(varsList, byte[][].class, inputFlux);
         checkPublisher(INSTANCE.parseBytesArray(results));
     }
 
     @Test
     void testParseBytesList() {
-        Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
+        FSPublisher<List<byte[]>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(BYTES_LISTS));
         Results<List<byte[]>> results = new Results<>(varsList, List.class, inputFlux);
         checkPublisher(INSTANCE.parseBytesList(results));
     }
@@ -128,7 +128,7 @@ class CharSequenceListRowParserTest {
 
     @Test
     void testParseBytesListAsCollection() {
-        Flux<List<byte[]>> inputFlux = Flux.fromIterable(BYTES_LISTS);
+        FSPublisher<List<byte[]>> inputFlux = FSPublisher.bindToAny(Flux.fromIterable(BYTES_LISTS));
         Results<Collection<byte[]>> results = new Results<>(varsList, Collection.class, inputFlux);
         checkPublisher(INSTANCE.parseBytesList(results));
     }

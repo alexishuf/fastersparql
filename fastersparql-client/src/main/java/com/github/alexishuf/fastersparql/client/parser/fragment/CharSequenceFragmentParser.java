@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client.parser.fragment;
 
 import com.github.alexishuf.fastersparql.client.model.Graph;
-import org.reactivestreams.Publisher;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 
 public class CharSequenceFragmentParser implements FragmentParser<CharSequence> {
     public static CharSequenceFragmentParser INSTANCE = new CharSequenceFragmentParser();
@@ -10,14 +10,14 @@ public class CharSequenceFragmentParser implements FragmentParser<CharSequence> 
         return CharSequence.class;
     }
 
-    @Override public Publisher<CharSequence> parseStrings(Graph<? extends CharSequence> source) {
+    @Override public FSPublisher<CharSequence> parseStrings(Graph<? extends CharSequence> source) {
         //noinspection unchecked
-        return (Publisher<CharSequence>) source.publisher();
+        return (FSPublisher<CharSequence>) source.publisher();
     }
 
-    @Override public Publisher<CharSequence> parseBytes(Graph<byte[]> source) {
-        Publisher<?> strings = new StringFragmentParser().parseBytes(source);
+    @Override public FSPublisher<CharSequence> parseBytes(Graph<byte[]> source) {
+        FSPublisher<?> strings = new StringFragmentParser().parseBytes(source);
         //noinspection unchecked
-        return (Publisher<CharSequence>) strings;
+        return (FSPublisher<CharSequence>) strings;
     }
 }

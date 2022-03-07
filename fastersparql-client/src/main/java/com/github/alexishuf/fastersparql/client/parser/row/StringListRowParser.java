@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.client.parser.row;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
-import org.reactivestreams.Publisher;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -19,29 +19,29 @@ public class StringListRowParser implements RowParser<List<String>> {
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<List<String>> parseStringsArray(Results<? extends CharSequence[]> source) {
+    public FSPublisher<List<String>> parseStringsArray(Results<? extends CharSequence[]> source) {
         if (source.rowClass().equals(String[].class))
-            return new MappingPublisher<>((Publisher<String[]>) source.publisher(), strArray);
-        return new MappingPublisher<>((Publisher<CharSequence[]>) source.publisher(), csArray);
+            return new MappingPublisher<>((FSPublisher<String[]>) source.publisher(), strArray);
+        return new MappingPublisher<>((FSPublisher<CharSequence[]>) source.publisher(), csArray);
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<List<String>>
+    public FSPublisher<List<String>>
     parseStringsList(Results<? extends Collection<? extends CharSequence>> source) {
-        Publisher<Collection<CharSequence>> publisher =
-                (Publisher<Collection<CharSequence>>) source.publisher();
+        FSPublisher<Collection<CharSequence>> publisher =
+                (FSPublisher<Collection<CharSequence>>) source.publisher();
         if (List.class.isAssignableFrom(source.rowClass()))
             return new MappingPublisher<>(publisher, new StringCollectionMapper());
         return new MappingPublisher<>(publisher, convertCollection);
     }
 
-    @Override public Publisher<List<String>> parseBytesArray(Results<byte[][]> source) {
+    @Override public FSPublisher<List<String>> parseBytesArray(Results<byte[][]> source) {
         return new MappingPublisher<>(source.publisher(), bArray);
     }
 
     @SuppressWarnings("unchecked") @Override
-    public Publisher<List<String>> parseBytesList(Results<? extends Collection<byte[]>> source) {
-        return new MappingPublisher<>((Publisher<Collection<byte[]>>)source.publisher(), bColl);
+    public FSPublisher<List<String>> parseBytesList(Results<? extends Collection<byte[]>> source) {
+        return new MappingPublisher<>((FSPublisher<Collection<byte[]>>)source.publisher(), bColl);
     }
 
     /* --- --- --- mapping function classes --- --- --- */
