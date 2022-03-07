@@ -14,7 +14,6 @@ import lombok.experimental.Accessors;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.reactivestreams.Publisher;
 
 import java.util.HashSet;
 import java.util.function.Function;
@@ -62,8 +61,11 @@ public class InMemoryHashDistinct implements Distinct {
         private final RowOperations ops;
         private final Object val;
 
-        @SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
-        @Override public boolean equals(Object o) { return ops.equalsSameVars(val, o); }
+        @Override public boolean equals(Object o) {
+            if (o instanceof HashAdapter)
+                return ops.equalsSameVars(val, ((HashAdapter) o).val);
+            return false;
+        }
         @Override public int hashCode() { return ops.hash(val); }
         @Override public String toString() { return val.toString(); }
     }
