@@ -84,7 +84,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
     /* --- --- --- immutable state state --- --- --- */
 
     private final @Positive int bindConcurrency;
-    private final Publisher<R> leftPublisher;
+    private final FSPublisher<R> leftPublisher;
     private final Merger<R> merger;
     private final JoinType joinType;
     private final Plan<R> originalPlan;
@@ -116,8 +116,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
 
     @Override public void subscribe(Subscriber<? super R> downstream) {
         start = System.nanoTime();
-        if (leftSubscription == null)
+        if (leftSubscription == null) {
+            leftPublisher.moveTo(executor());
             leftPublisher.subscribe(leftSubscriber);
+        }
         //else: super will deliver error to downstream
         super.subscribe(downstream);
     }
