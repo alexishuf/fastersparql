@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher.State.*;
 
@@ -36,7 +37,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     /* --- --- --- state changed only from the executor --- --- --- */
     private @NonNegative long requested, nextRequest;
     private volatile boolean subscriberReceivedTerminate = false;
-    @SuppressWarnings("unused") private @Nullable Thread workerThread = null;
+    private final AtomicReference<Thread> eventThread = new AtomicReference<>();
 
     /* --- --- --- state changed from both the public interface and the executor --- --- --- */
     /*        executor sets DELIVERED and false, pub interface sets PENDING and true         */
@@ -64,6 +65,26 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
             throw new NullPointerException("cannot move to a executor=null");
         if (subscriber != null)
             throw new IllegalStateException("cannot moveTo("+executor+") after subscribed");
+        Thread observed = eventThread.get();
+        if (observed != null) {
+            boolean inEvThread = Thread.currentThread().equals(observed);
+            String action;
+            if (inEvThread) {
+                action = "Running in event thread, cannot wait myself. Will set the executor " +
+                        "for future events, but this may cause races.";
+            } else {
+                action = "Will busy-wait until event thread stops before changing executor";
+            }
+            log.error("{}.moveTo({}): events already executed, eventThread={}. {}",
+                      this, executor, observed, action);
+            // if under test, blow up
+            assert false : "moveTo() after waking event thread on old executor";
+            if (!inEvThread) { // if not under test, try to safely change executor
+                //noinspection IdempotentLoopBody
+                for (boolean active = true; active; )
+                    synchronized (this) { active = workerActive; } // memory barrier
+            }
+        }
         this.executor = executor;
         this.loopExecutor = executor instanceof BoundedEventLoopPool.LoopExecutor
                           ? (BoundedEventLoopPool.LoopExecutor) executor : null;
@@ -79,7 +100,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
 
     public void feed(T item) {
         boolean completed, yield = false, wake = false, backpressure = false;
-        if (workerThread != null && workerThread == Thread.currentThread() && requested > 0
+        if (Thread.currentThread().equals(eventThread.get()) && requested > 0
                 && subscriber != null && termination != DELIVERED && cancel != DELIVERED ) {
             --requested;
             log.trace("{}.feed({}): directly calling subscriber.onNext()", this, item);
@@ -141,7 +162,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     protected abstract void onBackpressure();
     protected abstract void onCancel();
 
-    protected boolean isSubscribed() {
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted") protected boolean isSubscribed() {
         return subscriber != null;
     }
 
@@ -307,15 +328,18 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                 }
             }
         }
-        if (action == null) {
+        if (action == null)
             workerActive = false;
-            workerThread = null;
-        }
         return action;
     }
 
     private final Runnable spin = () -> {
-        workerThread = Thread.currentThread();
+        Thread me = Thread.currentThread();
+        if (!eventThread.compareAndSet(null, me)) {
+            log.error("{}: Event thread changed, was {}. This is a bug.", this, eventThread.get());
+            eventThread.set(me);
+            assert me.equals(eventThread.get()) : "Changed event thread"; // blow up under test
+        }
 //        log.trace("{}: spinning from {}", this, workerThread.getName());
         int iterations = 0;
         for (Action a = nextAction(); a != null; a = nextAction(), ++iterations) {

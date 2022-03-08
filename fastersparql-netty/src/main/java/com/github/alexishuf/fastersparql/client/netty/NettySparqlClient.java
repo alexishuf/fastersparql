@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.results.*;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.util.Throwing;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
@@ -30,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,7 +93,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         List<String> vars = SparqlUtils.publicVars(sparql);
         Throwable cause;
-        try {
+        Throwing.Runnable run = () -> {
             SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
             SparqlMethod method = eff.methods().get(0);
             HttpMethod nettyMethod = method2netty(method);
@@ -100,13 +102,23 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
                     nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
                     new QueryHandlerSetup(vars, accept, method, publisher));
+        };
+        try {
+            PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
+            publisher.requester = () -> {
+                SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
+                SparqlMethod method = eff.methods().get(0);
+                HttpMethod nettyMethod = method2netty(method);
+                String accept = resultsAcceptString(eff.resultsAccepts());
+                netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                        nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+                        new QueryHandlerSetup(vars, accept, method, publisher));
+            };
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
             FSPublisher<R> parsedPub = rowParser.parseStringsArray(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
                 return (Results<R>) raw;
             return new Results<>(vars, rowParser.rowClass(), parsedPub);
-        } catch (ExecutionException e) {
-            cause = e.getCause() == null ? e : e.getCause();
         } catch (Throwable t) {
             cause = t;
         }
@@ -117,23 +129,23 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     public Graph<F> queryGraph(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         Throwable cause;
         try {
-            SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-            SparqlMethod method = eff.methods().get(0);
-            HttpMethod nettyMethod = method2netty(method);
-            SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             PublisherAdapter<byte[]> publisher = new PublisherAdapter<>();
-            MediaType errorMT = eff.rdfAccepts().get(0);
-            String accept = rdfAcceptString(eff.rdfAccepts());
-            netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                    nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                    new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
+            SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
+            publisher.requester = () -> {
+                SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
+                SparqlMethod method = eff.methods().get(0);
+                HttpMethod nettyMethod = method2netty(method);
+                MediaType errorMT = eff.rdfAccepts().get(0);
+                String accept = rdfAcceptString(eff.rdfAccepts());
+                netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                        nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+                        new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
+            };
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
             FSPublisher<F> parsedPub = fragParser.parseBytes(raw);
             if (parsedPub == raw.publisher()) //noinspection unchecked
                 return (Graph<F>) raw;
             return new Graph<>(mtTask, fragParser.fragmentClass(), parsedPub);
-        } catch (ExecutionException e) {
-            cause = e.getCause() == null ? e : e.getCause();
         } catch (Throwable t) {
             cause = t;
         }
@@ -266,6 +278,8 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     private static class PublisherAdapter<T> extends CallbackPublisher<T> {
         private static final  Logger log = LoggerFactory.getLogger(PublisherAdapter.class);
         private static final AtomicInteger nextId = new AtomicInteger(1);
+
+        private Throwing.@MonotonicNonNull Runnable requester;
         private boolean pendingAutoRead, pendingCancel;
         private @MonotonicNonNull Handler handler;
         private int cycle = -1;
@@ -281,6 +295,23 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             else if (pendingAutoRead)
                 this.handler.autoRead(cycle, true);
         }
+
+        @Override public void subscribe(Subscriber<? super T> s) {
+            Throwable cause = null;
+            if (!isSubscribed()) {
+                try {
+                    requester.run();
+                } catch (ExecutionException e) {
+                    cause = e.getCause() == null ? e : e.getCause();
+                } catch (Throwable t) {
+                    cause = t;
+                }
+            }
+            super.subscribe(s);
+            if (cause != null)
+                s.onError(cause);
+        }
+
         @Override protected synchronized void onRequest(long n) {
             log.trace("{}.onRequest({}), handler={}", this, n, handler);
             if (handler != null) handler.autoRead(cycle, true);
