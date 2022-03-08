@@ -15,6 +15,11 @@ import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+import static java.lang.Thread.currentThread;
 
 
 @Slf4j
@@ -30,15 +35,14 @@ public class MergePublisher<T> implements FSPublisher<T> {
     @Getter private final @Positive int tgtConcurrency;
 
     /* --- --- --- thread-safety/reentrancy assertions --- --- --- */
-    private final AtomicBoolean redistributing      = new AtomicBoolean();
-    private final AtomicBoolean completing          = new AtomicBoolean();
-    private final AtomicInteger completeRetries     = new AtomicInteger();
-    private final AtomicInteger redistributeRetries = new AtomicInteger();
-    private Thread completer;
+    private final AtomicBoolean completing     = new AtomicBoolean();
+    private final AtomicBoolean redistributing = new AtomicBoolean();
+    private final AtomicReference<Thread> evThread = new AtomicReference<>();
 
     /* --- --- --- start/termination  state --- --- --- */
+    private final Lock subscribeLock = new ReentrantLock(); // synchronizes all public methods
     private Throwable terminationCause;
-    private boolean completable, terminated, cancelled, subscribed;
+    private boolean terminated, cancelled, completable, subscribed;
 
     /* --- --- --- request distribution state --- --- --- */
     private long undistributed;
@@ -109,10 +113,14 @@ public class MergePublisher<T> implements FSPublisher<T> {
     }
 
     @Override public void moveTo(Executor executor) {
-        if (subscribed)
-            throw new IllegalStateException("cannot move executor after subscribed");
-        cbp.moveTo(executor);
-
+        subscribeLock.lock();
+        try {
+            if (subscribed)
+                throw new IllegalStateException("cannot move executor after subscribed");
+            cbp.moveTo(executor);
+        } finally {
+            subscribeLock.unlock();
+        }
     }
 
     @Override public Executor executor() {
@@ -131,7 +139,15 @@ public class MergePublisher<T> implements FSPublisher<T> {
      */
     public void addPublisher(Publisher<? extends T> publisher) {
         log.trace("{}.addPublisher({})", this, publisher);
-        executor().execute(() -> addPublisherTask(publisher));
+        subscribeLock.lock();
+        try {
+            if (subscribed)
+                executor().execute(() -> addPublisherTask(publisher));
+            else
+                publishersQueue.add(publisher);
+        } finally {
+            subscribeLock.unlock();
+        }
     }
 
     /**
@@ -145,12 +161,26 @@ public class MergePublisher<T> implements FSPublisher<T> {
      * Note that a completion may be emitted from within this method.
      */
     public void markCompletable() {
-        executor().execute(markCompletableTask);
+        subscribeLock.lock();
+        try {
+            if (subscribed)
+                executor().execute(markCompletableTask);
+            else
+                completable = true;
+        } finally {
+            subscribeLock.unlock();
+        }
     }
 
     @Override public void subscribe(Subscriber<? super T> s) {
-        cbp.subscribe(s);
-        executor().execute(subscribedTask);
+        subscribeLock.lock();
+        try {
+            subscribed = true;
+            cbp.subscribe(s);                   // will notify s if already subscribed
+            executor().execute(subscribedTask); // no bad effect if already subscribed
+        } finally {
+            subscribeLock.unlock();
+        }
     }
 
     @Override public String toString() {
@@ -172,11 +202,13 @@ public class MergePublisher<T> implements FSPublisher<T> {
     /* --- --- --- in-executor tasks for public interface methods --- --- --- */
 
     private void addPublisherTask(Publisher<? extends T> publisher) {
+        checkEventThread();
         publishersQueue.add(publisher);
         redistribute(0, "addPublisher()");
     }
 
     private final Runnable markCompletableTask = () -> {
+        checkEventThread();
         if (!completable) {
             completable = true;
             if (!tryComplete(null, null, false, 0)) {
@@ -187,61 +219,72 @@ public class MergePublisher<T> implements FSPublisher<T> {
     };
 
     private final Runnable subscribedTask = () -> {
-        subscribed = true;
+        checkEventThread();
+        if (completable)
+            tryComplete(null, null, false, 0);
         redistribute(0, "subscribe()");
     };
 
 
     /* --- --- --- implementation details --- --- --- */
 
+    private boolean checkEventThread() {
+        Thread me = currentThread();
+        if (!evThread.compareAndSet(null, me) && !me.equals(evThread.get())) {
+            log.error("Bad thread in {} critical section, expected {}", this, evThread.get());
+            assert false : "Concurrent access to critical section";
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isConcurrentOrReentrant(AtomicBoolean flag) {
+        return !checkEventThread() || !flag.compareAndSet(false, true);
+    }
+
+    /**
+     * If terminated or cancelled, is a no-op. Else terminates or cancels if rules allow. If
+     * rules do not allow termination, calls {@code redistribute(additionalUndistributed)}.
+     */
     private boolean tryComplete(@Nullable Throwable cause, @Nullable Source source,
-                             boolean cancel, long additionalUndistributed) {
-        if (completing.compareAndSet(false, true)) {
-            completer = Thread.currentThread();
+                                boolean cancel, long additionalUndistributed) {
+        if (isConcurrentOrReentrant(completing)) {
+            executor().execute(() -> tryComplete(cause, source, cancel, additionalUndistributed));
         } else {
-            if (!Thread.currentThread().equals(completer)) {
-                assert false : "Concurrent tryComplete() call";
-                log.warn("Concurrent {}.tryComplete(cause={}, source={}, cancel={}, " +
-                                "additionalUndistributed={}). scheduling retry on executor {}",
-                        this, cause, source, cancel, additionalUndistributed, executor());
-            }
-            scheduleTryComplete(cause, source, cancel, additionalUndistributed);
-            return terminated;
-        }
-        try {
-            // trivial cases (but lengthy log logic)
-            if (!removeSource(source)) return terminated;
-            if (!checkUnterminated(cause, source, cancel)) return terminated;
+            try {
+                // trivial cases (but lengthy log logic)
+                if (!removeSource(source)) return terminated;
+                if (!checkUnterminated(cause, source, cancel)) return terminated;
 
-            if (ignoreUpstreamErrors && cause != null)
-                log.info("Ignoring upstream error {} from {}", cause, source);
+                if (ignoreUpstreamErrors && cause != null)
+                    log.info("Ignoring upstream error {} from {}", cause, source);
 
-            boolean complete = (cause != null && !ignoreUpstreamErrors)
-                    || (completable && activeSources == 0 && publishersQueue.isEmpty());
-            if (complete || cancel) {
-                terminationCause = ignoreUpstreamErrors ? null : cause;
-                log.trace("{} completing{} with error={} from source={}",
-                          this, cancel ? " by cancel()" : "", terminationCause, source);
-                terminated = true;
-                if (cancel) {
-                    cancelled = true;
-                    for (Source src : sources.keySet())
-                        src.cancel();
-                    assert activeSources == sources.size() : "activeSources != #sources";
-                    activeSources = 0;
-                    sources.clear();
+                boolean complete = (cause != null && !ignoreUpstreamErrors)
+                        || (completable && activeSources == 0 && publishersQueue.isEmpty());
+                if (complete || cancel) {
+                    terminationCause = ignoreUpstreamErrors ? null : cause;
+                    log.trace("{} completing{} with error={} from source={}",
+                            this, cancel ? " by cancel()" : "", terminationCause, source);
+                    terminated = true;
+                    if (cancel) {
+                        cancelled = true;
+                        for (Source src : sources.keySet())
+                            src.cancel();
+                        assert activeSources == sources.size() : "activeSources != #sources";
+                        activeSources = 0;
+                        sources.clear();
+                    }
+                    cbp.complete(terminationCause);
+                    onComplete(terminationCause, cancel);
+                } else {
+                    assert !terminated;
+                    redistribute(additionalUndistributed, "tryComplete");
                 }
-                cbp.complete(terminationCause);
-                onComplete(terminationCause, cancel);
-            } else {
-                assert !terminated;
-                redistribute(additionalUndistributed, "tryComplete");
+            } finally {
+                completing.set(false);
             }
-            return terminated;
-        } finally {
-            completing.set(false);
-            completer = null;
         }
+        return terminated;
     }
 
     private boolean checkUnterminated(@Nullable Throwable cause, @Nullable Source source,
@@ -277,7 +320,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
     }
 
     /**
-     * Add {@code additional} to {@code undistributed} and if the state allows it:
+     * Add {@code additional} to {@code undistributed} and if the state allows:
      * <ol>
      *    <li>Create new {@link Source} instances from queued {@link Publisher}s</li>
      *    <li>Distribute work among sources via {@link Source#request(long)}</li>
@@ -285,26 +328,28 @@ public class MergePublisher<T> implements FSPublisher<T> {
      */
     private void redistribute(long additional, String caller) {
         assert additional >= 0 : "Negative additional";
-        assert redistributing.compareAndSet(false, true)
-                : "Concurrent/reentrant redistribute";
-        try {
-            undistributed += additional;
-            if (redistributeSpecialCases(additional, caller))
-                return;
-            log.trace("{}.redistribute({}) from {}: updated undistributed={}, activeSources={}",
-                      this, additional, caller, undistributed, activeSources);
-            long distributed = 0, total = undistributed;
-            undistributed = 0;
+        if (isConcurrentOrReentrant(redistributing)) {
+            executor().execute(() -> redistribute(additional, caller));
+        } else {
             try {
-                startQueuedPublishers();
-                distributed = redistributeToSources(total, caller);
+                undistributed += additional;
+                if (redistributeSpecialCases(additional, caller))
+                    return;
+                log.trace("{}.redistribute({}) from {}: updated undistributed={}, activeSources={}",
+                        this, additional, caller, undistributed, activeSources);
+                long distributed = 0, total = undistributed;
+                undistributed = 0;
+                try {
+                    startQueuedPublishers();
+                    distributed = redistributeToSources(total, caller);
+                } finally {
+                    assert distributed <= total;
+                    if (distributed < total)
+                        undistributed += total - distributed;
+                }
             } finally {
-                assert distributed <= total;
-                if (distributed < total)
-                    undistributed += total - distributed;
+                redistributing.set(false);
             }
-        } finally {
-            redistributing.set(false);
         }
     }
 
@@ -339,7 +384,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
         }
         assert distributed <= total;
         if (rejected)
-            scheduleRedistribute(caller);
+            executor().execute(() -> redistribute(0, caller));
         return distributed;
     }
 
@@ -378,31 +423,6 @@ public class MergePublisher<T> implements FSPublisher<T> {
         log.trace("{}.startQueuedPublishers(): {} new sources", this, added.size());
     }
 
-    private void scheduleRedistribute(String caller) {
-        int n = redistributeRetries.incrementAndGet();
-        log.debug("Scheduled 1/{} a {}.redistribute(0, {})", n, this, caller);
-        executor().execute(() -> {
-            log.trace("Executing scheduled {}.redistribute(0, {})", this, caller);
-            redistribute(0, caller);
-            redistributeRetries.decrementAndGet();
-        });
-    }
-
-    private void scheduleTryComplete(@Nullable Throwable cause, @Nullable Source source,
-                                     boolean cancel, long additionalUndistributed) {
-        int n = completeRetries.incrementAndGet();
-        log.debug("Scheduled 1/{} {}.tryComplete(cause={}, source={}, cancel={}, " +
-                  "additionalUndistributed={})", n,
-                  this, cause, source, cancel, additionalUndistributed);
-        executor().execute(() -> {
-            log.trace("Scheduled 1/{} {}.tryComplete(cause={}, source={}, cancel={}, " +
-                      "additionalUndistributed={})", n,
-                      this, cause, source, cancel, additionalUndistributed);
-            tryComplete(cause, source, cancel, additionalUndistributed);
-            completeRetries.decrementAndGet();
-        });
-    }
-
     private class Source implements Subscriber<T> {
         private final FSPublisher<? extends T> upstreamPublisher;
         private final int number;
@@ -420,14 +440,14 @@ public class MergePublisher<T> implements FSPublisher<T> {
         public void subscribe() {
             if (active)
                 throw new IllegalStateException("Already subscribed!");
-            subscriberThread = Thread.currentThread();
+            subscriberThread = currentThread();
             active = true;
             this.upstreamPublisher.subscribe(this);
         }
 
         public boolean request(long n) {
-            assert Thread.currentThread() == subscriberThread;
-            assert Thread.currentThread() == onSubscribeThread;
+            assert currentThread() == subscriberThread;
+            assert currentThread() == onSubscribeThread;
             if (!active) {
                 return false;
             } else if (n <= 0) {
@@ -458,10 +478,10 @@ public class MergePublisher<T> implements FSPublisher<T> {
         }
 
         @Override public void onSubscribe(Subscription s)  {
-            onSubscribeThread = Thread.currentThread();
+            onSubscribeThread = currentThread();
             upstream = s;
         }
-        @Override public void      onNext(T item)          {
+        @Override public void onNext(T item)          {
             if (undelivered == 0)
                 log.warn("{}.onNext({}) beyond requested.", this, item);
             else
