@@ -335,7 +335,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
 
     private final Runnable spin = () -> {
         Thread me = Thread.currentThread();
-        if (!eventThread.compareAndSet(null, me)) {
+        if (!eventThread.compareAndSet(null, me) && !me.equals(eventThread.get())) {
             log.error("{}: Event thread changed, was {}. This is a bug.", this, eventThread.get());
             eventThread.set(me);
             assert me.equals(eventThread.get()) : "Changed event thread"; // blow up under test
