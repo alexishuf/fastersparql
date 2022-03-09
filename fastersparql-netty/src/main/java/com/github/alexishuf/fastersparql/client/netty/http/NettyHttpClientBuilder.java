@@ -15,6 +15,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import javax.net.ssl.SSLException;
 import java.io.File;
 import java.net.InetSocketAddress;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 import static io.netty.handler.ssl.SslContextBuilder.forClient;
@@ -23,6 +25,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 @Data @Accessors(fluent = true, chain = true)
 @Slf4j
 public final class NettyHttpClientBuilder {
+    private static Lock SHARED_HOLDER_LOCK = new ReentrantLock();
     private static @MonotonicNonNull EventLoopGroupHolder SHARED_HOLDER;
 
     private boolean shareEventLoopGroup = FasterSparqlNettyProperties.shareEventLoopGroup();
@@ -37,14 +40,19 @@ public final class NettyHttpClientBuilder {
 
     private EventLoopGroupHolder elgHolder() {
         if (shareEventLoopGroup) {
-            if (SHARED_HOLDER == null) {
-                SHARED_HOLDER = EventLoopGroupHolder.builder()
-                        .keepAlive(sharedEventLoopGroupKeepAliveSeconds)
-                        .keepAliveTimeUnit(SECONDS).build();
-            } else if (SHARED_HOLDER.keepAlive(SECONDS) != sharedEventLoopGroupKeepAliveSeconds) {
-                log.warn("sharedEventLoopGroupKeepAliveSeconds={} will not be honored as " +
-                         "shared EventLoopGroupHolder has already been instantiated",
-                        sharedEventLoopGroupKeepAliveSeconds);
+            SHARED_HOLDER_LOCK.lock();
+            try {
+                if (SHARED_HOLDER == null) {
+                    SHARED_HOLDER = EventLoopGroupHolder.builder()
+                            .keepAlive(sharedEventLoopGroupKeepAliveSeconds)
+                            .keepAliveTimeUnit(SECONDS).build();
+                } else if (SHARED_HOLDER.keepAlive(SECONDS) != sharedEventLoopGroupKeepAliveSeconds) {
+                    log.warn("sharedEventLoopGroupKeepAliveSeconds={} will not be honored as " +
+                             "shared EventLoopGroupHolder has already been instantiated",
+                             sharedEventLoopGroupKeepAliveSeconds);
+                }
+            } finally {
+                SHARED_HOLDER_LOCK.unlock();
             }
             return SHARED_HOLDER;
         } else {
