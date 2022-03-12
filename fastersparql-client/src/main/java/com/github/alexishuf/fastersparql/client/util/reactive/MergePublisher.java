@@ -202,13 +202,13 @@ public class MergePublisher<T> implements FSPublisher<T> {
     /* --- --- --- in-executor tasks for public interface methods --- --- --- */
 
     private void addPublisherTask(Publisher<? extends T> publisher) {
-        checkEventThread();
+        assertEventThread();
         publishersQueue.add(publisher);
         redistribute(0, "addPublisher()");
     }
 
     private final Runnable markCompletableTask = () -> {
-        checkEventThread();
+        assertEventThread();
         if (!completable) {
             completable = true;
             if (!tryComplete(null, null, false, 0)) {
@@ -219,7 +219,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
     };
 
     private final Runnable subscribedTask = () -> {
-        checkEventThread();
+        assertEventThread();
         if (completable)
             tryComplete(null, null, false, 0);
         redistribute(0, "subscribe()");
@@ -228,7 +228,16 @@ public class MergePublisher<T> implements FSPublisher<T> {
 
     /* --- --- --- implementation details --- --- --- */
 
-    private boolean checkEventThread() {
+    /**
+     * Assert (not simply boolean test) that this call is being made from the event thread.
+     *
+     * Calling this from a thread which is not the event thread will log an error
+     * (and intentionally raise an {@link AssertionError} if asserts are enabled).
+     *
+     * @return True if called from the event thread, false if not (and asserts are disabled).
+     * @throws AssertionError if not in the event thread and asserts are enabled.
+     */
+    protected boolean assertEventThread() {
         Thread me = currentThread();
         if (!evThread.compareAndSet(null, me) && !me.equals(evThread.get())) {
             log.error("Bad thread in {} critical section, expected {}", this, evThread.get());
@@ -239,7 +248,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
     }
 
     private boolean isConcurrentOrReentrant(AtomicBoolean flag) {
-        return !checkEventThread() || !flag.compareAndSet(false, true);
+        return !assertEventThread() || !flag.compareAndSet(false, true);
     }
 
     /**

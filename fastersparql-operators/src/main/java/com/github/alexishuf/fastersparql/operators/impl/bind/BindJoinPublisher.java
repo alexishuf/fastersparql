@@ -92,7 +92,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
     /* --- --- --- left-side state --- --- --- */
 
     private @NonNegative int leftRequested;
-    private boolean leftActive;
+    private boolean leftActive, loggedLeftNotActive;
     private @MonotonicNonNull Subscription leftSubscription;
 
     /* --- --- --- metrics --- --- --- */
@@ -159,7 +159,6 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
             assert leftSubscription == null : "already has leftSubscription!";
             leftSubscription = s;
             leftActive = true;
-            requestLeft(0);
         }
         @Override public void onError(Throwable error) {
             log.trace("{}.onError({})", this, Objects.toString(error));
@@ -177,7 +176,11 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
         @Override public String toString() { return BindJoinPublisher.this+"leftSubscriber"; }
     };
 
-    private void innerRequestLeft(@NonNegative int completed) {
+    private void requestLeft(@NonNegative int completed) {
+        if (!assertEventThread()) {
+            executor().execute(() -> requestLeft(completed));
+            return;
+        }
         assert leftSubscription != null : "requestLeft called before subscribe";
         assert completed <= leftRequested : "more completions than requested";
         assert leftRequested <= bindConcurrency : "leftRequested above allowed concurrency";
@@ -187,13 +190,10 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 leftRequested += n;
                 leftSubscription.request(n);
             }
-        } else {
+        } else if (!loggedLeftNotActive) {
             log.debug("{}.requestLeft({}): left subscription not active anymore", this, completed);
+            loggedLeftNotActive = true;
         }
-    }
-
-    private void requestLeft(@NonNegative int completed) {
-        executor().execute(() -> innerRequestLeft(completed));
     }
 
     /* --- --- --- right subscription management --- --- --- */
