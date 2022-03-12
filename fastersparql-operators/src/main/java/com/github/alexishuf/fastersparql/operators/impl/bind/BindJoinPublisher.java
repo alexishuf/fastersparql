@@ -191,7 +191,7 @@ class BindJoinPublisher<R> extends MergePublisher<R> {
                 leftSubscription.request(n);
             }
         } else if (!loggedLeftNotActive) {
-            log.debug("{}.requestLeft({}): left subscription not active anymore", this, completed);
+            log.trace("{}.requestLeft({}): left subscription not active anymore", this, completed);
             loggedLeftNotActive = true;
         }
     }
