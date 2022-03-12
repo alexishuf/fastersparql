@@ -426,7 +426,7 @@ public class JsonParser implements ResultsParser {
             }
             assert value != null;
             return value.startsWith("_:") ? value : "_:"+value;
-        } else if ("literal".equalsIgnoreCase(type)
+        } else if ("literal".equalsIgnoreCase(type) || "typed-literal".equalsIgnoreCase(type)
                 || (type == null && (datatype != null || lang != null))) {
             if (lang != null && !lang.isEmpty()) {
                 nt = "\""+value+"\"@"+lang.replace('_', '-');
