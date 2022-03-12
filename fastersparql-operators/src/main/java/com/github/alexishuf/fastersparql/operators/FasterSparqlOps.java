@@ -47,7 +47,7 @@ public class FasterSparqlOps {
      * {@link FasterSparqlOps#addGlobalMetricsListener(PlanMetricsListener)}.
      */
     public static boolean hasGlobalMetricsListeners() {
-        return listeners.isEmpty();
+        return !listeners.isEmpty();
     }
 
     /**
