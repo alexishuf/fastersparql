@@ -16,7 +16,7 @@ public interface Project extends Operator {
      * Create a plan for {@code run(input.execute(), vars)}
      */
     default <R> ProjectPlan<R> asPlan(Plan<R> input, List<String> vars) {
-        return new ProjectPlan<>(rowClass(), this, input, vars, null);
+        return new ProjectPlan<>(rowClass(), this, input, vars, null, null);
     }
 
     default <R> ProjectPlan.ProjectPlanBuilder<R> asPlan() {

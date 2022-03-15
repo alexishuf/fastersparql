@@ -17,6 +17,7 @@ import static java.lang.String.format;
 @Value @Accessors(fluent = true)
 public class SlicePlan<R> implements Plan<R> {
     Class<? super R> rowClass;
+    SlicePlan<R> parent;
     Slice op;
     Plan<R> input;
     long offset, limit;
@@ -31,8 +32,9 @@ public class SlicePlan<R> implements Plan<R> {
     @Builder
     public SlicePlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Slice op,
                      @lombok.NonNull Plan<R> input, long offset, long limit,
-                     @Nullable String name) {
+                     @Nullable SlicePlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.input = input;
         if (offset < 0)
@@ -65,15 +67,15 @@ public class SlicePlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new SlicePlan<>(rowClass, op, input.bind(var2ntValue), offset, limit, name);
+        return new SlicePlan<>(rowClass, op, input.bind(var2ntValue), offset, limit, this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, name);
+        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, name);
+        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, this, name);
     }
 
 }

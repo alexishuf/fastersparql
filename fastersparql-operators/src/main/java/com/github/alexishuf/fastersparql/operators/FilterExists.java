@@ -11,7 +11,8 @@ public interface FilterExists extends Operator {
      * Creates a {@link Plan} for {@code run(input, negate, filters)}.
      */
     default <R> FilterExistsPlan<R> asPlan(Plan<R> input, boolean negate, Plan<R> filter) {
-        return new FilterExistsPlan<>(rowClass(), this, input, negate, filter, null);
+        return new FilterExistsPlan<>(rowClass(), this, input, negate, filter,
+                                      null, null);
     }
 
     default <R> FilterExistsPlan.FilterExistsPlanBuilder<R> asPlan() {

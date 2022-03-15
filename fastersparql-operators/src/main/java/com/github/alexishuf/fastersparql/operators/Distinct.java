@@ -12,7 +12,7 @@ public interface Distinct extends Operator {
      * Creates a {@link Plan} for {@code run(input.execute()}.
      */
     default <R> DistinctPlan<R> asPlan(Plan<R> input) {
-        return new DistinctPlan<>(rowClass(), this, input, null);
+        return new DistinctPlan<>(rowClass(), this, input, null, null);
     }
 
     default <R> DistinctPlan.DistinctPlanBuilder<R> asPlan() {

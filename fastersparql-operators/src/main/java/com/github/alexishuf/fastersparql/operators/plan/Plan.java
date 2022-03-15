@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,14 @@ public interface Plan<R> {
      * A name for this plan.
      */
     String name();
+
+    /**
+     * Get {@code parent} in the {@code parent.bind()} call which created this plan, if this
+     * was created by a bind operation.
+     *
+     * @return the original unbound {@link Plan}, or null if this was not create by a bind.
+     */
+    @Nullable Plan<R> parent();
 
     /**
      * {@link Results#rowClass()} of {@link Plan#execute()};

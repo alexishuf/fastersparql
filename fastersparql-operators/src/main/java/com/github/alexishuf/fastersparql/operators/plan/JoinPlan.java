@@ -17,15 +17,17 @@ public class JoinPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     String name;
     Class<? super R> rowClass;
+    JoinPlan<R> parent;
     Join op;
     List<? extends Plan<R>> operands;
 
     @Builder
     public JoinPlan(@lombok.NonNull Join op, @lombok.NonNull Class<? super R> rowClass,
                     @Singular @lombok.NonNull List<? extends Plan<R>> operands,
-                    @Nullable String name) {
+                    @Nullable JoinPlan<R> parent, @Nullable String name) {
         this.name = name == null ? "Join-"+nextId.getAndIncrement() : name;
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.operands = operands;
     }
@@ -43,14 +45,14 @@ public class JoinPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, var2ntValue), name);
+        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, var2ntValue), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, vars, ntValues), name);
+        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, vars, ntValues), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, vars, ntValues), name);
+        return new JoinPlan<>(op, rowClass, PlanHelpers.bindAll(operands, vars, ntValues), this, name);
     }
 }

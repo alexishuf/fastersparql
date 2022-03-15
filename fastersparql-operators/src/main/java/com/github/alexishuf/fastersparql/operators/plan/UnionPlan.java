@@ -17,14 +17,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class UnionPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     Class<? super R> rowClass;
+    UnionPlan<R> parent;
     Union op;
     List<? extends Plan<R>> inputs;
     String name;
 
     @Builder
     public UnionPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Union op,
-                     @Singular List<? extends Plan<R>> inputs, @Nullable String name) {
+                     @Singular List<? extends Plan<R>> inputs,
+                     @Nullable UnionPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.inputs = inputs == null ? Collections.emptyList() : inputs;
         this.name = name == null ? "Union-"+nextId : name;
@@ -43,14 +46,14 @@ public class UnionPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, var2ntValue), name);
+        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, var2ntValue), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), name);
+        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), name);
+        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), this, name);
     }
 }

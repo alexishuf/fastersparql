@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.val;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import reactor.core.publisher.Flux;
 
 import java.util.*;
@@ -21,6 +22,10 @@ public class TestHelpers {
         return new Plan<List<String>>() {
             @Override public String name() {
                 return "test";
+            }
+
+            @Override public @Nullable Plan<List<String>> parent() {
+                return null;
             }
 
             @Override public Class<? super List<String>> rowClass() {

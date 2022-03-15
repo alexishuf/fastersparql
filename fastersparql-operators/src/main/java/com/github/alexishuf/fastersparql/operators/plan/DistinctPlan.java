@@ -13,14 +13,17 @@ import java.util.Map;
 @Value @Accessors(fluent = true)
 public class DistinctPlan<R> implements Plan<R> {
     Class<? super R> rowClass;
+    DistinctPlan<R> parent;
     Distinct op;
     Plan<R> input;
     String name;
 
     @Builder
     public DistinctPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Distinct op,
-                        @lombok.NonNull Plan<R> input, @Nullable String name) {
+                        @lombok.NonNull Plan<R> input, @Nullable DistinctPlan<R> parent,
+                        @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.input = input;
         this.name = name == null ? "Distinct-"+input.name() : name;
@@ -39,14 +42,14 @@ public class DistinctPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new DistinctPlan<>(rowClass, op, input.bind(var2ntValue), name);
+        return new DistinctPlan<>(rowClass, op, input.bind(var2ntValue), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), name);
+        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), name);
+        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), this, name);
     }
 }

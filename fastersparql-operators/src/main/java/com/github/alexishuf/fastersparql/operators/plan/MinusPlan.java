@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.operators.Minus;
 import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MinusPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     Class<? super R> rowClass;
+    MinusPlan<R> parent;
     Minus op;
     Plan<R> left, right;
     String name;
@@ -22,8 +24,9 @@ public class MinusPlan<R> implements Plan<R> {
     @Builder
     public MinusPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Minus op,
                      @lombok.NonNull Plan<R> left, @lombok.NonNull Plan<R> right,
-                     String name) {
+                     @Nullable MinusPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.left = left;
         this.right = right;
@@ -43,15 +46,15 @@ public class MinusPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new MinusPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), name);
+        return new MinusPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
+        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
+        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
     }
 
 }

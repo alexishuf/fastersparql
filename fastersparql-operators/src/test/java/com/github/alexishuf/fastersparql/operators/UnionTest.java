@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
 import lombok.val;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.provider.Arguments;
 import org.opentest4j.AssertionFailedError;
@@ -110,6 +111,7 @@ public class UnionTest {
             List<String> vars = varsLists.get(i);
             inPlans.add(new Plan<List<String>>() {
                 @Override public String name() { return "test"; }
+                @Override public @Nullable Plan<List<String>> parent() { return null; }
                 @Override public Class<? super List<String>> rowClass() { return List.class; }
                 @Override public List<String> publicVars() { return vars; }
                 @Override public List<String> allVars() { return vars; }

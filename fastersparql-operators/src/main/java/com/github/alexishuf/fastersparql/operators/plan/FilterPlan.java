@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class FilterPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     Class<? super R> rowClass;
+    @Nullable Plan<R> parent;
     Filter op;
     Plan<R> input;
     List<String> filters;
@@ -28,8 +29,9 @@ public class FilterPlan<R> implements Plan<R> {
     public FilterPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Filter op,
                       @lombok.NonNull Plan<R> input,
                       @Singular List<String> filters,
-                      @Nullable String name) {
+                      @Nullable FilterPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.input = input;
         this.filters = filters == null ? Collections.emptyList() : filters;
@@ -51,15 +53,20 @@ public class FilterPlan<R> implements Plan<R> {
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
         Plan<R> boundIn = input.bind(var2ntValue);
         boolean change = boundIn != input;
-        if (filters.isEmpty())
-            return change ? new FilterPlan<>(rowClass, op, boundIn, filters, name) : this;
-        List<String> boundFilters = new ArrayList<>(filters.size());
-        for (String filter : filters) {
-            String bound = SparqlUtils.bind(filter, var2ntValue).toString();
-            //noinspection StringEquality
-            change |= bound != filter;
-            boundFilters.add(bound);
+        List<String> boundFilters;
+        if (filters.isEmpty()) {
+            boundFilters = filters;
+        } else {
+            boundFilters = new ArrayList<>(filters.size());
+            for (String filter : filters) {
+                String bound = SparqlUtils.bind(filter, var2ntValue).toString();
+                //noinspection StringEquality
+                change |= bound != filter;
+                boundFilters.add(bound);
+            }
         }
-        return change ? new FilterPlan<>(rowClass, op, boundIn, boundFilters, name) : this;
+        if (!change)
+            return this;
+        return new FilterPlan<>(rowClass, op, boundIn, boundFilters, this, name);
     }
 }

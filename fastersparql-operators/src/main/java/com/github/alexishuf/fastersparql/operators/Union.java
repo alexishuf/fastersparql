@@ -13,7 +13,7 @@ public interface Union extends Operator {
      * Create a plan for {@code run(inputs)}.
      */
     default <R> UnionPlan<R> asPlan(List<Plan<R>> inputs) {
-        return new UnionPlan<>(rowClass(), this, inputs, null);
+        return new UnionPlan<>(rowClass(), this, inputs, null, null);
     }
 
     default <R> UnionPlan.UnionPlanBuilder<R> asPlan() {

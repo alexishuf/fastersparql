@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class FilterExistsPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     Class<? super R> rowClass;
+    @Nullable Plan<R> parent;
     FilterExists op;
     Plan<R> input;
     boolean negate;
@@ -25,8 +26,9 @@ public class FilterExistsPlan<R> implements Plan<R> {
     public FilterExistsPlan(@lombok.NonNull Class<? super R> rowClass,
                             @lombok.NonNull FilterExists op, @lombok.NonNull  Plan<R> input,
                             boolean negate, @lombok.NonNull  Plan<R> filter,
-                            @Nullable String name) {
+                            @Nullable FilterExistsPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.input = input;
         this.negate = negate;
@@ -48,6 +50,6 @@ public class FilterExistsPlan<R> implements Plan<R> {
 
     @Override public Plan<R> bind(Map<String, String> var2value) {
         return new FilterExistsPlan<>(rowClass, op, input.bind(var2value), negate,
-                                      filter.bind(var2value), name);
+                                      filter.bind(var2value), this, name);
     }
 }

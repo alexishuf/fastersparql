@@ -29,6 +29,10 @@ public class EmptyPlan<R> implements Plan<R> {
         this.rowClass = rowClass;
     }
 
+    @Override public @Nullable Plan<R> parent() {
+        return null;
+    }
+
     @Override public Results<R> execute() {
         return Results.empty(publicVars, rowClass);
     }

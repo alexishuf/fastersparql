@@ -15,7 +15,7 @@ public interface Filter extends Operator {
      * Creates a plan for {@code run(input.execute(), filters, predicates)}.
      */
     default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable List<String> filters) {
-        return new FilterPlan<>(rowClass(), this, input, filters, null);
+        return new FilterPlan<>(rowClass(), this, input, filters, null, null);
     }
 
     default <R> FilterPlan.FilterPlanBuilder<R> asPlan() {

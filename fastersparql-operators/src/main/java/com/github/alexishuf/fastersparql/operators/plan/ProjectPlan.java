@@ -15,6 +15,7 @@ import java.util.Map;
 @Value @Accessors(fluent = true)
 public class ProjectPlan<R> implements Plan<R> {
     Class<? super R> rowClass;
+    ProjectPlan<R> parent;
     Project op;
     Plan<R> input;
     List<String> vars;
@@ -23,8 +24,9 @@ public class ProjectPlan<R> implements Plan<R> {
     @Builder
     public ProjectPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Project op,
                        @lombok.NonNull Plan<R> input, @lombok.NonNull List<String> vars,
-                       @Nullable String name) {
+                       @Nullable ProjectPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.input = input;
         this.vars = vars;
@@ -44,15 +46,15 @@ public class ProjectPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new ProjectPlan<>(rowClass, op, input.bind(var2ntValue), removeBound(var2ntValue.keySet()), name);
+        return new ProjectPlan<>(rowClass, op, input.bind(var2ntValue), removeBound(var2ntValue.keySet()), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), name);
+        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), name);
+        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), this, name);
     }
 
     private List<String> removeBound(Collection<String> bound) {

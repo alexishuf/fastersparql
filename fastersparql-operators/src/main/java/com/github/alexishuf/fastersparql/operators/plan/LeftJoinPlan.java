@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LeftJoinPlan<R> implements Plan<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     Class<? super R> rowClass;
+    LeftJoinPlan<R> parent;
     LeftJoin op;
     Plan<R> left, right;
     String name;
@@ -23,8 +24,9 @@ public class LeftJoinPlan<R> implements Plan<R> {
     @Builder
     public LeftJoinPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull LeftJoin op,
                         @lombok.NonNull Plan<R> left, @lombok.NonNull Plan<R> right,
-                        @Nullable String name) {
+                        @Nullable LeftJoinPlan<R> parent, @Nullable String name) {
         this.rowClass = rowClass;
+        this.parent = parent;
         this.op = op;
         this.left = left;
         this.right = right;
@@ -44,14 +46,14 @@ public class LeftJoinPlan<R> implements Plan<R> {
     }
 
     @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new LeftJoinPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), name);
+        return new LeftJoinPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new LeftJoinPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
+        return new LeftJoinPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
     }
 
     @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new LeftJoinPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), name);
+        return new LeftJoinPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
     }
 }
