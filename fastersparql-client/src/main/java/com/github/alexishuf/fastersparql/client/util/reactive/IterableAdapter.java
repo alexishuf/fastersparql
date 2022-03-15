@@ -58,11 +58,12 @@ public class IterableAdapter<T> implements AsyncIterable<T> {
     @Override synchronized public void cancel() {
         if (!cancelled) {
             cancelled = true;
-            if (!terminated) {
-                cause = new AsyncIterableCancelled();
-                if (subscription != null)
-                    subscription.cancel();
-            }
+            AsyncIterableCancelled ex = new AsyncIterableCancelled();
+            if (cause != null)
+                ex.addSuppressed(cause);
+            cause = ex;
+            if (!terminated && subscription != null)
+                subscription.cancel();
             notifyAll();
         }
     }
