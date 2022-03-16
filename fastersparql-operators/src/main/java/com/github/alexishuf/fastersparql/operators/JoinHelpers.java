@@ -51,9 +51,9 @@ public class JoinHelpers {
         List<? extends Plan<R>> inOps = plan.operands();
         List<? extends Plan<R>> ops = reorder == null ? inOps : reorder.reorder(inOps, useBind);
         switch (ops.size()) {
-            case 0: return Results.empty(Object.class);
+            case 0: return Results.empty(plan.rowClass());
             case 1: return ops.get(0).execute();
-            case 2: return binaryExecutor.apply(plan.op().asPlan(ops));
+            case 2: return binaryExecutor.apply(reorder == null ? plan : plan.withOperands(ops));
         }
 
         int i0 = planIndex(ops.get(0), inOps), i1 = planIndex(ops.get(1), inOps);

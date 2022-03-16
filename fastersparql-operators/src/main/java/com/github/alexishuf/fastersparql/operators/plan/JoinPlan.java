@@ -32,6 +32,10 @@ public class JoinPlan<R> implements Plan<R> {
         this.operands = operands;
     }
 
+    public JoinPlan<R> withOperands(List<? extends Plan<R>> operands) {
+        return new JoinPlan<>(op, rowClass, operands, parent, name);
+    }
+
     @Override public List<String> publicVars() {
         return PlanHelpers.publicVarsUnion(operands);
     }
