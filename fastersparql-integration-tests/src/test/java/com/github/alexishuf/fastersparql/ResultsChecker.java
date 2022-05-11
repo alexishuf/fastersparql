@@ -158,8 +158,8 @@ public class ResultsChecker {
         }
     }
 
-    protected String expandVars(String string) {
-        if (string.equals("$null"))
+    protected static String expandVars(String string) {
+        if (string == null || string.equals("$null"))
             return null;
         int len = string.length();
         StringBuilder b = new StringBuilder(len + 128);

@@ -7,7 +7,8 @@ import java.util.List;
 public enum SparqlMethod {
     GET,
     POST,
-    FORM;
+    FORM,
+    WS;
 
     public boolean hasRequestBody() {
         return this != GET;
@@ -33,8 +34,9 @@ public enum SparqlMethod {
      */
     public String contentType() {
         switch (this) {
-            case GET: return "";
-            case POST: return "application/sparql-query";
+            case  GET: return "";
+            case POST:
+            case   WS: return "application/sparql-query";
             case FORM: return "application/x-www-form-urlencoded";
             default: throw new UnsupportedOperationException(this+" not supported");
         }

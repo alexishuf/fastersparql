@@ -51,8 +51,8 @@ class CSVParserTest {
         for (String suffix : asList(",", "\r\n", " ")) {
             String input = data[2] + suffix;
             int expectedWithSuffix = expected == -1 ? input.length() : expected;
-            assertEquals(expectedWithSuffix, findCloseQuote(input, from));
-            assertEquals(expectedWithSuffix, findCloseQuote(new StringBuilder(input), from));
+            assertEquals(expectedWithSuffix, findCloseQuote(input, from, input.length()));
+            assertEquals(expectedWithSuffix, findCloseQuote(new StringBuilder(input), from, input.length()));
         }
     }
 
@@ -80,11 +80,11 @@ class CSVParserTest {
         String input = data.length < 3 ? "" : data[2];
         if (expected == -1) {
             Class<? extends Throwable> exClass = AbstractSVResultsParser.SyntaxException.class;
-            assertThrows(exClass, () -> findSep(input, from));
-            assertThrows(exClass, () -> findSep(new StringBuilder(input), from));
+            assertThrows(exClass, () -> findSep(input, from, input.length()));
+            assertThrows(exClass, () -> findSep(new StringBuilder(input), from, input.length()));
         } else {
-            assertEquals(expected, findSep(input, from));
-            assertEquals(expected, findSep(new StringBuilder(input), from));
+            assertEquals(expected, findSep(input, from, input.length()));
+            assertEquals(expected, findSep(new StringBuilder(input), from, input.length()));
         }
     }
 

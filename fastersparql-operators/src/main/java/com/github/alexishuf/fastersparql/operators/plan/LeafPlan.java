@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
@@ -13,7 +14,6 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Getter @Accessors(fluent = true)
@@ -70,8 +70,8 @@ public class LeafPlan<R> implements Plan<R> {
         return client.query(query, configuration);
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        CharSequence bound = SparqlUtils.bind(query, var2ntValue);
+    @Override public Plan<R> bind(Binding binding) {
+        CharSequence bound = SparqlUtils.bind(query, binding);
         return new LeafPlan<>(this, bound, client, configuration);
     }
 }

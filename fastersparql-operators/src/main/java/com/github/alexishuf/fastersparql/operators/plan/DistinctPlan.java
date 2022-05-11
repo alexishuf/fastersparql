@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Distinct;
 import lombok.Builder;
 import lombok.Value;
@@ -8,7 +9,6 @@ import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 
 @Value @Accessors(fluent = true)
 public class DistinctPlan<R> implements Plan<R> {
@@ -41,15 +41,7 @@ public class DistinctPlan<R> implements Plan<R> {
         return op.run(this);
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new DistinctPlan<>(rowClass, op, input.bind(var2ntValue), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new DistinctPlan<>(rowClass, op, input.bind(vars, ntValues), this, name);
+    @Override public Plan<R> bind(Binding binding) {
+        return new DistinctPlan<>(rowClass, op, input.bind(binding), this, name);
     }
 }

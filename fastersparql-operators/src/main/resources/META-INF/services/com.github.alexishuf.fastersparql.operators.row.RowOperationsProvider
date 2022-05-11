@@ -1,4 +1,0 @@
-com.github.alexishuf.fastersparql.operators.row.impl.ArrayOperations$Provider
-com.github.alexishuf.fastersparql.operators.row.impl.ListOperations$Provider
-com.github.alexishuf.fastersparql.operators.row.impl.StringArrayOperations$Provider
-com.github.alexishuf.fastersparql.operators.row.impl.CharSequenceArrayOperations$Provider

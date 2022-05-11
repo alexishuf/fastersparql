@@ -8,12 +8,32 @@ import org.checkerframework.checker.nullness.qual.PolyNull;
  */
 public enum Protocol {
     HTTP,
-    HTTPS;
+    HTTPS,
+    WS,
+    WSS;
+
+    public Protocol underlying() {
+        switch (this) {
+            case  WS: return HTTP;
+            case WSS: return HTTPS;
+            default : return this;
+             }
+    }
+
+    public boolean needsSsl() {
+        return this == HTTPS || this == WSS;
+    }
+
+    public boolean isWebSocket() {
+        return this == WS || this == WSS;
+    }
 
     public int port() {
         switch (this) {
-            case  HTTP: return 80;
-            case HTTPS: return 443;
+            case  HTTP:
+            case    WS: return 80;
+            case HTTPS:
+            case   WSS: return 443;
         }
         throw new UnsupportedOperationException("No port known for "+this);
     }
@@ -25,6 +45,10 @@ public enum Protocol {
             return HTTPS;
         else if (uri.startsWith("http:"))
             return HTTP;
-        throw new SparqlClientInvalidArgument("The URI "+uri+" is not HTTP not HTTPS");
+        else if (uri.startsWith("wss:"))
+            return WSS;
+        else if (uri.startsWith("ws:"))
+            return WS;
+        throw new SparqlClientInvalidArgument("The URI "+uri+" does not use a supported scheme: http, https, ws or wss");
     }
 }

@@ -1,11 +1,13 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
 import com.github.alexishuf.fastersparql.client.model.*;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
-import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClientBuilder;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.results.*;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
@@ -15,6 +17,9 @@ import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
+import com.github.alexishuf.fastersparql.client.util.bind.BindPublisher;
+import com.github.alexishuf.fastersparql.client.util.bind.Binder;
+import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
 import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
@@ -36,7 +41,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,10 +54,17 @@ import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Arrays.asList;
+import static java.util.Collections.unmodifiableSet;
 
 
 public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
+    private static final AtomicInteger nextBindPublisherId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(NettySparqlClient.class);
+    private static final Set<SparqlMethod> SUPPORTED_METHODS = unmodifiableSet(new HashSet<>(asList(
+            SparqlMethod.GET, SparqlMethod.FORM, SparqlMethod.POST
+    )));
+
     private final AtomicLong nextHandler = new AtomicLong(1);
     private final SparqlEndpoint endpoint;
     private final AsyncTask<NettyHttpClient<Handler>> netty;
@@ -64,9 +79,9 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         if (endpoint == null) throw new NullPointerException("endpoint is null");
         if (rowParser == null) throw new NullPointerException("rowParser is null");
         if (fragmentParser == null) throw new NullPointerException("fragmentParser is null");
-        this.endpoint = withoutUnsupportedResultFormats(endpoint, ResultsParserRegistry.get());
+        this.endpoint = withSupported(endpoint, ResultsParserRegistry.get(), SUPPORTED_METHODS);
         this.netty = endpoint.resolvedHost().thenApplyThrowing(a ->
-                new NettyHttpClientBuilder().build(endpoint.protocol(), a, handlerFactory));
+                new NettyClientBuilder().buildHTTP(endpoint.protocol(), a, handlerFactory));
         this.rowParser = rowParser;
         this.fragParser = fragmentParser;
     }
@@ -90,29 +105,39 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     }
 
     @Override
+    public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration,
+                            @Nullable Results<R> bindings, @Nullable BindType bindType) {
+        if (bindings == null)
+            return query(sparql, configuration);
+        else if (bindType == null)
+            throw new NullPointerException("bindings != null, but bindType is null!");
+        RowOperations rowOps = RowOperationsRegistry.get().forClass(rowClass());
+        Binder<R> binder = new SparqlClientBinder<>(rowOps, bindings.vars(), this, sparql,
+                                                     configuration, bindType);
+        String name = this.toString()+bindType+"-"+nextBindPublisherId.getAndIncrement();
+        BindPublisher<R> publisher = new BindPublisher<>(bindings.publisher(), 1,
+                                                         binder, name, null);
+        return new Results<>(binder.resultVars(), rowClass(), publisher);
+    }
+
+    @Override
     public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         List<String> vars = SparqlUtils.publicVars(sparql);
         Throwable cause;
-        Throwing.Runnable run = () -> {
-            SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-            SparqlMethod method = eff.methods().get(0);
-            HttpMethod nettyMethod = method2netty(method);
-            PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
-            String accept = resultsAcceptString(eff.resultsAccepts());
-            netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                    nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                    new QueryHandlerSetup(vars, accept, method, publisher));
-        };
         try {
             PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
             publisher.requester = () -> {
-                SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-                SparqlMethod method = eff.methods().get(0);
-                HttpMethod nettyMethod = method2netty(method);
-                String accept = resultsAcceptString(eff.resultsAccepts());
-                netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                        nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                        new QueryHandlerSetup(vars, accept, method, publisher));
+                try {
+                    SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
+                    SparqlMethod method = eff.methods().get(0);
+                    HttpMethod nettyMethod = method2netty(method);
+                    String accept = resultsAcceptString(eff.resultsAccepts());
+                    netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                            nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+                            new QueryHandlerSetup(vars, accept, method, publisher));
+                } catch (Throwable t) {
+                    publisher.complete(t);
+                }
             };
             Results<String[]> raw = new Results<>(vars, String[].class, publisher);
             FSPublisher<R> parsedPub = rowParser.parseStringsArray(raw);
@@ -132,14 +157,19 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             PublisherAdapter<byte[]> publisher = new PublisherAdapter<>();
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             publisher.requester = () -> {
-                SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-                SparqlMethod method = eff.methods().get(0);
-                HttpMethod nettyMethod = method2netty(method);
-                MediaType errorMT = eff.rdfAccepts().get(0);
-                String accept = rdfAcceptString(eff.rdfAccepts());
-                netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                        nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                        new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
+                try {
+                    SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
+                    SparqlMethod method = eff.methods().get(0);
+                    HttpMethod nettyMethod = method2netty(method);
+                    MediaType errorMT = eff.rdfAccepts().get(0);
+                    String accept = rdfAcceptString(eff.rdfAccepts());
+                    netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
+                            nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
+                            new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
+                } catch (Throwable t) {
+                    mtTask.complete(new MediaType("text", "plain"));
+                    publisher.complete(t);
+                }
             };
             Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
             FSPublisher<F> parsedPub = fragParser.parseBytes(raw);
@@ -161,10 +191,11 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         NettyHttpClient<Handler> client = null;
         try {
             client = netty.orElse(null);
+        } catch (CancellationException ignored) {
         } catch (ExecutionException e) {
             if (cancel) {
-                log.info("{}.close(): NettyHttpClient construction failed after cancel: ",
-                         this, e.getCause());
+                log.debug("{}.close(): NettyHttpClient construction failed after cancel: ",
+                          this, e.getCause());
             } else {
                 log.info("{}.close(): NettyHttpClient construction failed: ", this, e.getCause());
             }

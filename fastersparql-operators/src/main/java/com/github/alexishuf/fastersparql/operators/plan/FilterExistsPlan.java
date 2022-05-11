@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.FilterExists;
 import lombok.Builder;
 import lombok.Value;
@@ -8,7 +9,6 @@ import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
@@ -48,8 +48,8 @@ public class FilterExistsPlan<R> implements Plan<R> {
         return op.run(this);
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2value) {
-        return new FilterExistsPlan<>(rowClass, op, input.bind(var2value), negate,
-                                      filter.bind(var2value), this, name);
+    @Override public Plan<R> bind(Binding binding) {
+        return new FilterExistsPlan<>(rowClass, op, input.bind(binding), negate,
+                                      filter.bind(binding), this, name);
     }
 }

@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.operators.expressions;
 
-import com.github.alexishuf.fastersparql.operators.errors.NoRowOperationsException;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
+import com.github.alexishuf.fastersparql.client.model.row.NoRowOperationsException;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
 
 import java.util.List;
 

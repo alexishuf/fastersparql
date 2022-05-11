@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluatorCompiler;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprSyntaxException;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import org.apache.jena.query.Query;
 import org.apache.jena.query.QueryException;
 import org.apache.jena.query.QueryFactory;

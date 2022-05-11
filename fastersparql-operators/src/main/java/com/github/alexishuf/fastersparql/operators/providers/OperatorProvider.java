@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.operators.providers;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Operator;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.OperatorName;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 public interface OperatorProvider {

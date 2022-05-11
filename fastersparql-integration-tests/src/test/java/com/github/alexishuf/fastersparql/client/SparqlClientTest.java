@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.FusekiContainer;
 import com.github.alexishuf.fastersparql.HdtssContainer;
-import com.github.alexishuf.fastersparql.client.model.RDFMediaTypes;
-import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.client.model.*;
 import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.CharSequenceFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
@@ -14,6 +11,8 @@ import com.github.alexishuf.fastersparql.client.parser.row.*;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -29,6 +28,7 @@ import static com.github.alexishuf.fastersparql.client.GraphData.graph;
 import static com.github.alexishuf.fastersparql.client.ResultsData.results;
 import static com.github.alexishuf.fastersparql.client.util.async.Async.async;
 import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
 
 @SuppressWarnings("SameParameterValue")
 @Testcontainers
@@ -39,6 +39,10 @@ public class SparqlClientTest {
             new HdtssContainer(SparqlClientTest.class, "data.hdt", log);
     @Container private static final FusekiContainer FUSEKI =
             new FusekiContainer(SparqlClientTest.class, "data.ttl", log);
+
+    private static final List<RowParser<?>> ROW_PARSERS = asList(StringListRowParser.INSTANCE,
+            CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
+    private static final ByteArrayFragmentParser BYTES_P = ByteArrayFragmentParser.INSTANCE;
 
     private static Stream<Arguments> resultsData() {
         List<ResultsData> seed = asList(
@@ -98,6 +102,8 @@ public class SparqlClientTest {
         List<ResultsData> expanded = new ArrayList<>();
         for (SparqlResultFormat format : asList(SparqlResultFormat.TSV, SparqlResultFormat.JSON)) {
             for (SparqlMethod method : SparqlMethod.VALUES) {
+                if (method == SparqlMethod.WS && format != SparqlResultFormat.TSV)
+                    continue;
                 for (ResultsData base : seed) {
                     expanded.add(base.with(b -> b.clearResultsAccepts().resultsAccept(format)
                                                  .clearMethods().method(method)));
@@ -107,34 +113,57 @@ public class SparqlClientTest {
         return expanded.stream().map(Arguments::arguments);
     }
 
+    private List<SparqlEndpoint> endpoints(boolean isWs, boolean allowFuseki) {
+        List<SparqlEndpoint> list = new ArrayList<>();
+        list.add(isWs ? asWs(HDTSS.asEndpoint()) : HDTSS.asEndpoint());
+        if (allowFuseki && !isWs)
+            list.add(FUSEKI.asEndpoint());
+        return list;
+    }
+
+    private boolean hasMethod(SparqlClient<?, ?> client, SparqlConfiguration request) {
+        List<SparqlMethod> allowed = client.endpoint().configuration().methods();
+        return request.methods().stream().anyMatch(allowed::contains);
+    }
+
+    private @Nullable SparqlEndpoint asWs(SparqlEndpoint ep) {
+        if (!ep.uri().equals(HDTSS.asEndpoint().uri()))
+            return null;
+        String uri = ep.uri().replaceAll("http://", "ws://");
+        val wsConfig = ep.configuration().toBuilder().clearMethods().method(SparqlMethod.WS).build();
+        return new SparqlEndpoint(uri, wsConfig);
+    }
+
     private void testResults(ResultsData d, String clientTag) throws ExecutionException {
         int threads = Runtime.getRuntime().availableProcessors() + 1;
         List<AsyncTask<?>> futures = new ArrayList<>();
         SparqlClientFactory factory = FasterSparql.factory(clientTag);
         List<SparqlClient<?, ?>> clients = new ArrayList<>();
         try {
-            for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
+            for (SparqlEndpoint ep : endpoints(d.isWs(), true)) {
                 SparqlClient<String[], byte[]> client = factory.createFor(ep);
-                clients.add(client);
-                d.assertExpected(client.query(d.sparql(), d.config()));
-                // a second query should work
-                d.assertExpected(client.query(d.sparql(), d.config()));
+                if (hasMethod(client, d.config())) {
+                    clients.add(client);
+                    d.assertExpected(client.query(d.sparql(), d.config()));
+                    // a second query should work
+                    d.assertExpected(client.query(d.sparql(), d.config()));
+                }
             }
             // concurrent queries using no row parser
             for (SparqlClient<?, ?> client : clients) {
+                if (client.endpoint().uri().equals(FUSEKI.asEndpoint().uri()))
+                    continue;
                 for (int i = 0; i < threads; i++)
                     futures.add(async(() -> d.assertExpected(client.query(d.sparql(), d.config()))));
             }
 
             // concurrent queries for each (endpoint, rowParser) pair
-            ByteArrayFragmentParser bytesP = ByteArrayFragmentParser.INSTANCE;
-            List<RowParser<?>> rowParsers = asList(StringListRowParser.INSTANCE,
-                    CharSequenceListRowParser.INSTANCE, CharSequenceArrayRowParser.INSTANCE);
-            for (SparqlEndpoint ep : asList(HDTSS.asEndpoint(), FUSEKI.asEndpoint())) {
-                for (RowParser<?> rowParser : rowParsers) {
+            for (SparqlEndpoint ep : endpoints(d.isWs(), false)) {
+                for (RowParser<?> rowParser : ROW_PARSERS) {
                     futures.add(async(() -> {
-                        try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, bytesP)) {
-                            d.assertExpected(client.query(d.sparql(), d.config()));
+                        try (SparqlClient<?, ?> client = factory.createFor(ep, rowParser, BYTES_P)) {
+                            if (hasMethod(client, d.config()))
+                                d.assertExpected(client.query(d.sparql(), d.config()));
                         }
                     }));
                 }
@@ -152,9 +181,169 @@ public class SparqlClientTest {
         testResults(data, "netty");
     }
 
+    private static Stream<Arguments> bindData() {
+        List<BindData> reused = new ArrayList<>();
+        resultsData().forEach(args -> {
+            BindData d = new BindData((ResultsData) args.get()[0]);
+            reused.add(d);
+            if (!d.expected().isEmpty())
+                reused.add(new BindData(d).bindType(BindType.LEFT_JOIN));
+        });
+
+        List<BindData> base = new ArrayList<>();
+        // expose bound values
+        base.add(BindData.join("SELECT * WHERE {?x foaf:name ?name}", "name")
+                .to("\"alice\"@en-US", "\"charlie\"")
+                .expecting("\"alice\"@en-US", "<$:Alice>", "\"charlie\"", "<$:Charlie>"));
+        // do not omit bound values even if query asks
+        base.add(BindData.join("SELECT ?x WHERE {?x foaf:name ?name}", "name")
+                .to("\"alice\"@en-US", "\"charlie\"")
+                .expecting("\"alice\"@en-US", "<$:Alice>", "\"charlie\"", "<$:Charlie>"));
+        // repeat 2 previous tests using LEFT_JOIN
+        //noinspection ConstantConditions
+        base.add(new BindData(base.get(base.size()-2)).bindType(BindType.LEFT_JOIN));
+        base.add(new BindData(base.get(base.size()-2)).bindType(BindType.LEFT_JOIN));
+        // exists (charlie does not match)
+        base.add(BindData.exists("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}", "name")
+                .to("\"bob\"", "\"charlie\"").expecting("\"bob\""));
+        // not exists
+        base.add(BindData.notExists("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}", "name")
+                .to("\"bob\"", "\"charlie\"").expecting("\"charlie\""));
+        // minus
+        base.add(new BindData(base.get(base.size()-1)).bindType(BindType.MINUS));
+
+        // join with two-column bindings
+        base.add(BindData.join("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}",
+                               "name", "age")
+                         .to("\"alice\"@en-US", "\"23\"^^<$xsd:integer>",
+                                    "\"alice\"@en-US", "\"25\"^^<$xsd:integer>",
+                                    "\"bob\"", "\"25\"^^<$xsd:int>",
+                                    "\"bob\"", "\"23\"^^<$xsd:int>")
+                         .expecting("\"alice\"@en-US", "\"23\"^^<$xsd:integer>", "<$:Bob>",
+                                 "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Bob>",
+                                 "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Charlie>"));
+        // now with a left join...
+        base.add(BindData.leftJoin("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}",
+                        "name", "age")
+                .to("\"alice\"@en-US", "\"23\"^^<$xsd:integer>",
+                        "\"alice\"@en-US", "\"25\"^^<$xsd:integer>",
+                        "\"bob\"", "\"25\"^^<$xsd:int>",
+                        "\"bob\"", "\"23\"^^<$xsd:integer>")
+                .expecting("\"alice\"@en-US", "\"23\"^^<$xsd:integer>", "<$:Bob>",
+                        "\"alice\"@en-US", "\"25\"^^<$xsd:integer>", null,
+                        "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Bob>",
+                        "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Charlie>",
+                        "\"bob\"", "\"23\"^^<$xsd:integer>", null));
+        //join with long own bindings
+        base.add(BindData.join("SELECT * WHERE {?x foaf:age ?age}", "age")
+                         .to("\"22\"^^<$xsd:integer>",
+                                 "\"23\"^^<$xsd:integer>",
+                                 "\"24\"^^<$xsd:integer>",
+                                 "\"25\"^^<$xsd:int>",
+                                 "\"26\"^^<$xsd:integer>",
+                                 "\"27\"^^<$xsd:integer>",
+                                 "\"28\"^^<$xsd:integer>",
+                                 "\"29\"^^<$xsd:integer>",
+                                 "\"30\"^^<$xsd:integer>",
+                                 "\"31\"^^<$xsd:integer>",
+                                 "\"32\"^^<$xsd:integer>")
+                         .expecting("\"23\"^^<$xsd:integer>", "<$:Alice>",
+                                 "\"23\"^^<$xsd:integer>", "<$:Eric>",
+                                 "\"25\"^^<$xsd:int>", "<$:Bob>"));
+        // same as a left join
+        base.add(BindData.leftJoin("SELECT * WHERE {?x foaf:age ?age}", "age")
+                .to("\"22\"^^<$xsd:integer>",
+                        "\"23\"^^<$xsd:integer>",
+                        "\"24\"^^<$xsd:integer>",
+                        "\"25\"^^<$xsd:int>",
+                        "\"26\"^^<$xsd:integer>",
+                        "\"27\"^^<$xsd:integer>",
+                        "\"28\"^^<$xsd:integer>",
+                        "\"29\"^^<$xsd:integer>",
+                        "\"30\"^^<$xsd:integer>",
+                        "\"31\"^^<$xsd:integer>",
+                        "\"32\"^^<$xsd:integer>")
+                .expecting("\"22\"^^<$xsd:integer>", null,
+                        "\"23\"^^<$xsd:integer>", "<$:Alice>",
+                        "\"23\"^^<$xsd:integer>", "<$:Eric>",
+                        "\"24\"^^<$xsd:integer>", null,
+                        "\"25\"^^<$xsd:int>", "<$:Bob>",
+                        "\"26\"^^<$xsd:integer>", null,
+                        "\"27\"^^<$xsd:integer>", null,
+                        "\"28\"^^<$xsd:integer>", null,
+                        "\"29\"^^<$xsd:integer>", null,
+                        "\"30\"^^<$xsd:integer>", null,
+                        "\"31\"^^<$xsd:integer>", null,
+                        "\"32\"^^<$xsd:integer>", null));
+        List<BindData> own = new ArrayList<>();
+        for (SparqlResultFormat fmt : asList(SparqlResultFormat.TSV, SparqlResultFormat.JSON)) {
+            for (SparqlMethod method : SparqlMethod.VALUES) {
+                if (method == SparqlMethod.WS && fmt != SparqlResultFormat.TSV)
+                    continue;
+                for (BindData d : base) {
+                    own.add(d.with(b -> b.clearResultsAccepts().resultsAccept(fmt)
+                                         .clearMethods().method(method)));
+                }
+            }
+        }
+        assert own.size() == base.size() * ( (3 * 2) + 1 );
+        //                                    ^   ^    +--> WS/TSV
+        //                                    |   +-------> TSV,JSON
+        //                                    +-----------> POST,FORM,GET
+        return Stream.concat(reused.stream(), own.stream()).map(Arguments::arguments);
+    }
+
+    private void testBind(BindData d, String clientTag) throws ExecutionException {
+        int threads = Runtime.getRuntime().availableProcessors() + 1;
+        SparqlClientFactory factory = FasterSparql.factory(clientTag);
+        List<SparqlClient<String[], ?>> clients = new ArrayList<>();
+        List<AsyncTask<?>> futures = new ArrayList<>();
+        boolean allowFuseki = d.config().methods().equals(singletonList(SparqlMethod.POST))
+                && d.config().resultsAccepts().equals(singletonList(SparqlResultFormat.TSV));
+        try {
+            for (SparqlEndpoint ep : endpoints(d.isWs(), allowFuseki)) {
+                SparqlClient<String[], byte[]> client = factory.createFor(ep);
+                if (hasMethod(client, d.config())) {
+                    clients.add(client);
+                    d.assertExpected(d.query(client));
+                    d.assertExpected(d.query(client)); // follow-up query also works
+                }
+            }
+            //concurrent queries without a row parser
+            for (SparqlClient<String[], ?> client : clients) {
+                if (client.endpoint().uri().equals(FUSEKI.asEndpoint().uri()))
+                    continue;
+                for (int i = 0; i < threads; i++)
+                    futures.add(async(() -> d.assertExpected(d.query(client))));
+            }
+            //concurrent queries with a row parser
+            for (SparqlEndpoint ep : endpoints(d.isWs(), false)) {
+                for (RowParser<?> rp : ROW_PARSERS) {
+                    futures.add(async(() -> {
+                        try (SparqlClient<?, byte[]> client = factory.createFor(ep, rp, BYTES_P)) {
+                            if (hasMethod(client, d.config()))
+                                d.assertExpected(d.query(client, rp));
+                        }
+                    }));
+                }
+            }
+            for (AsyncTask<?> f : futures)
+                f.get();
+        } finally {
+            for (SparqlClient<?, ?> client : clients) client.close();
+        }
+    }
+
+    @ParameterizedTest @MethodSource("bindData")
+    void testBindNetty(BindData data) throws ExecutionException {
+        testBind(data, "netty");
+    }
+
     private void testGraph(GraphData data, String tag) throws ExecutionException {
         SparqlClientFactory factory = FasterSparql.factory(tag);
         try (SparqlClient<String[], byte[]> client = factory.createFor(FUSEKI.asEndpoint())) {
+            if (!client.endpoint().configuration().methods().contains(data.method()))
+                return; // skip as method is not supported
             data.assertExpected(client.queryGraph(data.sparql(), data.config()));
         }
         List<AsyncTask<?>> futures = new ArrayList<>();

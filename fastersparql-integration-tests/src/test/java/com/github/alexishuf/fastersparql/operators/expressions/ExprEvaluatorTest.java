@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.expressions;
 
-import com.github.alexishuf.fastersparql.operators.row.impl.ListOperations;
+import com.github.alexishuf.fastersparql.client.model.row.impl.ListOperations;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import org.junit.jupiter.params.ParameterizedTest;

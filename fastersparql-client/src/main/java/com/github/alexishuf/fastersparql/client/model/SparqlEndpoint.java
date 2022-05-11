@@ -192,9 +192,6 @@ public final class SparqlEndpoint {
         }
         if (!parsed.isAbsolute())
             throw new SparqlClientInvalidArgument(uri+" is not an absolute URI");
-        String scheme = parsed.getScheme();
-        if (!scheme.startsWith("http"))
-            throw new SparqlClientInvalidArgument(uri+"is not HTTP nor HTTPS");
         this.toURI = parsed;
         this.uri = uri;
         this.protocol = Protocol.fromURI(uri);

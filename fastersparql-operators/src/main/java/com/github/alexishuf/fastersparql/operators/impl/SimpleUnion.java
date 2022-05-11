@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.util.reactive.MergePublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
@@ -10,7 +11,6 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.PlanHelpers;
 import com.github.alexishuf.fastersparql.operators.plan.UnionPlan;
 import com.github.alexishuf.fastersparql.operators.providers.UnionProvider;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;

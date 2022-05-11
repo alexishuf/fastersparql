@@ -72,7 +72,7 @@ To support user-defined row types, do the following:
 
 1. Create an implementation of `RowOperations`
 2. Implement a `RowOperationsProvider` with a default constructor 
-3. Create a `com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider`
+3. Create a `RowOperationsProvider`
    resource file under `META-INF/services` containing the fully qualified class 
    name of your `RowOperationsProvider` implementation
 

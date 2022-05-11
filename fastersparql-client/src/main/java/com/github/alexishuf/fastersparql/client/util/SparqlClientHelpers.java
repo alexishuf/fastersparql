@@ -203,8 +203,8 @@ public class SparqlClientHelpers {
      * @throws UnacceptableSparqlConfiguration {@link SparqlConfiguration#resultsAccepts()}
      *         would be empty on the returned endpoint (no requested results format is supported).
      */
-    public static SparqlEndpoint withoutUnsupportedResultFormats(SparqlEndpoint endpoint,
-                                                                 ResultsParserRegistry reg) {
+    public static SparqlEndpoint withSupported(SparqlEndpoint endpoint, ResultsParserRegistry reg,
+                                               Collection<SparqlMethod> allowedMethods) {
         List<SparqlResultFormat> supportedFormats = new ArrayList<>();
         boolean changed = false;
         SparqlConfiguration request = endpoint.configuration();
@@ -223,8 +223,11 @@ public class SparqlClientHelpers {
                          " has a ResultsParser in ResultsParserRegistry.get()";
             throw new UnacceptableSparqlConfiguration(endpoint.uri(), offer, request, msg);
         }
+        List<SparqlMethod> supportedMethods = new ArrayList<>(endpoint.configuration().methods());
+        changed |= supportedMethods.removeIf(m -> !allowedMethods.contains(m));
         if (changed) {
             SparqlConfiguration amended = request.toBuilder()
+                    .clearMethods().methods(supportedMethods)
                     .clearResultsAccepts().resultsAccepts(supportedFormats)
                     .build();
             return new SparqlEndpoint(endpoint.uri(), amended);

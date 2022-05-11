@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Slice;
 import lombok.Builder;
 import lombok.Value;
@@ -9,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 
 import static java.lang.String.format;
 
@@ -66,16 +66,7 @@ public class SlicePlan<R> implements Plan<R> {
         return input.allVars();
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new SlicePlan<>(rowClass, op, input.bind(var2ntValue), offset, limit, this, name);
+    @Override public Plan<R> bind(Binding binding) {
+        return new SlicePlan<>(rowClass, op, input.bind(binding), offset, limit, this, name);
     }
-
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new SlicePlan<>(rowClass, op, input.bind(vars, ntValues), offset, limit, this, name);
-    }
-
 }

@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProvider;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProviderRegistry;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 
 import java.util.ArrayList;
 import java.util.Collection;

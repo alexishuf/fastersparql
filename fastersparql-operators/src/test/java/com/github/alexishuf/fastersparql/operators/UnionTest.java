@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.AllArgsConstructor;
 import lombok.val;
@@ -11,7 +12,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.opentest4j.AssertionFailedError;
 import reactor.core.publisher.Flux;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
@@ -119,7 +123,7 @@ public class UnionTest {
                     val pub = FSPublisher.bindToAny(Flux.fromIterable(rows));
                     return new Results<>(vars, List.class, pub);
                 }
-                @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {
+                @Override public Plan<List<String>> bind(Binding binding) {
                     throw new UnsupportedOperationException();
                 }
             });

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.Minus;
 import lombok.Builder;
@@ -9,7 +10,6 @@ import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
@@ -45,16 +45,7 @@ public class MinusPlan<R> implements Plan<R> {
         return VarUtils.union(left.allVars(), right.allVars());
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new MinusPlan<>(rowClass, op, left.bind(var2ntValue), right.bind(var2ntValue), this, name);
+    @Override public Plan<R> bind(Binding binding) {
+        return new MinusPlan<>(rowClass, op, left.bind(binding), right.bind(binding), this, name);
     }
-
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new MinusPlan<>(rowClass, op, left.bind(vars, ntValues), right.bind(vars, ntValues), this, name);
-    }
-
 }

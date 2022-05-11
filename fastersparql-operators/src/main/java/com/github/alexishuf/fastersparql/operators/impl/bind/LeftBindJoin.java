@@ -1,15 +1,16 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
+import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.LeftJoin;
-import com.github.alexishuf.fastersparql.operators.impl.Merger;
 import com.github.alexishuf.fastersparql.operators.plan.LeftJoinPlan;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.providers.LeftJoinProvider;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
+
+import static com.github.alexishuf.fastersparql.operators.impl.bind.NativeBindHelper.preferNative;
 
 @Value @Accessors(fluent = true)
 public class LeftBindJoin implements LeftJoin {
@@ -31,11 +32,6 @@ public class LeftBindJoin implements LeftJoin {
     }
 
     @Override public <R> Results<R> checkedRun(LeftJoinPlan<R> plan) {
-        Plan<R> left = plan.left();
-        Merger<R> merger = new Merger<>(rowOps, left.publicVars(), plan.right());
-        Results<R> lr = left.execute();
-        BindJoinPublisher<R> pub = new BindJoinPublisher<>(bindConcurrency, lr.publisher(), merger,
-                                                           BindJoinPublisher.JoinType.LEFT, plan);
-        return new Results<>(merger.outVars(), lr.rowClass(), pub);
+        return preferNative(rowOps, bindConcurrency, BindType.LEFT_JOIN, plan.left(), plan.right());
     }
 }

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.row.impl;
 
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsProvider;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsProvider;
+import com.github.alexishuf.fastersparql.client.model.row.impl.ArrayOperations;
 import com.github.alexishuf.fastersparql.operators.row.RowOperationsTestBase;
 
 class ArrayOperationsTest extends RowOperationsTestBase {

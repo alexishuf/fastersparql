@@ -35,7 +35,7 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
     }
 
     private HdtssContainer(File hdtFile, Logger log, @Nullable File deleteOnClose) {
-        super(DockerImageName.parse("alexishuf/hdtss"));
+        super(DockerImageName.parse("alexishuf/hdtss:jdk"));
         this.deleteOnClose = deleteOnClose;
         withFileSystemBind(hdtFile.getAbsolutePath(),
                 "/data/data.hdt", BindMode.READ_ONLY)
@@ -55,7 +55,13 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
     }
 
     public SparqlEndpoint asEndpoint() {
+        return asEndpoint("");
+    }
+
+    public SparqlEndpoint asEndpoint(String options) {
         int port = getMappedPort(8080);
-        return SparqlEndpoint.parse(format("http://%s:%d/sparql", getHost(), port));
+        String sep = options == null || options.isEmpty() ? "" : "@";
+        String augmented = format("%s%shttp://%s:%d/sparql", options, sep, getHost(), port);
+        return SparqlEndpoint.parse(augmented);
     }
 }

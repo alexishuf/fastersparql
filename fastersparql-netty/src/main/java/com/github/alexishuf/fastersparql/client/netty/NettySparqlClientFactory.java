@@ -19,6 +19,8 @@ public class NettySparqlClientFactory implements SparqlClientFactory {
     public <Row, Fragment> SparqlClient<Row, Fragment>
     createFor(SparqlEndpoint endpoint, RowParser<Row> rowParser,
               FragmentParser<Fragment> fragmentParser) {
+        if (endpoint.protocol().isWebSocket())
+            return new NettyWebSocketSparqlClient<>(endpoint, rowParser, fragmentParser);
         return new NettySparqlClient<>(endpoint, rowParser, fragmentParser);
     }
 }

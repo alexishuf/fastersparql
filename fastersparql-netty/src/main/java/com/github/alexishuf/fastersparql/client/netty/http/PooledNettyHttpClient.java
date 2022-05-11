@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
-import com.github.alexishuf.fastersparql.client.netty.util.FasterSparqlNettyProperties;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -37,13 +36,14 @@ public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     public PooledNettyHttpClient(EventLoopGroupHolder groupHolder,
                                  InetSocketAddress address,
                                  Supplier<? extends ReusableHttpClientInboundHandler> hFactory,
+                                 boolean poolFIFO,
                                  @Nullable SslContext sslContext) {
         EventLoopGroup group = groupHolder.acquire();
         try {
             Bootstrap bootstrap = new Bootstrap().group(group).remoteAddress(address)
                     .channel(groupHolder.transport().channelClass());
             this.host = address.getHostString();
-            boolean lifo = !FasterSparqlNettyProperties.poolFIFO();
+            boolean lifo = !poolFIFO;
             this.pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
                 @Override public void channelAcquired(Channel ch) {
                     log.trace("channelAcquired({})", ch);

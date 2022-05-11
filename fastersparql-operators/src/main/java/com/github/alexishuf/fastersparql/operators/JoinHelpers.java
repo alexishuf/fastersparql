@@ -2,16 +2,20 @@ package com.github.alexishuf.fastersparql.operators;
 
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.impl.ProjectingProcessor;
 import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.ServiceLoader;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -37,7 +41,7 @@ public class JoinHelpers {
      * @param reorder The {@link JoinReorderStrategy} that will be used to reorder
      *                {@code plan.operands()} seeking lower execution time for full consumption
      *                of results. If null, the operands will not be reordered.
-     * @param useBind whether the joins will use {@link Plan#bind(Map)} this is forwarded to
+     * @param useBind whether the joins will use {@link Plan#bind(Binding)} this is forwarded to
      *                {@link JoinReorderStrategy#reorder(List, boolean)}.
      * @param binaryExecutor A function that turns a {@link JoinPlan} with two operands into a
      *                       {@link Results} instance.
@@ -122,7 +126,7 @@ public class JoinHelpers {
      *
      * @param leftVars public (i.e. result) vars of the left operand
      * @param right right-side operand
-     * @param useBind whether the join will use the {@link Plan#bind(Map)} operation.
+     * @param useBind whether the join will use the {@link Plan#bind(Binding)} operation.
      * @return true iff the join would cause a cartesian product.
      */
     public static boolean isProduct(Collection<String> leftVars, Plan<?> right, boolean useBind) {

@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.apache.jena.atlas.io.StringWriterI;

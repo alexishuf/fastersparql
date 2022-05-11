@@ -33,17 +33,17 @@ public class TSVParser extends AbstractSVResultsParser {
         super(consumer, "\n");
     }
 
-    @Override protected int readTerm(CharSequence input, int from) throws SyntaxException {
-        int i = CSUtils.skipUntil(input, from, '\n', '\t');
-        if (i == input.length()) {
-            carry(input, from);
+    @Override protected int readTerm(CharSequence input, int begin, int end) throws SyntaxException {
+        int i = CSUtils.skipUntilIn(input, begin, end, '\n', '\t');
+        if (i == end) {
+            carry(input, begin);
         } else {
             boolean isEOL = input.charAt(i) == '\n';
-            char first = from == i ? '\0' : input.charAt(from);
+            char first = begin == i ? '\0' : input.charAt(begin);
             if (CSUtils.charInSorted(first, NT_FIRST) || atHeaders())
-                addTerm(input, from, i, isEOL);
+                addTerm(input, begin, i, isEOL);
             else
-                addAsNt(input, from, i, isEOL);
+                addAsNt(input, begin, i, isEOL);
         }
         return i+1;
     }

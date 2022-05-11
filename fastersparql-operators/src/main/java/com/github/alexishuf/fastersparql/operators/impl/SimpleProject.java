@@ -1,13 +1,13 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Project;
 import com.github.alexishuf.fastersparql.operators.errors.IllegalOperatorArgumentException;
 import com.github.alexishuf.fastersparql.operators.plan.ProjectPlan;
 import com.github.alexishuf.fastersparql.operators.providers.ProjectProvider;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import lombok.val;

@@ -18,6 +18,7 @@ public class FasterSparqlNettyProperties extends FasterSparqlProperties {
     public static final String POOL_FIFO = "fastersparql.netty.pool.fifo";
     public static final String ELG_SHARED = "fastersparql.netty.eventloopgroup.shared";
     public static final String ELG_KEEPALIVE = "fastersparql.netty.eventloopgroup.keepalive-seconds";
+    public static final String WS_MAX_HTTP = "fastersparql.netty.ws.max-http";
 
     /* --- --- --- default values --- --- --- */
 
@@ -28,6 +29,7 @@ public class FasterSparqlNettyProperties extends FasterSparqlProperties {
     public static final boolean DEF_POOL_FIFO     = false;
     public static final boolean DEF_ELG_SHARED    = true;
     public static final int     DEF_ELG_KEEPALIVE = 15;
+    public static final int     DEF_WS_MAX_HTTP   = 8192;
 
     /* --- --- --- accessors --- --- --- */
 
@@ -132,5 +134,14 @@ public class FasterSparqlNettyProperties extends FasterSparqlProperties {
      */
     public static int sharedEventLoopGroupKeepAliveSeconds() {
         return readPositiveInt(ELG_KEEPALIVE, DEF_ELG_KEEPALIVE);
+    }
+
+    /**
+     * The maximum size, in bytes, of HTTP responses when performing a WebSocket handshake. This
+     * limit does not apply to websocket messages that will be exchanged after the handshake.
+     * The default is 8192 (8 KiB).
+     */
+    public static int wsMaxHttpResponse() {
+        return readPositiveInt(WS_MAX_HTTP, DEF_WS_MAX_HTTP);
     }
 }

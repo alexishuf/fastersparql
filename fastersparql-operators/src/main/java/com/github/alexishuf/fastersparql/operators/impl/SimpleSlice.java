@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
@@ -9,7 +10,6 @@ import com.github.alexishuf.fastersparql.operators.Slice;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.SlicePlan;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
 import lombok.Value;
 import lombok.experimental.Accessors;
 import lombok.val;

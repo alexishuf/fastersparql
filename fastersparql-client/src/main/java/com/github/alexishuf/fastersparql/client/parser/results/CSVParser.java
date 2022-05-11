@@ -7,7 +7,7 @@ import com.github.alexishuf.fastersparql.client.util.MediaType;
 import java.util.Collections;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.client.util.CSUtils.skipUntil;
+import static com.github.alexishuf.fastersparql.client.util.CSUtils.skipUntilIn;
 
 public class CSVParser extends AbstractSVResultsParser {
     private final StringBuilder unquoteBuilder = new StringBuilder();
@@ -29,32 +29,31 @@ public class CSVParser extends AbstractSVResultsParser {
 
     private static final char[] END_TERMS = {'\r', '"', ','};
 
-    @Override protected int readTerm(CharSequence input, int from) throws SyntaxException {
-        int len = input.length();
+    @Override protected int readTerm(CharSequence input, int begin, int end) throws SyntaxException {
         while (true) {
-            int first = skipUntil(input, from, END_TERMS);
-            if (first == len) {
-                return carry(input, from);
+            int first = skipUntilIn(input, begin, end, END_TERMS);
+            if (first == end) {
+                return carry(input, begin);
             } else if (input.charAt(first) == '"') {
-                int closeQuote = findCloseQuote(input, first+1);
-                if (closeQuote == len)
-                    return carry(input, from);
-                int end = findSep(input, closeQuote+1);
-                if (end == len)
-                    return carry(input, from);
-                boolean isEOL = input.charAt(end) == '\r';
+                int closeQuote = findCloseQuote(input, first+1, end);
+                if (closeQuote == end)
+                    return carry(input, begin);
+                int sepIdx = findSep(input, closeQuote+1, end);
+                if (sepIdx == end)
+                    return carry(input, begin);
+                boolean isEOL = input.charAt(sepIdx) == '\r';
                 CharSequence unquoted = unquote(input, first+1, closeQuote);
                 CharSequence nt = toNt(unquoted, 0, unquoted.length());
                 addTerm(nt, 0, nt.length(), isEOL);
-                return end + (isEOL ? 2 : 1);
+                return sepIdx + (isEOL ? 2 : 1);
             } else if (input.charAt(first) == ',') {
-                return trimAndAdd(input, from, first, false)+1;
+                return trimAndAdd(input, begin, first, false)+1;
             } else {
                 assert input.charAt(first) == '\r';
-                if (first+1 >= len)
-                    return carry(input, from);
+                if (first+1 >= end)
+                    return carry(input, begin);
                 else if (input.charAt(first+1) == '\n')
-                    return trimAndAdd(input, from, first, true)+2;
+                    return trimAndAdd(input, begin, first, true)+2;
                 // else try a new first
             }
         }
@@ -73,10 +72,10 @@ public class CSVParser extends AbstractSVResultsParser {
         return givenEnd;
     }
 
-    static int findCloseQuote(CharSequence input, int from) {
-        int end = input.length(), i = from;
+    static int findCloseQuote(CharSequence input, int from, int end) {
+        int i = from;
         while (i < end) {
-            i = skipUntil(input, i, '"');
+            i = skipUntilIn(input, i, end, '"');
             if (i > from && input.charAt(i-1) == '\\')
                 i += 1;
             else if (i+1 < end  && input.charAt(i+1) == '"')
@@ -87,8 +86,7 @@ public class CSVParser extends AbstractSVResultsParser {
         return end;
     }
 
-    static int findSep(CharSequence cs, int from) throws SyntaxException {
-        int end = cs.length();
+    static int findSep(CharSequence cs, int from, int end) throws SyntaxException {
         for (int i = from; i < end; i++) {
             char c = cs.charAt(i);
             if (c == ',') {

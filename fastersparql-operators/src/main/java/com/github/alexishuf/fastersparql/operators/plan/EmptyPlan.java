@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import lombok.Builder;
 import lombok.Singular;
 import lombok.Value;
@@ -9,7 +10,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Value  @Accessors(fluent = true)
@@ -37,7 +37,7 @@ public class EmptyPlan<R> implements Plan<R> {
         return Results.empty(publicVars, rowClass);
     }
 
-    @Override public Plan<R> bind(Map<String, String> ignored) {
+    @Override public Plan<R> bind(Binding binding) {
         return this;
     }
 }

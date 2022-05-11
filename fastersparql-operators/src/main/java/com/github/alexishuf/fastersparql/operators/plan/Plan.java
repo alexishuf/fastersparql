@@ -1,11 +1,10 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Represents a tree of operators applied to their arguments
@@ -41,7 +40,7 @@ public interface Plan<R> {
     /**
      * All vars used within this plan, not only those exposed in results.
      *
-     * This is the list of variables that should be used with {@link Plan#bind(Map)} and related
+     * This is the list of variables that should be used with {@link Plan#bind(Binding)} and related
      * methods.
      *
      * @return a non-null (possibly empty) list of non-null and non-empty variable names
@@ -62,35 +61,9 @@ public interface Plan<R> {
     /**
      * Create a copy of this {@link Plan} replacing the variables with the values they map to.
      *
-     * @param var2ntValue a map from variable names to RDF terms in N-Triples syntax.
+     * @param binding a mapping from variable names to RDF terms in N-Triples syntax.
      * @return a non-null Plan, being a copy of this with replaced variables or {@code this}
      *         if there is no variable to replace.
      */
-    Plan<R> bind(Map<String, String> var2ntValue);
-
-    /**
-     * Version of {@link Plan#bind(Map)} where the i-th {@code ntValue} corresponds to the
-     * i-th {@code var}.
-     *
-     * @param vars list of variable names
-     * @param ntValues list of values, in N-Triples syntax. The i-th value corresponds to the i-th
-     *                 variable.
-     * @return a non-null {@link Plan} with the named variables replaced with the given values.
-     */
-    default Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return bind(VarUtils.toMap(vars, ntValues));
-    }
-
-    /**
-     * Version of {@link Plan#bind(Map)} where the i-th {@code ntValue} corresponds to the
-     * i-th {@code var}.
-     *
-     * @param vars list of variable names
-     * @param ntValues list of values, in N-Triples syntax. The i-th value corresponds to the i-th
-     *                 variable.
-     * @return a non-null {@link Plan} with the named variables replaced with the given values.
-     */
-    default Plan<R> bind(List<String> vars, String[] ntValues) {
-        return bind(VarUtils.toMap(vars, ntValues));
-    }
+    Plan<R> bind(Binding binding);
 }

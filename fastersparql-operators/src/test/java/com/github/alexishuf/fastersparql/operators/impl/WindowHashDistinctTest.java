@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
 import com.github.alexishuf.fastersparql.operators.TestHelpers;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.row.RowOperationsRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

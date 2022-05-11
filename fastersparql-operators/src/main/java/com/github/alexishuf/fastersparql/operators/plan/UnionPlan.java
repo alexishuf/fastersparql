@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Union;
 import lombok.Builder;
 import lombok.Singular;
@@ -10,7 +11,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Value  @Accessors(fluent = true)
@@ -45,15 +45,8 @@ public class UnionPlan<R> implements Plan<R> {
         return PlanHelpers.allVarsUnion(inputs);
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, var2ntValue), this, name);
+    @Override public Plan<R> bind(Binding binding) {
+        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, binding), this, name);
     }
 
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, vars, ntValues), this, name);
-    }
 }

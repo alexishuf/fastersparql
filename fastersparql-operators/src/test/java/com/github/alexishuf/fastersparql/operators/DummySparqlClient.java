@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.model.Results;
@@ -23,7 +24,8 @@ public class DummySparqlClient<R,F> implements SparqlClient<R,F> {
     }
 
     @Override
-    public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
+    public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration,
+                            @Nullable Results<R> bindings, @Nullable BindType bindType) {
         throw new UnsupportedOperationException();
     }
 

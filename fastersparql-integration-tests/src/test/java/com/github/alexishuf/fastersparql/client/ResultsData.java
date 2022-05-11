@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.ResultsChecker;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
+import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -9,6 +10,8 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.function.Consumer;
 
 @EqualsAndHashCode(callSuper = true)
@@ -40,9 +43,18 @@ class ResultsData extends ResultsChecker {
         this.sparql = PREFIX+sparql;
     }
 
+    public ResultsData(String sparql, List<String> vars, String... values) {
+        super(vars, values);
+        this.sparql = PREFIX+sparql;
+    }
+
     public ResultsData with(Consumer<SparqlConfiguration.SparqlConfigurationBuilder> configurator) {
         SparqlConfiguration.SparqlConfigurationBuilder builder = config.toBuilder();
         configurator.accept(builder);
         return new ResultsData(this).config(builder.build());
+    }
+
+    public boolean isWs() {
+        return config.methods().equals(Collections.singletonList(SparqlMethod.WS));
     }
 }

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Project;
 import lombok.Builder;
 import lombok.Value;
@@ -8,9 +9,7 @@ import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 
 @Value @Accessors(fluent = true)
 public class ProjectPlan<R> implements Plan<R> {
@@ -45,26 +44,13 @@ public class ProjectPlan<R> implements Plan<R> {
         return input.allVars();
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        return new ProjectPlan<>(rowClass, op, input.bind(var2ntValue), removeBound(var2ntValue.keySet()), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, List<String> ntValues) {
-        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), this, name);
-    }
-
-    @Override public Plan<R> bind(List<String> vars, String[] ntValues) {
-        return new ProjectPlan<>(rowClass, op, input.bind(vars, ntValues), removeBound(vars), this, name);
-    }
-
-    private List<String> removeBound(Collection<String> bound) {
-        if (bound == null || bound.isEmpty())
-            return vars;
-        ArrayList<String> remaining = new ArrayList<>();
-        for (String name : this.vars) {
-            if (!bound.contains(name))
-                remaining.add(name);
+    @Override public Plan<R> bind(Binding binding) {
+        List<String> remaining = new ArrayList<>(vars.size());
+        for (String var : vars) {
+            if (binding.contains(var)) remaining.add(var);
         }
-        return remaining;
+        if (remaining.size() == vars.size())
+            remaining = vars; // let newer ArrayList<> be collected
+        return new ProjectPlan<>(rowClass, op, input.bind(binding), remaining, this, name);
     }
 }

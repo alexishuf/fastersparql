@@ -30,18 +30,24 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
     }
 
     @Override public void feed(CharSequence input) {
+        feed(input, 0, input.length());
+    }
+
+    public void feed(CharSequence input, int begin, int end) {
         if (hadError)
             return;
         if (ended)
             throw new IllegalStateException("feed() after end()");
         if (carry.length() > 0) {
-            int capacity = carry.length() + input.length();
-            input = new StringBuilder(capacity).append(carry).append(input);
+            int capacity = carry.length() + end-begin;
+            input = new StringBuilder(capacity).append(carry).append(input, begin, end);
+            begin = 0;
+            end = input.length();
             carry.setLength(0);
         }
-        for (int i = 0, len = input.length(); !hadError && i < len; ) {
+        for (int i = begin; !hadError && i < end; ) {
             try {
-                i = readTerm(input, i);
+                i = readTerm(input, i, end);
                 columnNumber = columnNumber == -1 ? 1 : columnNumber+i;
             } catch (SyntaxException e) {
                 error("Column "+(columnNumber+e.inputPos-i)+": "+e.getMessage());
@@ -70,7 +76,7 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
     }
 
     /**
-     * Try to parse a term from the input starting at {@code from}.
+     * Try to parse a term from the input starting at {@code begin} and reading up to {@code end}.
      *
      * This method MUST call either method:
      * <ul>
@@ -80,7 +86,7 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
      *
      * @return the index in {@code input} from where a subsequent {@code readTerm} shall start.
      */
-    protected abstract int readTerm(CharSequence input, int from) throws SyntaxException;
+    protected abstract int readTerm(CharSequence input, int begin, int end) throws SyntaxException;
 
     public static class SyntaxException extends Exception {
         final int inputPos;

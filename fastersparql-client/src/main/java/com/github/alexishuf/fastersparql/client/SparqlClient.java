@@ -75,19 +75,44 @@ public interface SparqlClient<R, F> extends AutoCloseable {
      *
      * @param sparql the SPARQL query.
      * @param configuration Additional configurations to apply when executing this query only.
+     * @param bindings A {@link Results} object providing zero or more rows of variable assignments
+     *                 for sparql. If this is non-null, the resulting rows will be obtained by a
+     *                 the {@link Results} to be returned by this method is defined by
+     *                 {@code bindType}
+     * @param bindType The semantics for the bind operation to be done with the given
+     *                 {@code bindings}. Can be null if, and only if {@code bindings == null}
      * @return a {@link Results} object wrapping the list of variables and a {@link Publisher}
      *         of solutions.
+     * @throws NullPointerException if {@code bindings} and {@code bindType} null status does
+     *                              not match: either both must be non-null or both must be null.
      */
-    Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration);
+    Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration,
+                     @Nullable Results<R> bindings, @Nullable BindType bindType);
 
     /**
-     * {@link SparqlClient#query(CharSequence, SparqlConfiguration)} with null configuration
-     * (use the configuration from {@link SparqlClient#endpoint()}).
+     * Indicates whether {@link SparqlClient#query(CharSequence, SparqlConfiguration, Results, BindType)}
+     * uses a protocol extension that allows more efficient executing of the same query with
+     * different bindings.
      *
-     * @param sparql the SPARQL SELECT or ASK query
-     * @return See {@link SparqlClient#query(CharSequence, SparqlConfiguration)}.
+     * This is not the case of the standard SPARQL protocol, thus most implementations return false.
      */
-    default Results<R> query(CharSequence sparql) {
+    default boolean usesBindingAwareProtocol() {
+        return false;
+    }
+
+    /**
+     * {@link SparqlClient#query(CharSequence, SparqlConfiguration, Results, BindType)} with
+     * {@code bindings} and {@code bindType} set to {@code null}.
+     */
+    default Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
+        return query(sparql, configuration, null, null);
+    }
+
+    /**
+     * {@link SparqlClient#query(CharSequence, SparqlConfiguration)} with {@code configuration}
+     * set to null
+     */
+    default Results<R> query(CharSequence sparql)  {
         return query(sparql, null);
     }
 

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
 import lombok.Builder;
@@ -12,7 +13,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Value @Accessors(fluent = true)
@@ -50,8 +50,8 @@ public class FilterPlan<R> implements Plan<R> {
         return op.run(this);
     }
 
-    @Override public Plan<R> bind(Map<String, String> var2ntValue) {
-        Plan<R> boundIn = input.bind(var2ntValue);
+    @Override public Plan<R> bind(Binding binding) {
+        Plan<R> boundIn = input.bind(binding);
         boolean change = boundIn != input;
         List<String> boundFilters;
         if (filters.isEmpty()) {
@@ -59,7 +59,7 @@ public class FilterPlan<R> implements Plan<R> {
         } else {
             boundFilters = new ArrayList<>(filters.size());
             for (String filter : filters) {
-                String bound = SparqlUtils.bind(filter, var2ntValue).toString();
+                String bound = SparqlUtils.bind(filter, binding).toString();
                 //noinspection StringEquality
                 change |= bound != filter;
                 boundFilters.add(bound);

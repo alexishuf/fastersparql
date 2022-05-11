@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util.sparql;
 
+import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -650,10 +651,70 @@ class SparqlUtilsTest {
 
     @ParameterizedTest @MethodSource
     void testBind(String string, Map<String, String> map, String expected) {
-        assertEquals(expected, bind(string, map).toString());
+        assertEquals(expected, bind(string, MapBinding.wrap(map)).toString());
+        assertEquals(expected, bind(string, ArrayBinding.copy(map)).toString());
+        assertEquals(expected, bind(string, ListBinding.copy(map)).toString());
 
         StringBuilder cs = new StringBuilder(string);
-        assertEquals(expected, bind(cs, map).toString());
+        assertEquals(expected, bind(cs, MapBinding.wrap(map)).toString());
         assertEquals(string, cs.toString(), "bind() modified its input");
+    }
+
+    static Stream<Arguments> testToAsk() {
+        @Value
+        class  D { String in, ex; }
+        List<D> base = new ArrayList<>(asList(
+                new D("ASK {?s ?p ?o}", "ASK {?s ?p ?o}"),
+                new D("ASK { <a> <b> <c> }", "ASK { <a> <b> <c> }"),
+                new D("SELECT ?x WHERE { <a> <b> ?x }", "ASK { <a> <b> ?x }"),
+                new D("SELECT * WHERE { <a> <b> ?x }", "ASK { <a> <b> ?x }"),
+                new D("SELECT ?x ?ask WHERE { ?x <b> ?ask }", "ASK { ?x <b> ?ask }"),
+                new D("SELECT * WHERE { <a> <b> '''\nASK {}\n''' }",
+                        "ASK { <a> <b> '''\nASK {}\n''' }")
+        ));
+        List<String> prefixes = asList(
+                "",
+                "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n",
+                "# ASK {}\n",
+                "# SELECT ?x WHERE \n",
+                "# SELECT ?x WHERE { ?x ?p ?o. }\n",
+                "PREFIX : <\n" +
+                        "# SELECT ?x\n" +
+                        "# ASK\n" +
+                        "> .#\n"
+        );
+        List<String> suffixes = asList(
+            "",
+            "\n",
+            "}\n}",
+            "#ASK {}"
+        );
+        List<Arguments> list = new ArrayList<>();
+        for (String prefix : prefixes) {
+            for (String suffix : suffixes) {
+                for (D d : base)
+                    list.add(arguments(prefix+d.in+suffix, prefix+d.ex+suffix));
+            }
+        }
+        return list.stream();
+    }
+
+    @Test
+    void parallelTestToAsk() {
+        List<RuntimeException> errors = testToAsk().parallel().map(args -> {
+            String in = args.get()[0].toString(), expected = args.get()[1].toString();
+            try {
+                assertEquals(expected, toAsk(in).toString());
+
+                StringBuilder sb = new StringBuilder(in);
+                assertEquals(expected, toAsk(sb).toString());
+                assertEquals(sb.toString(), in, "toAsk() mutated its input");
+                return null;
+            } catch (Throwable t) {
+                return new RuntimeException("in=" + in + "\nexpected=" + expected + "\n", t);
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+        if (!errors.isEmpty())
+            throw errors.get(0);
     }
 }

@@ -5,7 +5,12 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.value.qual.MinLen;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.client.util.CSUtils.*;
 import static java.util.Collections.emptyList;
@@ -21,14 +26,13 @@ public class SparqlUtils {
      * Returns a copy {@code input} with variables replaced by the given values
      *
      * @param input the object (e.g., a SPARQL query) to be bound
-     * @param varName2ntTerm a map from var names to RDF terms in N-Triples syntax.
+     * @param binding a map from var names to RDF terms in N-Triples syntax.
      * @return a new copy of {@code input} with variables replaced or {@code input} itself if the
-     *         bind operation is a no-op (no variable in {@code varName2ntTerm} appears in
+     *         bind operation is a no-op (no variable in {@code binding} appears in
      *         {@code input}.
      */
-    public static CharSequence bind(CharSequence input, Map<String, String> varName2ntTerm) {
-        VarUtils.checkBind(varName2ntTerm);
-        if (varName2ntTerm == null || varName2ntTerm.isEmpty())
+    public static CharSequence bind(CharSequence input, Binding binding) {
+        if (binding == null || binding.size() == 0)
             return input.toString();
         boolean change = false;
         StringBuilder builder = new StringBuilder();
@@ -40,7 +44,7 @@ public class SparqlUtils {
         if (projection != null && !projection.isAsk) {
             boolean becomesAsk = true;
             for (int i = 0, size = projection.vars.size(); becomesAsk && i < size; ++i)
-                becomesAsk = varName2ntTerm.containsKey(projection.vars.get(i));
+                becomesAsk = binding.contains(projection.vars.get(i));
             if (becomesAsk) {
                 change = true;
                 builder.append(input, 0, projection.begin).append("ASK {");
@@ -59,7 +63,7 @@ public class SparqlUtils {
             e = varEnd(input, b+1, len);
             if (e < len) {
                 String varName = input.subSequence(b+1, e).toString();
-                String value = varName2ntTerm.getOrDefault(varName, null);
+                String value = binding.get(varName);
                 if (value != null) {
                     change = true;
                     if (b >= openBody)
@@ -70,6 +74,30 @@ public class SparqlUtils {
             }
         }
         return change ? builder.toString() : input;
+    }
+
+    private static final Pattern SELECT_ALL_RX
+            = Pattern.compile("(?mi)^\\s*SELECT\\s*\\*\\s*WHERE\\s*\\{");
+    public static CharSequence toAsk(CharSequence sparql) {
+        ProjectionInfo info = findProjection(sparql);
+        if (info != null) {
+            if (info.vars.isEmpty())
+                return sparql;
+            return new StringBuilder(sparql.length())
+                    .append(sparql, 0, info.begin)
+                    .append("ASK ")
+                    .append(sparql, info.end, sparql.length());
+        } else { //fragment or SELECT *
+            StringBuffer sb = new StringBuffer(sparql.length());
+            Matcher m = SELECT_ALL_RX.matcher(sparql);
+            if (m.find()) {
+                m.appendReplacement(sb, "ASK {");
+                m.appendTail(sb);
+                return sb.toString();
+            } else { //SPARQL fragment
+                return "ASK {\n" + sparql + "\n}";
+            }
+        }
     }
 
     /**

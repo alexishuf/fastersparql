@@ -1,11 +1,10 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 
 public class PlanHelpers {
 
@@ -22,26 +21,15 @@ public class PlanHelpers {
     }
 
     public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
-                                            List<String> vars, String[] ntValues) {
-        VarUtils.checkBind(vars, ntValues);
-        List<Plan<R>> bound = new ArrayList<>(plans.size());
-        for (Plan<R> plan : plans) bound.add(plan.bind(vars, ntValues));
-        return bound;
-    }
-
-    public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
-                                            List<String> vars, List<String> ntValues) {
-        VarUtils.checkBind(vars, ntValues);
-        List<Plan<R>> bound = new ArrayList<>(plans.size());
-        for (Plan<R> plan : plans) bound.add(plan.bind(vars, ntValues));
-        return bound;
-    }
-
-    public static <R> List<Plan<R>> bindAll(List<? extends Plan<R>>  plans,
-                                            Map<String, String> var2ntValue) {
-        VarUtils.checkBind(var2ntValue);
-        List<Plan<R>> bound = new ArrayList<>(plans.size());
-        for (Plan<R> plan : plans) bound.add(plan.bind(var2ntValue));
-        return bound;
+                                            Binding binding) {
+        List<Plan<R>> boundList = new ArrayList<>(plans.size());
+        boolean change = false;
+        for (Plan<R> plan : plans) {
+            Plan<R> bound = plan.bind(binding);
+            change |= bound != plan;
+            boundList.add(bound);
+        }
+        //noinspection unchecked
+        return change ? boundList : (List<Plan<R>>) plans;
     }
 }

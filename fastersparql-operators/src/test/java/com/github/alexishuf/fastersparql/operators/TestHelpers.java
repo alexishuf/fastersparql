@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
+import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -45,7 +46,7 @@ public class TestHelpers {
                 return asResults(collection);
             }
 
-            @Override public Plan<List<String>> bind(Map<String, String> var2ntValue) {
+            @Override public Plan<List<String>> bind(Binding binding) {
                 return this;
             }
         };
