@@ -30,7 +30,7 @@ public class UnionPlan<R> implements Plan<R> {
         this.parent = parent;
         this.op = op;
         this.inputs = inputs == null ? Collections.emptyList() : inputs;
-        this.name = name == null ? "Union-"+nextId : name;
+        this.name = name == null ? "Union-"+nextId.getAndIncrement() : name;
     }
 
     @Override public Results<R> execute() {
