@@ -45,7 +45,7 @@ public class UnionPlan<R> implements Plan<R> {
         return PlanHelpers.allVarsUnion(inputs);
     }
 
-    @Override public Plan<R> bind(Binding binding) {
+    @Override public UnionPlan<R> bind(Binding binding) {
         return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(inputs, binding), this, name);
     }
 

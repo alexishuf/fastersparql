@@ -19,7 +19,6 @@ import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
 import com.github.alexishuf.fastersparql.client.util.Merger;
 import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
-import com.github.alexishuf.fastersparql.client.util.sparql.Projector;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import io.netty.channel.Channel;
@@ -50,6 +49,7 @@ import static java.util.Collections.emptyList;
 
 public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
     private static final AtomicInteger NEXT_HANDLER_ID = new AtomicInteger(1);
+    private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
 
     private static final Logger log = LoggerFactory.getLogger(NettyWebSocketSparqlClient.class);
     private static final AtomicInteger nextBindPublisherId = new AtomicInteger(1);
@@ -387,7 +387,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         private @Nullable String queryMessage;
         private final WebSocketResultsParser resultsParser
                 = new WebSocketResultsParser(new WebSocketResultsParserConsumer() {
-            private Projector projector = Projector.IDENTITY;
+            private Merger<String[]> projector = Merger.identity(ARRAY_OPS, QueryHandler.this.vars);
             @Override public void bindRequest(long n, boolean incremental) {
                 tryComplete(null, "Unexpected !bind-request");
             }
@@ -398,10 +398,10 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 tryComplete(null, "Unexpected !active-binding");
             }
             @Override public void vars(List<String> vars) {
-                projector = Projector.createFor(QueryHandler.this.vars, vars);
+                projector = Merger.forProjection(ARRAY_OPS, QueryHandler.this.vars, vars);
             }
             @Override public void row(@Nullable String[] row) {
-                publisher.feed(projector.project(row));
+                publisher.feed(projector.merge(row, null));
             }
             @Override public void     end()               { tryComplete(null, null); }
             @Override public void onError(String message) { tryComplete(null, message); }
@@ -473,8 +473,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
 
             @Override public void vars(List<String> vars) {
                 assert merger == null : "vars() called more than once";
-                StringArrayOperations rowOps = StringArrayOperations.get();
-                merger = new Merger<>(rowOps, bindings.vars(), "", vars, vars, bindType);
+                merger = Merger.forMerge(ARRAY_OPS, bindings.vars(), vars, bindType);
             }
 
             @Override public void row(@Nullable String[] row) {

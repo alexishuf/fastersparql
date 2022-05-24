@@ -49,19 +49,4 @@ public class VarUtils {
         set.addAll(right);
         return new ArrayList<>(set);
     }
-
-    /***
-     * Create an {@code int[]} where the i-th element is the index of the i-th {@code outVar}
-     * in {@code inVars}, or -1 if it is not found.
-     *
-     * @param outVars the list of output variables
-     * @param inVars the list of input (i.e., available) variables.
-     * @return an array with the indices of {@code outVars} within {@code inVars}.
-     */
-    public static int[] projectionIndices(List<String> outVars, List<String> inVars) {
-        int[] indices = new int[outVars.size()];
-        for (int i = 0; i < indices.length; i++)
-            indices[i] = inVars.indexOf(outVars.get(i));
-        return indices;
-    }
 }

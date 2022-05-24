@@ -19,6 +19,11 @@ public class PlanMetrics {
     private final Throwable error;
     private final boolean cancelled;
 
+    public PlanMetrics(String planName, long totalRows, long executionStartNanos,
+                       Throwable error, boolean cancelled) {
+        this(planName, totalRows, executionStartNanos, System.nanoTime(), error, cancelled);
+    }
+
     public long duration(TimeUnit unit) {
         return unit.convert(executionEndNanos - executionStartNanos, TimeUnit.NANOSECONDS);
     }

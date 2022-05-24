@@ -33,6 +33,8 @@ public class JoinPlan<R> implements Plan<R> {
     }
 
     public JoinPlan<R> withOperands(List<? extends Plan<R>> operands) {
+        if (operands == this.operands)
+            return this;
         return new JoinPlan<>(op, rowClass, operands, parent, name);
     }
 

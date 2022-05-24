@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.operators.providers.*;
 public enum OperatorName {
     JOIN,
     UNION,
+    MERGE,
     LEFT_JOIN,
     SLICE,
     DISTINCT,
@@ -44,6 +45,8 @@ public enum OperatorName {
                 return JoinProvider.class;
             case UNION:
                 return UnionProvider.class;
+            case MERGE:
+                return MergeProvider.class;
             case LEFT_JOIN:
                 return LeftJoinProvider.class;
             case SLICE:
@@ -59,7 +62,7 @@ public enum OperatorName {
             case MINUS:
                 return MinusProvider.class;
             default:
-                throw new UnsupportedOperationException("No Class<? extends OperatorProvider> for"+this);
+                throw new UnsupportedOperationException("No Class<? extends OperatorProvider> for "+this);
         }
     }
 
@@ -67,6 +70,7 @@ public enum OperatorName {
         if      (cls.equals(Join.class))     return JOIN;
         else if (cls.equals(LeftJoin.class)) return LEFT_JOIN;
         else if (cls.equals(Union.class))    return UNION;
+        else if (cls.equals(Merge.class))    return MERGE;
         else if (cls.equals(Slice.class))    return SLICE;
         else if (cls.equals(Distinct.class)) return DISTINCT;
         else if (cls.equals(Project.class))  return PROJECT;
@@ -80,6 +84,7 @@ public enum OperatorName {
         if      (cls.equals(JoinProvider.class))     return JOIN;
         else if (cls.equals(LeftJoinProvider.class)) return LEFT_JOIN;
         else if (cls.equals(UnionProvider.class))    return UNION;
+        else if (cls.equals(MergeProvider.class))    return MERGE;
         else if (cls.equals(SliceProvider.class))    return SLICE;
         else if (cls.equals(DistinctProvider.class)) return DISTINCT;
         else if (cls.equals(ProjectProvider.class))  return PROJECT;

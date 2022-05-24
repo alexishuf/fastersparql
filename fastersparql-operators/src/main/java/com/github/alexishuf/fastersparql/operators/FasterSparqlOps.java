@@ -118,6 +118,15 @@ public class FasterSparqlOps {
         return create(Union.class, OperatorFlags.ASYNC, rowClass).<R>asPlan().inputs(inputs);
     }
 
+    public static <R> MergePlan.MergePlanBuilder<R> merge(List<? extends Plan<R>> inputs,
+                                                          Class<? super R> rowClass, long flags) {
+        return create(Merge.class, flags, rowClass).<R>asPlan().inputs(inputs);
+    }
+    public static <R> MergePlan.MergePlanBuilder<R> merge(List<? extends Plan<R>> inputs,
+                                                          Class<? super R> rowClass) {
+        return create(Merge.class, OperatorFlags.ASYNC, rowClass).<R>asPlan().inputs(inputs);
+    }
+
     public static <R> LeftJoinPlan.LeftJoinPlanBuilder<R>
     leftJoin(Plan<R> left, Plan<R> right, Class<? super R> rowClass, long flags) {
         return create(LeftJoin.class, flags, rowClass).<R>asPlan().left(left).right(right);

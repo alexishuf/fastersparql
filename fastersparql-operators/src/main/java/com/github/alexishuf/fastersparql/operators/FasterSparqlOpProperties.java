@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluatorCompilerProvider;
+import com.github.alexishuf.fastersparql.operators.plan.MergePlan;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.NullJoinReorderStrategy;
@@ -12,6 +13,7 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
 
     /* --- --- --- property names --- --- --- */
     public static final String OP_DISTINCT_WINDOW = "fastersparql.op.distinct.window";
+    public static final String OP_MERGE_WINDOW = "fastersparql.op.merge.window";
     public static final String OP_BIND_CONCURRENCY = "fastersparql.op.bind.concurrency";
     public static final String OP_JOIN_REORDER = "fastersparql.op.join.reorder";
     public static final String OP_JOIN_REORDER_BIND = "fastersparql.op.join.reorder.bind";
@@ -21,6 +23,7 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
 
     /* --- --- --- default values --- --- --- */
     public static final int DEF_OP_DISTINCT_WINDOW = 16384;
+    public static final int DEF_OP_MERGE_WINDOW = 4096;
     public static final int DEF_OP_BIND_CONCURRENCY = 2;
     public static final String DEF_OP_JOIN_REORDER = "AvoidCartesian";
     public static final String DEF_OP_JOIN_REORDER_WCO = "Null";
@@ -41,6 +44,24 @@ public class FasterSparqlOpProperties extends FasterSparqlProperties {
      */
     public static @Positive int distinctWindow() {
         return readPositiveInt(OP_DISTINCT_WINDOW, DEF_OP_DISTINCT_WINDOW);
+    }
+
+    /**
+     * The {@link Merge} operator, which is not in the standard SPARQL algebra allows but does
+     * not require duplicates removal.
+     *
+     * Due to this intentional lax semantics, the default implementation uses a moving window
+     * for each operand of a {@link Merge} operation so that rows from one source are only output
+     * if no window for other sources under the same {@link MergePlan} have that row.
+     *
+     * Since the semantics allow duplicates to exist the default value for this property is
+     * smaller than that for {@link FasterSparqlOpProperties#distinctWindow()}.
+     *
+     *
+     * @return a positive (@code n > 0) integer.
+     */
+    public static @Positive int mergeWindow() {
+        return readPositiveInt(OP_MERGE_WINDOW, DEF_OP_MERGE_WINDOW);
     }
 
     /**

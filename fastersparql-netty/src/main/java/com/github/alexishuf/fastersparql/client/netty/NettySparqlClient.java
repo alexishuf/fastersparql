@@ -6,12 +6,14 @@ import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerExc
 import com.github.alexishuf.fastersparql.client.model.*;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
+import com.github.alexishuf.fastersparql.client.model.row.impl.StringArrayOperations;
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.results.*;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.util.Merger;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
@@ -23,7 +25,6 @@ import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
 import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
-import com.github.alexishuf.fastersparql.client.util.sparql.Projector;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
@@ -361,15 +362,20 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
      */
     @RequiredArgsConstructor
     private static class ResultsParserAdapter implements ResultsParserConsumer {
-        private final List<String> expectedVars;
+        private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
         private final PublisherAdapter<String[]> publisher;
-        private Projector projector = Projector.IDENTITY;
+        private Merger<String[]> projector;
 
+        public ResultsParserAdapter(List<String> expectedVars,
+                                    PublisherAdapter<String[]> publisher) {
+            this.projector = Merger.identity(ARRAY_OPS, expectedVars);
+            this.publisher = publisher;
+        }
         @Override public void vars(List<String> vars) {
-            projector = Projector.createFor(expectedVars, vars);
+            projector = Merger.forProjection(ARRAY_OPS, projector.outVars(), vars);
         }
         @Override public void row(@Nullable String[] row) {
-            publisher.feed(projector.project(row));
+            publisher.feed(projector.merge(row, null));
         }
         @Override public void end() { publisher.complete(null); }
         @Override public void onError(String message) {

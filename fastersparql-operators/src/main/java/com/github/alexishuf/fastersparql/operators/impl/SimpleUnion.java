@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.Union;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.plan.PlanHelpers;
 import com.github.alexishuf.fastersparql.operators.plan.UnionPlan;
 import com.github.alexishuf.fastersparql.operators.providers.UnionProvider;
 import lombok.Value;
@@ -24,7 +23,6 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMe
 
 @Value @Accessors(fluent = true)
 public class SimpleUnion  implements Union {
-    Class<?> rowClass;
     RowOperations rowOps;
     boolean parallel;
 
@@ -35,24 +33,28 @@ public class SimpleUnion  implements Union {
 
         @Override public Union create(long flags, RowOperations ro) {
             boolean parallelSubscribe = (flags & OperatorFlags.ASYNC) != 0;
-            return new SimpleUnion(ro.rowClass(), ro, parallelSubscribe);
+            return new SimpleUnion(ro, parallelSubscribe);
         }
+    }
+
+    @Override public <R> Class<R> rowClass() {
+        //noinspection unchecked
+        return (Class<R>) rowOps.rowClass();
     }
 
     @Override public <R> Results<R> checkedRun(UnionPlan<R> plan) {
         List<? extends Plan<R>> plans = plan.inputs();
-        List<String> unionVars = PlanHelpers.publicVarsUnion(plans);
-        UnionPublisher<R> merge = new UnionPublisher<>(parallel ? 1 : plans.size(), plan);
-        Class<? super R> rCls = Object.class;
+        List<String> unionVars = plan.publicVars();
+        UnionPublisher<R> merge = new UnionPublisher<>(parallel ? plans.size() : 1, plan);
         for (Plan<R> p : plans) {
             Results<R> results = p.execute();
-            if (rCls.equals(Object.class)) rCls = results.rowClass();
+            if (results.vars().size() == unionVars.size())
+                merge.addPublisher(results.publisher());
             else
-                assert results.rowClass().equals(Object.class) || rCls.equals(results.rowClass());
-            merge.addPublisher(new ProjectingProcessor<>(results, unionVars, rowOps));
+                merge.addPublisher(new ProjectingProcessor<>(results, unionVars, rowOps));
         }
         merge.markCompletable();
-        return new Results<>(unionVars, rCls, merge);
+        return new Results<>(unionVars, rowClass(), merge);
     }
 
     private static final class UnionPublisher<R> extends MergePublisher<R> {
@@ -77,10 +79,8 @@ public class SimpleUnion  implements Union {
         }
 
         @Override protected void onComplete(Throwable cause, boolean cancelled) {
-            if (hasGlobalMetricsListeners()) {
-                sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, System.nanoTime(),
-                                                  cause, cancelled));
-            }
+            if (hasGlobalMetricsListeners())
+                sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, cause, cancelled));
         }
     }
 }

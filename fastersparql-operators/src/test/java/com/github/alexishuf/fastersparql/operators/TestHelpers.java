@@ -65,25 +65,25 @@ public class TestHelpers {
         return IntStream.range(0, width).mapToObj(i -> "x" + i).collect(toList());
     }
 
-    private static LinkedHashMap<List<String>, Integer> countMap(Iterable<List<String>> lists) {
+    private static LinkedHashMap<List<String>, Integer> countMap(Iterable<? extends List<String>> lists) {
         LinkedHashMap<List<String>, Integer> map = new LinkedHashMap<>();
         for (List<String> list : lists)
             map.put(list, map.getOrDefault(list, 0)+1);
         return map;
     }
 
-    public static void checkRows(Collection<List<String>> expected,
+    public static void checkRows(Collection<? extends List<String>> expected,
                                  List<String> expectedVars,
                                  Class<? extends Throwable> expectedError,
-                                 Plan<List<String>> plan,
+                                 Plan<? extends List<String>> plan,
                                  boolean checkOrder) {
         checkRows(expected, expectedVars, expectedError, plan.execute(), checkOrder);
     }
 
-    public static void checkRows(Collection<List<String>> expected,
+    public static void checkRows(Collection<? extends List<String>> expected,
                                  List<String> expectedVars,
                                  Class<? extends Throwable> expectedError,
-                                 Results<List<String>> actual,
+                                 Results<? extends List<String>> actual,
                                  boolean checkOrder) {
         IterableAdapter<List<String>> adapter = new IterableAdapter<>(actual.publisher());
         LinkedHashMap<List<String>, Integer> exMap = countMap(expected);

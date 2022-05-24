@@ -1,34 +1,21 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
+import com.github.alexishuf.fastersparql.client.model.row.RowHashSet;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
-import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Distinct;
-import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.experimental.Accessors;
+import lombok.RequiredArgsConstructor;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.HashSet;
-import java.util.function.Function;
-
-import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
-import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
-import static java.lang.System.nanoTime;
-import static java.util.function.Function.identity;
 
-@Accessors(fluent = true)
+@RequiredArgsConstructor
 public class InMemoryHashDistinct implements Distinct {
-    @Getter private final Class<?> rowClass;
-    private final Function<Object, Object> wrap;
+    private final RowOperations rowOps;
 
     public static class Provider implements DistinctProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -46,52 +33,13 @@ public class InMemoryHashDistinct implements Distinct {
         }
     }
 
-    public InMemoryHashDistinct(RowOperations rowOps) {
-        this.rowClass = rowOps.rowClass();
-        this.wrap = rowOps.needsCustomHash() ? r -> new HashAdapter(rowOps, r) : identity();
+    @SuppressWarnings("unchecked") @Override public <R> Class<R> rowClass() {
+        return (Class<R>) rowOps.rowClass();
     }
 
     @Override public <R> Results<R> checkedRun(DistinctPlan<R> plan) {
         Results<R> in = plan.input().execute();
-        val hasher = new Hasher<>(in.publisher(), wrap, plan);
-        return new Results<>(in.vars(), in.rowClass(), hasher);
-    }
-
-    @AllArgsConstructor
-    static class HashAdapter {
-        private final RowOperations ops;
-        private final Object val;
-
-        @Override public boolean equals(Object o) {
-            if (o instanceof HashAdapter)
-                return ops.equalsSameVars(val, ((HashAdapter) o).val);
-            return false;
-        }
-        @Override public int hashCode() { return ops.hash(val); }
-        @Override public String toString() { return val.toString(); }
-    }
-
-    private static class Hasher<R> extends AbstractProcessor<R, R> {
-        private final DistinctPlan<R> plan;
-        private final HashSet<Object> set = new HashSet<>();
-        private final Function<Object, ?> wrap;
-
-        public Hasher(FSPublisher<? extends R> src, Function<Object, ?> wrap, DistinctPlan<R> plan) {
-            super(src);
-            this.wrap = wrap;
-            this.plan = plan;
-        }
-
-        @Override protected void handleOnNext(R item) {
-            if (set.add(wrap.apply(item)))
-                emit(item);
-        }
-
-        @Override protected void onTerminate(@Nullable Throwable error, boolean cancel) {
-            if (hasGlobalMetricsListeners()) {
-                val metrics = new PlanMetrics(plan.name(), rows, start, nanoTime(), error, cancel);
-                sendMetrics(plan, metrics);
-            }
-        }
+        val p = new DistinctProcessor<>(in.publisher(), plan, new RowHashSet<>(rowOps));
+        return new Results<>(in.vars(), in.rowClass(), p);
     }
 }

@@ -105,10 +105,8 @@ public class SimpleFilter implements Filter {
         }
 
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
-            if (hasGlobalMetricsListeners()) {
-                sendMetrics(plan, new PlanMetrics(plan.name(), rows,
-                                              start, System.nanoTime(), error, cancelled));
-            }
+            if (hasGlobalMetricsListeners())
+                sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, error, cancelled));
         }
     }
 }

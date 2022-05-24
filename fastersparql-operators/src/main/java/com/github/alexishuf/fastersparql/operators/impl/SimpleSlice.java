@@ -18,7 +18,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
-import static java.lang.System.nanoTime;
 
 @Value @Accessors(fluent = true)
 public class SimpleSlice implements Slice {
@@ -73,10 +72,8 @@ public class SimpleSlice implements Slice {
         }
 
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
-            if (hasGlobalMetricsListeners()) {
-                val m = new PlanMetrics(plan.name(), rows, start, nanoTime(), error, cancelled);
-                sendMetrics(plan, m);
-            }
+            if (hasGlobalMetricsListeners())
+                sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, error, cancelled));
         }
     }
 }

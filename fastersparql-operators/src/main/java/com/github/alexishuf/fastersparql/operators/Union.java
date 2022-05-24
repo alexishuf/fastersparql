@@ -37,7 +37,7 @@ public interface Union extends Operator {
         try {
             return checkedRun(plan);
         } catch (Throwable t) {
-            return Results.error(Object.class, t);
+            return Results.error(rowClass(), t);
         }
     }
 }

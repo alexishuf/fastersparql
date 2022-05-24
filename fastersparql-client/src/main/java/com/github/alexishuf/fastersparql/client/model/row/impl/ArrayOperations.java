@@ -29,7 +29,7 @@ public class ArrayOperations implements RowOperations {
                 throw new IllegalArgumentException(specializedClass+" is not an object array class");
             Function<Class<?>, ArrayOperations> fac;
             if (String[].class.isAssignableFrom(specializedClass))
-                fac = StringArrayOperations::new;
+                return StringArrayOperations.get();
             else if (CharSequence[].class.isAssignableFrom(specializedClass))
                 fac = CharSequenceArrayOperations::new;
             else

@@ -69,5 +69,4 @@ class AvoidCartesianJoinReorderStrategyTest {
         assertEquals(exPlans, reorder);
         assertEquals(plansCopy, plans);
     }
-
 }

@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.util.Merger;
+import com.github.alexishuf.fastersparql.client.util.SparqlMerger;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MonoPublisher;
@@ -17,13 +17,13 @@ import static com.github.alexishuf.fastersparql.client.BindType.MINUS;
 public final class SparqlClientBinder<R> implements Binder<R> {
     private final SparqlClient<R, ?> client;
     private final @Nullable SparqlConfiguration configuration;
-    private final Merger<R> merger;
+    private final SparqlMerger<R> merger;
     private final BindType bindType;
 
     public SparqlClientBinder(SparqlClientBinder<R> other){
         this.client        = other.client;
         this.configuration = other.configuration;
-        this.merger        = new Merger<>(other.merger);
+        this.merger        = new SparqlMerger<>(other.merger);
         this.bindType      = other.bindType;
     }
 
@@ -33,7 +33,7 @@ public final class SparqlClientBinder<R> implements Binder<R> {
                               BindType bindType) {
         this.client = client;
         this.configuration = configuration;
-        this.merger = new Merger<>(rowOps, bindingsVars, sparql, bindType);
+        this.merger = new SparqlMerger<>(rowOps, bindingsVars, sparql, bindType);
         this.bindType = bindType;
     }
 
@@ -63,10 +63,10 @@ public final class SparqlClientBinder<R> implements Binder<R> {
         private final T leftRow;
         private final boolean leftJoin;
         private boolean empty = true, completed = false;
-        private final Merger<T> merger;
+        private final SparqlMerger<T> merger;
 
-        public ClientJoinProcessor(FSPublisher<? extends T> source, T leftRow, Merger<T> merger,
-                                   boolean leftJoin) {
+        public ClientJoinProcessor(FSPublisher<? extends T> source, T leftRow,
+                                   SparqlMerger<T> merger, boolean leftJoin) {
             super(source);
             this.leftRow = leftRow;
             this.merger = merger;

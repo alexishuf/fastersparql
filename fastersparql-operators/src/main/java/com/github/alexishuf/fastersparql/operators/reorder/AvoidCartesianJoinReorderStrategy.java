@@ -17,14 +17,17 @@ public class AvoidCartesianJoinReorderStrategy implements JoinReorderStrategy {
         List<P> operands = new ArrayList<>(originalOperands);
         LinkedHashSet<String> accVars = new LinkedHashSet<>(size*8);
         accVars.addAll(operands.get(0).publicVars());
-        int start = useBind && fixFirstProductWithBind(operands, accVars) ? 2 : 1;
+        boolean change = useBind && fixFirstProductWithBind(operands, accVars);
+        int start = change ? 2 : 1;
         for (int i = start, last = size-1; i < last; i++) {
             P right = operands.get(i);
-            if (isProduct(accVars, right, useBind))
+            if (isProduct(accVars, right, useBind)) {
+                change = true;
                 right = moveFirstCompatible(operands, accVars, i, useBind);
+            }
             accVars.addAll(right.publicVars());
         }
-        return operands;
+        return change ? operands : originalOperands;
     }
 
     private <P extends Plan<?>>
