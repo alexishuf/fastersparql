@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.ws.impl;
 
+import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.netty.http.ActiveChannelSet;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
@@ -33,7 +34,7 @@ public class PooledNettyWsClient implements NettyWsClient {
     public PooledNettyWsClient(EventLoopGroupHolder elgHolder, URI uri,
                                HttpHeaders headers, boolean poolFIFO, @Nullable SslContext sslCtx) {
         this.elgHolder = elgHolder;
-        InetSocketAddress address = createUnresolved(uri.getHost(), uri.getPort());
+        InetSocketAddress address = createUnresolved(uri.getHost(), Protocol.port(uri));
         EventLoopGroup group = elgHolder.acquire();
         try {
             Bootstrap bootstrap = new Bootstrap().remoteAddress(address).group(group)

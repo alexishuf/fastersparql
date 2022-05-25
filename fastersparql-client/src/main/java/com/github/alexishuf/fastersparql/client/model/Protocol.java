@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.client.model;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
+import java.net.URI;
+
 /**
  * The protocol over which the SPARQL protocol will be used.
  */
@@ -36,6 +38,22 @@ public enum Protocol {
             case   WSS: return 443;
         }
         throw new UnsupportedOperationException("No port known for "+this);
+    }
+
+    public static int port(URI uri) {
+        int explicit = uri.getPort();
+        return explicit <= 0 ? fromURI(uri).port() : explicit;
+    }
+
+    public static Protocol fromURI(URI uri) {
+        String scheme = uri.getScheme();
+        switch (scheme) {
+            case  "http": return HTTP;
+            case "https": return HTTPS;
+            case    "ws": return WS;
+            case   "wss": return WSS;
+            default: throw new IllegalArgumentException("Unknown scheme "+ scheme);
+        }
     }
 
     public static @PolyNull Protocol fromURI(@PolyNull String uri) {
