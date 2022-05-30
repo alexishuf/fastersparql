@@ -54,6 +54,18 @@ public interface AsyncIterable<T> extends Iterable<T>, AutoCloseable {
     default boolean hasError() { return error() != null; }
 
     /**
+     * Throws {@link IterableAdapter#error()} if non-null.
+     *
+     * @throws Exception the Throwable in {@link IterableAdapter#error()}.
+     */
+    default void check() throws Exception {
+        Throwable e = error();
+        if      (e instanceof Error) throw (Error)e;
+        else if (e instanceof Exception) throw (Exception) e;
+        else if (e != null) throw new RuntimeException(e);
+    }
+
+    /**
      * Notifies the attached asynchronous producer that no more items will be consumed.
      *
      * After this is called, {@link Iterator#hasNext()} will eventually return false.
