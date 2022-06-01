@@ -32,6 +32,7 @@ import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.value.qual.MinLen;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
@@ -40,10 +41,13 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.alexishuf.fastersparql.client.BindType.*;
+import static java.util.Arrays.copyOfRange;
 import static java.util.Collections.emptyList;
 
 
@@ -52,7 +56,6 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
     private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
 
     private static final Logger log = LoggerFactory.getLogger(NettyWebSocketSparqlClient.class);
-    private static final AtomicInteger nextBindPublisherId = new AtomicInteger(1);
     private final SparqlEndpoint endpoint;
     private final RowParser<R> rowParser;
     private final FragmentParser<F> fragmentParser;
@@ -291,7 +294,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         }
 
         private final Runnable AR_REQUEST = () -> autoRead(true, "request");
-        protected void request(long n) {
+        protected void request(long ignoredN) {
             if (advanceState(HandlerState.CREATED, HandlerState.ACTIVE))
                 netty.open(this);
             inEventLoop(AR_REQUEST, "autoRead(true, request)");
@@ -425,17 +428,86 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         }
     }
 
-    private String sanitizedNT(R row, int i, String name) {
-        String nt = rowOps.getNT(row, i, name);
-        if (nt == null)            return "";
-        if (nt.indexOf('\t') >= 0) nt = nt.replace("\t", "\\t");
-        if (nt.indexOf('\n') >= 0) nt = nt.replace("\n", "\\n");
-        return nt;
+    private static class BindingProjector {
+        private final RowOperations rowOps;
+        private final List<String> inVars;
+        private final int[] srcCol;
+        private final String[] outVars;
+        private final StringBuilder sb = new StringBuilder();
+        private final ConcurrentLinkedQueue<String[]> sent = new ConcurrentLinkedQueue<>();
+
+        public BindingProjector(RowOperations rowOps, List<String> inVars,
+                                CharSequence sparql) {
+            this.inVars = inVars;
+            this.rowOps = rowOps;
+            List<@MinLen(1) String> wantedVars = SparqlUtils.allVars(sparql);
+            int size = 0, capacity = Math.min(inVars.size(), wantedVars.size());
+            String[] outVars = new String[capacity];
+            int[] srcCol = new int[capacity];
+            for (int i = 0, offeredVarsSize = inVars.size(); i < offeredVarsSize; i++) {
+                String name = inVars.get(i);
+                if (wantedVars.contains(name)) {
+                    srcCol[size] = i;
+                    outVars[size++] = name;
+                }
+            }
+            this.srcCol = size == srcCol.length ? srcCol : copyOfRange(srcCol, 0, size);
+            this.outVars = size == outVars.length ? outVars : copyOfRange(outVars, 0, size);
+        }
+
+        public String tsvHeaders() {
+            sb.setLength(0);
+            for (String name : outVars) sb.append('?').append(name).append('\t');
+            sb.setLength(Math.max(0, sb.length()-1));
+            sb.append('\n');
+            return sb.toString();
+        }
+
+        private static String sanitizeNT(@Nullable String nt) {
+            if (nt == null) return "";
+            if (nt.indexOf('\t') >= 0) nt = nt.replace("\t", "\\t");
+            if (nt.indexOf('\n') >= 0) nt = nt.replace("\n", "\\n");
+            return nt;
+        }
+
+        public String tsvRow(Object row) {
+            if (row instanceof String[]) {
+                sent.add((String[]) row);
+            } else {
+                String[] full = new String[inVars.size()];
+                for (int i = 0; i < full.length; i++)
+                    full[i] = rowOps.getNT(row, i, inVars.get(i));
+                sent.add(full);
+            }
+            sb.setLength(0);
+            for (int i = 0; i < srcCol.length; i++)
+                sb.append(sanitizeNT(rowOps.getNT(row, srcCol[i], outVars[i]))).append('\t');
+            if (srcCol.length > 0)
+                sb.setLength(sb.length()-1);
+            return sb.append('\n').toString();
+        }
+
+        public String[] fullRow(String[] projected) {
+            String[] full = sent.poll();
+            if (full == null)
+                throw new IllegalStateException("Received more projected bindings than sent");
+            assert matches(full, projected) : "not a projection";
+            return full;
+        }
+
+        private boolean matches(String[] full, String[] projected) {
+            for (int i = 0; i < srcCol.length; i++) {
+                if (!Objects.equals(full[srcCol[i]], projected[i]))
+                    return false;
+            }
+            return true;
+        }
     }
 
     private class BindHandler extends Handler {
         private final Results<R> bindings;
         private final BindType bindType;
+        private final BindingProjector bProjector;
         private @Nullable String firstMessage;
         private @MonotonicNonNull Subscription bindingsSubscription;
 
@@ -460,10 +532,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             @Override public void bindRequest(long n, boolean incremental) {
                 if (!sentHeaders) {
                     sentHeaders = true;
-                    StringBuilder sb = new StringBuilder();
-                    for (String name : bindings.vars()) sb.append('?').append(name).append('\t');
-                    sb.setLength(Math.max(0, sb.length()-1));
-                    sendFrame(sb.append('\n').toString());
+                    sendFrame(bProjector.tsvHeaders());
                 }
                 if (bindingsSubscription != null)
                     bindingsSubscription.request(n);
@@ -494,9 +563,9 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 if (bindings.vars().isEmpty()) {
                     binding = new String[0];
                 } else {
-                    assert row.length == bindings.vars().size()
-                            : "columns in activeBinding != bindings.vars()";
-                    binding = row;
+                    assert row.length == bProjector.outVars.length
+                            : "columns in activeBinding != bProjector.outVars.length";
+                    binding = bProjector.fullRow(row);
                 }
                 empty = true;
             }
@@ -509,17 +578,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         });
 
         private final Subscriber<R> bindingsSubscriber = new Subscriber<R>() {
-            private final StringBuilder sb = new StringBuilder();
-            @Override public void onNext(R r) {
-                assert sb.length() == 0 : "Concurrent onNext() execution";
-                List<String> vars = bindings.vars();
-                for (int i = 0, size = vars.size(); i < size; i++)
-                    sb.append(sanitizedNT(r, i, vars.get(i))).append('\t');
-                if (!vars.isEmpty())
-                    sb.setLength(sb.length()-1);
-                sendFrame(sb.append('\n').toString());
-                sb.setLength(0);
-            }
+            @Override public void onNext(R r)                 { sendFrame(bProjector.tsvRow(r)); }
             @Override public void onSubscribe(Subscription s) { bindingsSubscription = s; }
             @Override public void onError(Throwable t)        { tryComplete(t, null); }
             @Override public void onComplete()                { sendFrame("!end\n"); }
@@ -531,6 +590,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             this.bindType = bindType;
             if (!bindType.isJoin())
                 sparql = SparqlUtils.toAsk(sparql);
+            this.bProjector = new BindingProjector(rowOps, bindings.vars(), sparql);
             boolean hasNewline = sparql.charAt(sparql.length() - 1) == '\n';
             this.firstMessage = "!bind " + sparql + (hasNewline ? "" : "\n");
         }

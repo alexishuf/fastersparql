@@ -234,6 +234,45 @@ public class SparqlClientTest {
                         "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Bob>",
                         "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Charlie>",
                         "\"bob\"", "\"23\"^^<$xsd:integer>", null));
+        // preserve useless binding column
+        base.add(BindData.join("SELECT ?who WHERE {?who foaf:age ?age.}",
+                               "x", "age")
+                .to("\"row1\"", "\"23\"^^<$xsd:integer>",
+                    "\"row2\"", "\"24\"",
+                    "\"row3\"", "\"25\"^^<$xsd:int>")
+                .expecting("\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Alice>",
+                           "\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Eric>",
+                           "\"row3\"", "\"25\"^^<$xsd:int>", "<$:Bob>"));
+        // same but as a left join...
+        base.add(BindData.leftJoin("SELECT ?who WHERE {?who foaf:age ?age.}",
+                        "x", "age")
+                .to("\"row1\"", "\"23\"^^<$xsd:integer>",
+                    "\"row2\"", "\"24\"",
+                    "\"row3\"", "\"25\"^^<$xsd:int>")
+                .expecting("\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Alice>",
+                           "\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Eric>",
+                           "\"row2\"", "\"24\"",                 null,
+                           "\"row3\"", "\"25\"^^<$xsd:int>",     "<$:Bob>"));
+        // preserve useless binding column (reverse order)
+        base.add(BindData.join("SELECT ?who WHERE {?who foaf:age ?age.}",
+                        "age", "x")
+                .to("\"23\"^^<$xsd:integer>", "\"row1\"",
+                    "\"24\"",                    "\"row2\"",
+                    "\"25\"^^<$xsd:int>",        "\"row3\"")
+                .expecting("\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Alice>",
+                           "\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Eric>",
+                           "\"25\"^^<$xsd:int>",     "\"row3\"", "<$:Bob>"));
+        //same as a left join
+        base.add(BindData.leftJoin("SELECT ?who WHERE {?who foaf:age ?age.}",
+                        "age", "x")
+                .to("\"23\"^^<$xsd:integer>",    "\"row1\"",
+                    "\"24\"",                    "\"row2\"",
+                    "\"25\"^^<$xsd:int>",        "\"row3\"")
+                .expecting("\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Alice>",
+                           "\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Eric>",
+                           "\"24\"",                 "\"row2\"", null,
+                           "\"25\"^^<$xsd:int>",     "\"row3\"", "<$:Bob>"));
+
         //join with long own bindings
         base.add(BindData.join("SELECT * WHERE {?x foaf:age ?age}", "age")
                          .to("\"22\"^^<$xsd:integer>",
