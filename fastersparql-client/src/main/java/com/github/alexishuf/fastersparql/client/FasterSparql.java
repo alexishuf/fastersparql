@@ -4,12 +4,18 @@ import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlCon
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Queue;
 import java.util.ServiceLoader;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class FasterSparql {
+    private static final Logger log = LoggerFactory.getLogger(FasterSparql.class);
+
     /**
      * Alias for {@link FasterSparql#factory(List)} with variadic arguments
      *
@@ -119,5 +125,36 @@ public class FasterSparql {
     public static SparqlClient<String[], byte[]>
     clientFor(String augmentedUri) {
         return factory().createFor(SparqlEndpoint.parse(augmentedUri));
+    }
+
+    private static final Queue<Runnable> shutdownHooks = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Register a Runnable to execute when {@link FasterSparql#shutdown()} is called.
+     *
+     * Once {@link FasterSparql#shutdown()} is called, the hook will be de-registered after
+     * execution. If resources needing a shutdown hook are re-acquired after a
+     * {@link FasterSparql#shutdown()}, this method must be called again to ensure the hook
+     * will execute on a second {@link FasterSparql#shutdown()}  call.
+     *
+     * @param runnable code to execute on {@link FasterSparql#shutdown()}.
+     */
+    public static void addShutdownHook(Runnable runnable) {
+        shutdownHooks.add(runnable);
+    }
+
+    /**
+     * Releases globally held resources initialized by fastersparql components.
+     *
+     * One example of such resources are Netty {@code EventLoopGroup} and the associated threads.
+     * If this method is not called, it may take a few seconds for the {@code EventLoopGroup} to
+     * be closed by its keep-alive timeout.
+     */
+    public static void shutdown() {
+        for (Runnable hook = shutdownHooks.poll(); hook != null; hook = shutdownHooks.poll()) {
+            try {
+                hook.run();
+            } catch (Throwable t) { log.error("Failed to execute {}: ", hook, t); }
+        }
     }
 }

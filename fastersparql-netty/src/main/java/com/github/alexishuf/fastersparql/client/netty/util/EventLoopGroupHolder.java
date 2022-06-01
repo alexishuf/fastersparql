@@ -1,5 +1,8 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.client.FasterSparql;
+import com.github.alexishuf.fastersparql.client.util.async.Async;
+import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
 import lombok.Builder;
@@ -11,18 +14,12 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 @Accessors(fluent = true) @ToString  @Slf4j
 public class EventLoopGroupHolder {
-    private static final ScheduledExecutorService SCHEDULED =
-            Executors.newSingleThreadScheduledExecutor();
-
     /**
      * The {@link NettyTransport} implementation
      */
@@ -52,7 +49,7 @@ public class EventLoopGroupHolder {
      * after {@link EventLoopGroupHolder#keepAlive()}
      * {@link EventLoopGroupHolder#keepAliveTimeUnit()}s if it still has no references.
      */
-    private @Nullable ScheduledFuture<?> shutdownTask;
+    private @Nullable AsyncTask<?> shutdownTask;
 
     /**
      * The current alvie {@link EventLoopGroup}. This field must be set to null before
@@ -119,6 +116,7 @@ public class EventLoopGroupHolder {
                 assert false : "group==null with references != 1";
             }
             group = transport.createGroup();
+            FasterSparql.addShutdownHook(() -> immediateShutdown("FasterSparql.shutdown()"));
         } else if (shutdownTask != null) {
             // if cancel() is too late, the task will see references > 0 and will do nothing
             shutdownTask.cancel(false);
@@ -166,17 +164,8 @@ public class EventLoopGroupHolder {
             --references;
             if (references == 0) {
                 if (keepAlive > 0 && shutdownTask == null) {
-                    shutdownTask = SCHEDULED.schedule(() -> {
-                        synchronized (EventLoopGroupHolder.this) {
-                            if (group != null && references == 0) {
-                                log.debug("{}.shutdownGracefully() after keepAlive={} {} timeout",
-                                        group, keepAlive, keepAliveTimeUnit);
-                                group.shutdownGracefully();
-                                group = null;
-                                shutdownTask = null;
-                            }
-                        }
-                    }, keepAlive, keepAliveTimeUnit);
+                    shutdownTask = Async.schedule(keepAlive, keepAliveTimeUnit, () ->
+                                                  immediateShutdown("keepAlive timeout"));
                 } else {
                     future = (shuttingDown = group).shutdownGracefully();
                     group = null;
@@ -186,6 +175,19 @@ public class EventLoopGroupHolder {
         if (future != null && wait > 0) {
             if (!future.awaitUninterruptibly(wait, waitTimeUnit))
                 log.debug("{} not terminated after {} {}.", shuttingDown, wait, waitTimeUnit);
+        }
+    }
+
+    private void immediateShutdown(String reason) {
+        synchronized (EventLoopGroupHolder.this) {
+            if (group != null && references == 0) {
+                log.debug("{}.shutdownGracefully() reason: {}", group, reason);
+                group.shutdownGracefully();
+                group = null;
+                if (shutdownTask != null)
+                    shutdownTask.cancel(false);
+                shutdownTask = null;
+            }
         }
     }
 }
