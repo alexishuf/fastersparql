@@ -115,6 +115,7 @@ public class UnionTest {
             List<String> vars = varsLists.get(i);
             inPlans.add(new Plan<List<String>>() {
                 @Override public String name() { return "test"; }
+                @Override public List<? extends Plan<List<String>>> operands() { return emptyList(); }
                 @Override public @Nullable Plan<List<String>> parent() { return null; }
                 @Override public Class<? super List<String>> rowClass() { return List.class; }
                 @Override public List<String> publicVars() { return vars; }

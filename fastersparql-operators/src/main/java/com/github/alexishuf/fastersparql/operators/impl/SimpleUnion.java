@@ -43,7 +43,7 @@ public class SimpleUnion  implements Union {
     }
 
     @Override public <R> Results<R> checkedRun(UnionPlan<R> plan) {
-        List<? extends Plan<R>> plans = plan.inputs();
+        List<? extends Plan<R>> plans = plan.operands();
         List<String> unionVars = plan.publicVars();
         UnionPublisher<R> merge = new UnionPublisher<>(parallel ? plans.size() : 1, plan);
         for (Plan<R> p : plans) {

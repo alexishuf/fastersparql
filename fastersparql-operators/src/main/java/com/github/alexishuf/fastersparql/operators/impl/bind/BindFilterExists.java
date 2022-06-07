@@ -5,7 +5,7 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FilterExists;
-import com.github.alexishuf.fastersparql.operators.plan.FilterExistsPlan;
+import com.github.alexishuf.fastersparql.operators.plan.ExistsPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterExistsProvider;
 import lombok.Value;
 import lombok.experimental.Accessors;
@@ -35,8 +35,8 @@ public class BindFilterExists implements FilterExists {
         return (Class<R>) rowOps.rowClass();
     }
 
-    @Override public <R> Results<R> checkedRun(FilterExistsPlan<R> plan) {
+    @Override public <R> Results<R> checkedRun(ExistsPlan<R> plan) {
         BindType type = plan.negate() ? BindType.NOT_EXISTS : BindType.EXISTS;
-        return preferNative(rowOps, bindConcurrency, type, plan.input(), plan.filter());
+        return preferNative(rowOps, bindConcurrency, plan);
     }
 }

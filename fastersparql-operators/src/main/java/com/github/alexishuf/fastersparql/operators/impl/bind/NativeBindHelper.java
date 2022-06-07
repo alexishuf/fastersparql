@@ -4,8 +4,7 @@ import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.*;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
@@ -22,26 +21,26 @@ public class NativeBindHelper {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
     public static <R> Results<R> preferNative(RowOperations rowOps, int bindConcurrency,
-                                              BindType bindType, List<? extends Plan<R>> operands) {
-        switch (operands.size()) {
-            case 0: return Results.empty((Class<? super R>) rowOps.rowClass());
-            case 1: return operands.get(0).execute();
-            case 2: break;
-            default: throw new IllegalArgumentException("expected <= 2 operands");
-        }
-        return preferNative(rowOps, bindConcurrency, bindType, operands.get(0), operands.get(1));
-    }
-
-    public static <R> Results<R> preferNative(RowOperations rowOps, int bindConcurrency,
-                                              BindType bindType, Plan<R> left, Plan<R> right) {
+                                              Plan<R> join) {
+        BindType type;
+        Plan<R> left = join.operands().get(0), right = join.operands().get(1);
+        if (join instanceof LeftJoinPlan)
+            type = BindType.LEFT_JOIN;
+        else if (join instanceof JoinPlan)
+            type = BindType.JOIN;
+        else if (join instanceof MinusPlan)
+            type = BindType.MINUS;
+        else if (join instanceof ExistsPlan)
+            type = ((ExistsPlan<R>) join).negate() ? BindType.NOT_EXISTS : BindType.EXISTS;
+        else
+            throw new IllegalArgumentException("Unsupported: join.getClass()="+join.getClass());
         Results<R> leftResults = left.execute();
-        Results<R> results = tryNativeBind(bindType, leftResults, right);
+        Results<R> results = tryNativeBind(type, leftResults, right);
         if (results == null) {
-            BindJoinPublisher<R> pub = new BindJoinPublisher<>(rowOps, leftResults, bindType,
-                                                               right, bindConcurrency);
-            List<String> outVars = bindType.resultVars(leftResults.vars(), right.publicVars());
+            BindJoinPublisher<R> pub = new BindJoinPublisher<>(rowOps, leftResults, type,
+                                                               right, bindConcurrency, join.name());
+            List<String> outVars = type.resultVars(leftResults.vars(), right.publicVars());
             results = new Results<>(outVars, left.rowClass(), pub);
         }
         return results;

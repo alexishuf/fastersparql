@@ -50,7 +50,7 @@ public class SimpleMerge implements Merge {
     }
 
     @Override public <R> Results<R> checkedRun(MergePlan<R> plan) {
-        List<? extends Plan<R>> operands = plan.inputs();
+        List<? extends Plan<R>> operands = plan.operands();
         List<String> vars = plan.publicVars();
         int window = this.window < 0 ? FasterSparqlOpProperties.mergeWindow() : this.window;
         int concurrency = parallel ? operands.size() : 1;

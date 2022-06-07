@@ -206,15 +206,15 @@ public class FasterSparqlOps {
         return filter(input, filters, input.rowClass(), 0L);
     }
 
-    public static <R> FilterExistsPlan.FilterExistsPlanBuilder<R>
-    filterExists(Plan<R> input, boolean negate, Plan<R> filter,
+    public static <R> ExistsPlan.ExistsPlanBuilder<R>
+    exists(Plan<R> input, boolean negate, Plan<R> filter,
                  Class<? super R> rowClass, long flags) {
         return create(FilterExists.class, flags, rowClass).<R>asPlan()
                 .input(input).negate(negate).filter(filter);
     }
-    public static <R> FilterExistsPlan.FilterExistsPlanBuilder<R>
-    filterExists(Plan<R> input, boolean negate, Plan<R> filter) {
-        return filterExists(input, negate, filter, input.rowClass(), 0L);
+    public static <R> ExistsPlan.ExistsPlanBuilder<R>
+    exists(Plan<R> input, boolean negate, Plan<R> filter) {
+        return exists(input, negate, filter, input.rowClass(), 0L);
     }
 
     public static <R> MinusPlan.MinusPlanBuilder<R>

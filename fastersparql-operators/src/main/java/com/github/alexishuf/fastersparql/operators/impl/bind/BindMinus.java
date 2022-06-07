@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
-import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.Minus;
@@ -34,6 +33,6 @@ public class BindMinus implements Minus {
     }
 
     @Override public <R> Results<R> checkedRun(MinusPlan<R> plan) {
-        return preferNative(rowOps, bindConcurrency, BindType.MINUS, plan.left(), plan.right());
+        return preferNative(rowOps, bindConcurrency, plan);
     }
 }

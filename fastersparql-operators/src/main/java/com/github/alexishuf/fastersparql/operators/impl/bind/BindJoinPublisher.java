@@ -11,23 +11,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 class BindJoinPublisher<R> extends BindPublisher<R> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
-    private static String name(BindType type) {
+    private static String suffix(BindType type) {
         String prefix;
         switch (type) {
-            case       JOIN: prefix = "BindJoinPublisher-"; break;
-            case  LEFT_JOIN: prefix = "LeftBindJoinPublisher-"; break;
-            case     EXISTS: prefix = "BindExistsPublisher-"; break;
-            case NOT_EXISTS: prefix = "BindNotExistsPublisher-"; break;
-            case      MINUS: prefix = "MinusPublisher-"; break;
+            case       JOIN: prefix = "-BindJoinPublisher-"; break;
+            case  LEFT_JOIN: prefix = "-LeftBindJoinPublisher-"; break;
+            case     EXISTS: prefix = "-BindExistsPublisher-"; break;
+            case NOT_EXISTS: prefix = "-BindNotExistsPublisher-"; break;
+            case      MINUS: prefix = "-MinusPublisher-"; break;
             default: throw new UnsupportedOperationException("Unexpected type="+type);
         }
         return prefix+nextId.getAndIncrement();
     }
 
     public BindJoinPublisher(RowOperations rowOps, Results<R> left, BindType joinType,
-                             Plan<R> right, int bindConcurrency) {
+                             Plan<R> right, int bindConcurrency, String name) {
         super(left.publisher(), bindConcurrency,
               new PlanMergerBinder<>(joinType, rowOps, left.vars(), right),
-              name(joinType), null);
+              name+suffix(joinType), null);
     }
 }

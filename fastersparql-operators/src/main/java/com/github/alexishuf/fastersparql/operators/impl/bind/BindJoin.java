@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
-import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
@@ -57,6 +56,6 @@ public class BindJoin implements Join {
     }
 
     private <R> Results<R> execute(JoinPlan<R> plan) {
-        return preferNative(rowOps, bindConcurrency, BindType.JOIN, plan.operands());
+        return preferNative(rowOps, bindConcurrency, plan);
     }
 }

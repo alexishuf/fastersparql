@@ -2,50 +2,36 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
-import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.Minus;
 import lombok.Builder;
-import lombok.Value;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Value @Accessors(fluent = true)
-public class MinusPlan<R> implements Plan<R> {
+@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
+public class MinusPlan<R> extends AbstractNAryPlan<R, MinusPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
-    Class<? super R> rowClass;
-    MinusPlan<R> parent;
-    Minus op;
-    Plan<R> left, right;
-    String name;
+    @Getter private final Minus op;
 
     @Builder
     public MinusPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Minus op,
                      @lombok.NonNull Plan<R> left, @lombok.NonNull Plan<R> right,
                      @Nullable MinusPlan<R> parent, @Nullable String name) {
-        this.rowClass = rowClass;
-        this.parent = parent;
+        super(rowClass, Arrays.asList(left, right),
+              name == null ? "Minus-"+nextId.getAndIncrement() : name, parent);
         this.op = op;
-        this.left = left;
-        this.right = right;
-        this.name = name == null ? "Minus-"+nextId.getAndIncrement() : name;
     }
 
-    @Override public Results<R> execute() {
-        return op.run(this);
-    }
-
-    @Override public List<String> publicVars() {
-        return VarUtils.union(left.publicVars(), right.publicVars());
-    }
-
-    @Override public List<String> allVars() {
-        return VarUtils.union(left.allVars(), right.allVars());
-    }
+    public Plan<R>  input()                   { return operands.get(0); }
+    public Plan<R> filter()                   { return operands.get(1); }
+    @Override public Results<R> execute()    { return op.run(this); }
 
     @Override public Plan<R> bind(Binding binding) {
-        return new MinusPlan<>(rowClass, op, left.bind(binding), right.bind(binding), this, name);
+        return new MinusPlan<>(rowClass, op, operands.get(0).bind(binding),
+                               operands.get(1).bind(binding), this, name);
     }
 }

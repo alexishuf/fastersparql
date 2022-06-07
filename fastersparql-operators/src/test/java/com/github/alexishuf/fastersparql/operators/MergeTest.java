@@ -23,6 +23,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.operators.TestHelpers.checkRows;
 import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
 public class MergeTest {
@@ -61,6 +62,7 @@ public class MergeTest {
                 int idx = i;
                 plans.add(new Plan<Row>() {
                     @Override public String name() { return "input-"+idx; }
+                    @Override public List<? extends Plan<Row>> operands() { return emptyList(); }
                     @Override public @Nullable Plan<Row> parent() { return null; }
                     @Override public Class<? super Row> rowClass() { return Row.class; }
                     @Override public List<String> publicVars() { return inputsVars.get(idx); }

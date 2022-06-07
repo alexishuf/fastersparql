@@ -2,50 +2,36 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
-import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.LeftJoin;
 import lombok.Builder;
-import lombok.Value;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Value @Accessors(fluent = true)
-public class LeftJoinPlan<R> implements Plan<R> {
+@Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
+public class LeftJoinPlan<R> extends AbstractNAryPlan<R, LeftJoinPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
-    Class<? super R> rowClass;
-    LeftJoinPlan<R> parent;
-    LeftJoin op;
-    Plan<R> left, right;
-    String name;
+    @Getter private final LeftJoin op;
 
     @Builder
     public LeftJoinPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull LeftJoin op,
                         @lombok.NonNull Plan<R> left, @lombok.NonNull Plan<R> right,
                         @Nullable LeftJoinPlan<R> parent, @Nullable String name) {
-        this.rowClass = rowClass;
-        this.parent = parent;
+        super(rowClass, Arrays.asList(left, right),
+              name == null ? "LeftJoin-"+nextId.getAndIncrement() : name, parent);
         this.op = op;
-        this.left = left;
-        this.right = right;
-        this.name = name == null ? "LeftJoin-"+nextId.getAndIncrement() : null;
     }
 
-    @Override public Results<R> execute() {
-        return op.run(this);
-    }
-
-    @Override public List<String> publicVars() {
-        return VarUtils.union(left.publicVars(), right.publicVars());
-    }
-
-    @Override public List<String> allVars() {
-        return VarUtils.union(left.allVars(), right.allVars());
-    }
+    public Plan<R>                    left() { return operands.get(0); }
+    public Plan<R>                   right() { return operands.get(1); }
+    @Override public Results<R>    execute() { return op.run(this); }
 
     @Override public Plan<R> bind(Binding binding) {
-        return new LeftJoinPlan<>(rowClass, op, left.bind(binding), right.bind(binding), this, name);
+        return new LeftJoinPlan<>(rowClass, op, operands.get(0).bind(binding),
+                                  operands.get(1).bind(binding), this, name);
     }
 }

@@ -49,6 +49,13 @@ public interface Plan<R> {
     List<String> allVars();
 
     /**
+     * Child operands of this plan.
+     *
+     * @return a non-null immutable possibly empty list of non-null plans.
+     */
+    List<? extends Plan<R>> operands();
+
+    /**
      * Create a {@link Results} from this plan.
      *
      * {@link Results#vars()} is not required to be ready and {@link Results#publisher()} may only

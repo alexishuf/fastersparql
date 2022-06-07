@@ -25,6 +25,10 @@ public class TestHelpers {
                 return "test";
             }
 
+            @Override public List<? extends Plan<List<String>>> operands() {
+                return Collections.emptyList();
+            }
+
             @Override public @Nullable Plan<List<String>> parent() {
                 return null;
             }

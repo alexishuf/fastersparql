@@ -12,7 +12,7 @@ import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.impl.bind.BindFilterExists;
-import com.github.alexishuf.fastersparql.operators.plan.FilterExistsPlan;
+import com.github.alexishuf.fastersparql.operators.plan.ExistsPlan;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterExistsProvider;
 import lombok.EqualsAndHashCode;
@@ -260,7 +260,7 @@ public class FilterExistsTest {
         try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
             LeafPlan<String[]> left = LeafPlan.builder(client, data.left).build();
             LeafPlan<String[]> filter = LeafPlan.builder(client, data.filter).build();
-            FilterExistsPlan<String[]> plan = op.asPlan(left, data.negate, filter);
+            ExistsPlan<String[]> plan = op.asPlan(left, data.negate, filter);
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int thread = 0; thread < N_THREADS; thread++) {
                 tasks.add(Async.async(() -> {
