@@ -16,7 +16,7 @@ public class SharedEventLoopGroupHolder {
         return INSTANCE.doGet();
     }
 
-    private EventLoopGroupHolder doGet() {
+    private synchronized EventLoopGroupHolder doGet() {
         int keepAliveSeconds = sharedEventLoopGroupKeepAliveSeconds();
         if (elgHolder == null) {
             elgHolder = EventLoopGroupHolder.builder()
