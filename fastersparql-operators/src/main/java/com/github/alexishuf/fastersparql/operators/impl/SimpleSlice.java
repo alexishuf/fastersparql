@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.operators.plan.SlicePlan;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
 import lombok.Value;
 import lombok.experimental.Accessors;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -19,7 +20,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
-@Value @Accessors(fluent = true)
+@Value @Accessors(fluent = true) @Slf4j
 public class SimpleSlice implements Slice {
     Class<?> rowClass;
 
@@ -39,7 +40,7 @@ public class SimpleSlice implements Slice {
     @Override public <R> Results<R> run(SlicePlan<R> plan) {
         try {
             Results<R> input = plan.input().execute();
-            val processor = new SlicingProcessor<>(input.publisher(), plan.offset(), plan.limit(),
+            val processor = new SliceProcessor<>(input.publisher(), plan.offset(), plan.limit(),
                                                    plan);
             return new Results<>(input.vars(), input.rowClass(), processor);
         } catch (Throwable t) {
@@ -47,13 +48,13 @@ public class SimpleSlice implements Slice {
         }
     }
 
-    private static class SlicingProcessor<R> extends AbstractProcessor<R, R> {
+    private static class SliceProcessor<R> extends AbstractProcessor<R, R> {
         private final SlicePlan<R> plan;
         private final @NonNegative long offset, limit;
         private long itemsReceived = 0;
 
-        public SlicingProcessor(FSPublisher<? extends R> source, long offset, long limit,
-                                SlicePlan<R> plan) {
+        public SliceProcessor(FSPublisher<? extends R> source, long offset, long limit,
+                              SlicePlan<R> plan) {
             super(source);
             this.offset = offset;
             this.limit = limit;
@@ -65,6 +66,7 @@ public class SimpleSlice implements Slice {
                 if (itemsReceived-offset <= limit) {
                     emit(item);
                 } else if (!terminated.get()) {
+                    log.debug("{}: limit reached!", this);
                     cancelUpstream();
                     completeDownstream(null);
                 }
@@ -74,6 +76,13 @@ public class SimpleSlice implements Slice {
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {
             if (hasGlobalMetricsListeners())
                 sendMetrics(plan, new PlanMetrics(plan.name(), rows, start, error, cancelled));
+        }
+
+        @Override public String toString() {
+            String status = terminated.get() ? "terminated"
+                                             : (downstream == null ? "not subscribed" : "active");
+            return String.format("SliceProcessor[%s:+%d](%s)-%s",
+                                 plan.offset(), plan.limit(),  status,  source.toString());
         }
     }
 }

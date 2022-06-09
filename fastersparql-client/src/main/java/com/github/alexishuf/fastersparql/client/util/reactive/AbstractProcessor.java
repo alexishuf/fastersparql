@@ -14,7 +14,7 @@ public abstract class AbstractProcessor<U, D>
         implements Processor<U, D>, FSPublisher<D> {
     private static final Logger log = LoggerFactory.getLogger(AbstractProcessor.class);
 
-    private final FSPublisher<? extends U> source;
+    protected final FSPublisher<? extends U> source;
     protected AtomicBoolean terminated = new AtomicBoolean(false);
     protected Subscription upstream;
     protected Subscriber<? super D> downstream;

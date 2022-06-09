@@ -31,7 +31,7 @@ class PlanMergerBinder<R> implements Binder<R> {
         this.bindType = bindType;
     }
 
-    @Override public String              toString() { return "PlanMergerBinder["+id+"]"; }
+    @Override public String              toString() { return "PlanMergerBinder-"+id; }
     @Override public List<String>      resultVars() { return merger.outVars(); }
     @Override public Binder<R> copyIfNotShareable() { return new PlanMergerBinder<>(this); }
 
@@ -75,7 +75,8 @@ class PlanMergerBinder<R> implements Binder<R> {
 
         @Override public String toString() {
             String name = (bindType == BindType.LEFT_JOIN ? "Left" : "") + "JoinProcessor";
-            return PlanMergerBinder.this+"$"+name+merger.rowOps().toString(leftRow);
+            return String.format("%s.%s{right=%s,leftRow=%s}", PlanMergerBinder.this, name,
+                                 merger.right().name(), merger.rowOps().toString(leftRow));
         }
     }
 

@@ -116,6 +116,8 @@ public class BindPublisher<R> extends MergePublisher<R> {
             bindingsActive = false;
             markCompletable();
         }
+
+        @Override public String toString() { return BindPublisher.this+".bindingsSubscriber"; }
     };
 
     /* --- --- --- bound processor --- --- --- --- */
@@ -139,5 +141,7 @@ public class BindPublisher<R> extends MergePublisher<R> {
             if (!cancelled && error == null)
                 requestBindings(true);
         }
+
+        @Override public String toString() { return name()+"["+source+"]"; }
     }
 }
