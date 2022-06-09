@@ -99,7 +99,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     }
 
     public void feed(T item) {
-        boolean completed, yield = false, wake = false, backpressure = false;
+        boolean completed, cancelled, yield = false, wake = false, backpressure = false;
         if (Thread.currentThread().equals(eventThread.get()) && requested > 0
                 && subscriber != null && termination != DELIVERED && cancel != DELIVERED ) {
             --requested;
@@ -109,7 +109,8 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
         }
         synchronized (this) {
             completed = termination != NONE;
-            if (!completed) {
+            cancelled = cancel != NONE;
+            if (!completed && !cancelled) {
                 wake = mustWake();
                 items.add(item);
                 if (requested == 0 && pendingRequest == 0 && this.backpressure == NONE) {
@@ -126,6 +127,8 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                 feedAfterCompleteWarned = true;
                 log.warn("Ignoring {}.feed({}) after complete({})", this, item, errorString());
             }
+        } else if (cancelled) {
+            log.trace("{}.feed({}): cancel() pending, dropping item", this, item);
         } else {
             log.trace("{}.feed({}): wake={}, yield={}, backpressure={}",
                       this, item, wake, yield, backpressure);
@@ -182,6 +185,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
             executor.execute(() -> s.onError(ex));
         } else {
             this.subscriber = s;
+            log.trace("{}.subscribe({})", this, s);
             s.onSubscribe(new Subscription() {
                 @Override public void request(long n) {
                     if (n < 0) {
@@ -226,9 +230,9 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                         }
                     }
                     if (cancelled) {
-                        log.debug("Ignoring {}.cancel(): prev cancel()", name);
+                        log.trace("Ignoring {}.cancel(): prev cancel()", name);
                     } else if (terminated && subscriberReceivedTerminate) {
-                        log.debug("Ignoring {}.cancel(): prev complete({})", name, errorString());
+                        log.trace("Ignoring {}.cancel(): prev complete({})", name, errorString());
                     } else {
                         log.trace("{}.cancel(), wake={}", name, wake);
                         if (wake)
