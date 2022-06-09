@@ -183,4 +183,8 @@ public abstract class AbstractProcessor<U, D>
     @Override public void onComplete() {
         completeDownstream(null);
     }
+
+    @Override public String toString() {
+        return getClass().getSimpleName()+"("+source+")";
+    }
 }

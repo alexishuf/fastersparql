@@ -111,7 +111,8 @@ class PlanMergerBinder<R> implements Binder<R> {
                 default:
                     throw new UnsupportedOperationException("Unexpected bindType="+bindType);
             }
-            return PlanMergerBinder.this+"$"+name+merger.rowOps().toString(leftRow);
+            return String.format("%s.%s{right=%s,leftRow=%s}", PlanMergerBinder.this, name,
+                                 merger.right().name(), merger.rowOps().toString(leftRow));
         }
     }
 }

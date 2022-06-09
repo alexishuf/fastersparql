@@ -141,7 +141,5 @@ public class BindPublisher<R> extends MergePublisher<R> {
             if (!cancelled && error == null)
                 requestBindings(true);
         }
-
-        @Override public String toString() { return name()+"["+source+"]"; }
     }
 }
