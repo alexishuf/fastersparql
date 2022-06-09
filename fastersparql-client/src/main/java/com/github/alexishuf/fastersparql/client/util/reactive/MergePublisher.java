@@ -282,6 +282,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
                         assert activeSources == sources.size() : "activeSources != #sources";
                         activeSources = 0;
                         sources.clear();
+                        publishersQueue.clear();
                     }
                     cbp.complete(terminationCause);
                     onComplete(terminationCause, cancel);
@@ -435,7 +436,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
     private class Source implements Subscriber<T> {
         private final FSPublisher<? extends T> upstreamPublisher;
         private final int number;
-        private boolean active = false;
+        private boolean active = false, cancelled;
         private long undelivered;
         private @MonotonicNonNull Subscription upstream;
         private @MonotonicNonNull Thread subscriberThread;
@@ -471,19 +472,23 @@ public class MergePublisher<T> implements FSPublisher<T> {
         }
 
         public void cancel() {
-            if (!active) {
+            if (active) {
                 log.trace("{}.cancel()", this);
                 active = false;
+                cancelled = true;
                 upstream.cancel();
             }
         }
 
         private void complete(@Nullable Throwable cause) {
             log.trace("{}.complete({})", this, cause);
-            active = false;
-            long n = undelivered;
-            undelivered = 0;
-            tryComplete(cause, this, false, n);
+            assert cancelled || active : "!cancelled && !active: double completion?";
+            if (active) {
+                active = false;
+                long n = undelivered;
+                undelivered = 0;
+                tryComplete(cause, this, false, n);
+            }
         }
 
         @Override public void onSubscribe(Subscription s)  {
