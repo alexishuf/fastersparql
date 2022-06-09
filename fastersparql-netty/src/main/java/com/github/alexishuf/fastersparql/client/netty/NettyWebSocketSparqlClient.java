@@ -419,6 +419,9 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         private final WebSocketResultsParser resultsParser
                 = new WebSocketResultsParser(new WebSocketResultsParserConsumer() {
             private Merger<String[]> projector = Merger.identity(ARRAY_OPS, QueryHandler.this.vars);
+            @Override public String toString() {
+                return QueryHandler.this+".resultsParser";
+            }
             @Override public void bindRequest(long n, boolean incremental) {
                 tryComplete(null, "Unexpected !bind-request");
             }
@@ -556,6 +559,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                     binding = null;
                 }
             }
+
+            @Override public String toString() { return BindHandler.this+".resultsParser"; }
 
             @Override public void bindRequest(long n, boolean incremental) {
                 if (!sentHeaders) {
