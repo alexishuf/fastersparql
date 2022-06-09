@@ -52,7 +52,8 @@ import static java.util.Collections.emptyList;
 
 
 public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
-    private static final AtomicInteger NEXT_HANDLER_ID = new AtomicInteger(1);
+    private static final AtomicInteger NEXT_QUERY_HANDLER_ID = new AtomicInteger(1);
+    private static final AtomicInteger NEXT_BIND_HANDLER_ID = new AtomicInteger(1);
     private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
 
     private static final Logger log = LoggerFactory.getLogger(NettyWebSocketSparqlClient.class);
@@ -161,6 +162,11 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         netty.close();
     }
 
+    @Override public String toString() {
+        int id = System.identityHashCode(this);
+        return String.format("NettyWSSparqlClient[%s]@%x", endpoint.uri(), id);
+    }
+
     private enum HandlerState {
         CREATED,
         ACTIVE,
@@ -172,19 +178,22 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
     }
 
     private abstract class Handler implements WsClientHandler {
-        private final int id = NEXT_HANDLER_ID.getAndIncrement();
-
+        private final int id;
+        private final boolean tracing = log.isTraceEnabled();
         protected final List<String> vars;
         protected @MonotonicNonNull ChannelHandlerContext ctx;
         private @MonotonicNonNull WsRecycler recycler;
+        protected final CallbackPublisher<String[]> publisher;
         private final AtomicReference<HandlerState> state = new AtomicReference<>(HandlerState.CREATED);
 
-        public Handler(List<String> vars) {
+        public Handler(int id, List<String> vars) {
+            this.id = id;
             this.vars = vars;
+            this.publisher = new Publisher();
         }
 
-        protected final CallbackPublisher<String[]> publisher
-                = new CallbackPublisher<String[]>(this+"$CallbackPublisher") {
+        private class Publisher extends CallbackPublisher<String[]> {
+            public Publisher() { super(Handler.this.name()+".publisher"); }
             @Override protected void onRequest(long n) {
                 Handler.this.request(n);
             }
@@ -193,9 +202,26 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 inEventLoop(AR_BACKPRESSURE, "autoRead(false, onBackpressure)");
             }
             @Override protected void onCancel() {
-                inEventLoop(() -> cancel(), "cancel");
+                inEventLoop(() -> {
+                    if (advanceState(HandlerState.CANCELLED)) {
+                        if (ctx != null) {
+                            if (ctx.channel().isOpen()) {
+                                ctx.writeAndFlush(new TextWebSocketFrame("!cancel\n")).addListener(f -> {
+                                    if (f.isSuccess() && ctx != null)
+                                        ctx.close(); // will trigger a future detach()
+                                });
+                            } else {
+                                log.trace("{} ignoring onCancel(): channel closed", this);
+                            }
+                        } else {
+                            log.trace("{}.onCancel(): cancelled but before attach/after detach", this);
+                        }
+                    } else {
+                        log.debug("{} ignoring doCancel(): already terminated/cancelled", this);
+                    }
+                }, "cancel");
             }
-        };
+        }
 
         protected abstract WebSocketResultsParser resultsParser();
 
@@ -236,21 +262,22 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 tryComplete(null, "Unexpected "+frame.getClass().getSimpleName());
         }
 
+        private String name() {
+            return NettyWebSocketSparqlClient.this + "." + getClass().getSimpleName() + "-" + id;
+        }
+
         @Override public String toString() {
-            StringBuilder sb = new StringBuilder(128);
-            sb.append(NettyWebSocketSparqlClient.this)
-                    .append('.').append(getClass().getSimpleName())
-                    .append('-').append(id)
-                    .append('{').append(state.get()).append(", ");
+            StringBuilder sb = new StringBuilder(256);
+            sb.append(name()).append('{').append(state.get()).append(", ");
+            boolean hasChannel = false;
             try { // wrap on try-catch as we are racing on ctx != null
                 if (ctx != null) {
                     Channel ch = ctx.channel();
                     sb.append("ch=").append(ch).append(ch.isOpen() ? ", open" : ", closed");
+                    hasChannel = true;
                 }
             } catch (NullPointerException ignored) {}
-            if (sb.charAt(sb.length()-1) == '{')
-                sb.append("detached");
-            return sb.append('}').toString();
+            return sb.append(hasChannel ? "" : "detached").append('}').toString();
         }
 
         /* --- --- --- state management: may be called outside the Netty event loop --- --- --- */
@@ -308,7 +335,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 if (state.get().isTerminal() || state.get() == HandlerState.CANCELLED) {
                     log.debug("{}: ignoring sendFrame({}): terminated/cancelled", this, message);
                 } else {
-                    log.trace("{}: sendFrame({})", this, message);
+                    if (tracing)
+                        log.trace("{}: sendFrame({})", this, message.replace("\n", "\\n"));
                     ctx.writeAndFlush(new TextWebSocketFrame(message));
                 }
             } else {
@@ -332,8 +360,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                     runnable.run();
                 else
                     el.execute(runnable);
-            } else {
-                log.debug("{} ignoring {}: detached", this, name);
+            } else if (state.get().isTerminal()) {
+                log.trace("{} ignoring {}: detached", this, name);
             }
         }
 
@@ -360,8 +388,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 } else {
                     log.debug("{} ignoring autoRead({}, {}): channel closed", this, value, reason);
                 }
-            } else {
-                log.debug("{} ignoring autoRead({}, {}): detached", this, value, reason);
+            } else if (state.get().isTerminal()) {
+                log.trace("{} ignoring autoRead({}, {}): detached", this, value, reason);
             }
         }
 
@@ -411,7 +439,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         });
 
         public QueryHandler(CharSequence query) {
-            super(SparqlUtils.publicVars(query));
+            super(NEXT_QUERY_HANDLER_ID.getAndIncrement(), SparqlUtils.publicVars(query));
             boolean needsSuffix = query.length() > 0 && query.charAt(query.length() - 1) != '\n';
             this.queryMessage = "!query " + query + (needsSuffix ? "\n" : "");
         }
@@ -585,7 +613,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         };
 
         public BindHandler(CharSequence sparql, Results<R> bindings, BindType bindType) {
-            super(bindType.resultVars(bindings.vars(), SparqlUtils.publicVars(sparql)));
+            super(NEXT_BIND_HANDLER_ID.getAndIncrement(),
+                  bindType.resultVars(bindings.vars(), SparqlUtils.publicVars(sparql)));
             this.bindings = bindings;
             this.bindType = bindType;
             if (!bindType.isJoin())
