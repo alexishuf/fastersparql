@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty.ws;
 
 import io.netty.channel.Channel;
 
+@FunctionalInterface
 public interface WsRecycler {
     /**
      * Submit an established WebSocket session for reuse.

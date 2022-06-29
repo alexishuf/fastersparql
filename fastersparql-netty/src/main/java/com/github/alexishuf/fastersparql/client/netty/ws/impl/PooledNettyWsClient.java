@@ -15,6 +15,7 @@ import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.concurrent.Future;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -40,11 +41,7 @@ public class PooledNettyWsClient implements NettyWsClient {
             Bootstrap bootstrap = new Bootstrap().remoteAddress(address).group(group)
                     .channel(elgHolder.transport().channelClass());
             boolean lifo = !poolFIFO;
-            WsRecycler recycler = ch -> new WsRecycler() {
-                @Override public void recycle(Channel channel) {
-                    PooledNettyWsClient.this.pool.release(channel);
-                }
-            };
+            WsRecycler recycler = this::recycle;
             WsChannelInitializer init = new WsChannelInitializer(sslCtx, uri, headers, recycler);
             pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
                 @Override public void channelCreated(Channel ch) {
@@ -58,16 +55,20 @@ public class PooledNettyWsClient implements NettyWsClient {
         }
     }
 
+    private void recycle(Channel channel) {
+        pool.release(channel);
+    }
+
     @Override public void open(WsClientHandler handler) {
-        pool.acquire().addListener(f -> {
+        Future<Channel> future = pool.acquire();
+        future.addListener(f -> {
             Channel ch;
             try {
                 ch = (Channel)f.get();
+                ((WsClientNettyHandler) ch.pipeline().get("ws")).delegate(handler);
             } catch (Throwable e) {
                 handler.onError(e);
-                return;
             }
-            ((WsClientNettyHandler)ch.pipeline().get("ws")).delegate(handler);
         });
     }
 

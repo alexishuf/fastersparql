@@ -22,19 +22,16 @@ import static java.util.Objects.requireNonNull;
  * Netty {@link ChannelInboundHandler} that handles handshake and feeds a {@link WsClientHandler}.
  */
 @Slf4j
-public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> {
+public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> implements WsRecycler {
     private final WebSocketClientHandshaker hs;
     private final WsRecycler recycler;
     private @Nullable WsClientHandler delegate;
     private @MonotonicNonNull ChannelHandlerContext ctx;
-    private boolean handshakeStarted = false;
+    private boolean handshakeStarted, handshakeComplete, attached;
 
     public WsClientNettyHandler(URI uri, HttpHeaders headers, WsRecycler recycler) {
         this.hs = newHandshaker(uri, V13, null, true, headers);
-        this.recycler = ch -> {
-            delegate = null;
-            recycler.recycle(ch);
-        };
+        this.recycler = recycler;
     }
 
     public void delegate(WsClientHandler delegate) {
@@ -52,9 +49,27 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> {
         assert ctx != null : "No ctx";
         assert ctx.executor().inEventLoop() : "Called from outside the event loop";
         Channel channel = ctx.channel();
-        if (!handshakeStarted && delegate != null && channel.isOpen()) {
+        if (!channel.isOpen()) {
+            log.error("Ignoring {}.tryHandshake() with closed channel", this);
+        } else if (delegate == null) {
+            log.error("Ignoring {}.tryHandshake() with delegate=null", this);
+        } else if (!handshakeStarted) {
             handshakeStarted = true;
             hs.handshake(channel);
+        } else if (handshakeComplete) {
+            attach();
+        } else {
+            log.trace("Skipping {}.tryHandshake(): handshake in progress", this);
+        }
+    }
+
+    private void attach() {
+        if (delegate == null || ctx == null || attached || !handshakeComplete) {
+            assert false : "Illegal state for attach()";
+            log.error("Ignoring illegal {}.attach()", this);
+        } else {
+            attached = true;
+            delegate.attach(ctx, this);
         }
     }
 
@@ -62,7 +77,14 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> {
         if (delegate != null) {
             delegate.detach();
             delegate = null;
+            attached = false;
         }
+    }
+
+    @Override public void recycle(Channel channel) {
+        assert ctx == null || ctx.channel() == channel : "recycling extraneous channel";
+        detach();
+        recycler.recycle(channel);
     }
 
     @Override public void    handlerAdded(ChannelHandlerContext ctx) { this.ctx = ctx; }
@@ -76,8 +98,8 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> {
         if (!hs.isHandshakeComplete()) {
             try {
                 hs.finishHandshake(channel, (FullHttpResponse) requireNonNull(msg));
-                assert delegate != null : "null delegate";
-                delegate.attach(ctx, recycler);
+                handshakeComplete = true;
+                attach();
             } catch (WebSocketHandshakeException e) {
                 exceptionCaught(ctx, e);
             }
@@ -120,6 +142,7 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> {
     }
 
     @Override public String toString() {
-        return "WsClientNettyHandler{" + (ctx == null ? "[detached]" : ctx.channel()) + "}";
+        return "WsClientNettyHandler{delegate="+delegate+
+               ", ch=" + (ctx == null ? "[detached]" : ctx.channel()) + "}";
     }
 }
