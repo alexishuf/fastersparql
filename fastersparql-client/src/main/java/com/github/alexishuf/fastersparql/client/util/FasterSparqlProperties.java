@@ -16,8 +16,8 @@ public class FasterSparqlProperties {
     public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
     public static final int DEF_REACTIVE_QUEUE_CAPACITY = 1024;
     public static final int DEF_CLIENT_MAX_QUERY_GET = 1024;
-    public static final int DEF_CLIENT_CONN_RETRIES = 2;
-    public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 500;
+    public static final int DEF_CLIENT_CONN_RETRIES = 3;
+    public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
 
     protected interface Parser<T> {
         T parse(String source, String value) throws IllegalArgumentException;

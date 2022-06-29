@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.client.util.async.CompletableAsyncTask;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.util.concurrent.Future;
+import lombok.extern.slf4j.Slf4j;
 
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
@@ -15,6 +16,7 @@ import java.util.function.Supplier;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+@Slf4j
 public class NettyRetryingChannelSupplier {
     public static AsyncTask<Channel> open(Supplier<Future<?>> channelSupplier) {
         return open(0, channelSupplier);
@@ -30,11 +32,12 @@ public class NettyRetryingChannelSupplier {
                     task.complete((Channel) future.get());
             } catch (Throwable e) {
                 Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
-                boolean retry = FasterSparqlProperties.maxRetries() > attempt
+                boolean retry = (FasterSparqlProperties.maxRetries()+1) > attempt
                              && (cause instanceof NoRouteToHostException ||
                                  cause instanceof ConnectException);
                 if (retry) {
                     long ms = FasterSparqlProperties.retryWait(MILLISECONDS);
+                    log.info("{}: attempt={} retrying in {}ms", e.getMessage(), attempt, ms);
                     Async.schedule(ms, MILLISECONDS,
                             () -> open(attempt + 1, channelSupplier).handle(
                                     (ret, err) -> err == null
