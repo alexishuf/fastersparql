@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyRetryingChannelSupplier;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -11,7 +12,6 @@ import io.netty.channel.*;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
-import io.netty.util.concurrent.Future;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
@@ -64,20 +64,10 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     }
 
     static <T extends ReusableHttpClientInboundHandler>
-    void doRequestSetup(Future<?> chFuture, String host, String connection,
+    void doRequestSetup(Channel ch, String host, String connection,
                         HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         Setup<T> setup) {
-        Channel ch;
-        try {
-            if (chFuture instanceof ChannelFuture)
-                ch = ((ChannelFuture)chFuture).channel();
-            else
-                ch = (Channel) chFuture.get();
-        } catch (Throwable t) {
-            setup.connectionError(t);
-            return;
-        }
         try {
             ByteBuf bb = null;
             if (bodyGenerator != null)
@@ -113,8 +103,12 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     public void request(HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         Setup<H> setup) {
-        bootstrap.connect().addListener(f ->
-                doRequestSetup(f, host, CONNECTION, method, firstLine, bodyGenerator, setup));
+        NettyRetryingChannelSupplier.open(bootstrap::connect).whenComplete((ch, err) -> {
+            if (err != null)
+                setup.connectionError(err);
+            else
+                doRequestSetup(ch, host, CONNECTION, method, firstLine, bodyGenerator, setup);
+        });
     }
 
     @Override public void close() {

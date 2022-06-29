@@ -1,16 +1,23 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class FasterSparqlProperties {
     public static final String REACTIVE_QUEUE_CAPACITY   = "fastersparql.reactive.queue.capacity";
     public static final String CLIENT_MAX_QUERY_GET = "fastersparql.client.max-query-get";
+    public static final String CLIENT_CONN_RETRIES = "fastersparql.client.conn.retries";
+    public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
     public static final int DEF_REACTIVE_QUEUE_CAPACITY = 1024;
     public static final int DEF_CLIENT_MAX_QUERY_GET = 1024;
+    public static final int DEF_CLIENT_CONN_RETRIES = 2;
+    public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 500;
 
     protected interface Parser<T> {
         T parse(String source, String value) throws IllegalArgumentException;
@@ -78,5 +85,28 @@ public class FasterSparqlProperties {
      */
     public static @Positive int maxQueryByGet() {
         return readPositiveInt(CLIENT_MAX_QUERY_GET, DEF_CLIENT_MAX_QUERY_GET);
+    }
+
+    /**
+     * How many times a {@link SparqlClient} should retry opening a connection to an endpoint if
+     * the connection was actively refused or timed out.
+     *
+     * @return A number {@code >= 0} indicating how many retries should be made. If zero,
+     *         there will be only the initial connection attempt.
+     */
+    public static @NonNegative int maxRetries() {
+        return readPositiveInt(CLIENT_CONN_RETRIES, DEF_CLIENT_CONN_RETRIES);
+    }
+
+    /**
+     * How much time to wait before each of the connection retries
+     * ({@link FasterSparqlProperties#maxRetries()}).
+     *
+     * @param timeUnit the desired time unit of the time window.
+     * @return a non-negative number of timeunits to wait before each each retry.
+     */
+    public static @NonNegative long retryWait(TimeUnit timeUnit) {
+        int ms = readPositiveInt(CLIENT_CONN_RETRY_WAIT_MS, DEF_CLIENT_CONN_RETRY_WAIT_MS);
+        return timeUnit.convert(ms, TimeUnit.MILLISECONDS);
     }
 }

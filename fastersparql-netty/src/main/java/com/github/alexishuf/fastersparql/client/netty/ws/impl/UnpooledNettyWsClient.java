@@ -2,21 +2,23 @@ package com.github.alexishuf.fastersparql.client.netty.ws.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyRetryingChannelSupplier;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsClientHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsClientNettyHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsRecycler;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.concurrent.Future;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static java.net.InetSocketAddress.createUnresolved;
 
@@ -43,13 +45,23 @@ public class UnpooledNettyWsClient implements NettyWsClient {
 
     @Override
     public void open(WsClientHandler handler) {
-        ChannelFuture f = bootstrap.connect();
-        f.addListener(ignored -> {
-            if (f.isSuccess())
-                ((WsClientNettyHandler) f.channel().pipeline().get("ws")).delegate(handler);
-            else
-                handler.onError(f.cause());
-        });
+        retryingOpen(handler, bootstrap::connect);
+    }
+
+    static void retryingOpen(WsClientHandler handler,
+                             Supplier<Future<?>> channelSupplier) {
+        NettyRetryingChannelSupplier.open(channelSupplier)
+                .whenComplete((ch, cause) -> {
+                    if (cause != null) {
+                        handler.onError(cause);
+                    } else {
+                        try {
+                            ((WsClientNettyHandler) ch.pipeline().get("ws")).delegate(handler);
+                        } catch (Throwable t) {
+                            handler.onError(t);
+                        }
+                    }
+                });
     }
 
     @Override public void close() {

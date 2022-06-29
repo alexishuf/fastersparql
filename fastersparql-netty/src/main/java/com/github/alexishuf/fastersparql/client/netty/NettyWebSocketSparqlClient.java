@@ -244,9 +244,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             assert ctx != null : "No previous attach() call";
             assert ctx.executor().inEventLoop() : "Called from outside the event loop";
             this.ctx = null;
-            if (state.get() == HandlerState.CANCELLED) {
-                log.debug("{}.cancel() called, will not complete() on detach()", this);
-            } else {
+            if (!state.get().isTerminal()) {
                 String msg = "Remote peer closed WebSocket session before completing results";
                 tryComplete(null, msg);
             }
@@ -330,7 +328,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
         protected void sendFrame(String message) {
             EventExecutor executor = safeExecutor();
             if (executor == null) {
-                log.debug("{}: ignoring sendFrame({}): detached", this, message);
+                log.warn("{}: ignoring sendFrame({}): detached", this, message.replace("\n", "\\n"));
             } else if (executor.inEventLoop()) {
                 if (state.get().isTerminal() || state.get() == HandlerState.CANCELLED) {
                     log.debug("{}: ignoring sendFrame({}): terminated/cancelled", this, message);
@@ -393,25 +391,6 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             }
         }
 
-        private void cancel() {
-            assert ctx.executor().inEventLoop() : "called from outside the event loop";
-            if (advanceState(HandlerState.CANCELLED)) {
-                if (ctx != null) {
-                    if (ctx.channel().isOpen()) {
-                        ctx.writeAndFlush(new TextWebSocketFrame("!cancel\n")).addListener(f -> {
-                            if (f.isSuccess() && ctx != null)
-                                ctx.close(); // will trigger a future detach()
-                        });
-                    } else {
-                        log.debug("{} ignoring doCancel(): channel closed", this);
-                    }
-                } else {
-                    log.debug("{}.onCancel(): cancelled but before attach/after detach", this);
-                }
-            } else {
-                log.debug("{} ignoring doCancel(): already cancelled", this);
-            }
-        }
     }
 
     private class QueryHandler extends Handler {

@@ -50,9 +50,9 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
         assert ctx.executor().inEventLoop() : "Called from outside the event loop";
         Channel channel = ctx.channel();
         if (!channel.isOpen()) {
-            log.error("Ignoring {}.tryHandshake() with closed channel", this);
+            log.trace("Ignoring {}.tryHandshake() with closed channel", this);
         } else if (delegate == null) {
-            log.error("Ignoring {}.tryHandshake() with delegate=null", this);
+            log.trace("Ignoring {}.tryHandshake() with delegate=null", this);
         } else if (!handshakeStarted) {
             handshakeStarted = true;
             hs.handshake(channel);

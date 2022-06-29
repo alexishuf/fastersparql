@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.client.netty.http.ActiveChannelSet;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsClientHandler;
-import com.github.alexishuf.fastersparql.client.netty.ws.WsClientNettyHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsRecycler;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
@@ -15,7 +14,6 @@ import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
-import io.netty.util.concurrent.Future;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -60,16 +58,7 @@ public class PooledNettyWsClient implements NettyWsClient {
     }
 
     @Override public void open(WsClientHandler handler) {
-        Future<Channel> future = pool.acquire();
-        future.addListener(f -> {
-            Channel ch;
-            try {
-                ch = (Channel)f.get();
-                ((WsClientNettyHandler) ch.pipeline().get("ws")).delegate(handler);
-            } catch (Throwable e) {
-                handler.onError(e);
-            }
-        });
+        UnpooledNettyWsClient.retryingOpen(handler, pool::acquire);
     }
 
     @Override public void close() {

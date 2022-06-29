@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 
 import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyRetryingChannelSupplier;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -70,8 +71,13 @@ public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     public void request(HttpMethod method, CharSequence firstLine,
                         Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
                         @Nullable Setup<H> setup) {
-        pool.acquire().addListener(f -> doRequestSetup(f, host, CONNECTION,
-                                                       method, firstLine, bodyGenerator, setup));
+        NettyRetryingChannelSupplier.open(pool::acquire).whenComplete((ch, err) -> {
+            if (err != null) {
+                if (setup != null) setup.connectionError(err);
+            } else {
+                doRequestSetup(ch, host, CONNECTION, method, firstLine, bodyGenerator, setup);
+            }
+        });
     }
 
     @Override public void close() {
