@@ -196,4 +196,14 @@ class SparqlEndpointTest {
         assertTrue(a.equals(a));
         assertTrue(b.equals(b));
     }
+
+    @ParameterizedTest @ValueSource(strings = {
+            "ws://example.org/sparql",
+            "post,tsv@http://example.org/sparql",
+            "http://example.org/sparql",
+            "get,tsv,json@https://example.org/sparql",
+    })
+    void testToStringFromAugmented(String augmented) {
+        assertEquals(augmented, SparqlEndpoint.parse(augmented).toString());
+    }
 }

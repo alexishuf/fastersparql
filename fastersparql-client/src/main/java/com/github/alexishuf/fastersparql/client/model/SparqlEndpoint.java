@@ -6,12 +6,10 @@ import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.ToString;
-import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -19,17 +17,26 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static java.net.InetAddress.getByName;
 
-@Accessors(fluent = true)
-@EqualsAndHashCode(onlyExplicitlyIncluded = true)
-@ToString(onlyExplicitlyIncluded = true)
-@Slf4j
 public final class SparqlEndpoint {
+    private static final Logger log = LoggerFactory.getLogger(SparqlEndpoint.class);
+
+    private final String uri;
+    private final SparqlConfiguration configuration;
+    private final boolean hasQuery;
+    private final Protocol protocol;
+    private final String rawPathWithQuery;
+    private @MonotonicNonNull URI toURI;
+    private @MonotonicNonNull AsyncTask<InetSocketAddress> resolved;
+
+    /* --- --- --- trivial accessors --- --- --- */
+
     /**
      * The full SPARQL endpoint URI, in conformance to
      * <a href="https://datatracker.ietf.org/doc/html/rfc2396">RFC 2396</a>.
@@ -37,18 +44,12 @@ public final class SparqlEndpoint {
      * SPARQL endpoint URIs are not allowed to contain fragment identifiers
      * (.e.g., {@code #author}).
      */
-    @Getter @ToString.Include @EqualsAndHashCode.Include
-    private final String uri;
-
-    /**
-     * A {@link URI} object for {@link SparqlEndpoint#uri()}.
-     */
-    @Getter private final URI toURI;
+    public String uri() { return uri; }
 
     /**
      * Whether the URI scheme is HTTP. If false, the URI is HTTP.
      */
-    @Getter private final Protocol protocol;
+    public Protocol protocol() { return protocol; }
 
     /**
      * The <a href="https://datatracker.ietf.org/doc/html/rfc2396#section-3.3">path</a> segment
@@ -60,14 +61,13 @@ public final class SparqlEndpoint {
      *
      * The path segment will always start with a single {@code /}.
      */
-    @Getter private final String rawPathWithQuery;
+    public String rawPathWithQuery() { return rawPathWithQuery; }
 
     /**
      * Whether the URI includes a non-empty
      * <a href="https://datatracker.ietf.org/doc/html/rfc2396#section-3.4">query</a> component.
      */
-    @Getter private final boolean hasQuery;
-
+    public boolean hasQuery() { return hasQuery; }
     /**
      * The allowed methods and result media types, as well as headers and query parameters to
      * be set in queries.
@@ -79,10 +79,8 @@ public final class SparqlEndpoint {
      * {@link SparqlConfiguration#overlayWith(SparqlConfiguration)} called on the endpoint
      * configuration given the query-specific configuration.
      */
-    @Getter @ToString.Include @EqualsAndHashCode.Include
-    private final SparqlConfiguration configuration;
+    public SparqlConfiguration configuration() { return configuration; }
 
-    private @Nullable AsyncTask<InetSocketAddress> resolved;
 
     /* --- --- --- Constants --- --- --- */
 
@@ -239,6 +237,46 @@ public final class SparqlEndpoint {
 
     /* --- --- --- Computed properties --- --- --- */
 
+    /**
+     * A {@link URI} object for {@link SparqlEndpoint#uri()}.
+     */
+    public URI toURI() {
+        try {
+            return toURI == null ? toURI = new URI(uri) : toURI;
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Unexpected URISyntaxException for "+uri, e);
+        }
+    }
+
+    /**
+     * Generate an augmented URI that can be fed into {@link SparqlEndpoint#parse(String)}
+     * and generate an {@link SparqlEndpoint} with the same {@link SparqlMethod} and
+     * {@link SparqlResultFormat} configurations.
+     *
+     * <strong>Other configurations in {@link SparqlEndpoint#configuration()} have no
+     * representation in the augmented uri, thus the result of {@link SparqlEndpoint#parse(String)}
+     * on the returned URI may differ from {@code this}.</strong>.
+     *
+     * @return an augmented URI representing this {@link SparqlEndpoint}.
+     */
+    public String augmentedUri() {
+        if (!configuration.hasMethods() && !configuration.hasResultsAccepts())
+            return uri();
+        StringBuilder sb = new StringBuilder();
+        if (configuration.hasMethods()) {
+            for (SparqlMethod m : configuration.methods())
+                sb.append(m.lowercase()).append(',');
+            sb.setLength(sb.length()-1);
+        }
+        if (configuration.hasResultsAccepts()) {
+            if (sb.length() > 0) sb.append(',');
+            for (SparqlResultFormat fmt : configuration.resultsAccepts())
+                sb.append(fmt.lowercase()).append(',');
+            sb.setLength(sb.length()-1);
+        }
+        assert sb.length() > 0 : "Unexpected empty StringBuilder";
+        return sb.append('@').append(uri()).toString();
+    }
 
     /**
      * Get the host as a DNS host name, an IP v4 IP address or an IPV6 address (enclosed in []).
@@ -319,6 +357,27 @@ public final class SparqlEndpoint {
      * @return non-null decoded password if there is an {@code userinfo} in the URI, else null
      */
     public @Nullable String password() { return UriUtils.unescape(rawPassword()); }
+
+    /* --- --- --- java.lang.Object methods --- --- --- */
+
+    @Override public String toString() {
+        boolean trivial = !configuration.hasRdfAccepts()
+                       && configuration.params().isEmpty()
+                       && configuration.headers().isEmpty()
+                       && configuration.appendHeaders().isEmpty();
+        return trivial ? augmentedUri() : "<"+uri+">@"+ configuration;
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof SparqlEndpoint)) return false;
+        SparqlEndpoint that = (SparqlEndpoint) o;
+        return uri.equals(that.uri) && configuration.equals(that.configuration);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(uri, configuration);
+    }
 
     /* --- --- --- implementation details --- --- --- */
 
