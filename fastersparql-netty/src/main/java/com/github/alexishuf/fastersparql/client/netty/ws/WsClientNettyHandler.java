@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.ws;
 
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandler;
@@ -49,10 +50,10 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
         assert ctx != null : "No ctx";
         assert ctx.executor().inEventLoop() : "Called from outside the event loop";
         Channel channel = ctx.channel();
-        if (!channel.isOpen()) {
-            log.trace("Ignoring {}.tryHandshake() with closed channel", this);
-        } else if (delegate == null) {
+        if (delegate == null) {
             log.trace("Ignoring {}.tryHandshake() with delegate=null", this);
+        } else if (!channel.isOpen()) {
+            detach();
         } else if (!handshakeStarted) {
             handshakeStarted = true;
             hs.handshake(channel);
@@ -74,8 +75,19 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
     }
 
     private void detach() {
+        assert ctx == null || ctx.executor().inEventLoop() : "detach() from outside event loop";
         if (delegate != null) {
-            delegate.detach();
+            if (attached) {
+                delegate.detach();
+            } else if (ctx == null) {
+                delegate.onError(new IllegalStateException("detach() with ctx == null"));
+            } else if (!ctx.channel().isOpen()) {
+                String msg = "Server closed connection before completing WS handshake";
+                delegate.onError(new SparqlClientServerException(msg));
+            } else {
+                String msg = "detach() before attach() with open channel=";
+                delegate.onError(new IllegalStateException(msg +ctx.channel()));
+            }
             delegate = null;
             attached = false;
         }

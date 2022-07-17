@@ -7,18 +7,25 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmen
 import com.github.alexishuf.fastersparql.client.parser.fragment.CharSequenceFragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
+import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
 import com.github.alexishuf.fastersparql.client.parser.row.*;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -26,9 +33,13 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.GraphData.graph;
 import static com.github.alexishuf.fastersparql.client.ResultsData.results;
+import static com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties.*;
 import static com.github.alexishuf.fastersparql.client.util.async.Async.async;
+import static com.github.alexishuf.fastersparql.client.util.async.Async.asyncThrowing;
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SuppressWarnings("SameParameterValue")
 @Testcontainers
@@ -179,6 +190,120 @@ public class SparqlClientTest {
     @ParameterizedTest @MethodSource("resultsData")
     void testResultsNetty(ResultsData data) throws ExecutionException {
         testResults(data, "netty");
+    }
+
+    private void testUnreachable(String tag) throws Exception {
+        int port = -1;
+        while (port == -1) {
+            try (ServerSocket serverSocket = new ServerSocket(0)) {
+                port = serverSocket.getLocalPort();
+            } catch (IOException e) {
+                log.debug("Ignoring {} and retrying in 1s...", e.toString());
+                Thread.sleep(1_000);
+            }
+        }
+        List<AsyncTask<?>> tasks = new ArrayList<>();
+        for (SparqlMethod meth : SparqlMethod.values()) {
+            if (meth == SparqlMethod.WS) {
+                String uri = "ws://127.0.0.1:"+port+"/sparql";
+                tasks.add(async(() -> testUnreachable(tag, uri)));
+            } else {
+                for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
+                    if (ResultsParserRegistry.get().canParse(fmt.asMediaType())) {
+                        String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
+                        tasks.add(Async.async(() -> testUnreachable(tag, uri)));
+                    }
+                }
+            }
+        }
+        for (AsyncTask<?> task : tasks) task.get();
+    }
+
+    private void testUnreachable(String tag, String uri) {
+        try (val client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
+            val results = client.query("SELECT * WHERE { ?x a <http://example.org/Dummy>}");
+            assertEquals(singletonList("x"), results.vars());
+            val adapter = new IterableAdapter<>(results.publisher());
+            boolean empty = !adapter.iterator().hasNext();
+            assertTrue(empty);
+            assertTrue(adapter.hasError());
+        }
+    }
+
+    @Test
+    void testUnreachableNetty() throws Exception {
+        testUnreachable("netty");
+    }
+
+    private void testServerEarlyClose(String tag, String uri) {
+        try (val client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
+            Results<String[]> results = client.query("SELECT * WHERE { ?s ?p ?o}");
+            assertEquals(asList("s", "p", "o"), results.vars());
+            val adapter = new IterableAdapter<>(results.publisher());
+            boolean empty = !adapter.iterator().hasNext();
+            assertTrue(empty);
+            assertTrue(adapter.hasError());
+        }
+    }
+
+    private void testServerEarlyClose(String tag) throws Exception {
+        String connRetries = System.getProperty(CLIENT_CONN_RETRIES);
+        String connRetryWaitMs = System.getProperty(CLIENT_CONN_RETRY_WAIT_MS);
+        String connTimeoutMs = System.getProperty(CLIENT_CONN_TIMEOUT_MS);
+        System.setProperty(CLIENT_CONN_RETRIES, "2");
+        System.setProperty(CLIENT_CONN_RETRY_WAIT_MS, "10");
+        System.setProperty(CLIENT_CONN_TIMEOUT_MS, "100");
+        AsyncTask<?> serverTask;
+        try (ServerSocket server = new ServerSocket(0)) {
+            int port = server.getLocalPort();
+            serverTask = asyncThrowing(() -> {
+                try {
+                    while (!server.isClosed())
+                        server.accept().close();
+                } catch (SocketException e) {
+                    if (!server.isClosed()) // do not publish "Socket closed" exceptions
+                        throw e;
+                }
+            });
+            List<AsyncTask<?>> tasks = new ArrayList<>();
+            for (SparqlMethod meth : SparqlMethod.values()) {
+                if (meth == SparqlMethod.WS) {
+                    String uri = "ws://127.0.0.1:"+port+"/sparql";
+                    tasks.add(async(() -> testServerEarlyClose(tag, uri)));
+                } else {
+                    for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
+                        if (ResultsParserRegistry.get().canParse(fmt.asMediaType())) {
+                            String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
+                            tasks.add(async(() -> testServerEarlyClose(tag, uri)));
+                        }
+                    }
+                }
+            }
+            for (AsyncTask<?> task : tasks)
+                task.get();
+        } finally {
+            if (connRetries == null)
+                System.clearProperty(CLIENT_CONN_RETRIES);
+            else
+                System.setProperty(CLIENT_CONN_RETRIES, connRetries);
+
+            if (connRetryWaitMs == null)
+                System.clearProperty(CLIENT_CONN_RETRY_WAIT_MS);
+            else
+                System.setProperty(CLIENT_CONN_RETRY_WAIT_MS, connRetryWaitMs);
+
+            if (connTimeoutMs == null)
+                System.clearProperty(CLIENT_CONN_TIMEOUT_MS);
+            else
+                System.setProperty(CLIENT_CONN_TIMEOUT_MS, connTimeoutMs);
+        }
+        if (serverTask != null)
+            serverTask.get();
+    }
+
+    @Test
+    void testServerEarlyClose() throws Exception {
+        testServerEarlyClose("netty");
     }
 
     private static Stream<Arguments> bindData() {

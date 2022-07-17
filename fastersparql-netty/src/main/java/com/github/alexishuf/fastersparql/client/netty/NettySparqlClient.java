@@ -251,7 +251,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         protected abstract void setupHandler(Channel ch, Handler handler);
 
         @Override public void connectionError(Throwable cause) {
-            log.debug("connectionError, completing the publisher", cause);
+            log.debug("Cannot connect: {}. completing the publisher", cause.getMessage());
             publisher.complete(cause);
         }
 
@@ -365,6 +365,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
         private final PublisherAdapter<String[]> publisher;
         private Merger<String[]> projector;
+        private boolean gotVars = false;
 
         public ResultsParserAdapter(List<String> expectedVars,
                                     PublisherAdapter<String[]> publisher) {
@@ -372,12 +373,17 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             this.publisher = publisher;
         }
         @Override public void vars(List<String> vars) {
+            gotVars = true;
             projector = Merger.forProjection(ARRAY_OPS, projector.outVars(), vars);
         }
         @Override public void row(@Nullable String[] row) {
             publisher.feed(projector.merge(row, null));
         }
-        @Override public void end() { publisher.complete(null); }
+        @Override public void end() {
+            Throwable error = gotVars ? null
+                    : new InvalidSparqlResultsException("Premature response end before var names");
+            publisher.complete(error);
+        }
         @Override public void onError(String message) {
             publisher.complete(new InvalidSparqlResultsException(message));
         }

@@ -1,8 +1,11 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.client.FasterSparql;
+import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
 import lombok.Builder;
@@ -14,6 +17,8 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -124,6 +129,37 @@ public class EventLoopGroupHolder {
         }
         assert group != null : "null group";
         return group;
+    }
+
+    /**
+     * Builds a {@link Bootstrap} with the {@link EventLoopGroupHolder#acquire()}d
+     * {@link EventLoopGroup}.
+     *
+     * Applicable configurations from {@link FasterSparqlProperties} will be set.
+     *
+     * <strong>{@link EventLoopGroupHolder#release()} must be called once the
+     * {@link Bootstrap} is discarded.</strong>
+     *
+     * @param address the {@link Bootstrap#remoteAddress(SocketAddress)}
+     * @return A new {@link Bootstrap} bound to the acquired {@link EventLoopGroup}.
+     */
+    public Bootstrap acquireBootstrap(InetSocketAddress address) {
+        EventLoopGroup group = acquire();
+        try {
+            Bootstrap bootstrap = new Bootstrap().group(group).remoteAddress(address)
+                                                 .channel(transport.channelClass());
+            int connTimeoutMs = FasterSparqlProperties.connectTimeoutMs();
+            if (connTimeoutMs > 0)
+                bootstrap = bootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, connTimeoutMs);
+
+            int soTimeoutMs = FasterSparqlProperties.soTimeoutMs();
+            if (soTimeoutMs > 0)
+                bootstrap = bootstrap.option(ChannelOption.SO_TIMEOUT, soTimeoutMs);
+            return bootstrap;
+        } catch (Throwable t) {
+            release();
+            throw t;
+        }
     }
 
     /**

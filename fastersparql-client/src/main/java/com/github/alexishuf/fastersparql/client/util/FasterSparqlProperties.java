@@ -13,10 +13,14 @@ public class FasterSparqlProperties {
     public static final String REACTIVE_QUEUE_CAPACITY   = "fastersparql.reactive.queue.capacity";
     public static final String CLIENT_MAX_QUERY_GET = "fastersparql.client.max-query-get";
     public static final String CLIENT_CONN_RETRIES = "fastersparql.client.conn.retries";
+    public static final String CLIENT_CONN_TIMEOUT_MS = "fastersparql.client.conn.timeout-ms";
+    public static final String CLIENT_SO_TIMEOUT_MS = "fastersparql.client.so.timeout-ms";
     public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
     public static final int DEF_REACTIVE_QUEUE_CAPACITY = 1024;
     public static final int DEF_CLIENT_MAX_QUERY_GET = 1024;
     public static final int DEF_CLIENT_CONN_RETRIES = 3;
+    public static final int DEF_CLIENT_CONN_TIMEOUT_MS = 0;
+    public static final int DEF_CLIENT_SO_TIMEOUT_MS = 0;
     public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
 
     protected interface Parser<T> {
@@ -96,6 +100,27 @@ public class FasterSparqlProperties {
      */
     public static @NonNegative int maxRetries() {
         return readPositiveInt(CLIENT_CONN_RETRIES, DEF_CLIENT_CONN_RETRIES);
+    }
+
+    /**
+     * Timeout, in millis, for establishing a TCP connection.
+     *
+     * @return Either {@code 0}, delegating the choice the underlying OS, or a value {@code > 0}
+     *         with the number of milliseconds after which TCP connections that failed to complete
+     *         the handshake are to be considered failed.
+     */
+    public static int connectTimeoutMs() {
+        return readPositiveInt(CLIENT_CONN_TIMEOUT_MS, DEF_CLIENT_CONN_TIMEOUT_MS);
+    }
+
+    /**
+     * Timeout in milliseconds for all socket operations other than connect.
+     *
+     * @return Either {@code 0}, delegating the choice to the underlying OS, or a value {@code >0}
+     *         with the timeout in milliseconds to be set for non-connect socket operations.
+     */
+    public static int soTimeoutMs() {
+        return readPositiveInt(CLIENT_SO_TIMEOUT_MS, DEF_CLIENT_SO_TIMEOUT_MS);
     }
 
     /**

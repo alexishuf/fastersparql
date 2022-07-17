@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.ws.impl;
 
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRetryingChannelSupplier;
@@ -8,11 +9,11 @@ import com.github.alexishuf.fastersparql.client.netty.ws.WsClientHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsClientNettyHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsRecycler;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.EventLoopGroup;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.Future;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
@@ -32,15 +33,8 @@ public class UnpooledNettyWsClient implements NettyWsClient {
                                  HttpHeaders headers, @Nullable SslContext sslContext) {
         this.elgHolder = elgHolder;
         InetSocketAddress address = createUnresolved(uri.getHost(), Protocol.port(uri));
-        EventLoopGroup group = elgHolder.acquire();
-        try {
-            this.bootstrap = new Bootstrap().remoteAddress(address).group(group)
-                    .channel(elgHolder.transport().channelClass())
-                    .handler(new WsChannelInitializer(sslContext, uri, headers, WsRecycler.CLOSE));
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
+        val initializer = new WsChannelInitializer(sslContext, uri, headers, WsRecycler.CLOSE);
+        this.bootstrap = elgHolder.acquireBootstrap(address).handler(initializer);
     }
 
     @Override
@@ -56,7 +50,16 @@ public class UnpooledNettyWsClient implements NettyWsClient {
                         handler.onError(cause);
                     } else {
                         try {
-                            ((WsClientNettyHandler) ch.pipeline().get("ws")).delegate(handler);
+                            WsClientNettyHandler nettyHandler;
+                            nettyHandler = (WsClientNettyHandler) ch.pipeline().get("ws");
+                            if (nettyHandler == null) {
+                                String msg = ch.isOpen()
+                                        ? "\"ws\" handler missing from pipeline in ch="+ch
+                                        : "Server closed the connection prematurely for ch="+ch;
+                                handler.onError(new SparqlClientServerException(msg));
+                            } else {
+                                nettyHandler.delegate(handler);
+                            }
                         } catch (Throwable t) {
                             handler.onError(t);
                         }

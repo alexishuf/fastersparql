@@ -8,7 +8,6 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.EventLoopGroup;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
 import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
@@ -32,24 +31,26 @@ public class PooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
     private final EventLoopGroupHolder groupHolder;
     private final String host;
     private final SimpleChannelPool pool;
-    private final ActiveChannelSet activeChannels = new ActiveChannelSet();
+    private final ActiveChannelSet activeChannels;
 
     public PooledNettyHttpClient(EventLoopGroupHolder groupHolder,
                                  InetSocketAddress address,
                                  Supplier<? extends ReusableHttpClientInboundHandler> hFactory,
                                  boolean poolFIFO,
                                  @Nullable SslContext sslContext) {
-        EventLoopGroup group = groupHolder.acquire();
+        activeChannels = new ActiveChannelSet(address.toString());
+        Bootstrap bootstrap = groupHolder.acquireBootstrap(address);
         try {
-            Bootstrap bootstrap = new Bootstrap().group(group).remoteAddress(address)
-                    .channel(groupHolder.transport().channelClass());
             this.host = address.getHostString();
             boolean lifo = !poolFIFO;
             this.pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
                 @Override public void channelAcquired(Channel ch) {
                     log.trace("channelAcquired({})", ch);
+                    activeChannels.setActive(ch);
                 }
-
+                @Override public void channelReleased(Channel ch) {
+                    activeChannels.setInactive(ch);
+                }
                 @Override public void channelCreated(Channel ch) {
                     log.trace("channelCreated({})", ch);
                     activeChannels.add(ch);
