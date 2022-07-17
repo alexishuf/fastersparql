@@ -125,7 +125,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
         if (completed) {
             if (!feedAfterCompleteWarned) {
                 feedAfterCompleteWarned = true;
-                log.warn("Ignoring {}.feed({}) after complete({})", this, item, errorString());
+                log.warn("Ignoring {}.feed({}) after complete({})", this, item, Objects.toString(error));
             }
         } else if (cancelled) {
             log.trace("{}.feed({}): cancel() pending, dropping item", this, item);
@@ -150,11 +150,13 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                 this.error = error;
             }
         }
-        if (cancelled)
+        if (cancelled) {
             log.debug("Ignored {}.complete({}) cancel() committed", this, Objects.toString(error));
-        else if (completed)
-            log.warn("Ignored {}.complete({}) previous complete({})", this, error, errorString());
-        else {
+        } else if (completed) {
+            String message = "Ignored {}.complete({}) previous complete({})";
+            if (this.error != null) log.debug(message, this, error, Objects.toString(this.error));
+            else                    log.warn(message, this, error, null);
+        } else {
             log.trace("{}.complete({}), wake={}", this, error, wake);
             if (wake)
                 executor.execute(spin);
@@ -208,10 +210,10 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                     } else if (terminated) {
                         if (subscriberReceivedTerminate) {
                             log.info("Ignoring {}.request({}): after returned {}({})",
-                                    name, n, error == null ? "onComplete" : "onError", errorString());
+                                    name, n, error == null ? "onComplete" : "onError", Objects.toString(error));
                         } else {
                             log.trace("Ignoring {}.request({}) after complete({})",
-                                      name, n, errorString());
+                                      name, n, Objects.toString(error));
                         }
                     } else {
                         log.trace("{}.request({}), wake={}", name, n, wake);
@@ -232,7 +234,7 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
                     if (cancelled) {
                         log.trace("Ignoring {}.cancel(): prev cancel()", name);
                     } else if (terminated && subscriberReceivedTerminate) {
-                        log.trace("Ignoring {}.cancel(): prev complete({})", name, errorString());
+                        log.trace("Ignoring {}.cancel(): prev complete({})", name, Objects.toString(error));
                     } else {
                         log.trace("{}.cancel(), wake={}", name, wake);
                         if (wake)
@@ -248,8 +250,6 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     }
 
     /* --- --- --- implementation details --- --- --- */
-
-    private String errorString() { return Objects.toString(error); }
 
     enum State {
         NONE,
