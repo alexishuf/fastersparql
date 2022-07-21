@@ -41,6 +41,28 @@ class SparqlEndpointTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {
+            "http://user:pass@example.org/sparql|user",
+            "http://user:pass@example.org:8893/sparql#username|user",
+            "http://example.org/sparql|null",
+    })
+    void testUser(String dataString) {
+        String[] data = dataString.split("\\|");
+        String user = data[1].equals("null") ? null : data[1];
+        assertEquals(user, new SparqlEndpoint(data[0]).user());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {
+            "http://user:pass@example.org/sparql|pass",
+            "http://user:2.%40@example.org:8893/sparql/username|2.@",
+            "http://example.org/sparql|null",
+    })
+    void testPassword(String dataString) {
+        String[] data = dataString.split("\\|");
+        String pass = data[1].equals("null") ? null : data[1];
+        assertEquals(pass, new SparqlEndpoint(data[0]).password());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {
             "http://example.org/sparql|example.org",
             "http://www.example.org/sparql|www.example.org",
             "http://127.0.0.1/sparql|127.0.0.1",
@@ -49,6 +71,20 @@ class SparqlEndpointTest {
     void testHost(String dataString) {
         String[] data = dataString.split("\\|");
         assertEquals(data[1], new SparqlEndpoint(data[0]).host());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {
+    /* 1 */ "http://example.org/sparql",
+    /* 2 */ "https://example.org/sparql",
+    /* 3 */ "ws://example.org/sparql",
+    /* 4 */ "wss://example.org/sparql",
+    /* 5 */ "tsv@http://example.org/sparql",
+    /* 6 */ "post,tsv@http://example.org/sparql",
+    /* 7 */ "post,xml,tsv@http://example.org/sparql",
+    /* 8 */ "get,form,xml,tsv@http://example.org/sparql",
+    })
+    void testToAugmentedUri(String uri) {
+        assertEquals(uri, SparqlEndpoint.parse(uri).augmentedUri());
     }
 
     @ParameterizedTest @ValueSource(strings = {
@@ -132,7 +168,7 @@ class SparqlEndpointTest {
         assertSame(ep.configuration(), configuration);
     }
 
-    static Stream<Arguments> testAugmentedURI() {
+    @SuppressWarnings("unused") static Stream<Arguments> testAugmentedURI() {
         String ex = "http://example.org/sparql";
         SparqlConfiguration tsv = SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.TSV).build();
         SparqlConfiguration tsvTtlJsonld = SparqlConfiguration.builder()
@@ -167,7 +203,7 @@ class SparqlEndpointTest {
         assertEquals(parsed.configuration(), expectedConfig);
     }
 
-    static Stream<Arguments> testEquals() {
+    @SuppressWarnings("unused") static Stream<Arguments> testEquals() {
         String a = "http://a.example.org/sparql";
         String b = "http://b.example.org/sparql";
         return Stream.of(

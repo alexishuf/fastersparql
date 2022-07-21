@@ -2,9 +2,9 @@ package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
@@ -16,8 +16,8 @@ import java.time.Duration;
 
 import static java.lang.String.format;
 
-@Slf4j
 public final class HdtssContainer extends GenericContainer<HdtssContainer> {
+    private static final Logger log = LoggerFactory.getLogger(HdtssContainer.class);
     private static final String TEST_QUERY = "SELECT * WHERE { ?s a <http://example.org/Dummy>}";
     private static final String ENC_TEST_QUERY = UriUtils.escapeQueryParam(TEST_QUERY);
 

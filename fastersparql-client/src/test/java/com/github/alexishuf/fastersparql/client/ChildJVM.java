@@ -3,7 +3,9 @@ package com.github.alexishuf.fastersparql.client;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Singular;
-import lombok.extern.slf4j.Slf4j;
+import lombok.experimental.Accessors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -14,8 +16,9 @@ import java.util.concurrent.TimeUnit;
 import static java.lang.ProcessBuilder.Redirect.PIPE;
 import static java.util.Arrays.asList;
 
-@Slf4j
+@Accessors(fluent = true)
 public class ChildJVM implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(ChildJVM.class);
     @Getter private final Process process;
 
     @Builder

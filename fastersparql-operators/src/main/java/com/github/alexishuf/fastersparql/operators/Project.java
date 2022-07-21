@@ -51,7 +51,7 @@ public interface Project extends Operator {
         try {
             return checkedRun(plan);
         } catch (Throwable t) {
-            List<String> sanitized = plan.vars().stream().filter(Objects::nonNull).distinct()
+            List<String> sanitized = plan.publicVars().stream().filter(Objects::nonNull).distinct()
                                          .collect(Collectors.toList());
             return Results.error(sanitized, Object.class, t);
         }

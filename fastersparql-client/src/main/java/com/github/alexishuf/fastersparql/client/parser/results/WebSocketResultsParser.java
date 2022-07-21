@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,8 +12,8 @@ import java.util.regex.Pattern;
 /**
  * A parser for TSV results and {@code !}control messages as used in hdtss WebSocket protocol
  */
-@Slf4j
 public class WebSocketResultsParser implements ResultsParser {
+    private static final Logger log = LoggerFactory.getLogger(WebSocketResultsParser.class);
     private static final Pattern QUEUE_CAP_RX = Pattern.compile("!action-queue-cap\\s*=?\\s*(\\d+)");
     private static final Pattern BIND_REQUEST_RX = Pattern.compile("!bind-request\\s*(\\+?)\\s*(\\d+)");
 

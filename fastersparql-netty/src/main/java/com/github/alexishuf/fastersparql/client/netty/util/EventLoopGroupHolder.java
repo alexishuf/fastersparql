@@ -12,10 +12,11 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -23,8 +24,10 @@ import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-@Accessors(fluent = true) @ToString  @Slf4j
+@Accessors(fluent = true) @ToString
 public class EventLoopGroupHolder {
+    private static final Logger log = LoggerFactory.getLogger(EventLoopGroupHolder.class);
+
     /**
      * The {@link NettyTransport} implementation
      */

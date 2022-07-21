@@ -4,17 +4,15 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Slice;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Objects;
+
 import static java.lang.String.format;
 import static java.util.Collections.singletonList;
 
-@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
 public class SlicePlan<R> extends AbstractUnaryPlan<R, SlicePlan<R>> {
     private static final Logger log = LoggerFactory.getLogger(SlicePlan.class);
     private final Slice op;
@@ -25,6 +23,10 @@ public class SlicePlan<R> extends AbstractUnaryPlan<R, SlicePlan<R>> {
         private long offset = 0;
         private long limit = Long.MAX_VALUE;
     }
+
+    public Slice op()     { return op; }
+    public long  offset() { return offset; }
+    public long  limit()  { return limit; }
 
     private static String algebraName(long offset, long limit) {
         String limitStr = limit > Integer.MAX_VALUE ? "" : String.valueOf(limit);
@@ -56,5 +58,17 @@ public class SlicePlan<R> extends AbstractUnaryPlan<R, SlicePlan<R>> {
     @Override public Plan<R> bind(Binding binding) {
         return new SlicePlan<>(rowClass, op, operands.get(0).bind(binding),
                                offset, limit, this, name);
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof SlicePlan)) return false;
+        if (!super.equals(o)) return false;
+        SlicePlan<?> slicePlan = (SlicePlan<?>) o;
+        return offset == slicePlan.offset && limit == slicePlan.limit && op.equals(slicePlan.op);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), op, offset, limit);
     }
 }

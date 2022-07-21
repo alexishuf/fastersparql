@@ -13,8 +13,9 @@ import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -22,8 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.net.InetSocketAddress.createUnresolved;
 
-@Slf4j
 public class PooledNettyWsClient implements NettyWsClient {
+    private static final Logger log = LoggerFactory.getLogger(PooledNettyWsClient.class);
     private final EventLoopGroupHolder elgHolder;
     private final SimpleChannelPool pool;
     private final ActiveChannelSet activeChannels;

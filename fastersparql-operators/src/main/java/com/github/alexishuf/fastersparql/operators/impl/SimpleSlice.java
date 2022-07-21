@@ -12,16 +12,18 @@ import com.github.alexishuf.fastersparql.operators.plan.SlicePlan;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
 import lombok.Value;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
-@Value @Accessors(fluent = true) @Slf4j
+@Value @Accessors(fluent = true)
 public class SimpleSlice implements Slice {
+    private static final Logger log = LoggerFactory.getLogger(SimpleSlice.class);
     Class<?> rowClass;
 
     public static class Provider implements SliceProvider {

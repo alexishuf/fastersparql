@@ -4,16 +4,13 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Union;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
 import lombok.Singular;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
 public class UnionPlan<R> extends AbstractNAryPlan<R, UnionPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private final Union op;
@@ -26,11 +23,23 @@ public class UnionPlan<R> extends AbstractNAryPlan<R, UnionPlan<R>> {
         this.op = op;
     }
 
-    @Override public    Results<R> execute()     { return op.run(this); }
+    public           Union      op()      { return op; }
+    @Override public Results<R> execute() { return op.run(this); }
 
     @Override public UnionPlan<R> bind(Binding binding) {
         return new UnionPlan<>(rowClass, op, PlanHelpers.bindAll(operands, binding),
                               this, name);
     }
 
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof UnionPlan)) return false;
+        if (!super.equals(o)) return false;
+        UnionPlan<?> unionPlan = (UnionPlan<?>) o;
+        return op.equals(unionPlan.op);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), op);
+    }
 }

@@ -12,7 +12,6 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.Future;
-import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -23,7 +22,6 @@ import java.util.function.Supplier;
 
 import static java.net.InetSocketAddress.createUnresolved;
 
-@Slf4j
 public class UnpooledNettyWsClient implements NettyWsClient {
     private final EventLoopGroupHolder elgHolder;
     private final Bootstrap bootstrap;

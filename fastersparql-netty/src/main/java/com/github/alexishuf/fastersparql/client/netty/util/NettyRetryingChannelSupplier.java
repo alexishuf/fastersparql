@@ -7,7 +7,8 @@ import com.github.alexishuf.fastersparql.client.util.async.CompletableAsyncTask;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.util.concurrent.Future;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
@@ -16,8 +17,9 @@ import java.util.function.Supplier;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-@Slf4j
 public class NettyRetryingChannelSupplier {
+    private static final Logger log  = LoggerFactory.getLogger(NettyRetryingChannelSupplier.class);
+
     public static AsyncTask<Channel> open(Supplier<Future<?>> channelSupplier) {
         return open(0, channelSupplier);
     }

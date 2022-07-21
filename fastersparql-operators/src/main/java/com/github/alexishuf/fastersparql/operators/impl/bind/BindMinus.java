@@ -7,12 +7,10 @@ import com.github.alexishuf.fastersparql.operators.plan.MinusPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
 import lombok.Value;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import static com.github.alexishuf.fastersparql.operators.impl.bind.NativeBindHelper.preferNative;
 
-@Slf4j
 @Value @Accessors(fluent = true)
 public class BindMinus implements Minus {
     RowOperations rowOps;

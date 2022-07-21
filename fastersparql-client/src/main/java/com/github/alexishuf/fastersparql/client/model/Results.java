@@ -6,9 +6,10 @@ import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
@@ -34,8 +35,10 @@ import java.util.stream.Stream;
  *
  * @param <Row>  the type that represents an individual solution, binding RDF terms to variables.
  */
-@Slf4j @Getter @Accessors(fluent = true)
+@Getter @Accessors(fluent = true)
 public class Results<Row> {
+    private static final Logger log = LoggerFactory.getLogger(Results.class);
+
     /**
      * The list of variables in the results.
      */

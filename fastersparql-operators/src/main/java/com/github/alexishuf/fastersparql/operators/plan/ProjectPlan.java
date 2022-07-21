@@ -4,16 +4,13 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Project;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
-@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
 public class ProjectPlan<R> extends AbstractUnaryPlan<R, ProjectPlan<R>> {
     private final Project op;
     private final List<String> vars;
@@ -28,8 +25,10 @@ public class ProjectPlan<R> extends AbstractUnaryPlan<R, ProjectPlan<R>> {
         this.vars = vars;
     }
 
-    @Override protected String    algebraName() { return "Project"+vars; }
-    @Override public Results<R>   execute()     { return op.run(this); }
+    public              Project      project()     { return op; }
+    @Override public    List<String> publicVars()  { return vars; }
+    @Override protected String       algebraName() { return "Project"+vars; }
+    @Override public    Results<R>   execute()     { return op.run(this); }
 
     @Override public Plan<R> bind(Binding binding) {
         List<String> remaining = new ArrayList<>(vars.size());
@@ -40,5 +39,17 @@ public class ProjectPlan<R> extends AbstractUnaryPlan<R, ProjectPlan<R>> {
             remaining = vars; // let newer ArrayList<> be collected
         return new ProjectPlan<>(rowClass, op, operands.get(0).bind(binding),
                                  remaining, this, name);
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ProjectPlan)) return false;
+        if (!super.equals(o)) return false;
+        ProjectPlan<?> that = (ProjectPlan<?>) o;
+        return op.equals(that.op) && vars.equals(that.vars);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), op, vars);
     }
 }

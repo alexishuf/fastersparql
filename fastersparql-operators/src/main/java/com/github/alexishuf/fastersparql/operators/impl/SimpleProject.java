@@ -39,7 +39,7 @@ public class SimpleProject implements Project {
     }
 
     @Override public <R> Results<R> checkedRun(ProjectPlan<R> plan) {
-        List<String> vars = plan.vars();
+        List<String> vars = plan.publicVars();
         for (String v : vars) {
             if (v == null)
                 throw new IllegalOperatorArgumentException("null var name in vars=" + vars);

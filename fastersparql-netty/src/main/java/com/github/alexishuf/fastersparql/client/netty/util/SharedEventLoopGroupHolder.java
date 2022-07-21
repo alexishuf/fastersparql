@@ -1,13 +1,14 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.FasterSparqlNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-@Slf4j
 public class SharedEventLoopGroupHolder {
+    private static final Logger log = LoggerFactory.getLogger(SharedEventLoopGroupHolder.class);
     private static final SharedEventLoopGroupHolder INSTANCE = new SharedEventLoopGroupHolder();
 
     private @MonotonicNonNull EventLoopGroupHolder elgHolder;

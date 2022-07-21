@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
-import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -13,9 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
 
-@Slf4j
 public class TestUtils {
-
     public static File extract(Class<?> refClass, String resourcePath) {
         try (InputStream is = refClass.getResourceAsStream(resourcePath)) {
             if (is == null)

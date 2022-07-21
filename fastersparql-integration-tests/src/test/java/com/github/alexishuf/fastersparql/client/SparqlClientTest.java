@@ -13,13 +13,14 @@ import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -43,8 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SuppressWarnings("SameParameterValue")
 @Testcontainers
-@Slf4j
 public class SparqlClientTest {
+    private static final Logger log = LoggerFactory.getLogger(SparqlClientTest.class);
 
     @Container private static final HdtssContainer HDTSS =
             new HdtssContainer(SparqlClientTest.class, "data.hdt", log);

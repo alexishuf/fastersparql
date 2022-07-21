@@ -16,9 +16,10 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import lombok.Data;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
 import java.io.File;
@@ -29,8 +30,8 @@ import java.util.function.Supplier;
 import static io.netty.handler.ssl.SslContextBuilder.forClient;
 
 @Data @Accessors(fluent = true, chain = true)
-@Slf4j
 public final class NettyClientBuilder {
+    private static final Logger log = LoggerFactory.getLogger(NettyClientBuilder.class);
     private boolean shareEventLoopGroup = FasterSparqlNettyProperties.shareEventLoopGroup();
     private boolean pooled = FasterSparqlNettyProperties.pool();
     private boolean poolFIFO = FasterSparqlNettyProperties.poolFIFO();

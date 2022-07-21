@@ -4,15 +4,12 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.FilterExists;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
 public class ExistsPlan<R> extends AbstractUnaryPlan<R, ExistsPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private final FilterExists op;
@@ -29,12 +26,26 @@ public class ExistsPlan<R> extends AbstractUnaryPlan<R, ExistsPlan<R>> {
         this.negate = negate;
     }
 
-    public Plan<R>                filter()      { return operands.get(1); }
-    @Override public Results<R>   execute()     { return op.run(this); }
-    @Override protected String    algebraName() {return (negate?"Not":"")+"Exists";}
+    public              FilterExists op()          { return op; }
+    public              boolean      negate()      { return negate; }
+    public              Plan<R>      filter()      { return operands.get(1); }
+    @Override public    Results<R>   execute()     { return op.run(this); }
+    @Override protected String       algebraName() {return (negate?"Not":"")+"Exists";}
 
     @Override public Plan<R> bind(Binding binding) {
         return new ExistsPlan<>(rowClass, op, input().bind(binding), negate,
                                       filter().bind(binding), this, name);
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ExistsPlan)) return false;
+        if (!super.equals(o)) return false;
+        ExistsPlan<?> that = (ExistsPlan<?>) o;
+        return negate == that.negate && op.equals(that.op);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), op, negate);
     }
 }

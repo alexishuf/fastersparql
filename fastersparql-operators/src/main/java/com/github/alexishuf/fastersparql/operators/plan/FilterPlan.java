@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Singular;
 import lombok.experimental.Accessors;
@@ -14,11 +13,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Collections.singletonList;
 
-@Getter @Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
+@Getter @Accessors(fluent = true)
 public class FilterPlan<R> extends AbstractUnaryPlan<R, FilterPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private final Filter op;
@@ -35,6 +35,8 @@ public class FilterPlan<R> extends AbstractUnaryPlan<R, FilterPlan<R>> {
         this.filters = filters == null ? Collections.emptyList() : filters;
     }
 
+    public           Filter       op()         { return op; }
+    public           List<String> filters()    { return filters; }
     @Override public Results<R>   execute()    { return op.run(this); }
 
     @Override protected String algebraName() {
@@ -63,5 +65,17 @@ public class FilterPlan<R> extends AbstractUnaryPlan<R, FilterPlan<R>> {
         if (!change)
             return this;
         return new FilterPlan<>(rowClass, op, boundIn, boundFilters, this, name);
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof FilterPlan)) return false;
+        if (!super.equals(o)) return false;
+        FilterPlan<?> that = (FilterPlan<?>) o;
+        return op.equals(that.op) && filters.equals(that.filters);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), op, filters);
     }
 }

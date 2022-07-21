@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
@@ -15,8 +15,8 @@ import java.time.Duration;
 
 import static java.lang.String.format;
 
-@Slf4j
 public final class FusekiContainer extends GenericContainer<FusekiContainer> {
+    private static final Logger log = LoggerFactory.getLogger(FusekiContainer.class);
     private final @Nullable File deleteOnClose;
 
     public FusekiContainer(Class<?> refClass, String resourcePath, Logger log) {

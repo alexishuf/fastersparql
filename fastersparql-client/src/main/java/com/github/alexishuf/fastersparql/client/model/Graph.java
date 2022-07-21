@@ -9,10 +9,11 @@ import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import lombok.Getter;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
@@ -45,8 +46,9 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * @param <Fragment> - the type representing fragments of the RDF graph serialization.
  */
 @Getter @Accessors(fluent = true)
-@Slf4j
 public class Graph<Fragment> {
+    private static final Logger log = LoggerFactory.getLogger(Graph.class);
+
     /**
      * The media type identifying the RDF graph serialization format.
      *

@@ -16,11 +16,12 @@ import com.github.alexishuf.fastersparql.operators.plan.FilterPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterProvider;
 import lombok.Value;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -35,8 +36,9 @@ public class SimpleFilter implements Filter {
     RowOperations rowOperations;
     ExprEvaluatorCompiler compiler;
 
-    @Slf4j
+
     public static class Provider implements FilterProvider {
+        private static final Logger log = LoggerFactory.getLogger(Provider.class);
         private @MonotonicNonNull List<ExprEvaluatorCompiler> compilerCache = null;
 
         private ExprEvaluatorCompiler findCompiler() {

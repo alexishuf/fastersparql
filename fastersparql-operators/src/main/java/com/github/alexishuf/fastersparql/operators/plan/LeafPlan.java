@@ -7,23 +7,20 @@ import com.github.alexishuf.fastersparql.client.util.CSUtils;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Collections.emptyList;
 
-@Accessors(fluent = true) @EqualsAndHashCode(callSuper = true)
 public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
-    @Getter private final CharSequence query;
-    @Getter private final SparqlClient<R, ?> client;
-    @Getter private final SparqlConfiguration configuration;
+    private final CharSequence query;
+    private final SparqlClient<R, ?> client;
+    private final SparqlConfiguration configuration;
     private @MonotonicNonNull List<String> publicVars;
     private @MonotonicNonNull List<String> allVars;
 
@@ -47,6 +44,10 @@ public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
         this.client = client;
         this.configuration = configuration;
     }
+
+    public CharSequence        query()         { return query; }
+    public SparqlClient<R, ?>  client()        { return client; }
+    public SparqlConfiguration configuration() { return configuration; }
 
     public static <T> LeafPlanBuilder<T> builder(SparqlClient<T, ?> client, CharSequence query) {
         return new LeafPlanBuilder<T>().client(client).query(query);
@@ -87,5 +88,17 @@ public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
     @Override public Plan<R> bind(Binding binding) {
         CharSequence bound = SparqlUtils.bind(query, binding);
         return new LeafPlan<>(this, bound, client, configuration);
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof LeafPlan)) return false;
+        if (!super.equals(o)) return false;
+        LeafPlan<?> leafPlan = (LeafPlan<?>) o;
+        return query.equals(leafPlan.query) && client.equals(leafPlan.client) && configuration.equals(leafPlan.configuration);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), query, client, configuration);
     }
 }

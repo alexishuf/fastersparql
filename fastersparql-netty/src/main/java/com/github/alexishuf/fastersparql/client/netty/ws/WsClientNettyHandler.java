@@ -9,9 +9,10 @@ import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.websocketx.*;
 import io.netty.util.concurrent.EventExecutor;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 
@@ -22,8 +23,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Netty {@link ChannelInboundHandler} that handles handshake and feeds a {@link WsClientHandler}.
  */
-@Slf4j
 public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> implements WsRecycler {
+    private static final Logger log = LoggerFactory.getLogger(WsClientNettyHandler.class);
     private final WebSocketClientHandshaker hs;
     private final WsRecycler recycler;
     private @Nullable WsClientHandler delegate;

@@ -12,13 +12,14 @@ import com.github.alexishuf.fastersparql.client.util.bind.BindPublisher;
 import com.github.alexishuf.fastersparql.client.util.bind.Binder;
 import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Flux;
@@ -39,8 +40,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @Testcontainers
-@Slf4j
 class BindPublisherTest {
+    private static final Logger log = LoggerFactory.getLogger(BindPublisherTest.class);
+
     private static final int THREADS = Runtime.getRuntime().availableProcessors()*4;
     @Container private static final HdtssContainer hdtss
             = new HdtssContainer(SparqlClientTest.class, "data.hdt", log);

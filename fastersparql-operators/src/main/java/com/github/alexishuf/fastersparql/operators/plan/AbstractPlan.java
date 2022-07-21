@@ -1,12 +1,11 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import lombok.EqualsAndHashCode;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
+import java.util.Objects;
 
-@EqualsAndHashCode
 abstract class AbstractPlan<R, Implementation extends Plan<R>> implements Plan<R> {
     protected final Class<? super R> rowClass;
     protected final List<? extends Plan<R>> operands;
@@ -40,6 +39,17 @@ abstract class AbstractPlan<R, Implementation extends Plan<R>> implements Plan<R
         }
         sb.setLength(Math.max(0, sb.length()-1));
         return sb;
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof AbstractPlan)) return false;
+        AbstractPlan<?, ?> that = (AbstractPlan<?, ?>) o;
+        return rowClass.equals(that.rowClass) && operands.equals(that.operands) && Objects.equals(parent, that.parent) && name.equals(that.name);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(rowClass, operands, parent, name);
     }
 
     @Override public String toString() {

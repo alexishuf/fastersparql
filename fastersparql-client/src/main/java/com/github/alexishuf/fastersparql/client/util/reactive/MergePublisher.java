@@ -3,13 +3,14 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 import lombok.Data;
 import lombok.Getter;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.Executor;
@@ -22,9 +23,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import static java.lang.Thread.currentThread;
 
 
-@Slf4j
 @Accessors(fluent = true)
 public class MergePublisher<T> implements FSPublisher<T> {
+    private static final Logger log = LoggerFactory.getLogger(MergePublisher.class);
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     /* --- --- --- Immutable state --- --- --- */
