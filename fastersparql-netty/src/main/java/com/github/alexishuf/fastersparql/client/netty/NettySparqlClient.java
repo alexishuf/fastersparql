@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
 import com.github.alexishuf.fastersparql.client.model.*;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
@@ -126,7 +127,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         List<String> vars = SparqlUtils.publicVars(sparql);
         Throwable cause;
         try {
-            PublisherAdapter<String[]> publisher = new PublisherAdapter<>();
+            PublisherAdapter<String[]> publisher = new PublisherAdapter<>(endpoint);
             publisher.requester = () -> {
                 try {
                     SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
@@ -155,7 +156,7 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     public Graph<F> queryGraph(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
         Throwable cause;
         try {
-            PublisherAdapter<byte[]> publisher = new PublisherAdapter<>();
+            PublisherAdapter<byte[]> publisher = new PublisherAdapter<>(endpoint);
             SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
             publisher.requester = () -> {
                 try {
@@ -311,12 +312,14 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
         private static final  Logger log = LoggerFactory.getLogger(PublisherAdapter.class);
         private static final AtomicInteger nextId = new AtomicInteger(1);
 
+        private final SparqlEndpoint endpoint;
         private Throwing.@MonotonicNonNull Runnable requester;
         private boolean pendingAutoRead, pendingCancel;
         private @MonotonicNonNull Handler handler;
         private int cycle = -1;
-        public PublisherAdapter() {
-            super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement());
+        public PublisherAdapter(SparqlEndpoint endpoint) {
+            super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement()+"["+endpoint+"]");
+            this.endpoint = endpoint;
         }
         public synchronized void handler(Handler handler, int cycle) {
             log.trace("{}.handler({})", this, handler);
@@ -342,6 +345,14 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
             super.subscribe(s);
             if (cause != null)
                 s.onError(cause);
+        }
+
+        @Override public void complete(@Nullable Throwable error) {
+            if (error instanceof SparqlClientException)
+                ((SparqlClientException)error).offerEndpoint(endpoint);
+            else if (error != null)
+                error = new SparqlClientException(endpoint, error.getMessage(), error);
+            super.complete(error);
         }
 
         @Override protected synchronized void onRequest(long n) {

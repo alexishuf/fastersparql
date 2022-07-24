@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsClientHandler;
 import com.github.alexishuf.fastersparql.client.netty.ws.WsRecycler;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
+import com.github.alexishuf.fastersparql.client.parser.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.client.parser.results.WebSocketResultsParser;
 import com.github.alexishuf.fastersparql.client.parser.results.WebSocketResultsParserConsumer;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
@@ -312,8 +313,16 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             HandlerState target = cause != null || message != null
                                 ? HandlerState.FAILED : HandlerState.COMPLETED;
             if (advanceState(target)) {
-                if (cause == null && message != null)
-                    cause = new SparqlClientServerException(message);
+                if (cause == null && message != null) {
+                    cause = new SparqlClientServerException(endpoint(), message);
+                } else if (cause != null) {
+                    if (cause instanceof SparqlClientException) {
+                        SparqlClientException sce = (SparqlClientException) cause;
+                        sce.offerEndpoint(endpoint());
+                    } else {
+                        cause = new SparqlClientException(endpoint(), cause.getMessage(), cause);
+                    }
+                }
                 publisher.complete(cause);
             }
         }
@@ -575,8 +584,14 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 if (bindings.vars().isEmpty()) {
                     binding = new String[0];
                 } else {
-                    assert row.length == bProjector.outVars.length
-                            : "columns in activeBinding != bProjector.outVars.length";
+                    int ac = row.length, ex = bProjector.outVars.length;
+                    boolean bad = (ex > 0 && ac != ex)
+                               || (ex == 0 && ac != 0
+                                   && (ac > 1 || row[0] != null));
+                    if (bad) {
+                        String msg = endpoint+" sent "+ac+" terms in !active-binding, expected "+ex;
+                        throw new InvalidSparqlResultsException(msg);
+                    }
                     binding = bProjector.fullRow(row);
                 }
                 empty = true;
