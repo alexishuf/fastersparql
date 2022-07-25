@@ -8,7 +8,9 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
+import org.testcontainers.containers.wait.strategy.AbstractWaitStrategy;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.containers.wait.strategy.WaitAllStrategy;
 import org.testcontainers.utility.DockerImageName;
 
 import java.io.File;
@@ -37,6 +39,7 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
     private HdtssContainer(File hdtFile, Logger log, @Nullable File deleteOnClose) {
         super(DockerImageName.parse("alexishuf/hdtss:jdk"));
         this.deleteOnClose = deleteOnClose;
+        //noinspection resource
         withFileSystemBind(hdtFile.getAbsolutePath(),
                 "/data/data.hdt", BindMode.READ_ONLY)
                 .withExposedPorts(8080)
@@ -44,8 +47,16 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
                         .withSeparateOutputStreams()
                         .withPrefix("HDTSS container"))
                 .withCommand("-port=8080", "/data/data.hdt")
-                .withStartupTimeout(Duration.ofSeconds(30))
-                .waitingFor(Wait.forHttp("/sparql?query=" + ENC_TEST_QUERY));
+                .waitingFor(new WaitAllStrategy()
+                        .withStartupTimeout(Duration.ofSeconds(60))
+                        .withStrategy(new AbstractWaitStrategy() {
+                            @Override protected void waitUntilReady() {
+                                try {
+                                    Thread.sleep(10_000);
+                                } catch (InterruptedException e) { throw new RuntimeException(e); }
+                            }
+                        })
+                        .withStrategy(Wait.forHttp("/sparql?query="+ENC_TEST_QUERY)));
     }
 
     @Override public void close() {

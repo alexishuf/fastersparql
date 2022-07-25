@@ -7,7 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
+import org.testcontainers.containers.wait.strategy.AbstractWaitStrategy;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.containers.wait.strategy.WaitAllStrategy;
 import org.testcontainers.utility.DockerImageName;
 
 import java.io.File;
@@ -34,6 +36,7 @@ public final class FusekiContainer extends GenericContainer<FusekiContainer> {
         if (name.isEmpty())
             throw new IllegalArgumentException("Empty name for rdfFile="+rdfFile);
         this.deleteOnClose = deleteOnClose;
+        //noinspection resource
         withFileSystemBind(rdfFile.getAbsolutePath(),
                 "/data/" + name, BindMode.READ_ONLY)
                 .withExposedPorts(3030)
@@ -41,8 +44,19 @@ public final class FusekiContainer extends GenericContainer<FusekiContainer> {
                         .withSeparateOutputStreams()
                         .withPrefix("Fuseki container"))
                 .withCommand("--file", "/data/" + name, "--port", "3030", "/ds")
-                .withStartupTimeout(Duration.ofSeconds(30))
-                .waitingFor(Wait.forHttp("/ds"));
+                .waitingFor(new WaitAllStrategy()
+                        .withStartupTimeout(Duration.ofSeconds(60))
+                        .withStrategy(new AbstractWaitStrategy() {
+                            @Override protected void waitUntilReady() {
+                                try {
+                                    Thread.sleep(10_000);
+                                } catch (InterruptedException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        })
+                        .withStrategy(Wait.forHttp("/ds"))
+                );
     }
 
     @Override public void close() {
