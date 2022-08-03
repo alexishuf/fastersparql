@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
@@ -8,6 +9,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.PlanMetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProvider;
 import com.github.alexishuf.fastersparql.operators.providers.OperatorProviderRegistry;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -18,7 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.ASYNC;
 import static java.util.Arrays.asList;
 
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "unused"})
 public class FasterSparqlOps {
     private static final OperatorProviderRegistry registry
             = new OperatorProviderRegistry().registerAll();
@@ -67,12 +69,29 @@ public class FasterSparqlOps {
     }
 
     /**
+     * Get the {@link BindType} corresponding to the given plan
+     * @return A {@link BindType} or {@code null} if plan is not a join/leftJoin/exists/minus.
+     */
+    public static @Nullable BindType bindTypeOf(Plan<?> plan) {
+        if (plan instanceof JoinPlan)
+            return BindType.JOIN;
+        else if (plan instanceof LeftJoinPlan)
+            return BindType.LEFT_JOIN;
+        else if (plan instanceof ExistsPlan)
+            return ((ExistsPlan<?>) plan).negate() ? BindType.NOT_EXISTS : BindType.EXISTS;
+        else if (plan instanceof MinusPlan)
+            return BindType.MINUS;
+        else
+            return null;
+    }
+
+    /**
      * Create an instance of the given {@link Operator} interface that best matches the given flags.
      *
-     * Creation of an {@link Operator} instance is done by the {@link OperatorProvider}
+     * <p>Creation of an {@link Operator} instance is done by the {@link OperatorProvider}
      * corresponding to the {@link Operator} sub-interface given by {@code cls}. If there is more
      * than one suitable provider the one that produces the lowest
-     * {@link OperatorProvider#bid(long)} for the given {@code flags} will be selected.
+     * {@link OperatorProvider#bid(long)} for the given {@code flags} will be selected.</p>
      *
      * @param cls An interface extending {@link Operator} denoting the {@link Operator} type to
      *            be instantiated.

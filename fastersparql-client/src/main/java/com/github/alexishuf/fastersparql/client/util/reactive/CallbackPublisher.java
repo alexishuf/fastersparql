@@ -63,8 +63,10 @@ public abstract class CallbackPublisher<T> implements FSPublisher<T> {
     @Override public void moveTo(Executor executor) {
         if (executor == null)
             throw new NullPointerException("cannot move to a executor=null");
+        if (this.executor != null && this.executor.equals(executor))
+            return; // no-op
         if (subscriber != null)
-            throw new IllegalStateException("cannot moveTo("+executor+") after subscribed");
+            throw new IllegalStateException("cannot moveTo(" + executor + ") after subscribed");
         Thread observed = eventThread.get();
         if (observed != null) {
             boolean inEvThread = Thread.currentThread().equals(observed);

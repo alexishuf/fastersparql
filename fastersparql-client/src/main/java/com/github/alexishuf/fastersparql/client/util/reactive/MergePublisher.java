@@ -116,6 +116,8 @@ public class MergePublisher<T> implements FSPublisher<T> {
     @Override public void moveTo(Executor executor) {
         subscribeLock.lock();
         try {
+            if (cbp.executor().equals(executor))
+                return; // no-op
             if (subscribed)
                 throw new IllegalStateException("cannot move executor after subscribed");
             cbp.moveTo(executor);
@@ -131,10 +133,10 @@ public class MergePublisher<T> implements FSPublisher<T> {
     /**
      * Add a upstream {@link Publisher} for consumption.
      *
-     * If the number of active upstream {@link Publisher}s exceeds the configured concurrency,
+     * <p>If the number of active upstream {@link Publisher}s exceeds the configured concurrency,
      * the given {@code publisher} will be held in a queue and its
      * {@link Publisher#subscribe(Subscriber)} method will only be called once one of the active
-     * upstream publishers terminates.
+     * upstream publishers terminates.</p>
      *
      * @param publisher the {@link Publisher} to consume.
      */
@@ -154,10 +156,10 @@ public class MergePublisher<T> implements FSPublisher<T> {
     /**
      * Make the publisher completable.
      *
-     * When the publisher is completable, as soon as there is no unterminated upstream
+     * <p>When the publisher is completable, as soon as there is no unterminated upstream
      * {@link Publisher} and there is no queued {@link Publisher} ({@link Publisher}s are queued
      * to honor the maximum concurrency set in the constructor), the merge publisher itself will
-     * emit {@link Subscriber#onComplete()}.
+     * emit {@link Subscriber#onComplete()}.</p>
      *
      * Note that a completion may be emitted from within this method.
      */
@@ -232,8 +234,8 @@ public class MergePublisher<T> implements FSPublisher<T> {
     /**
      * Assert (not simply boolean test) that this call is being made from the event thread.
      *
-     * Calling this from a thread which is not the event thread will log an error
-     * (and intentionally raise an {@link AssertionError} if asserts are enabled).
+     * <p>Calling this from a thread which is not the event thread will log an error
+     * (and intentionally raise an {@link AssertionError} if asserts are enabled).</p>
      *
      * @return True if called from the event thread, false if not (and asserts are disabled).
      * @throws AssertionError if not in the event thread and asserts are enabled.

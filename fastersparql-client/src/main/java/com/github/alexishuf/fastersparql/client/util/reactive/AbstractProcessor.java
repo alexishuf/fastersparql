@@ -26,22 +26,17 @@ public abstract class AbstractProcessor<U, D>
 
     /* --- --- --- FastersparqlPublisher methods --- --- --- */
 
-    @Override public void moveTo(Executor executor) {
-        source.moveTo(executor);
-    }
-
-    @Override public Executor executor() {
-        return source.executor();
-    }
+    @Override public void moveTo(Executor executor) { source.moveTo(executor); }
+    @Override public Executor executor() { return source.executor(); }
 
     /* --- --- --- Behavior-changing methods --- --- --- */
 
     /**
      * Creates a {@link Subscription} for the downstream {@link Subscriber}.
      *
-     * The default implementation creates a {@link Subscription} that forward calls to
+     * <p>The default implementation creates a {@link Subscription} that forward calls to
      * {@link AbstractProcessor#upstream} if this Processor is not
-     * {@link AbstractProcessor#terminated}.
+     * {@link AbstractProcessor#terminated}.</p>
      *
      * @return a non-null {@link Subscription}.
      */
@@ -64,7 +59,7 @@ public abstract class AbstractProcessor<U, D>
      * Throwing body for {@link Subscriber#onNext(Object)}. Implementations should call
      * {@link AbstractProcessor#emit(Object)} to send elements downstream
      *
-     * If anything is throw, the processor will terminate:
+     * <p>If anything is throw, the processor will terminate:</p>
      * <ul>
      *     <li>The upstream subscription will be cancelled</li>
      *     <li>New items received from upstream will be silently dropped</li>
