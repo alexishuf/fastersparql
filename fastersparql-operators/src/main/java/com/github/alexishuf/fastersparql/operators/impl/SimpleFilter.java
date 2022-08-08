@@ -99,11 +99,17 @@ public class SimpleFilter implements Filter {
         }
 
         @Override protected void handleOnNext(R row) {
+            boolean discard = false;
             for (ExprEvaluator<R> predicate : predicates) {
-                if (!RDFValues.coerceToBool(predicate.evaluate(row)))
-                    return; // discard row
+                if (!RDFValues.coerceToBool(predicate.evaluate(row))) {
+                    discard = true;
+                    break;
+                }
             }
-            emit(row);
+            if (discard)
+                upstream.request(1);
+            else
+                emit(row);
         }
 
         @Override protected void onTerminate(@Nullable Throwable error, boolean cancelled) {

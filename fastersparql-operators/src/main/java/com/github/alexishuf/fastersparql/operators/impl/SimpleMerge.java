@@ -79,8 +79,12 @@ public class SimpleMerge implements Merge {
                 boolean duplicate = false;
                 for (int i = 0; !duplicate && i < windows.size(); i++)
                     duplicate = i != idx && windows.get(i).contains(projected);
-                if (!duplicate)
+                if (duplicate) {
+                    upstream.request(1);
+                } else {
+                    windows.get(idx).add(row);
                     emit(projected);
+                }
             }
         }
 
