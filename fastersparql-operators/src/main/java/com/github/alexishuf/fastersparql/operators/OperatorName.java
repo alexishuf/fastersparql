@@ -67,29 +67,31 @@ public enum OperatorName {
     }
 
     public static OperatorName valueOf(Class<? extends Operator> cls) {
-        if      (cls.equals(Join.class))     return JOIN;
-        else if (cls.equals(LeftJoin.class)) return LEFT_JOIN;
-        else if (cls.equals(Union.class))    return UNION;
-        else if (cls.equals(Merge.class))    return MERGE;
-        else if (cls.equals(Slice.class))    return SLICE;
-        else if (cls.equals(Distinct.class)) return DISTINCT;
-        else if (cls.equals(Project.class))  return PROJECT;
-        else if (cls.equals(Filter.class))   return FILTER;
-        else if (cls.equals(Minus.class))    return MINUS;
+        if      (cls.equals(Join.class))         return JOIN;
+        else if (cls.equals(LeftJoin.class))     return LEFT_JOIN;
+        else if (cls.equals(Union.class))        return UNION;
+        else if (cls.equals(Merge.class))        return MERGE;
+        else if (cls.equals(Slice.class))        return SLICE;
+        else if (cls.equals(Distinct.class))     return DISTINCT;
+        else if (cls.equals(Project.class))      return PROJECT;
+        else if (cls.equals(Filter.class))       return FILTER;
+        else if (cls.equals(FilterExists.class)) return FILTER_EXISTS;
+        else if (cls.equals(Minus.class))        return MINUS;
         else
             throw new IllegalArgumentException(cls+" is not a known Operator");
     }
 
     public static OperatorName valueOfProvider(Class<? extends OperatorProvider> cls) {
-        if      (cls.equals(JoinProvider.class))     return JOIN;
-        else if (cls.equals(LeftJoinProvider.class)) return LEFT_JOIN;
-        else if (cls.equals(UnionProvider.class))    return UNION;
-        else if (cls.equals(MergeProvider.class))    return MERGE;
-        else if (cls.equals(SliceProvider.class))    return SLICE;
-        else if (cls.equals(DistinctProvider.class)) return DISTINCT;
-        else if (cls.equals(ProjectProvider.class))  return PROJECT;
-        else if (cls.equals(FilterProvider.class))   return FILTER;
-        else if (cls.equals(MinusProvider.class))    return MINUS;
+        if      (cls.equals(JoinProvider.class))         return JOIN;
+        else if (cls.equals(LeftJoinProvider.class))     return LEFT_JOIN;
+        else if (cls.equals(UnionProvider.class))        return UNION;
+        else if (cls.equals(MergeProvider.class))        return MERGE;
+        else if (cls.equals(SliceProvider.class))        return SLICE;
+        else if (cls.equals(DistinctProvider.class))     return DISTINCT;
+        else if (cls.equals(ProjectProvider.class))      return PROJECT;
+        else if (cls.equals(FilterProvider.class))       return FILTER;
+        else if (cls.equals(FilterExistsProvider.class)) return FILTER_EXISTS;
+        else if (cls.equals(MinusProvider.class))        return MINUS;
         else
             throw new IllegalArgumentException(cls+" is not a known Operator");
     }
