@@ -18,15 +18,12 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
 public class NativeJoinPublisher<T> extends MergePublisher<T> {
-    private static final Logger log = LoggerFactory.getLogger(NativeJoinPublisher.class);
 
     private final BindType bindType;
     private final Results<T> left;
@@ -131,7 +128,6 @@ public class NativeJoinPublisher<T> extends MergePublisher<T> {
                     novel = i == idx || !windows.get(i).contains(row);
                 if (novel) {
                     windows.get(idx).add(row);
-                    log.info("{}.emit({})", this, rowOps.toString(row));
                     emit(row);
                 } else {
                     upstream.request(1);
@@ -139,7 +135,6 @@ public class NativeJoinPublisher<T> extends MergePublisher<T> {
             }
 
             @Override protected void completeDownstream(@Nullable Throwable cause) {
-                log.info("{}.completeDownstream({})", this, cause);
                 super.completeDownstream(cause);
             }
 
