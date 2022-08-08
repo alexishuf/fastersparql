@@ -31,4 +31,10 @@ public interface WebSocketResultsParserConsumer extends ResultsParserConsumer {
      * @param n the capacity of the server action queue
      */
     void actionQueue(int n);
+
+    /**
+     * The server sent a {@code !cancelled} message.
+     * An {@link ResultsParserConsumer#end()} will nevertheless follow
+     */
+    void cancelled();
 }

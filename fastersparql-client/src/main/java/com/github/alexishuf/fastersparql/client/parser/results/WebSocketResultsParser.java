@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.github.alexishuf.fastersparql.client.util.CSUtils.startsWith;
+
 /**
  * A parser for TSV results and {@code !}control messages as used in hdtss WebSocket protocol
  */
@@ -91,27 +93,30 @@ public class WebSocketResultsParser implements ResultsParser {
             assert false : "empty control message";
             consumer.onError("Empty control message");
             end();
-        } else if (CSUtils.startsWith(input, begin, end, "!error ")) {
+        } else if (startsWith(input, begin, end, "!error ")) {
             if (end-begin <= 7)
                 consumer.onError(input.subSequence(begin, end).toString());
             else
                 consumer.onError(input.subSequence(begin+7, end).toString());
             end();
-        } else if (CSUtils.startsWith(input, begin, end, "!end")) {
+        } else if (startsWith(input, begin, end, "!end")) {
             end();
-        } else if (CSUtils.startsWith(input, begin, end, "!action-queue-cap")) {
+        } else if (startsWith(input, begin, end, "!cancelled")) {
+            consumer.cancelled();
+            end();
+        } else if (startsWith(input, begin, end, "!action-queue-cap")) {
             Matcher m = QUEUE_CAP_RX.matcher(input);
             if (!m.find(begin) || m.start() != begin)
                 log.warn("Ignoring malformed control line {}", input.subSequence(begin, end));
             else
                 consumer.actionQueue((int)Math.min(Long.parseLong(m.group(1)), Integer.MAX_VALUE));
-        } else if (CSUtils.startsWith(input, begin, end, "!bind-request")) {
+        } else if (startsWith(input, begin, end, "!bind-request")) {
             Matcher m = BIND_REQUEST_RX.matcher(input);
             if (!m.find(begin) || m.start() != begin)
                 log.warn("Ignoring malformed control line {}", input.subSequence(begin, end));
             else
                 consumer.bindRequest(Long.parseLong(m.group(2)), !m.group(1).isEmpty());
-        } else if (CSUtils.startsWith(input, begin, end, "!active-binding ")) {
+        } else if (startsWith(input, begin, end, "!active-binding ")) {
             assert bindingTerms.isEmpty() : "Concurrent readControl";
             String string = input.toString();
             for (int i = begin+16, eot; i < end; i = eot+1) {

@@ -281,6 +281,10 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
 
         /* --- --- --- state management: may be called outside the Netty event loop --- --- --- */
 
+        protected boolean isCancelled() {
+            return state.get() == HandlerState.CANCELLED;
+        }
+
         protected void onStateChange(HandlerState state) {
             if (state == HandlerState.COMPLETED)
                 recycle();
@@ -427,6 +431,9 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             }
             @Override public void     end()               { tryComplete(null, null); }
             @Override public void onError(String message) { tryComplete(null, message); }
+            @Override public void cancelled()             {
+                log.debug("{}: server-sent !cancelled", QueryHandler.this);
+            }
         });
 
         public QueryHandler(CharSequence query) {
@@ -534,7 +541,7 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             private @MonotonicNonNull String[] binding;
             private boolean empty = true;
             private @MonotonicNonNull Merger<String[]> merger;
-            private boolean sentHeaders = false;
+            private boolean sentHeaders = false, serverCancelled = false;
 
             private void endBinding() {
                 if (binding != null) {
@@ -598,7 +605,13 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             }
             @Override public void end()                       {
                 endBinding();
-                tryComplete(null, null);
+                // do not complete if server replied !cancel with !cancelled
+                if (!isCancelled() || !serverCancelled)
+                    tryComplete(null, null);
+            }
+            @Override public void cancelled() {
+                serverCancelled = true;
+                log.debug("{}: server-sent !cancelled", BindHandler.this);
             }
             @Override public void actionQueue(int n)          { }
             @Override public void onError(String message)     { tryComplete(null, message); }
