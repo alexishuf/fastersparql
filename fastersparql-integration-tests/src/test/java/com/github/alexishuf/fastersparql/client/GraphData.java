@@ -6,8 +6,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.Data;
-import lombok.experimental.Accessors;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFLanguages;
@@ -21,7 +19,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Data @Accessors(fluent = true, chain = true)
+@SuppressWarnings("FieldMayBeFinal")
 public class GraphData {
     private static final String PREFIX, TTL_PREFIX;
 
@@ -52,8 +50,17 @@ public class GraphData {
         return new GraphData(this);
     }
 
+    public SparqlMethod               method() { return method; }
+    public String                     sparql() { return sparql; }
+
+
+    public GraphData      method(SparqlMethod value)               {      method = value; return this; }
+    public GraphData     accepts(MediaType value)                  {     accepts = value; return this; }
+    public GraphData      sparql(String value)                     {      sparql = value; return this; }
+
+
     public SparqlConfiguration config() {
-        SparqlConfiguration.SparqlConfigurationBuilder b = SparqlConfiguration.builder();
+        SparqlConfiguration.Builder b = SparqlConfiguration.builder();
         if (method != null)
             b.clearMethods().method(method);
         if (accepts != null)
@@ -63,15 +70,17 @@ public class GraphData {
 
     public void assertExpected(Graph<?> graph) {
         StringBuilder actual = new StringBuilder();
-        IterableAdapter<?> adapter = new IterableAdapter<>(graph.publisher());
-        for (Object o : adapter)
-            decodeFragment(o, actual);
-        MediaType actualMediaType = graph.mediaType().get();
-        if (error != null) {
-            fail("Expected error "+error.getSimpleName()+" got "+adapter.error());
-            assertNull(actualMediaType);
-        } else if (adapter.hasError()) {
-            fail(adapter.error());
+        MediaType actualMediaType;
+        try (IterableAdapter<?> adapter = new IterableAdapter<>(graph.publisher())) {
+            for (Object o : adapter)
+                decodeFragment(o, actual);
+            actualMediaType = graph.mediaType().get();
+            if (error != null) {
+                fail("Expected error " + error.getSimpleName() + " got " + adapter.error());
+                assertNull(actualMediaType);
+            } else if (adapter.hasError()) {
+                fail(adapter.error());
+            }
         }
         assertTrue(accepts.accepts(actualMediaType),
                    "expected "+accepts+", got "+actualMediaType);

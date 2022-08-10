@@ -511,36 +511,36 @@ class SparqlConfigurationTest {
     static Stream<Arguments> testAccepts() {
         return Stream.of(
                 arguments(
-                        SparqlConfiguration.builder().method(SparqlMethod.GET).build(),
+                        builder().method(SparqlMethod.GET).build(),
                         null
                 ),
                 arguments(
-                        SparqlConfiguration.builder().method(SparqlMethod.GET).method(SparqlMethod.FORM).build(),
-                        SparqlConfiguration.builder().method(SparqlMethod.FORM).build()
+                        builder().method(SparqlMethod.GET).method(SparqlMethod.FORM).build(),
+                        builder().method(SparqlMethod.FORM).build()
                 ),
                 arguments(
                         null,
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.JSON).build()
+                        builder().resultsAccept(SparqlResultFormat.JSON).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.JSON).resultsAccept(SparqlResultFormat.TSV).build(),
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.TSV).build()
+                        builder().resultsAccept(SparqlResultFormat.JSON).resultsAccept(SparqlResultFormat.TSV).build(),
+                        builder().resultsAccept(SparqlResultFormat.TSV).build()
                 ),
                 arguments(
                         null,
-                        SparqlConfiguration.builder().rdfAccept(TURTLE).build()
+                        builder().rdfAccept(TURTLE).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().rdfAccept(TURTLE).rdfAccept(JSONLD).build(),
-                        SparqlConfiguration.builder().rdfAccept(TURTLE).build()
+                        builder().rdfAccept(TURTLE).rdfAccept(JSONLD).build(),
+                        builder().rdfAccept(TURTLE).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().rdfAccept(JSONLD).build(),
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_COMPACTED).build()
+                        builder().rdfAccept(JSONLD).build(),
+                        builder().rdfAccept(JSONLD_COMPACTED).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_COMPACTED).build(),
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_FLATTENED).rdfAccept(JSONLD_COMPACTED).build()
+                        builder().rdfAccept(JSONLD_COMPACTED).build(),
+                        builder().rdfAccept(JSONLD_FLATTENED).rdfAccept(JSONLD_COMPACTED).build()
                 )
         );
     }
@@ -556,28 +556,28 @@ class SparqlConfigurationTest {
     static Stream<Arguments> testNotAccepts() {
         return Stream.of(
                 arguments(
-                        SparqlConfiguration.builder().method(SparqlMethod.GET).build(),
-                        SparqlConfiguration.builder().method(SparqlMethod.POST).build()
+                        builder().method(SparqlMethod.GET).build(),
+                        builder().method(SparqlMethod.POST).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().method(SparqlMethod.GET).method(SparqlMethod.FORM).build(),
-                        SparqlConfiguration.builder().method(SparqlMethod.POST).build()
+                        builder().method(SparqlMethod.GET).method(SparqlMethod.FORM).build(),
+                        builder().method(SparqlMethod.POST).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.JSON).build(),
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.TSV).build()
+                        builder().resultsAccept(SparqlResultFormat.JSON).build(),
+                        builder().resultsAccept(SparqlResultFormat.TSV).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.CSV).resultsAccept(SparqlResultFormat.JSON).build(),
-                        SparqlConfiguration.builder().resultsAccept(SparqlResultFormat.TSV).build()
+                        builder().resultsAccept(SparqlResultFormat.CSV).resultsAccept(SparqlResultFormat.JSON).build(),
+                        builder().resultsAccept(SparqlResultFormat.TSV).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_COMPACTED).build(),
-                        SparqlConfiguration.builder().rdfAccept(JSONLD).build()
+                        builder().rdfAccept(JSONLD_COMPACTED).build(),
+                        builder().rdfAccept(JSONLD).build()
                 ),
                 arguments(
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_COMPACTED).build(),
-                        SparqlConfiguration.builder().rdfAccept(JSONLD_FLATTENED).build()
+                        builder().rdfAccept(JSONLD_COMPACTED).build(),
+                        builder().rdfAccept(JSONLD_FLATTENED).build()
                 )
         );
     }
@@ -589,5 +589,21 @@ class SparqlConfigurationTest {
             assertFalse(offer.isAcceptedBy(req));
         if (req != null)
             assertFalse(req.accepts(offer));
+    }
+
+    static Stream<Arguments> testIsEmpty() {
+        return Stream.of(
+                arguments(SparqlConfiguration.EMPTY, true),
+                arguments(builder().build(), true),
+                arguments(builder().methods(asList(SparqlMethod.values())).build(), true),
+                arguments(builder().resultsAccepts(asList(SparqlResultFormat.values())).build(), true),
+                arguments(builder().method(SparqlMethod.POST).build(), false),
+                arguments(builder().methods(asList(SparqlMethod.POST, SparqlMethod.FORM)).build(), false)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testIsEmpty(SparqlConfiguration config, boolean expected) {
+        assertEquals(expected, config.isEmpty());
     }
 }

@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.client.FasterSparql;
+import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +26,11 @@ class HdtssContainerTest {
 
     @Test
     void test() {
-        try (val client = FasterSparql.clientFor(container.asEndpoint())) {
-            val results = client.query("SELECT * WHERE {?x <http://xmlns.com/foaf/0.1/age> 23.}");
-            try (val adapter = new IterableAdapter<>(results.publisher())) {
-                val ex = new HashSet<>(asList("<http://example.org/Alice>",
-                                              "<http://example.org/Eric>"));
+        try (SparqlClient<String[], ?> client = FasterSparql.clientFor(container.asEndpoint())) {
+            Results<String[]> results = client.query("SELECT * WHERE {?x <http://xmlns.com/foaf/0.1/age> 23.}");
+            try (IterableAdapter<String[]> adapter = new IterableAdapter<>(results.publisher())) {
+                HashSet<String> ex = new HashSet<>(asList("<http://example.org/Alice>",
+                                                          "<http://example.org/Eric>"));
                 assertEquals(ex, adapter.stream().map(r -> r[0]).collect(Collectors.toSet()));
             }
         }

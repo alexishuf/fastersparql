@@ -1,14 +1,11 @@
 package com.github.alexishuf.fastersparql.client;
 
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Singular;
-import lombok.experimental.Accessors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -16,18 +13,49 @@ import java.util.concurrent.TimeUnit;
 import static java.lang.ProcessBuilder.Redirect.PIPE;
 import static java.util.Arrays.asList;
 
-@Accessors(fluent = true)
 public class ChildJVM implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ChildJVM.class);
-    @Getter private final Process process;
+    private final Process process;
 
-    @Builder
-    public ChildJVM(Class<?> mainClass, @Singular Map<String, String> envVars,
+    @SuppressWarnings("unused")
+    public static final class Builder {
+        private final Class<?> mainClass;
+        private ProcessBuilder.Redirect errorRedirect = PIPE;
+        private ProcessBuilder.Redirect outputRedirect = PIPE;
+        private boolean redirectErrorStream = false;
+        private Map<String, String> envVars = new HashMap<>();
+        private List<String> jvmArgs = new ArrayList<>();
+        private List<String> mainArgs = new ArrayList<>();
+
+        public Builder(Class<?> mainClass) {
+            this.mainClass = mainClass;
+        }
+
+        public Builder errorRedirect(ProcessBuilder.Redirect value)  {      errorRedirect = value; return this;}
+        public Builder outputRedirect(ProcessBuilder.Redirect value) {     outputRedirect = value; return this;}
+        public Builder redirectErrorStream(boolean value)            {redirectErrorStream = value; return this;}
+        public Builder envVars(Map<String, String> value)            {            envVars = value; return this;}
+        public Builder jvmArgs(List<String> value)                   {            jvmArgs = value; return this;}
+        public Builder mainArgs(List<String> value)                  {           mainArgs = value; return this;}
+
+        public Builder envVar(String name, String value) {envVars.put(name, value); return this;}
+        public Builder jvmArg(String arg)             {jvmArgs.add(arg); return this;}
+        public Builder mainArg(String arg)            {mainArgs.add(arg); return this;}
+
+        public ChildJVM build() throws IOException {
+            return new ChildJVM(mainClass, envVars, errorRedirect, outputRedirect,
+                                redirectErrorStream, jvmArgs, mainArgs);
+        }
+    }
+
+    public static Builder builder(Class<?> mainClass) { return new Builder(mainClass); }
+
+    public ChildJVM(Class<?> mainClass, Map<String, String> envVars,
                     ProcessBuilder.Redirect errorRedirect,
                     ProcessBuilder.Redirect outputRedirect,
                     boolean redirectErrorStream,
-                    @Singular List<String> jvmArgs,
-                    @Singular List<String> mainArgs) throws IOException {
+                    List<String> jvmArgs,
+                    List<String> mainArgs) throws IOException {
         if (mainClass == null)
             throw new IllegalArgumentException("mainClass is required");
         String separator = System.getProperty("file.separator");
@@ -64,16 +92,12 @@ public class ChildJVM implements AutoCloseable {
         return readAll(process.getInputStream());
     }
 
-    public String readAllError() throws IOException {
-        return readAll(process.getErrorStream());
-    }
-
-    @Override public void close() throws Exception {
+    @Override public void close() throws InterruptedException {
         close(0, 1000, 1000);
     }
 
     public void close(int waitMs, int destroyWaitMs,
-                      int forceWaitMs) throws Exception {
+                      int forceWaitMs) throws InterruptedException {
         if (process.isAlive()) {
             if (!process.waitFor(waitMs, TimeUnit.MILLISECONDS)) {
                 process.destroy();

@@ -5,16 +5,13 @@ import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.Minus;
 import com.github.alexishuf.fastersparql.operators.plan.MinusPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import static com.github.alexishuf.fastersparql.operators.impl.bind.NativeBindHelper.preferNative;
 
-@Value @Accessors(fluent = true)
-public class BindMinus implements Minus {
-    RowOperations rowOps;
-    int bindConcurrency;
+public final class BindMinus implements Minus {
+    private final RowOperations rowOps;
+    private final int bindConcurrency;
 
     public static class Provider implements MinusProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -23,6 +20,11 @@ public class BindMinus implements Minus {
         @Override public Minus create(long flags, RowOperations rowOperations) {
             return new BindMinus(rowOperations, BindJoin.Provider.concurrency(flags));
         }
+    }
+
+    public BindMinus(RowOperations rowOps, int bindConcurrency) {
+        this.rowOps = rowOps;
+        this.bindConcurrency = bindConcurrency;
     }
 
     @Override public <R> Class<R> rowClass() {

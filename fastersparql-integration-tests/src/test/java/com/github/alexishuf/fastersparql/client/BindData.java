@@ -5,11 +5,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.experimental.Accessors;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
@@ -21,8 +16,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
-@EqualsAndHashCode(callSuper = true)
-@Getter @Setter @Accessors(fluent = true, chain = true)
+@SuppressWarnings("unused")
 public class BindData extends ResultsData {
     private List<String> bindingVars;
     private List<String[]> bindingRows;
@@ -63,6 +57,14 @@ public class BindData extends ResultsData {
         }
         this.bindType = bindType;
     }
+
+    public List<String>   bindingVars() { return bindingVars; }
+    public List<String[]> bindingRows() { return bindingRows; }
+    public BindType          bindType() { return bindType; }
+
+    public BindData bindingVars(List<String> value)   { bindingVars = value; return this; }
+    public BindData bindingRows(List<String[]> value) { bindingRows = value; return this; }
+    public BindData    bindType(BindType value)       { bindType    = value; return this; }
 
     public Results<String[]> bindings() {
         return new Results<>(bindingVars, String[].class,
@@ -110,11 +112,16 @@ public class BindData extends ResultsData {
         return new BuilderStage1(BindType.MINUS, sparql, vars == null ? emptyList() : asList(vars));
     }
 
-    @RequiredArgsConstructor
     public static final class BuilderStage1 {
         private final BindType bindType;
         private final String sparql;
         private final List<String> vars;
+
+        public BuilderStage1(BindType bindType, String sparql, List<String> vars) {
+            this.bindType = bindType;
+            this.sparql = sparql;
+            this.vars = vars;
+        }
 
         public BuilderStage2 to(String... values) {
             List<String[]> rows = new ArrayList<>();
@@ -127,10 +134,14 @@ public class BindData extends ResultsData {
         }
     }
 
-    @RequiredArgsConstructor
     public static class BuilderStage2 {
         private final BuilderStage1 stage1;
         private final List<String[]> bindingRows;
+
+        public BuilderStage2(BuilderStage1 stage1, List<String[]> bindingRows) {
+            this.stage1 = stage1;
+            this.bindingRows = bindingRows;
+        }
 
         public BindData expecting(String... values) {
             return new BindData(stage1.sparql, stage1.vars, bindingRows, stage1.bindType, values);
@@ -149,8 +160,8 @@ public class BindData extends ResultsData {
     }
 
     @Override
-    public BindData with(Consumer<SparqlConfiguration.SparqlConfigurationBuilder> configurator) {
-        SparqlConfiguration.SparqlConfigurationBuilder b = config().toBuilder();
+    public BindData with(Consumer<SparqlConfiguration.Builder> configurator) {
+        SparqlConfiguration.Builder b = config().toBuilder();
         configurator.accept(b);
         return new BindData(this).config(b.build());
     }

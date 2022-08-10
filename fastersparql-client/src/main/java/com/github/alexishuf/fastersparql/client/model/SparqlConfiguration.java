@@ -5,10 +5,7 @@ import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlCon
 import com.github.alexishuf.fastersparql.client.util.HeaderUtils;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
-import lombok.Builder;
-import lombok.Singular;
-import lombok.Value;
-import lombok.experimental.Accessors;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
@@ -17,17 +14,18 @@ import org.checkerframework.common.value.qual.MinLen;
 import java.util.*;
 
 import static java.lang.String.format;
+import static java.util.Arrays.asList;
 
 /**
  * Configuration that can be applied to a set or to one SPARQL query but is orthogonal
  * to the query itself.
  *
- * To improve interaction with other code and avoid needless object creation, fields in
- * this class carry mostly validated Strings in Lists and Maps.
+ * <p>To improve interaction with other code and avoid needless object creation, fields in
+ * this class carry mostly validated Strings in Lists and Maps.</p>
  *
- * At construction time, inputs are sanitized and validated. The sanitizations and
+ * <p>At construction time, inputs are sanitized and validated. The sanitizations and
  * constraints are documented on each field accessor. Users of this class should keep in
- * mind the sanitizations, which avoid the need to handle all styles allowed by HTTP and URIs.
+ * mind the sanitizations, which avoid the need to handle all styles allowed by HTTP and URIs.</p>
  *
  * <strong>Overlay semantics:</strong>
  * {@link SparqlConfiguration}s are meant to overlay one another. The specific overlay semantic
@@ -35,10 +33,147 @@ import static java.lang.String.format;
  * {@link SparqlConfiguration#overlayWith(SparqlConfiguration)} method provides an
  * implementation of such semantics.
  */
-@Builder(toBuilder = true)
-@Value @Accessors(fluent = true)
-public class SparqlConfiguration {
-    public static final SparqlConfiguration EMPTY = SparqlConfiguration.builder().build();
+public final class SparqlConfiguration {
+    public static final SparqlConfiguration EMPTY = new SparqlConfiguration(null, null, null, null, null, null);
+
+    private final @MinLen(1) List<SparqlMethod> methods;
+    private final @MinLen(1) List<SparqlResultFormat> resultsAccepts;
+    private final @MinLen(1) List<MediaType> rdfAccepts;
+    private final Map<String, List<String>> params;
+    private final Map<String, String> headers;
+    private final Map<String, List<String>> appendHeaders;
+
+    /* --- --- --- builder --- --- --- */
+
+    @SuppressWarnings("unused")
+    public static final class Builder {
+        private @MonotonicNonNull List<SparqlMethod> methods;
+        private @MonotonicNonNull List<SparqlResultFormat> resultsAccepts;
+        private @MonotonicNonNull List<MediaType> rdfAccepts;
+        private @MonotonicNonNull Map<String, List<String>> params;
+        private @MonotonicNonNull Map<String, String> headers;
+        private @MonotonicNonNull Map<String, List<String>> appendHeaders;
+
+        public Builder           clearMethods() { if (methods        != null) methods.clear();        return this; }
+        public Builder    clearResultsAccepts() { if (resultsAccepts != null) resultsAccepts.clear(); return this; }
+        public Builder        clearRdfAccepts() { if (rdfAccepts     != null) rdfAccepts.clear();     return this; }
+        public Builder            clearParams() { if (params         != null) params.clear();         return this; }
+        public Builder           clearHeaders() { if (headers        != null) headers.clear();        return this; }
+        public Builder     clearAppendHeaders() { if (appendHeaders  != null) appendHeaders.clear();  return this; }
+
+        @SuppressWarnings("UnusedReturnValue") public Builder methods(List<SparqlMethod> source) {
+            (methods == null ? methods = new ArrayList<>() : methods).addAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder method(SparqlMethod value) {
+            (methods == null ? methods = new ArrayList<>() : methods).add(value);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder resultsAccepts(List<SparqlResultFormat> source) {
+            (resultsAccepts == null ? resultsAccepts = new ArrayList<>() : resultsAccepts).addAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder resultsAccept(SparqlResultFormat value) {
+            (resultsAccepts == null ? resultsAccepts = new ArrayList<>() : resultsAccepts).add(value);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder rdfAccepts(List<MediaType> source) {
+            (rdfAccepts == null ? rdfAccepts = new ArrayList<>() : rdfAccepts).addAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder rdfAccept(MediaType value) {
+            (rdfAccepts == null ? rdfAccepts = new ArrayList<>() : rdfAccepts).add(value);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder params(Map<String, List<String>> source) {
+            (params == null ? params = new LinkedHashMap<>() : params).putAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder param(String name, List<String> values) {
+            (params == null ? params = new LinkedHashMap<>() : params).put(name, values);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder headers(Map<String, String> source) {
+            (headers == null ? headers = new LinkedHashMap<>() : headers).putAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder header(String name, String value) {
+            (headers == null ? headers = new LinkedHashMap<>() : headers).put(name, value);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder appendHeaders(Map<String, List<String>> source) {
+            (appendHeaders == null ? appendHeaders = new LinkedHashMap<>() : appendHeaders).putAll(source);
+            return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder appendHeader(String name, List<String> values) {
+            (appendHeaders == null ? appendHeaders = new LinkedHashMap<>() : appendHeaders).put(name, values);
+            return this;
+        }
+
+        private static final List<SparqlMethod> DEF_METHODS = asList(SparqlMethod.values());
+        private static final List<SparqlResultFormat> DEF_FORMATS = asList(SparqlResultFormat.values());
+
+        private boolean isDefault(List<?> list, List<?> defaultList) {
+            return list == null || list.size() == defaultList.size() && list.equals(defaultList);
+        }
+
+        public SparqlConfiguration build() {
+            boolean empty = isDefault(methods, DEF_METHODS)
+                    && isDefault(resultsAccepts, DEF_FORMATS)
+                    && isDefault(rdfAccepts, RDFMediaTypes.DEFAULT_ACCEPTS)
+                    && (params        == null || params.isEmpty())
+                    && (headers       == null || headers.isEmpty())
+                    && (appendHeaders == null || appendHeaders.isEmpty());
+            if (empty)
+                return EMPTY;
+            return new SparqlConfiguration(methods, resultsAccepts, rdfAccepts,
+                                           params, headers, appendHeaders);
+        }
+    }
+
+    public static Builder builder() { return new Builder(); }
+
+    public Builder toBuilder() {
+        Builder b = new Builder();
+        if (hasMethods())             b.methods(methods);
+        if (hasResultsAccepts())      b.resultsAccepts(resultsAccepts);
+        if (hasRdfAccepts())          b.rdfAccepts(rdfAccepts);
+        if (!params.isEmpty())        b.params(params);
+        if (!headers.isEmpty())       b.headers(headers);
+        if (!appendHeaders.isEmpty()) b.appendHeaders(appendHeaders);
+        return b;
+    }
+
+    /* --- --- --- constructors --- --- --- */
+
+    private SparqlConfiguration(@Nullable List<@Nullable SparqlMethod> methods,
+                                @Nullable List<@Nullable SparqlResultFormat> resultsAccepts,
+                                @Nullable List<@Nullable MediaType> rdfAccepts,
+                                @Nullable Map<String, @Nullable List<@Nullable String>> params,
+                                @Nullable Map<String, @Nullable String> headers,
+                                @Nullable Map<String, @Nullable List<@Nullable String>> appendHeaders) {
+        this.methods = nonEmptyNonNullDistinct(methods, SparqlMethod.VALUES,
+                                               "method");
+        this.resultsAccepts = nonEmptyNonNullDistinct(resultsAccepts, SparqlResultFormat.VALUES,
+                                                      "accepted results format");
+        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, RDFMediaTypes.DEFAULT_ACCEPTS,
+                                                  "accepted RDF media types");
+        this.params = sanitizeParams(params);
+        this.headers = sanitizeHeaders(headers);
+        this.appendHeaders = sanitizeAppendHeaders(appendHeaders);
+
+        List<String> bad = null;
+        for (String header : this.headers.keySet()) {
+            if (this.appendHeaders.containsKey(header))
+                (bad == null ? bad = new ArrayList<>() : bad).add(header);
+        }
+        if (bad != null) {
+            String msg = "These headers appear both in headers and appendHeaders: " + bad;
+            throw new SparqlClientInvalidArgument(msg);
+        }
+    }
+
+    /* --- --- --- trivial getters --- --- --- */
 
     /**
      * Non-null, non-empty, immutable distinct list of preferred SPARQL protocol methods.
@@ -55,13 +190,13 @@ public class SparqlConfiguration {
      * order of elements in this list being preserved. Else, the lower-precedence list
      * remains effective.
      */
-    @Singular @MinLen(1) List<SparqlMethod> methods;
+    public @MinLen(1) List<SparqlMethod> methods() { return methods; }
 
     /**
      * Non-null, non-empty, immutable, distinct list of non-null SPARQL result formats
      * ordered from most to least-preferred.
      *
-     * These result formats will be applied to {@code SELECT} and {@code ASK} queries.
+     * <p>These result formats will be applied to {@code SELECT} and {@code ASK} queries.</p>
      *
      * <strong>Pre-validation sanitization at construction time</strong>:
      * <ul>
@@ -76,13 +211,13 @@ public class SparqlConfiguration {
      * with the order of elements in this list being preserved. Else, the lower-precedence list
      * remains effective.
      */
-    @Singular @MinLen(1) List<SparqlResultFormat> resultsAccepts;
+    public @MinLen(1) List<SparqlResultFormat> resultsAccepts() { return resultsAccepts; }
 
     /**
      * Non-null, non-empty, distinct immutable list of accepted RDF media types
      * ordered from most preferred to least preferred and not including q-values.
      *
-     * <strong>Sanitization at construction time</strong>:
+     * <p><strong>Sanitization at construction time</strong>:</p>
      * <ul>
      *     <li>{@code null} is converted to an empty list.</li>
      *     <li>An empty list is converted to {@link RDFMediaTypes#DEFAULT_ACCEPTS}</li>
@@ -93,13 +228,13 @@ public class SparqlConfiguration {
      * with the order of elements in this list being preserved. Else, the lower-precedence list
      * remains effective.
      */
-    @Singular @MinLen(1) List<MediaType> rdfAccepts;
+    public @MinLen(1) List<MediaType> rdfAccepts() { return rdfAccepts; }
 
     /**
      * An immutable non-null map from non-null (but possibly empty) param names to non-null
      * possibly empty immutable Lists of non-null, possibly empty, percent-escaped param values.
      *
-     * <strong>Pre-validation sanitizations at construction time</strong>:
+     * <p><strong>Pre-validation sanitizations at construction time</strong>:</p>
      * <ul>
      *     <li>A name will be percent-escaped if it contains any forbidden character. If it
      *         also contains valid percent-escapes, the {@code %} in these escapes will
@@ -123,15 +258,15 @@ public class SparqlConfiguration {
      * in a list will be sent after the values set in lower-precedence {@link SparqlConfiguration}s.
      * Each name-value pair will generate a name=value query param in the URI or form request body.
      */
-    @Singular Map<String, List<String>> params;
+    public Map<String, List<String>> params() { return params; }
 
     /**
      * An immutable, non-null map from non-null, non-empty, trimmed, lower-case header names to
      * non-null, non-empty and trimmed values.
      *
-     * Header names conform to the
+     * <p>Header names conform to the
      * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">{@code token}
-     * production in RFC2616</a>
+     * production in RFC2616</a></p>
      *
      * <strong>Value constraints:</strong>
      * <ul>
@@ -167,14 +302,14 @@ public class SparqlConfiguration {
      * in {@link SparqlConfiguration#appendHeaders()} for the same {@link SparqlConfiguration}
      * is an error.
      */
-    @Singular Map<String, String> headers;
+    public Map<String, String> headers() { return headers; }
 
     /**
      * An immutable, non-null map from non-null, non-empty, trimmed, lower-case header names to
      * a non-null, immutable, possibly empty list of additional non-null, non-empty, trimmed
      * header values.
      *
-     * <strong>Pre-validation sanitizations at construction time</strong>:
+     * <p><strong>Pre-validation sanitizations at construction time</strong>:</p>
      * <ul>
      *     <li>Names sanitization:
      *         <ul>
@@ -203,35 +338,9 @@ public class SparqlConfiguration {
      * For the same {@link SparqlConfiguration} instance, setting a header here and in
      * {@link SparqlConfiguration#headers()} is an error
      */
-    @Singular Map<String, List<String>> appendHeaders;
+    public Map<String, List<String>> appendHeaders() { return appendHeaders; }
 
-    private SparqlConfiguration(@Nullable List<@Nullable SparqlMethod> methods,
-                                @Nullable List<@Nullable SparqlResultFormat> resultsAccepts,
-                                @Nullable List<@Nullable MediaType> rdfAccepts,
-                                @Nullable Map<String, @Nullable List<@Nullable String>> params,
-                                @Nullable Map<String, @Nullable String> headers,
-                                @Nullable Map<String, @Nullable List<@Nullable String>> appendHeaders) {
-        this.methods = nonEmptyNonNullDistinct(methods, SparqlMethod.VALUES,
-                                               "method");
-        this.resultsAccepts = nonEmptyNonNullDistinct(resultsAccepts, SparqlResultFormat.VALUES,
-                                                      "accepted results format");
-        this.rdfAccepts = nonEmptyNonNullDistinct(rdfAccepts, RDFMediaTypes.DEFAULT_ACCEPTS,
-                                                  "accepted RDF media types");
-        this.params = sanitizeParams(params);
-        this.headers = sanitizeHeaders(headers);
-        this.appendHeaders = sanitizeAppendHeaders(appendHeaders);
-
-        List<String> bad = null;
-        for (String header : this.headers.keySet()) {
-            if (this.appendHeaders.containsKey(header))
-                (bad == null ? bad = new ArrayList<>() : bad).add(header);
-        }
-        if (bad != null) {
-            String msg = "These headers appear both in headers and appendHeaders: " + bad;
-            throw new SparqlClientInvalidArgument(msg);
-        }
-    }
-
+    /* --- --- --- accessors --- --- --- */
 
     /**
      * Whether {@link SparqlConfiguration#methods()} was set on construction.
@@ -315,7 +424,7 @@ public class SparqlConfiguration {
         if (higher == null)
             return this;
 
-        SparqlConfigurationBuilder b = toBuilder();
+        Builder b = toBuilder();
         if (higher.hasMethods())
             b.clearMethods().methods(overlay(methods, higher.methods, higher));
         if (higher.hasResultsAccepts()) {
@@ -334,15 +443,15 @@ public class SparqlConfiguration {
      * {@link SparqlConfiguration#methods()}, {@link SparqlConfiguration#resultsAccepts()} and
      * {@link SparqlConfiguration#rdfAccepts()}.
      *
-     * <strong>Headers and parameters are ignored</strong>.
+     * <p><strong>Headers and parameters are ignored</strong>.</p>
      *
-     * Null lists in {@code this} are interpreted as "anything is offered/supported", while null
-     * lists in {@code req} are interpreted as "anything is accepted".
+     * <p>Null lists in {@code this} are interpreted as "anything is offered/supported", while null
+     * lists in {@code req} are interpreted as "anything is accepted".</p>
      *
-     * For {@link SparqlConfiguration#methods()} and
+     * <p>For {@link SparqlConfiguration#methods()} and
      * {@link SparqlConfiguration#resultsAccepts()} acceptance is defined by a non-empty
      * intersection. For {@link SparqlConfiguration#rdfAccepts()} some value in {@code this}
-     * must be {@link MediaType#acceptedBy(MediaType)} some value in {@code req}.
+     * must be {@link MediaType#acceptedBy(MediaType)} some value in {@code req}.</p>
      *
      * @param req The {@link SparqlConfiguration} which will be interpreted to a request,
      *                which may or may not be allowed by {@code this}, which represents what
@@ -376,6 +485,32 @@ public class SparqlConfiguration {
         return offer == null || offer.isAcceptedBy(this);
     }
 
+
+    /* --- --- --- java.lang.Object methods --- --- --- */
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof SparqlConfiguration)) return false;
+        SparqlConfiguration that = (SparqlConfiguration) o;
+        return methods.equals(that.methods) && resultsAccepts.equals(that.resultsAccepts) && rdfAccepts.equals(that.rdfAccepts) && params.equals(that.params) && headers.equals(that.headers) && appendHeaders.equals(that.appendHeaders);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(methods, resultsAccepts, rdfAccepts, params, headers, appendHeaders);
+    }
+
+    @Override public String toString() {
+        if (isEmpty())
+            return "SparqlConfiguration.EMPTY";
+        return "SparqlConfiguration{" +
+                "methods=" + methods +
+                ", resultsAccepts=" + resultsAccepts +
+                ", rdfAccepts=" + rdfAccepts +
+                ", params=" + params +
+                ", headers=" + headers +
+                ", appendHeaders=" + appendHeaders +
+                '}';
+    }
 
     /* --- --- --- implementation details --- --- --- */
 
@@ -416,9 +551,9 @@ public class SparqlConfiguration {
     }
 
     private void overlayHeaders(@NonNull SparqlConfiguration higher,
-                                SparqlConfigurationBuilder b) {
-        Map<String, String> headers = new HashMap<>(this.headers);
-        Map<String, List<String>> appendHeaders = new HashMap<>(this.appendHeaders);
+                                Builder b) {
+        Map<String, String> headers = new LinkedHashMap<>(this.headers);
+        Map<String, List<String>> appendHeaders = new LinkedHashMap<>(this.appendHeaders);
         for (Map.Entry<String, String> e : higher.headers.entrySet()) {
             String name = e.getKey();
             appendHeaders.remove(name);
@@ -443,7 +578,7 @@ public class SparqlConfiguration {
         b.clearAppendHeaders().appendHeaders(appendHeaders);
     }
 
-    private void overlayParams(@NonNull SparqlConfiguration higher, SparqlConfigurationBuilder b) {
+    private void overlayParams(@NonNull SparqlConfiguration higher, Builder b) {
         for (Map.Entry<String, List<String>> e : higher.params.entrySet()) {
             String name = e.getKey();
             List<String> values = e.getValue();

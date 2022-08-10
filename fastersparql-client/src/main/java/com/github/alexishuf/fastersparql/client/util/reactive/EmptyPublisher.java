@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.util.reactive;
 
-import lombok.ToString;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
@@ -15,7 +14,6 @@ import java.util.concurrent.Executor;
  *
  * @param <T> the declared type of elements produced, even tough no element will ever be delivered.
  */
-@ToString
 public class EmptyPublisher<T> implements FSPublisher<T> {
     private final @Nullable Throwable cause;
     private @MonotonicNonNull Executor executor;
@@ -52,4 +50,6 @@ public class EmptyPublisher<T> implements FSPublisher<T> {
             executor = BoundedEventLoopPool.get().chooseExecutor();
         return executor;
     }
+
+    @Override public String toString() { return "EmptyPublisher{" + "cause=" + cause + '}'; }
 }

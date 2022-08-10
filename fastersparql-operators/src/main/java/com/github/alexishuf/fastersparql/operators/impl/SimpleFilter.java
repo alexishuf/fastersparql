@@ -14,9 +14,6 @@ import com.github.alexishuf.fastersparql.operators.expressions.RDFValues;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.FilterPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -31,11 +28,9 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
-@Value @Accessors(fluent = true)
-public class SimpleFilter implements Filter {
-    RowOperations rowOperations;
-    ExprEvaluatorCompiler compiler;
-
+public final class SimpleFilter implements Filter {
+    private final RowOperations rowOperations;
+    private final ExprEvaluatorCompiler compiler;
 
     public static class Provider implements FilterProvider {
         private static final Logger log = LoggerFactory.getLogger(Provider.class);
@@ -67,6 +62,11 @@ public class SimpleFilter implements Filter {
         }
     }
 
+    public SimpleFilter(RowOperations rowOperations, ExprEvaluatorCompiler compiler) {
+        this.rowOperations = rowOperations;
+        this.compiler = compiler;
+    }
+
     @Override public <R> Class<R> rowClass() {
         //noinspection unchecked
         return (Class<R>) rowOperations.rowClass();
@@ -83,7 +83,7 @@ public class SimpleFilter implements Filter {
         for (CharSequence expr : filters) {
             evaluators.add(compiler.compile(rowClass, rowOperations, left.vars(), expr));
         }
-        val pub = new FilterPublisher<>(left.publisher(), evaluators, plan);
+        FilterPublisher<R> pub = new FilterPublisher<>(left.publisher(), evaluators, plan);
         return new Results<>(left.vars(), rowClass, pub);
     }
 

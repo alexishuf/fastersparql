@@ -4,19 +4,12 @@ import com.github.alexishuf.fastersparql.ResultsChecker;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
-import lombok.experimental.Accessors;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
-@EqualsAndHashCode(callSuper = true)
-@ToString
-@Getter @Setter @Accessors(fluent = true, chain = true)
 class ResultsData extends ResultsChecker {
     private SparqlConfiguration config = SparqlConfiguration.EMPTY;
     private String sparql;
@@ -48,13 +41,31 @@ class ResultsData extends ResultsChecker {
         this.sparql = PREFIX+sparql;
     }
 
-    public ResultsData with(Consumer<SparqlConfiguration.SparqlConfigurationBuilder> configurator) {
-        SparqlConfiguration.SparqlConfigurationBuilder builder = config.toBuilder();
+    public SparqlConfiguration config() { return config; }
+    public String              sparql() { return sparql; }
+
+    public ResultsData config(SparqlConfiguration value) { config = value; return this; }
+    public ResultsData sparql(String value)              { sparql = value; return this; }
+
+
+    public ResultsData with(Consumer<SparqlConfiguration.Builder> configurator) {
+        SparqlConfiguration.Builder builder = config.toBuilder();
         configurator.accept(builder);
         return new ResultsData(this).config(builder.build());
     }
 
     public boolean isWs() {
         return config.methods().equals(Collections.singletonList(SparqlMethod.WS));
+    }
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ResultsData)) return false;
+        ResultsData that = (ResultsData) o;
+        return config.equals(that.config) && sparql.equals(that.sparql);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(config, sparql);
     }
 }

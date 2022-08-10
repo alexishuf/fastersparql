@@ -20,9 +20,7 @@ public class SharedEventLoopGroupHolder {
     private synchronized EventLoopGroupHolder doGet() {
         int keepAliveSeconds = sharedEventLoopGroupKeepAliveSeconds();
         if (elgHolder == null) {
-            elgHolder = EventLoopGroupHolder.builder()
-                    .keepAliveTimeUnit(SECONDS)
-                    .keepAlive(keepAliveSeconds).build();
+            elgHolder = new EventLoopGroupHolder(null, keepAliveSeconds, SECONDS);
         } else if (elgHolder.keepAlive(SECONDS) != keepAliveSeconds) {
             log.warn("sharedEventLoopGroupKeepAliveSeconds={} will not be honored as " +
                      "shared EventLoopGroupHolder has already been instantiated",

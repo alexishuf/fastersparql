@@ -11,12 +11,11 @@ public interface FilterExists extends Operator {
      * Creates a {@link Plan} for {@code run(input, negate, filters)}.
      */
     default <R> ExistsPlan<R> asPlan(Plan<R> input, boolean negate, Plan<R> filter) {
-        return new ExistsPlan<>(rowClass(), this, input, negate, filter,
-                                      null, null);
+        return new ExistsPlan<>(this, input, negate, filter, null, null);
     }
 
-    default <R> ExistsPlan.ExistsPlanBuilder<R> asPlan() {
-        return ExistsPlan.<R>builder().rowClass(rowClass()).op(this);
+    default <R> ExistsPlan.Builder<R> asPlan() {
+        return ExistsPlan.builder(this);
     }
 
     /**
@@ -24,8 +23,8 @@ public interface FilterExists extends Operator {
      * at least one compatible (in join semantics) result (or a true result in case {@code filter}
      * is an ASK query).
      *
-     * If {@code negate} is true, then rows will be discarded if {@code filter} produces at least
-     * one compatible row.
+     * <p>If {@code negate} is true, then rows will be discarded if {@code filter} produces at least
+     * one compatible row.</p>
      *
      * @param plan the {@link ExistsPlan} to execute
      * @param <R> the row type.

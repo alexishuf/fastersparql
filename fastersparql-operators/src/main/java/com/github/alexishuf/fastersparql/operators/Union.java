@@ -13,12 +13,10 @@ public interface Union extends Operator {
      * Create a plan for {@code run(inputs)}.
      */
     default <R> UnionPlan<R> asPlan(List<Plan<R>> inputs) {
-        return new UnionPlan<>(rowClass(), this, inputs, null, null);
+        return new UnionPlan<>(this, inputs, null, null);
     }
 
-    default <R> UnionPlan.UnionPlanBuilder<R> asPlan() {
-        return UnionPlan.<R>builder().rowClass(rowClass()).op(this);
-    }
+    default <R> UnionPlan.Builder<R> asPlan() { return UnionPlan.builder(this); }
 
     /**
      * Create a {@link Results} with all rows from all inputs.

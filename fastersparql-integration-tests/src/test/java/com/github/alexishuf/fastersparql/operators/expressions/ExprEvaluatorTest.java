@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.expressions;
 
 import com.github.alexishuf.fastersparql.client.model.row.impl.ListOperations;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -23,17 +21,26 @@ public class ExprEvaluatorTest {
     private static final List<ExprEvaluatorCompilerProvider> allProviders =
             ExprEvaluatorCompilerRegistry.get().allProviders();
 
-    @Value @Accessors(fluent = true)
     private static class TestData {
-        String expr;
-        List<String> vars;
-        List<TestRow> rows;
+        final String expr;
+        final List<String> vars;
+        final List<TestRow> rows;
+
+        public TestData(String expr, List<String> vars, List<TestRow> rows) {
+            this.expr = expr;
+            this.vars = vars;
+            this.rows = rows;
+        }
     }
 
-    @Value @Accessors(fluent = true)
     private static class TestRow {
-        List<String> values;
-        String expected;
+        final List<String> values;
+        final String expected;
+
+        public TestRow(List<String> values, String expected) {
+            this.values = values;
+            this.expected = expected;
+        }
     }
 
     private static String integer(int i) {

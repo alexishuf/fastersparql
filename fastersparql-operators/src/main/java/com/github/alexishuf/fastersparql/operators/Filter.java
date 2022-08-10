@@ -15,12 +15,10 @@ public interface Filter extends Operator {
      * Creates a plan for {@code run(input.execute(), filters, predicates)}.
      */
     default <R> FilterPlan<R> asPlan(Plan<R> input, @Nullable List<String> filters) {
-        return new FilterPlan<>(rowClass(), this, input, filters, null, null);
+        return new FilterPlan<>(this, input, filters, null, null);
     }
 
-    default <R> FilterPlan.FilterPlanBuilder<R> asPlan() {
-        return FilterPlan.<R>builder().rowClass(rowClass()).op(this);
-    }
+    default <R> FilterPlan.Builder<R> asPlan() { return FilterPlan.builder(this); }
 
     /**
      * Create a {@link Results} without rows that fail any of the SPARQL filters in

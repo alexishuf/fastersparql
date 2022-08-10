@@ -7,13 +7,10 @@ import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.Distinct;
 import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
-import lombok.RequiredArgsConstructor;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 
-@RequiredArgsConstructor
 public class InMemoryHashDistinct implements Distinct {
     private final RowOperations rowOps;
 
@@ -33,13 +30,18 @@ public class InMemoryHashDistinct implements Distinct {
         }
     }
 
+    public InMemoryHashDistinct(RowOperations rowOps) {
+        this.rowOps = rowOps;
+    }
+
     @SuppressWarnings("unchecked") @Override public <R> Class<R> rowClass() {
         return (Class<R>) rowOps.rowClass();
     }
 
     @Override public <R> Results<R> checkedRun(DistinctPlan<R> plan) {
         Results<R> in = plan.input().execute();
-        val p = new DistinctProcessor<>(in.publisher(), plan, new RowHashSet<>(rowOps));
+        DistinctProcessor<R> p
+                = new DistinctProcessor<>(in.publisher(), plan, new RowHashSet<>(rowOps));
         return new Results<>(in.vars(), in.rowClass(), p);
     }
 }

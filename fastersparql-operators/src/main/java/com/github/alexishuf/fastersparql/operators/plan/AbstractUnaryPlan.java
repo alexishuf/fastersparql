@@ -6,10 +6,12 @@ import java.util.List;
 
 public abstract class AbstractUnaryPlan<R, Implementation extends Plan<R>>
         extends AbstractPlan<R, Implementation> {
-    public AbstractUnaryPlan(@lombok.NonNull Class<? super R> rowClass,
-                             @lombok.NonNull List<? extends Plan<R>> operands,
-                             @lombok.NonNull String name, @Nullable Implementation parent) {
+    public AbstractUnaryPlan(Class<? super R> rowClass,
+                             List<? extends Plan<R>> operands,
+                             String name, @Nullable Implementation parent) {
         super(rowClass, operands, name, parent);
+        if (operands.size() != 1)
+            throw new IllegalArgumentException("Expected 1 operand, got "+operands.size());
     }
 
     public           Plan<R>           input() { return operands().get(0); }

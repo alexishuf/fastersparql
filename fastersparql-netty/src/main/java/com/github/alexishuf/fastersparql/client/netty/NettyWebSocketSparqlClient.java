@@ -64,9 +64,9 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
     private final NettyWsClient netty;
     private final RowOperations rowOps;
 
-    public NettyWebSocketSparqlClient(@lombok.NonNull SparqlEndpoint endpoint,
-                                      @lombok.NonNull RowParser<R> rowParser,
-                                      @lombok.NonNull FragmentParser<F> fragmentParser) {
+    public NettyWebSocketSparqlClient(SparqlEndpoint endpoint,
+                                      RowParser<R> rowParser,
+                                      FragmentParser<F> fragmentParser) {
         this.rowParser = rowParser;
         this.rowOps = RowOperationsRegistry.get().forClass(rowParser.rowClass());
         this.fragmentParser = fragmentParser;

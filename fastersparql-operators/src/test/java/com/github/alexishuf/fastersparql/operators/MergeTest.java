@@ -1,14 +1,10 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.plan.MergePlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import lombok.AllArgsConstructor;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -27,7 +23,6 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
 public class MergeTest {
-    private static final RowOperations ROW_OPS = RowOperationsRegistry.get().forClass(Row.class);
 
     private static class Row extends ArrayList<String> {
         public Row(String... terms) { addAll(asList(terms)); }
@@ -38,12 +33,18 @@ public class MergeTest {
         return new Row(strings);
     }
 
-    @AllArgsConstructor
     private static class D {
         List<List<String>> inputsVars;
         List<List<Row>> inputs;
         long flags;
         List<Row> expected;
+
+        public D(List<List<String>> inputsVars, List<List<Row>> inputs, long flags, List<Row> expected) {
+            this.inputsVars = inputsVars;
+            this.inputs = inputs;
+            this.flags = flags;
+            this.expected = expected;
+        }
 
         public D(List<List<String>> inputsVars, List<List<Row>> inputs, List<Row> expected) {
             this(inputsVars, inputs, 0L, expected);
@@ -68,7 +69,7 @@ public class MergeTest {
                     @Override public List<String> publicVars() { return inputsVars.get(idx); }
                     @Override public List<String> allVars() { return inputsVars.get(idx); }
                     @Override public Results<Row> execute() {
-                        val pub = FSPublisher.bindToAny(Flux.fromIterable(inputs.get(idx)));
+                        FSPublisher<Row> pub = FSPublisher.bindToAny(Flux.fromIterable(inputs.get(idx)));
                         return new Results<>(inputsVars.get(idx), Row.class, pub);
                     }
                     @Override public Plan<Row> bind(Binding binding) {

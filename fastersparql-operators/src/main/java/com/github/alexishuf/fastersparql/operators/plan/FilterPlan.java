@@ -4,10 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.Filter;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Singular;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -18,18 +14,44 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Collections.singletonList;
 
-@Getter @Accessors(fluent = true)
 public class FilterPlan<R> extends AbstractUnaryPlan<R, FilterPlan<R>> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private final Filter op;
     private final List<String> filters;
 
-    @Builder
-    public FilterPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Filter op,
-                      @lombok.NonNull Plan<R> input,
-                      @Singular List<String> filters,
+
+    public static final class Builder<T> {
+        private Filter op;
+        private Plan<T> input;
+        private List<String> filters;
+        private @Nullable FilterPlan<T> parent;
+        private @Nullable String name;
+
+        public Builder(Filter op) { this.op = op; }
+
+        public Builder<T>      op(Filter value)                   {      op = value; return this; }
+        public Builder<T>   input(Plan<T> value)                  {   input = value; return this; }
+        public Builder<T> filters(List<String> value)             { filters = value; return this; }
+        public Builder<T>  parent(@Nullable FilterPlan<T>  value) {  parent = value; return this; }
+        public Builder<T>    name(@Nullable String  value)        {    name = value; return this; }
+
+        public Builder<T> filter(String expression) {
+            (filters == null ? filters = new ArrayList<>() : filters).add(expression);
+            return this;
+        }
+
+        public FilterPlan<T> build() {
+            return new FilterPlan<>(op, input, filters, parent, name);
+        }
+    }
+
+    public static <T> Builder<T> builder(Filter op) {
+        return new Builder<>(op);
+    }
+
+    public FilterPlan(Filter op, Plan<R> input, @Nullable List<String> filters,
                       @Nullable FilterPlan<R> parent, @Nullable String name) {
-        super(rowClass, singletonList(input),
+        super(input.rowClass(), singletonList(input),
               name == null ? "Filter-"+nextId.getAndIncrement()+"-"+input.name() : name, parent);
         this.op = op;
         this.filters = filters == null ? Collections.emptyList() : filters;
@@ -64,7 +86,7 @@ public class FilterPlan<R> extends AbstractUnaryPlan<R, FilterPlan<R>> {
         }
         if (!change)
             return this;
-        return new FilterPlan<>(rowClass, op, boundIn, boundFilters, this, name);
+        return new FilterPlan<>(op, boundIn, boundFilters, this, name);
     }
 
     @Override public boolean equals(Object o) {

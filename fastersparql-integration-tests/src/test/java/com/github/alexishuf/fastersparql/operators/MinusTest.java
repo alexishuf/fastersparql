@@ -14,11 +14,6 @@ import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.impl.bind.BindMinus;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -28,10 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ServiceLoader;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
@@ -51,15 +43,28 @@ public class MinusTest {
     private static final HdtssContainer HDTSS =
             new HdtssContainer(MinusTest.class, "minus.hdt", log);
 
-    @EqualsAndHashCode(callSuper = true)
-    @Getter @Setter @Accessors(fluent = true, chain = true)
     private static class TestData extends ResultsChecker {
-        private final String left, right;
+        final String left, right;
 
         public TestData(String left, String right, String... values) {
             super(SparqlUtils.publicVars(left), values);
             this.left = PREFIX+left;
             this.right = PREFIX+right;
+        }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TestData)) return false;
+            TestData testData = (TestData) o;
+            return left.equals(testData.left) && right.equals(testData.right);
+        }
+
+        @Override public int hashCode() {
+            return Objects.hash(left, right);
+        }
+
+        @Override public String toString() {
+            return "TestData{left='" + left + '\'' +  ", right='" + right + '\'' +  '}';
         }
     }
 
@@ -149,7 +154,7 @@ public class MinusTest {
 
     @Test
     void selfTest() throws ExecutionException {
-        val factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<SparqlClientFactory> factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
         Set<String> queries = test().map(a -> (TestData) a.get()[3])
                                     .flatMap(d -> Stream.of(d.left, d.right)).collect(toSet());
         for (SparqlClientFactory factory : factories) {
@@ -157,9 +162,10 @@ public class MinusTest {
                 List<AsyncTask<?>> tasks = new ArrayList<>();
                 for (String query : queries) {
                     tasks.add(Async.async(() -> {
-                        val a = new IterableAdapter<>(client.query(query).publisher());
-                        if (a.hasError())
-                            fail(a.error());
+                        try (IterableAdapter<String[]> a = new IterableAdapter<>(client.query(query).publisher())) {
+                            if (a.hasError())
+                                fail(a.error());
+                        }
                     }));
                 }
                 for (AsyncTask<?> task : tasks) task.get();

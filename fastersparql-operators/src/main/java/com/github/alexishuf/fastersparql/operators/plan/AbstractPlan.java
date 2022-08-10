@@ -12,9 +12,13 @@ abstract class AbstractPlan<R, Implementation extends Plan<R>> implements Plan<R
     protected final @Nullable Implementation parent;
     protected final String name;
 
-    public AbstractPlan(@lombok.NonNull Class<? super R> rowClass,
-                        @lombok.NonNull List<? extends Plan<R>> operands,
-                        @lombok.NonNull String name, @Nullable Implementation parent) {
+    public AbstractPlan(Class<? super R> rowClass, List<? extends Plan<R>> operands,
+                        String name, @Nullable Implementation parent) {
+        if (rowClass == null || operands == null || name == null)
+            throw new NullPointerException("rowClass, operands and name cannot be null");
+        for (Plan<R> o : operands) {
+            if (o == null) throw new IllegalArgumentException("operands list contains a null");
+        }
         this.parent   = parent;
         this.rowClass = rowClass;
         this.operands = operands;

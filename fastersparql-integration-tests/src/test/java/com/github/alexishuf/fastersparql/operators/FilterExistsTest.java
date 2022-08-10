@@ -15,11 +15,6 @@ import com.github.alexishuf.fastersparql.operators.impl.bind.BindFilterExists;
 import com.github.alexishuf.fastersparql.operators.plan.ExistsPlan;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.FilterExistsProvider;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -30,10 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ServiceLoader;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
@@ -55,18 +47,31 @@ public class FilterExistsTest {
     private static final HdtssContainer HDTSS =
             new HdtssContainer(FilterExistsTest.class, "filter_exists.hdt", log);
 
-    @EqualsAndHashCode(callSuper = true)
-    @Getter @Setter @Accessors(fluent = true, chain = true)
     private static final class TestData extends ResultsChecker {
-        private final String left;
-        private final boolean negate;
-        private final String filter;
+        final String left;
+        final boolean negate;
+        final String filter;
 
         public TestData(String left, boolean negate, String filter, String... values) {
             super(SparqlUtils.publicVars(left), values);
             this.left = PREFIX+left;
             this.filter = PREFIX+filter;
             this.negate = negate;
+        }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TestData)) return false;
+            TestData testData = (TestData) o;
+            return negate == testData.negate && left.equals(testData.left) && filter.equals(testData.filter);
+        }
+
+        @Override public int hashCode() {
+            return Objects.hash(left, negate, filter);
+        }
+
+        @Override public String toString() {
+            return "TestData{" +  "left='" + left + '\'' +  ", negate=" + negate +  ", filter='" + filter + '\'' +  '}';
         }
     }
 
@@ -232,7 +237,7 @@ public class FilterExistsTest {
 
     @Test
     void selfTest() throws ExecutionException {
-        val clientFactories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<SparqlClientFactory> clientFactories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
         Set<String> queries = test().map(a -> (TestData) a.get()[3])
                                     .flatMap(d -> Stream.of(d.left, d.filter)).collect(toSet());
 
@@ -241,10 +246,12 @@ public class FilterExistsTest {
                 List<AsyncTask<?>> tasks = new ArrayList<>();
                 for (String query : queries) {
                     tasks.add(Async.async(() -> {
-                        val a = new IterableAdapter<>(client.query(query).publisher());
-                        a.forEach(r -> {});
-                        if (a.hasError())
-                            fail(a.error());
+                        try (IterableAdapter<String[]> a = new IterableAdapter<>(client.query(query).publisher())) {
+                            a.forEach(r -> {
+                            });
+                            if (a.hasError())
+                                fail(a.error());
+                        }
                     }));
                 }
                 for (AsyncTask<?> task : tasks) task.get();

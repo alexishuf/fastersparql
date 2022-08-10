@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.SparqlConfigurationBuilder;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
@@ -41,8 +40,8 @@ public final class SparqlEndpoint {
      * The full SPARQL endpoint URI, in conformance to
      * <a href="https://datatracker.ietf.org/doc/html/rfc2396">RFC 2396</a>.
      *
-     * SPARQL endpoint URIs are not allowed to contain fragment identifiers
-     * (.e.g., {@code #author}).
+     * <p>SPARQL endpoint URIs are not allowed to contain fragment identifiers
+     * (.e.g., {@code #author}).</p>
      */
     public String uri() { return uri; }
 
@@ -57,9 +56,9 @@ public final class SparqlEndpoint {
      * <a href="https://datatracker.ietf.org/doc/html/rfc2396#section-3.4">query</a> segment if
      * the URI has a query component (see {@link SparqlEndpoint#hasQuery()}).
      *
-     * Neither the path nor the query segment have their percent-escapes decoded.
+     * <p>Neither the path nor the query segment have their percent-escapes decoded.</p>
      *
-     * The path segment will always start with a single {@code /}.
+     * <p>The path segment will always start with a single {@code /}.</p>
      */
     public String rawPathWithQuery() { return rawPathWithQuery; }
 
@@ -72,12 +71,12 @@ public final class SparqlEndpoint {
      * The allowed methods and result media types, as well as headers and query parameters to
      * be set in queries.
      *
-     * When executing a query against this endpoint, query-specific {@link SparqlConfiguration},
+     * <p>When executing a query against this endpoint, query-specific {@link SparqlConfiguration},
      * may be used so long as the given configuration
      * {@link SparqlConfiguration#isAcceptedBy(SparqlConfiguration)} the {@link SparqlEndpoint}
      * configuration. The effectively applied {@link SparqlConfiguration} will be the result of
      * {@link SparqlConfiguration#overlayWith(SparqlConfiguration)} called on the endpoint
-     * configuration given the query-specific configuration.
+     * configuration given the query-specific configuration.</p>
      */
     public SparqlConfiguration configuration() { return configuration; }
 
@@ -142,9 +141,9 @@ public final class SparqlEndpoint {
     /**
      * Builds a {@link SparqlEndpoint} referring to the given URI with the given configuration.
      *
-     * The given {@code uri} can be an augmented URI (see {@link SparqlEndpoint#parse(String)}),
+     * <p>The given {@code uri} can be an augmented URI (see {@link SparqlEndpoint#parse(String)}),
      * in which case the configuration of the autgmented URI will be overlaid above the given
-     * {@code configuration} parameter.
+     * {@code configuration} parameter.</p>
      *
      * @param uri the URI of the SPARQL endpoint or an augmented URI.
      * @param configuration The {@link SparqlConfiguration}. If null will use
@@ -173,7 +172,7 @@ public final class SparqlEndpoint {
         try {
             parsed = new URI(uri);
         } catch (URISyntaxException e) {
-            SparqlConfigurationBuilder builder = SparqlConfiguration.builder();
+            SparqlConfiguration.Builder builder = SparqlConfiguration.builder();
             String plainUri = removeConfiguration(uri, builder);
             try {
                 parsed = new URI(uri);
@@ -210,8 +209,8 @@ public final class SparqlEndpoint {
     /**
      * Parses a possibly augmented SPARQL endpoint URI.
      *
-     * Augmented URIs have the form {@code OPTS@URI} where {@code URI} is defined by RFC 2396
-     * and {@code OPTS} is a comma-separated list of the following keywords, in any order:
+     * <p>Augmented URIs have the form {@code OPTS@URI} where {@code URI} is defined by RFC 2396
+     * and {@code OPTS} is a comma-separated list of the following keywords, in any order:</p>
      * <ul>
      *     <li>Allowed {@link SparqlMethod} keywords: {@code get}, {@code post} and {@code form}</li>
      *     <li>{@link SparqlResultFormat} keywords: {@code json}, {@code tsv}, {@code xml},
@@ -230,7 +229,7 @@ public final class SparqlEndpoint {
      * the {@link SparqlConfiguration} built from the augmented URI keywords.
      */
     public static SparqlEndpoint parse(String augmentedUri) {
-        SparqlConfigurationBuilder cfgBuilder = SparqlConfiguration.builder();
+        SparqlConfiguration.Builder cfgBuilder = SparqlConfiguration.builder();
         String plainUri = removeConfiguration(augmentedUri, cfgBuilder);
         return new SparqlEndpoint(plainUri, cfgBuilder.build());
     }
@@ -253,9 +252,9 @@ public final class SparqlEndpoint {
      * and generate an {@link SparqlEndpoint} with the same {@link SparqlMethod} and
      * {@link SparqlResultFormat} configurations.
      *
-     * <strong>Other configurations in {@link SparqlEndpoint#configuration()} have no
+     * <p><strong>Other configurations in {@link SparqlEndpoint#configuration()} have no
      * representation in the augmented uri, thus the result of {@link SparqlEndpoint#parse(String)}
-     * on the returned URI may differ from {@code this}.</strong>.
+     * on the returned URI may differ from {@code this}.</strong>.</p>
      *
      * @return an augmented URI representing this {@link SparqlEndpoint}.
      */
@@ -298,9 +297,9 @@ public final class SparqlEndpoint {
     /**
      * Get the IP (v4 or v6) address for {@link SparqlEndpoint#host()}.
      *
-     * If the URI uses a name instead of an IP address the name will be resolved and the
+     * <p>If the URI uses a name instead of an IP address the name will be resolved and the
      * {@link AsyncTask} will complete upon resolution. The resolution may fail with
-     * {@link UnknownHostException}.
+     * {@link UnknownHostException}.</p>
      *
      * @return A {@link java.util.concurrent.Future} and {@link java.util.concurrent.CompletionStage}
      *         with the asynchronously resolved {@link InetSocketAddress} from the host and port
@@ -316,7 +315,7 @@ public final class SparqlEndpoint {
      * Get the {@code user} in the {@code user:password} {@code userinfo} component of the URI,
      * if present.
      *
-     * Percent-escapes will not be decoded.
+     * <p>Percent-escapes will not be decoded.</p>
      *
      * @return If there is an userinfo component in the URI a non-null percent-escaped,
      *         possibly empty string with the user, else {@code null}.
@@ -337,8 +336,8 @@ public final class SparqlEndpoint {
      * Get the {@code password} in the {@code user:password} if the URI has a {@code userinfo}
      * component.
      *
-     * Percent-escapes will not be decoded. If there is no {@code :} in the {@code userinfo},
-     * an empty string will be returned.
+     * <p>Percent-escapes will not be decoded. If there is no {@code :} in the {@code userinfo},
+     * an empty string will be returned.</p>
      *
      * @return A non-null percent-escaped string with the password.
      */
@@ -382,7 +381,7 @@ public final class SparqlEndpoint {
     /* --- --- --- implementation details --- --- --- */
 
     private static String removeConfiguration(String augmentedUri,
-                                              SparqlConfigurationBuilder builder) {
+                                              SparqlConfiguration.Builder builder) {
         Matcher m = AUGMENTED.matcher(augmentedUri);
         if (!m.find())
             return augmentedUri;

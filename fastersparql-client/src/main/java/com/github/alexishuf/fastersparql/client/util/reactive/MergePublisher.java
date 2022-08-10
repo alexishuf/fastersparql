@@ -1,8 +1,5 @@
 package com.github.alexishuf.fastersparql.client.util.reactive;
 
-import lombok.Data;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.Positive;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -23,17 +20,16 @@ import java.util.concurrent.locks.ReentrantLock;
 import static java.lang.Thread.currentThread;
 
 
-@Accessors(fluent = true)
 public class MergePublisher<T> implements FSPublisher<T> {
     private static final Logger log = LoggerFactory.getLogger(MergePublisher.class);
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     /* --- --- --- Immutable state --- --- --- */
-    @Getter private final String name;
+    private final String name;
     private final CallbackPublisher<T> cbp;
     private final boolean ignoreUpstreamErrors;
-    @Getter private final @Positive int maxConcurrency;
-    @Getter private final @Positive int tgtConcurrency;
+    private final @Positive int maxConcurrency;
+    private final @Positive int tgtConcurrency;
 
     /* --- --- --- thread-safety/reentrancy assertions --- --- --- */
     private final AtomicBoolean completing     = new AtomicBoolean();
@@ -53,13 +49,18 @@ public class MergePublisher<T> implements FSPublisher<T> {
     private final ArrayDeque<Publisher<? extends T>> publishersQueue = new ArrayDeque<>();
     private final IdentityHashMap<Source, Object> sources = new IdentityHashMap<>();
 
-    @Data @Accessors(fluent = true, chain = true)
     public static class Builder {
         private String name;
         private int maxConcurrency = Integer.MAX_VALUE;
         private @Positive int targetConcurrency = 1;
         private boolean ignoreUpstreamErrors;
         private Executor executor;
+
+        public Builder name(String value)                     { this.name = value; return this;  }
+        public Builder maxConcurrency(int value)              { this.maxConcurrency = value; return this; }
+        public Builder targetConcurrency(@Positive int value) {this.targetConcurrency = value; return this;  }
+        public Builder ignoreUpstreamErrors(boolean value)    { this.ignoreUpstreamErrors = value; return this;  }
+        public Builder executor(Executor value)               { this.executor = value; return this;  }
 
         public Builder concurrency(int targetAndMaxConcurrency) {
             return targetConcurrency(targetConcurrency).maxConcurrency(targetAndMaxConcurrency);
@@ -113,6 +114,8 @@ public class MergePublisher<T> implements FSPublisher<T> {
         this.cbp.silenceFeedAfterCompleteWarnings();
     }
 
+    public String name() { return name; }
+
     @Override public void moveTo(Executor executor) {
         subscribeLock.lock();
         try {
@@ -131,7 +134,7 @@ public class MergePublisher<T> implements FSPublisher<T> {
     }
 
     /**
-     * Add a upstream {@link Publisher} for consumption.
+     * Add an upstream {@link Publisher} for consumption.
      *
      * <p>If the number of active upstream {@link Publisher}s exceeds the configured concurrency,
      * the given {@code publisher} will be held in a queue and its

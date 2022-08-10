@@ -31,11 +31,6 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
       <groupId>com.github.alexishuf.fastersparql</groupId>
       <artifactId>fastersparql-operators</artifactId>
       <version>${project.version}</version>
@@ -57,52 +52,4 @@
       <artifactId>logback-classic</artifactId>
     </dependency>
   </dependencies>
-
-  <build>
-    <plugins>
-      <!-- Generate sources jar over delomboked sources -->
-      <!-- antrun-plugin instead of source-plugin  as the latter cannot change the input dir -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-antrun-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>generate-delomboked-sources-jar</id>
-            <phase>package</phase>
-            <goals>
-              <goal>run</goal>
-            </goals>
-            <configuration>
-              <target>
-                <jar destfile="${project.build.directory}/${project.build.finalName}-sources.jar"
-                     basedir="${project.build.directory}/delombok"/>
-              </target>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <!-- Install sources jar generated using antrun -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-install-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>install-source-jar</id>
-            <goals><goal>install-file</goal></goals>
-            <phase>install</phase>
-            <configuration>
-              <file>${project.build.directory}/${project.build.finalName}-sources.jar</file>
-              <groupId>${project.groupId}</groupId>
-              <artifactId>${project.artifactId}</artifactId>
-              <version>${project.version}</version>
-              <classifier>sources</classifier>
-              <generatePom>true</generatePom>
-              <pomFile>${project.basedir}/pom.xml</pomFile>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
-
 </project>

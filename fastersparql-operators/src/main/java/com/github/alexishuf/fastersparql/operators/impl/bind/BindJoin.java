@@ -8,8 +8,6 @@ import com.github.alexishuf.fastersparql.operators.Join;
 import com.github.alexishuf.fastersparql.operators.OperatorFlags;
 import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.providers.JoinProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
@@ -19,10 +17,9 @@ import static com.github.alexishuf.fastersparql.operators.OperatorFlags.LARGE_FI
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.SMALL_SECOND;
 import static com.github.alexishuf.fastersparql.operators.impl.bind.NativeBindHelper.preferNative;
 
-@Value @Accessors(fluent = true)
-public class BindJoin implements Join {
-    RowOperations rowOps;
-    @Positive int bindConcurrency;
+public final class BindJoin implements Join {
+    private final RowOperations rowOps;
+    private final @Positive int bindConcurrency;
 
     public static class Provider implements JoinProvider {
         static @NonNegative int bindCost(long flags) {
@@ -43,6 +40,11 @@ public class BindJoin implements Join {
         @Override public Join create(long flags, RowOperations rowOperations) {
             return new BindJoin(rowOperations, concurrency(flags));
         }
+    }
+
+    public BindJoin(RowOperations rowOps, @Positive int bindConcurrency) {
+        this.rowOps = rowOps;
+        this.bindConcurrency = bindConcurrency;
     }
 
     @Override public <R> Class<R> rowClass() {

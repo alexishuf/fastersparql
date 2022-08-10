@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.util.sparql;
 
-import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -661,8 +660,10 @@ class SparqlUtilsTest {
     }
 
     static Stream<Arguments> testToAsk() {
-        @Value
-        class  D { String in, ex; }
+        final class  D {
+            final String in, ex;
+            D(String in, String ex) { this.in = in; this.ex = ex; }
+        }
         List<D> base = new ArrayList<>(asList(
                 new D("ASK {?s ?p ?o}", "ASK {?s ?p ?o}"),
                 new D("ASK { <a> <b> <c> }", "ASK { <a> <b> <c> }"),

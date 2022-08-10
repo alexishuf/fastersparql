@@ -16,17 +16,15 @@ public interface Project extends Operator {
      * Create a plan for {@code run(input.execute(), vars)}
      */
     default <R> ProjectPlan<R> asPlan(Plan<R> input, List<String> vars) {
-        return new ProjectPlan<>(rowClass(), this, input, vars, null, null);
+        return new ProjectPlan<>(this, input, vars, null, null);
     }
 
-    default <R> ProjectPlan.ProjectPlanBuilder<R> asPlan() {
-        return ProjectPlan.<R>builder().rowClass(rowClass()).op(this);
-    }
+    default <R> ProjectPlan.Builder<R> asPlan() { return ProjectPlan.builder(this); }
 
     /**
      * Perform a projection, returning a {@link Results} with the given variables.
      *
-     * Additional rules:
+     * <p>Additional rules:</p>
      * <ul>
      *     <li>The order of variables in {@code vars} is retained.</li>
      *     <li>If a variable appears more than once, only the first use will be

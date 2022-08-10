@@ -13,7 +13,6 @@ import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -142,7 +141,7 @@ public class SparqlClientTest {
         if (!ep.uri().equals(HDTSS.asEndpoint().uri()))
             return null;
         String uri = ep.uri().replaceAll("http://", "ws://");
-        val wsConfig = ep.configuration().toBuilder().clearMethods().method(SparqlMethod.WS).build();
+        SparqlConfiguration wsConfig = ep.configuration().toBuilder().clearMethods().method(SparqlMethod.WS).build();
         return new SparqlEndpoint(uri, wsConfig);
     }
 
@@ -221,13 +220,14 @@ public class SparqlClientTest {
     }
 
     private void testUnreachable(String tag, String uri) {
-        try (val client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
-            val results = client.query("SELECT * WHERE { ?x a <http://example.org/Dummy>}");
+        try (SparqlClient<String[], ?> client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
+            Results<String[]> results = client.query("SELECT * WHERE { ?x a <http://example.org/Dummy>}");
             assertEquals(singletonList("x"), results.vars());
-            val adapter = new IterableAdapter<>(results.publisher());
-            boolean empty = !adapter.iterator().hasNext();
-            assertTrue(empty);
-            assertTrue(adapter.hasError());
+            try (IterableAdapter<String[]> adapter = new IterableAdapter<>(results.publisher())) {
+                boolean empty = !adapter.iterator().hasNext();
+                assertTrue(empty);
+                assertTrue(adapter.hasError());
+            }
         }
     }
 
@@ -237,13 +237,14 @@ public class SparqlClientTest {
     }
 
     private void testServerEarlyClose(String tag, String uri) {
-        try (val client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
+        try (SparqlClient<String[], ?> client = FasterSparql.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
             Results<String[]> results = client.query("SELECT * WHERE { ?s ?p ?o}");
             assertEquals(asList("s", "p", "o"), results.vars());
-            val adapter = new IterableAdapter<>(results.publisher());
-            boolean empty = !adapter.iterator().hasNext();
-            assertTrue(empty);
-            assertTrue(adapter.hasError());
+            try (IterableAdapter<String[]> adapter = new IterableAdapter<>(results.publisher())) {
+                boolean empty = !adapter.iterator().hasNext();
+                assertTrue(empty);
+                assertTrue(adapter.hasError());
+            }
         }
     }
 

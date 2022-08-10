@@ -10,8 +10,6 @@ import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.UnionPlan;
 import com.github.alexishuf.fastersparql.operators.providers.UnionProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.reactivestreams.Subscriber;
 
@@ -21,10 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
-@Value @Accessors(fluent = true)
-public class SimpleUnion  implements Union {
-    RowOperations rowOps;
-    boolean parallel;
+public final class SimpleUnion  implements Union {
+    private final RowOperations rowOps;
+    private final boolean parallel;
 
     public static class Provider implements UnionProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -35,6 +32,11 @@ public class SimpleUnion  implements Union {
             boolean parallelSubscribe = (flags & OperatorFlags.ASYNC) != 0;
             return new SimpleUnion(ro, parallelSubscribe);
         }
+    }
+
+    public SimpleUnion(RowOperations rowOps, boolean parallel) {
+        this.rowOps = rowOps;
+        this.parallel = parallel;
     }
 
     @Override public <R> Class<R> rowClass() {

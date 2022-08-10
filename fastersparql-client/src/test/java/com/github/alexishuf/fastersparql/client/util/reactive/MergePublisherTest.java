@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import lombok.Value;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -68,9 +67,14 @@ class MergePublisherTest {
         public TestException(String message) { super(message); }
     }
 
-    @Value
-    private static class Source implements Publisher<Integer> {
-        int begin, end, failBefore;
+    private static final class Source implements Publisher<Integer> {
+        final int begin, end, failBefore;
+
+        public Source(int begin, int end, int failBefore) {
+            this.begin = begin;
+            this.end = end;
+            this.failBefore = failBefore;
+        }
 
         @Override public void subscribe(Subscriber<? super Integer> s) {
             SourceSubscription subscription = new SourceSubscription(begin, end, failBefore, s);
@@ -125,9 +129,14 @@ class MergePublisherTest {
         }
     }
 
-    @Value
     private static class AsyncSource implements Publisher<Integer> {
-        int begin, end, failBefore;
+        final int begin, end, failBefore;
+
+        public AsyncSource(int begin, int end, int failBefore) {
+            this.begin = begin;
+            this.end = end;
+            this.failBefore = failBefore;
+        }
 
         @Override public void subscribe(Subscriber<? super Integer> s) {
             SourceSubscription sub = new SourceSubscription(begin, end, failBefore, s);
@@ -177,9 +186,14 @@ class MergePublisherTest {
     }
     
 
-    @Value
     private static class Range {
-        int begin, end, failBefore;
+        final int begin, end, failBefore;
+
+        public Range(int begin, int end, int failBefore) {
+            this.begin = begin;
+            this.end = end;
+            this.failBefore = failBefore;
+        }
 
         boolean hasError() { return failBefore < end; }
 
@@ -216,10 +230,12 @@ class MergePublisherTest {
         for (int i = 0; i < N_ITERATIONS; i++) {
             Range range = r(begin, end, failBefore);
             List<Integer> ac = new ArrayList<>();
-            IterableAdapter<Integer> subscriber = new IterableAdapter<>(range.asPublisher(async));
-            subscriber.forEach(ac::add);
-            if (failBefore < end)
-                assertTrue(subscriber.hasError());
+            try (IterableAdapter<Integer> subscriber
+                         = new IterableAdapter<>(range.asPublisher(async))) {
+                subscriber.forEach(ac::add);
+                if (failBefore < end)
+                    assertTrue(subscriber.hasError());
+            }
             assertEquals(range.stream().collect(toList()), ac);
         }
     }
@@ -329,9 +345,10 @@ class MergePublisherTest {
 
     private <T> List<T> consume(Publisher<T> pub, @Nullable Throwable expectedError) {
         List<T> list = new ArrayList<>();
-        IterableAdapter<T> a = new IterableAdapter<>(pub);
-        a.forEach(list::add);
-        assertEquals(expectedError, a.error());
+        try (IterableAdapter<T> a = new IterableAdapter<>(pub)) {
+            a.forEach(list::add);
+            assertEquals(expectedError, a.error());
+        }
         return list;
     }
 

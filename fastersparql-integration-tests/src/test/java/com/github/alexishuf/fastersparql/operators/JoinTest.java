@@ -15,11 +15,6 @@ import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
 import com.github.alexishuf.fastersparql.operators.impl.bind.BindJoin;
 import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
 import com.github.alexishuf.fastersparql.operators.providers.JoinProvider;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -30,10 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ServiceLoader;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
@@ -55,16 +47,29 @@ public class JoinTest {
     private static final HdtssContainer HDTSS =
             new HdtssContainer(MinusTest.class, "join.hdt", log);
 
-    @EqualsAndHashCode(callSuper = true)
-    @Getter @Setter @Accessors(fluent = true, chain = true)
     private static class TestData extends ResultsChecker {
-        private final List<String> operands;
+        final List<String> operands;
 
         public TestData(List<String> operands, String... values) {
             super(operands.stream().map(SparqlUtils::publicVars)
                                    .reduce(emptyList(), VarUtils::union),
                   values);
             this.operands = operands.stream().map(s -> PREFIX+s).collect(toList());
+        }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TestData)) return false;
+            TestData testData = (TestData) o;
+            return operands.equals(testData.operands);
+        }
+
+        @Override public int hashCode() {
+            return Objects.hash(operands);
+        }
+
+        @Override public String toString() {
+            return "TestData{operands=" + operands +  ", vars=" + vars +  ", expected=" + expected +  ", checkOrder=" + checkOrder +  ", expectedError=" + expectedError +  '}';
         }
     }
 
@@ -219,7 +224,7 @@ public class JoinTest {
 
     @Test
     void selfTest() throws ExecutionException {
-        val factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
+        Set<SparqlClientFactory> factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
         Set<String> queries = test().map(a -> (TestData) a.get()[3])
                                     .flatMap(d -> d.operands.stream()).collect(toSet());
         for (SparqlClientFactory factory : factories) {
@@ -227,11 +232,12 @@ public class JoinTest {
             try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
                 for (String query : queries) {
                     tasks.add(Async.async(() -> {
-                        val a = new IterableAdapter<>(client.query(query).publisher());
                         List<String[]> list = new ArrayList<>();
-                        a.forEach(list::add);
-                        if (a.hasError())
-                            fail(a.error());
+                        try (IterableAdapter<String[]> a = new IterableAdapter<>(client.query(query).publisher())) {
+                            a.forEach(list::add);
+                            if (a.hasError())
+                                fail(a.error());
+                        }
                         assertFalse(list.isEmpty());
                     }));
                 }

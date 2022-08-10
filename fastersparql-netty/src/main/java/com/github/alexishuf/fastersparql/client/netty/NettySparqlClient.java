@@ -34,7 +34,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.EventLoop;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
-import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.reactivestreams.Publisher;
@@ -235,11 +234,16 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
 
     /* --- --- --- inner classes  --- --- ---  */
 
-    @RequiredArgsConstructor
     private abstract static class HandlerSetupBase<T> implements NettyHttpClient.Setup<Handler> {
         protected final String accept;
         protected final SparqlMethod method;
         protected final PublisherAdapter<T> publisher;
+
+        public HandlerSetupBase(String accept, SparqlMethod method, PublisherAdapter<T> publisher) {
+            this.accept = accept;
+            this.method = method;
+            this.publisher = publisher;
+        }
 
         @Override public void setup(Channel ch, HttpRequest request, Handler handler) {
             request.headers().set(HttpHeaderNames.ACCEPT, accept);
@@ -371,7 +375,6 @@ public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
     /**
      * Listens as a {@link ResultsParserConsumer} and feeds a {@link PublisherAdapter}.
      */
-    @RequiredArgsConstructor
     private static class ResultsParserAdapter implements ResultsParserConsumer {
         private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
         private final PublisherAdapter<String[]> publisher;

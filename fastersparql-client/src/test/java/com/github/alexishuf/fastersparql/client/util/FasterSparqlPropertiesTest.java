@@ -28,11 +28,11 @@ public class FasterSparqlPropertiesTest {
     }
     private static final AsyncTask<?> readProp =
             asyncThrowing(FasterSparqlPropertiesTest::doTestReadProp);
-    private static void doTestReadProp() throws IOException {
-        ChildJVM jvm = ChildJVM.builder().envVar(TEST_ENV_NAME, "5")
-                .jvmArg("-D" + TEST_PROP_NAME + "=23")
-                .mainClass(PropReader.class).build();
-        Assertions.assertEquals(23, Integer.parseInt(jvm.readAllOutput().trim()));
+    private static void doTestReadProp() throws IOException, InterruptedException {
+        try (ChildJVM jvm = ChildJVM.builder(PropReader.class).envVar(TEST_ENV_NAME, "5")
+                .jvmArg("-D" + TEST_PROP_NAME + "=23").build()) {
+            Assertions.assertEquals(23, Integer.parseInt(jvm.readAllOutput().trim()));
+        }
     }
 
     @Test
@@ -41,10 +41,10 @@ public class FasterSparqlPropertiesTest {
     }
     private static final AsyncTask<?> readEnv =
             asyncThrowing(FasterSparqlPropertiesTest::doTestReadEnv);
-    private static void doTestReadEnv() throws IOException {
-        ChildJVM jvm = ChildJVM.builder().envVar(TEST_ENV_NAME, "5")
-                .mainClass(PropReader.class).build();
-        Assertions.assertEquals(5, Integer.parseInt(jvm.readAllOutput().trim()));
+    private static void doTestReadEnv() throws IOException, InterruptedException {
+        try (ChildJVM jvm = ChildJVM.builder(PropReader.class).envVar(TEST_ENV_NAME, "5").build()) {
+            Assertions.assertEquals(5, Integer.parseInt(jvm.readAllOutput().trim()));
+        }
     }
 
     @Test

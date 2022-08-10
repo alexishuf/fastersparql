@@ -11,8 +11,6 @@ import com.github.alexishuf.fastersparql.client.parser.row.StringListRowParser;
 import com.github.alexishuf.fastersparql.client.util.bind.BindPublisher;
 import com.github.alexishuf.fastersparql.client.util.bind.Binder;
 import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
-import lombok.RequiredArgsConstructor;
-import lombok.val;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -85,13 +83,20 @@ class BindPublisherTest {
         String prefix = "PREFIX : <http://example.org/>\n" +
                         "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n" +
                         "PREFIX foaf: <http://xmlns.com/foaf/0.1/>\n";
-        @RequiredArgsConstructor
         class D {
             final List<String> bindingVars;
             final List<List<String>> bindings;
             final String sparql;
             final BindType bindType;
             final List<List<String>> expected;
+
+            public D(List<String> bindingVars, List<List<String>> bindings, String sparql, BindType bindType, List<List<String>> expected) {
+                this.bindingVars = bindingVars;
+                this.bindings = bindings;
+                this.sparql = sparql;
+                this.bindType = bindType;
+                this.expected = expected;
+            }
         }
 
         String i23 = "\"23\"^^<xsd:integer>";
@@ -161,10 +166,10 @@ class BindPublisherTest {
         for (int bindConcurrency : asList(1, 2, 16)) {
             for (D d : base) {
                 String sparql = prefix + d.sparql;
-                val binder = new SparqlClientBinder<>(ListOperations.get(), d.bindingVars,
-                                                      client, sparql, null, d.bindType);
-                val bindings = expandPrefixes(d.bindings);
-                val expected = expandPrefixes(d.expected);
+                SparqlClientBinder<List<String>> binder = new SparqlClientBinder<>(ListOperations.get(), d.bindingVars,
+                        client, sparql, null, d.bindType);
+                List<List<String>> bindings = expandPrefixes(d.bindings);
+                List<List<String>> expected = expandPrefixes(d.expected);
                 argumentsList.add(arguments(bindings, bindConcurrency, binder, expected));
             }
         }

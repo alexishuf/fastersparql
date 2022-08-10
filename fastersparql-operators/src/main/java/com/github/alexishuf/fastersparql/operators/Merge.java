@@ -11,12 +11,10 @@ public interface Merge extends Operator {
     default OperatorName name() { return OperatorName.MERGE; }
 
     default <R> MergePlan<R> asPlan(List<? extends Plan<R>> inputs) {
-        return new MergePlan<>(rowClass(), this, inputs, null, null);
+        return new MergePlan<>(this, inputs, null, null);
     }
 
-    default <R> MergePlan.MergePlanBuilder<R> asPlan() {
-        return MergePlan.<R>builder().rowClass(rowClass()).op(this);
-    }
+    default <R> MergePlan.Builder<R> asPlan() { return MergePlan.builder(this); }
 
     /**
      * Create a {@link Results} with all rows {@code r} such that the following conditions hold:

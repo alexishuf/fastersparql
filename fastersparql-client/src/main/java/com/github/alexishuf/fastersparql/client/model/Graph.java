@@ -7,13 +7,9 @@ import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
@@ -26,52 +22,52 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 /**
  * A {@link Publisher} of RDF graph serialization fragments with the serialization media type.
  *
- * A serialization fragment is represented by Fragment, which may be an object representing an
- * RDF triple, a set of RDF triples or simply a fragment of the graph serialization.
+ * <p>A serialization fragment is represented by Fragment, which may be an object representing an
+ * RDF triple, a set of RDF triples or simply a fragment of the graph serialization.</p>
  *
- * If {@code Fragment} is a {@link CharSequence} or {@link String}, consumers of the fragments
+ * <p>If {@code Fragment} is a {@link CharSequence} or {@link String}, consumers of the fragments
  * the concatenation of fragments will yield the serialization of the RDF graph. If
  * {@code Fragment} is an iterable of textual types, the same holds, but for the
- * concatenation of all {@link CharSequence} in all iterables.
+ * concatenation of all {@link CharSequence} in all iterables.</p>
  *
- * If {@code Fragment} is {@code byte[]} or an iterable of {@code byte[]}, the same
+ * <p>If {@code Fragment} is {@code byte[]} or an iterable of {@code byte[]}, the same
  * interpretation of textual types holds, with the bytes being the UTF-8 encoding of the
  * serialization, unless the serialization is a binary format, uses a default that is not UTF-8 or
- * includes a charset attribute in {@link Graph#mediaType()}.
+ * includes a charset attribute in {@link Graph#mediaType()}.</p>
  *
- * Consumers should not assume textual or bytes fragments end in the border of RDF terms,
+ * <p>Consumers should not assume textual or bytes fragments end in the border of RDF terms,
  * triples or quads. An individual fragment may end in the middle of one RDF term and
- * may contain no complete term or triple/quad.
+ * may contain no complete term or triple/quad.</p>
  *
  * @param <Fragment> - the type representing fragments of the RDF graph serialization.
  */
-@Getter @Accessors(fluent = true)
 public class Graph<Fragment> {
-    private static final Logger log = LoggerFactory.getLogger(Graph.class);
-
     /**
      * The media type identifying the RDF graph serialization format.
      *
-     * The task is safe: failures before or during parsing of the media type will not be reported
-     * here and the {@link AsyncTask} will complete with media type {@code * /*}
+     * <p>The task is safe: failures before or during parsing of the media type will not be reported
+     * here and the {@link AsyncTask} will complete with media type {@code * /*}</p>
      *
-     * If an error occurs, it will be reported to {@link Subscriber#onError(Throwable)}
-     * by {@link Graph#publisher()} and this method will return a null {@link MediaType}.
+     * <p>If an error occurs, it will be reported to {@link Subscriber#onError(Throwable)}
+     * by {@link Graph#publisher()} and this method will return a null {@link MediaType}.</p>
      */
+    public SafeAsyncTask<MediaType> mediaType() { return mediaType; }
     private final SafeAsyncTask<MediaType> mediaType;
 
     /**
      * The class of fragments produced by {@link Graph#publisher()}.
      */
+    public Class<? super Fragment> fragmentClass() { return fragmentClass; }
     private final Class<? super Fragment> fragmentClass;
 
     /**
      * A non-null, single-subscription {@link Publisher} of RDF graph serialization fragments.
      *
-     * If {@code Fragment} is {@code byte[]}, {@link CharSequence}, {@link String} or an iterable
+     * <p>If {@code Fragment} is {@code byte[]}, {@link CharSequence}, {@link String} or an iterable
      * of these, concatenating the byte or char sequences will yield the serialization of the RDF
-     * graph. Consumers should not expect fragments to end on RDF term or triple/quad borders.
+     * graph. Consumers should not expect fragments to end on RDF term or triple/quad borders.</p>
      */
+    public FSPublisher<Fragment> publisher() { return publisher; }
     private final FSPublisher<Fragment> publisher;
 
     public Graph(SafeAsyncTask<MediaType> mediaType, Class<? super Fragment> fragmentClass,
@@ -86,7 +82,7 @@ public class Graph<Fragment> {
      * Get a {@link Future} for the charset specified in the media type, falling back to the given
      * {@link Charset} if the media type defines no charset parameter.
      *
-     * The {@link Future} may throw these exceptions, wrapped in {@link ExecutionException}:
+     * <p>The {@link Future} may throw these exceptions, wrapped in {@link ExecutionException}:</p>
      * <ul>
      *     <li>{@link IllegalCharsetNameException} if the charset param has an invalid value</li>
      *     <li>{@link UnsupportedCharsetException} if the charset param is valid but the
@@ -117,13 +113,12 @@ public class Graph<Fragment> {
     /**
      * Wrap {@link Graph#publisher()} into a lazy {@link Iterable}.
      *
-     * Since {@link Graph#publisher()} is single-subscription, calling {@link AsyncIterable#start()}
+     * <p>Since {@link Graph#publisher()} is single-subscription, calling {@link AsyncIterable#start()}
      * will disallow future calls to {@link Publisher#subscribe(Subscriber)} on
-     * {@link Graph#publisher()}.
+     * {@link Graph#publisher()}.</p>
      *
      * @return a non-null {@link AsyncIterable} wrapping {@link Graph#publisher()}.
      */
-    public AsyncIterable<Fragment> iterable() {
-        return new IterableAdapter<>(publisher);
-    }
+    @SuppressWarnings("unused")
+    public AsyncIterable<Fragment> iterable() { return new IterableAdapter<>(publisher); }
 }

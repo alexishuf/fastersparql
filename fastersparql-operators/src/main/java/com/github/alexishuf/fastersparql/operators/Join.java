@@ -14,26 +14,26 @@ public interface Join extends Operator {
      * Create a plan for {@code run(inputs)}.
      */
     default <R> JoinPlan<R> asPlan(List<? extends Plan<R>> inputs) {
-       return new JoinPlan<>(this, rowClass(), inputs, null, null);
+       return new JoinPlan<>(this, inputs, null, null);
     }
 
-    default <R> JoinPlan.JoinPlanBuilder<R> asPlan() {
-        return JoinPlan.<R>builder().op(this).rowClass(rowClass());
+    default <R> JoinPlan.Builder<R> asPlan() {
+        return JoinPlan.builder(this);
     }
 
     /**
      * Join the given results.
      *
-     * An implementation is allowed to reorder operands which are not the first
+     * <p>An implementation is allowed to reorder operands which are not the first
      * in {@code resultsList} but are not expected to do so. The caller of this method should
-     * provide good enough ordering presuming a left-associative execution order of binary joins.
+     * provide good enough ordering presuming a left-associative execution order of binary joins.</p>
      *
-     * Although left-associative execution should be assumed for optimization purposes, there is
-     * no requirement that implementations be made of binary join algorithms.
+     * <p>Although left-associative execution should be assumed for optimization purposes, there is
+     * no requirement that implementations be made of binary join algorithms.</p>
      *
-     * As in the Join operator of SPARQL algebra, joins may act as cartesian products when
+     * </p>As in the Join operator of SPARQL algebra, joins may act as cartesian products when
      * two operands do not share variables. Implementations should avoid or delay such cartesian
-     * products, but are not required to.
+     * products, but are not required to.</p>
      *
      * @param plan the {@link JoinPlan} to execite
      * @param <R> the row type

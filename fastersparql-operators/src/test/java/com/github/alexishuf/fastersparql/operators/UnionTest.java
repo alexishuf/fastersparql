@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import lombok.AllArgsConstructor;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.provider.Arguments;
@@ -28,13 +26,20 @@ import static java.util.stream.IntStream.range;
 
 public class UnionTest {
 
-    @AllArgsConstructor
     private static final class TestData {
         List<List<List<String>>> inputs;
         List<List<String>> inputsVars;
         long flags;
         List<List<String>> expected;
         List<String> expectedVars;
+
+        public TestData(List<List<List<String>>> inputs, List<List<String>> inputsVars, long flags, List<List<String>> expected, List<String> expectedVars) {
+            this.inputs = inputs;
+            this.inputsVars = inputsVars;
+            this.flags = flags;
+            this.expected = expected;
+            this.expectedVars = expectedVars;
+        }
 
         TestData withFlags(long flags) {
             return new TestData(inputs, inputsVars, flags, expected, expectedVars);
@@ -121,7 +126,7 @@ public class UnionTest {
                 @Override public List<String> publicVars() { return vars; }
                 @Override public List<String> allVars() { return vars; }
                 @Override public Results<List<String>> execute() {
-                    val pub = FSPublisher.bindToAny(Flux.fromIterable(rows));
+                    FSPublisher<List<String>> pub = FSPublisher.bindToAny(Flux.fromIterable(rows));
                     return new Results<>(vars, List.class, pub);
                 }
                 @Override public Plan<List<String>> bind(Binding binding) {

@@ -2,9 +2,6 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.util.async.Async;
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import lombok.Setter;
-import lombok.SneakyThrows;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -80,19 +77,24 @@ class CallbackPublisherTest {
             return this;
         }
 
-        @SneakyThrows public void sync() {
-            thread.join();
+        public void sync() {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
-    @Setter @Accessors(fluent = true)
-    private static class TestPublisher extends CallbackPublisher<Integer> implements Callback{
+    private static final class TestPublisher extends CallbackPublisher<Integer> implements Callback{
         private static final AtomicInteger nextId = new AtomicInteger(1);
-        private @MonotonicNonNull Producer producer;
+        @MonotonicNonNull Producer producer;
 
         public TestPublisher() {
             super("TestPublisher-"+nextId.getAndIncrement());
         }
+
+        public void producer(Producer value) { producer = value; }
 
         /* --- --- --- CallbackPublisher methods --- --- --- */
 
@@ -108,6 +110,7 @@ class CallbackPublisherTest {
     }
 
     private IterableAdapter<Integer> subscribe(TestPublisher pub) {
+        //noinspection resource
         return new IterableAdapter<>(pub, 4).start();
     }
 

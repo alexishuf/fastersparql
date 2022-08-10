@@ -1,14 +1,13 @@
 package com.github.alexishuf.fastersparql.operators;
 
-import lombok.Getter;
-
 import java.util.NoSuchElementException;
 
 import static java.lang.String.format;
 
+@SuppressWarnings("unused")
 public class NoOperatorProviderException extends NoSuchElementException {
-    @Getter private final Class<? extends Operator> operatorClass;
-    @Getter private final long flags;
+    private final Class<? extends Operator> operatorClass;
+    private final long flags;
 
     public NoOperatorProviderException(Class<? extends Operator> operatorClass, long flags,
                                        String message) {
@@ -27,4 +26,7 @@ public class NoOperatorProviderException extends NoSuchElementException {
         return new NoOperatorProviderException(operator, flags,
                 format("All "+operator.getSimpleName()+"Providers rejected flags 0x%016x", flags));
     }
+
+    public Class<? extends Operator> operatorClass() { return operatorClass; }
+    public long flags() { return flags; }
 }

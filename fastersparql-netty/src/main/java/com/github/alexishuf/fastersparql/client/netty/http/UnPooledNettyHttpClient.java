@@ -15,7 +15,6 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
@@ -37,7 +36,7 @@ public class UnPooledNettyHttpClient<H extends ReusableHttpClientInboundHandler>
                                    @Nullable SslContext sslContext) {
         this.activeChannels = new ActiveChannelSet(address.toString());
         this.host = address.getHostString();
-        val initializer = new ChannelInitializer<SocketChannel>() {
+        ChannelInitializer<SocketChannel> initializer = new ChannelInitializer<SocketChannel>() {
             @Override protected void initChannel(SocketChannel ch) {
                 activeChannels.add(ch).setActive(ch);
                 setupPipeline(ch, sslContext, hFactory);

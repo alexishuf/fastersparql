@@ -9,7 +9,6 @@ import com.github.alexishuf.fastersparql.operators.impl.ProjectingProcessor;
 import com.github.alexishuf.fastersparql.operators.plan.JoinPlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -31,11 +30,11 @@ public class JoinHelpers {
     /**
      * Executes the n-ary join using a left-deep tree (aka. left-associative execution).
      *
-     * The operators are optionally reordered before the execution tree is built, using the
-     * given {@link JoinReorderStrategy}, which may be null
+     * <p>The operators are optionally reordered before the execution tree is built, using the
+     * given {@link JoinReorderStrategy}, which may be null</p>
      *
-     * Optionally Reorders {@code operands} and create a left-deep execution tree
-     * (corresponding to a left-associative execution order).
+     * <p>Optionally Reorders {@code operands} and create a left-deep execution tree
+     * (corresponding to a left-associative execution order).</p>
      *
      * @param plan A {@link JoinPlan} with unordered operands. It will not be modified
      * @param reorder The {@link JoinReorderStrategy} that will be used to reorder
@@ -73,7 +72,7 @@ public class JoinHelpers {
         if (ops != plan.operands() && !root.publicVars().equals(expectedVars)) {
             Class<? super R> rowClass = results.rowClass();
             RowOperations ro = RowOperationsRegistry.get().forClass(rowClass);
-            val processor = new ProjectingProcessor<>(results, expectedVars, ro, null);
+            ProjectingProcessor<R> processor = new ProjectingProcessor<>(results, expectedVars, ro, null);
             results = new Results<>(expectedVars, rowClass, processor);
         }
         return results;
@@ -93,10 +92,10 @@ public class JoinHelpers {
     /**
      * Get the first {@link JoinReorderStrategy} known by the given name.
      *
-     * Name comparison is case-insensitive and spaces are trimmed. If no
+     * <p>Name comparison is case-insensitive and spaces are trimmed. If no
      * {@link JoinReorderStrategy#name()} matches, will try to match {@code name} as a suffix of
      * the Fully Qualified Class Name (FQCN). When comparing with the class name, will additionally
-     * try dropping the {@code JoinReorderStrategy} suffix of the class, if present.
+     * try dropping the {@code JoinReorderStrategy} suffix of the class, if present.</p>
      *
      * @param name the {@link JoinReorderStrategy#name()}  or FQCN suffix
      * @return the first matching {@link JoinReorderStrategy} or null if no match was found.

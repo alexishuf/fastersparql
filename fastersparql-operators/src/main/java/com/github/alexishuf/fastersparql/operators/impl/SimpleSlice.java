@@ -10,9 +10,6 @@ import com.github.alexishuf.fastersparql.operators.Slice;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.SlicePlan;
 import com.github.alexishuf.fastersparql.operators.providers.SliceProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -21,10 +18,9 @@ import org.slf4j.LoggerFactory;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlobalMetricsListeners;
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
-@Value @Accessors(fluent = true)
-public class SimpleSlice implements Slice {
+public final class SimpleSlice implements Slice {
     private static final Logger log = LoggerFactory.getLogger(SimpleSlice.class);
-    Class<?> rowClass;
+    private final Class<?> rowClass;
 
     public static class Provider implements SliceProvider {
         @Override public int bid(long flags) {
@@ -37,13 +33,17 @@ public class SimpleSlice implements Slice {
         }
     }
 
+    public SimpleSlice(Class<?> rowClass) {
+        this.rowClass = rowClass;
+    }
 
+    @SuppressWarnings("unchecked") @Override public <R> Class<R> rowClass() { return (Class<R>) rowClass; }
 
     @Override public <R> Results<R> run(SlicePlan<R> plan) {
         try {
             Results<R> input = plan.input().execute();
-            val processor = new SliceProcessor<>(input.publisher(), plan.offset(), plan.limit(),
-                                                   plan);
+            SliceProcessor<R> processor = new SliceProcessor<>(input.publisher(), plan.offset(),
+                                                               plan.limit(), plan);
             return new Results<>(input.vars(), input.rowClass(), processor);
         } catch (Throwable t) {
             return Results.error(Object.class, t);

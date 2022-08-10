@@ -58,7 +58,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>8</maven.compiler.source>
     <maven.compiler.target>8</maven.compiler.target>
-    <lombok.version>1.18.22</lombok.version>
   </properties>
 
   <modules>
@@ -81,12 +80,6 @@
         <groupId>ch.qos.logback</groupId>
         <artifactId>logback-classic</artifactId>
         <version>1.2.7</version>
-      </dependency>
-      <dependency> <!-- Code generation, mostly for @Value and @Builder  -->
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok</artifactId>
-        <version>${lombok.version}</version>
-        <scope>provided</scope>
       </dependency>
       <dependency> <!-- Annotations from checkerframework.org -->
         <groupId>org.checkerframework</groupId>
@@ -164,78 +157,22 @@
           <artifactId>maven-javadoc-plugin</artifactId>
           <version>3.3.1</version>
         </plugin>
-        <plugin>
-          <groupId>org.projectlombok</groupId>
-          <artifactId>lombok-maven-plugin</artifactId>
-          <version>1.18.20.0</version>
-        </plugin>
       </plugins>
     </pluginManagement>
 
     <plugins>
-      <!-- Expand lombok-annotated code into delombok -->
-      <plugin>
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok-maven-plugin</artifactId>
-        <dependencies>
-          <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>${lombok.version}</version>
-          </dependency>
-        </dependencies>
-        <configuration>
-          <sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
-          <outputDirectory>${project.build.directory}/delombok</outputDirectory>
-          <addOutputDirectory>false</addOutputDirectory>
-        </configuration>
-        <executions>
-          <execution>
-            <phase>generate-sources</phase>
-            <goals><goal>delombok</goal></goals>
-          </execution>
-        </executions>
-      </plugin>
-      <!-- copy resources to delomboked source tree  -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-resources-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>copy-to-delombok</id>
-            <phase>process-resources</phase>
-            <goals><goal>copy-resources</goal></goals>
-            <configuration>
-              <resources>
-                <resource>
-                  <directory>${project.basedir}/src/main/resources</directory>
-                </resource>
-              </resources>
-              <outputDirectory>${project.build.directory}/delombok</outputDirectory>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <!-- Set java version and add lombok annotation processor -->
+      <!-- Set java version -->
       <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <source>${maven.compiler.source}</source>
           <target>${maven.compiler.target}</target>
-          <annotationProcessorPaths>
-            <path> <!-- expand lombok annotations into the bytecode -->
-              <groupId>org.projectlombok</groupId>
-              <artifactId>lombok</artifactId>
-              <version>1.18.22</version>
-            </path>
-          </annotationProcessorPaths>
         </configuration>
       </plugin>
-      <!-- Generate javadoc over delomboked sources -->
+      <!-- Generate javadoc  -->
       <plugin>
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
-          <sourcepath>${project.build.directory}/delombok</sourcepath>
           <javadocExecutable>${java.home}/bin/javadoc</javadocExecutable>
           <source>8</source>
           <!-- Enable all warnings but the missing documentation -->

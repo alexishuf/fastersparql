@@ -1,11 +1,6 @@
 package com.github.alexishuf.fastersparql.client.parser.results;
 
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -16,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.parser.results.WebSocketResultsParser.skipUntilControl;
@@ -54,9 +50,6 @@ class WebSocketResultsParserTest {
         }
     }
 
-    @AllArgsConstructor
-    @Data @Accessors(fluent = true)
-    @Builder(toBuilder = true)
     private static class ParseResult {
         List<String> vars;
         List<List<String>> rows;
@@ -65,8 +58,30 @@ class WebSocketResultsParserTest {
         @Nullable List<String> bindRequests;
         @Nullable List<Integer> actionQueues;
 
+        public ParseResult(List<String> vars, List<List<String>> rows, @Nullable String error, @Nullable List<List<String>> activeBindings, @Nullable List<String> bindRequests, @Nullable List<Integer> actionQueues) {
+            this.vars = vars;
+            this.rows = rows;
+            this.error = error;
+            this.activeBindings = activeBindings;
+            this.bindRequests = bindRequests;
+            this.actionQueues = actionQueues;
+        }
+
         public ParseResult(List<String> vars, List<List<String>> rows) {
             this(vars, rows, null, null, null, null);
+        }
+
+        ParseResult error(@Nullable String value) { error = value; return this; }
+        ParseResult activeBindings(@Nullable List<List<String>> value) { activeBindings = value; return this; }
+        ParseResult bindRequests(@Nullable List<String> value) { bindRequests = value; return this; }
+
+        public ParseResult copy() {
+            return new ParseResult(new ArrayList<>(vars),
+                    rows.stream().map(ArrayList::new).collect(Collectors.toList()),
+                    error,
+                    activeBindings == null ? null : activeBindings.stream().map(ArrayList::new).collect(Collectors.toList()),
+                    bindRequests == null ? null : new ArrayList<>(bindRequests),
+                    actionQueues == null ? null : new ArrayList<>(actionQueues));
         }
     }
 
@@ -74,7 +89,8 @@ class WebSocketResultsParserTest {
         private final List<String> vars = new ArrayList<>();
         private final List<List<String>> rows = new ArrayList<>();
         private final List<String> errors = new ArrayList<>();
-        private int endCount = 0, cancelledCount = 0;
+        private int endCount = 0;
+        @SuppressWarnings("unused") private int cancelledCount = 0;
         private final List<List<String>> activeBindings = new ArrayList<>();
         private final List<String> bindRequests = new ArrayList<>();
         private final List<Integer> actionQueues = new ArrayList<>();
@@ -108,10 +124,11 @@ class WebSocketResultsParserTest {
     }
 
     static Stream<Arguments> parseData() {
-        @Value
-        class D {
-            String in;
-            ParseResult ex;
+        final class D {
+            final String in;
+            final ParseResult ex;
+
+            public D(String in, ParseResult ex) { this.in = in; this.ex = ex; }
         }
         List<D> base = new ArrayList<>(asList(
         /*  1 */new D("", new ParseResult(emptyList(), emptyList())),
@@ -157,7 +174,7 @@ class WebSocketResultsParserTest {
         for (int i = 0; i < baseRows; i++) {
             D d = base.get(i);
             String in = d.in + (d.in.endsWith("\n") ? "" : "\n") + "!error test induced";
-            base.add(new D(in, d.ex.toBuilder().error("test induced").build()));
+            base.add(new D(in, d.ex.copy().error("test induced")));
         }
         // ignore error after !end
         for (int i = 0; i < baseRows; i++) {

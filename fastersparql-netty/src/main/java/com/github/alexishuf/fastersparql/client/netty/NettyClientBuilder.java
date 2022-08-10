@@ -14,8 +14,6 @@ import com.github.alexishuf.fastersparql.client.netty.ws.impl.UnpooledNettyWsCli
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import lombok.Data;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -25,13 +23,15 @@ import javax.net.ssl.SSLException;
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static io.netty.handler.ssl.SslContextBuilder.forClient;
 
-@Data @Accessors(fluent = true, chain = true)
+@SuppressWarnings("unused")
 public final class NettyClientBuilder {
     private static final Logger log = LoggerFactory.getLogger(NettyClientBuilder.class);
+
     private boolean shareEventLoopGroup = FasterSparqlNettyProperties.shareEventLoopGroup();
     private boolean pooled = FasterSparqlNettyProperties.pool();
     private boolean poolFIFO = FasterSparqlNettyProperties.poolFIFO();
@@ -40,11 +40,25 @@ public final class NettyClientBuilder {
     private @Nullable File trustCertCollectionFile =
             FasterSparqlNettyProperties.trustCertCollectionFile();
 
+    public boolean shareEventLoopGroup() { return shareEventLoopGroup; }
+    public boolean pooled() { return pooled; }
+    public boolean poolFIFO() { return poolFIFO; }
+    public boolean ocsp() { return ocsp; }
+    public boolean startTls() { return startTls; }
+    public @Nullable File trustCertCollectionFile() { return trustCertCollectionFile; }
+
+    public NettyClientBuilder shareEventLoopGroup(boolean value)  { shareEventLoopGroup = value; return this; }
+    public NettyClientBuilder pooled(boolean value)               { pooled = value; return this; }
+    public NettyClientBuilder poolFIFO(boolean value)             { poolFIFO = value; return this; }
+    public NettyClientBuilder ocsp(boolean value)                 { ocsp = value; return this; }
+    public NettyClientBuilder startTls(boolean value)             { startTls = value; return this; }
+    public NettyClientBuilder trustCertCollectionFile(File value) { trustCertCollectionFile = value; return this; }
+
     private EventLoopGroupHolder elgHolder() {
         if (shareEventLoopGroup) {
             return SharedEventLoopGroupHolder.get();
         } else {
-            return EventLoopGroupHolder.builder().keepAlive(0).build();
+            return new EventLoopGroupHolder(null, 0, TimeUnit.SECONDS);
         }
     }
 
@@ -63,9 +77,9 @@ public final class NettyClientBuilder {
      *         initialization. Such exceptions are usually configuration (or environment) issues.
      */
     public <H extends ReusableHttpClientInboundHandler> NettyHttpClient<H>
-    buildHTTP(@lombok.NonNull Protocol protocol,
-              @lombok.NonNull InetSocketAddress address,
-              @lombok.NonNull Supplier<H> factory) throws SSLException {
+    buildHTTP(Protocol protocol,
+              InetSocketAddress address,
+              Supplier<H> factory) throws SSLException {
         if (protocol.isWebSocket())
             throw new IllegalArgumentException("WS(S) not supported by buildHTTP");
         SslContext sslContext = buildSslContext(protocol);
@@ -97,8 +111,7 @@ public final class NettyClientBuilder {
      * @throws SSLException If protocol is {@link Protocol#WSS} and something goes wrong
      *                      when creating an {@link SslContext}.
      */
-    public NettyWsClient buildWs(@lombok.NonNull Protocol protocol, @lombok.NonNull URI uri,
-                                 @lombok.NonNull HttpHeaders headers) throws SSLException {
+    public NettyWsClient buildWs(Protocol protocol, URI uri, HttpHeaders headers) throws SSLException {
         if (!protocol.isWebSocket())
             throw new IllegalArgumentException("WS(S) not supported by buildWs");
         SslContext sslContext = buildSslContext(protocol);

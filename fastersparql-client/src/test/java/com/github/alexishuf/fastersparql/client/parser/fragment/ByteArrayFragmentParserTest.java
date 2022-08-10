@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmen
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
-import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -86,7 +85,7 @@ class ByteArrayFragmentParserTest {
 
         for (int i = 0; i < 10; i++) {
             SafeCompletableAsyncTask<MediaType> mtFuture = new SafeCompletableAsyncTask<>();
-            val fragmentFlux = FSPublisher.bindToAny(Flux.fromIterable(fragmentStrings));
+            FSPublisher<CharSequence> fragmentFlux = FSPublisher.bindToAny(Flux.fromIterable(fragmentStrings));
             Graph<CharSequence> graph = new Graph<>(mtFuture, CharSequence.class, fragmentFlux);
             Publisher<byte[]> bytesPub = ByteArrayFragmentParser.INSTANCE.parseStrings(graph);
             Thread completer = new Thread(() -> mtFuture.complete(mediaType));

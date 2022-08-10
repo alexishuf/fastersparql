@@ -1,11 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.Singular;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
@@ -21,50 +16,11 @@ import static com.github.alexishuf.fastersparql.client.util.HeaderUtils.*;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
-@Builder(toBuilder = true)
-@EqualsAndHashCode
-@Getter @Accessors(fluent = true)
+@SuppressWarnings("unused")
 public final class MediaType {
-    /**
-     * The non-null and non-empty type in {@code type/subtype; p1=v1; ...}.
-     *
-     * The constructor ensures this conforms to the
-     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">token production
-     * in RFC2616</a>.
-     */
     private final String type;
-
-    /**
-     * The non-null and non-empty subtype in {@code type/subtype; p1=v1; ...}.
-     *
-     * The constructor ensures this conforms to the
-     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">token production
-     * in RFC2616</a>.
-     */
     private final String subtype;
-
-    /**
-     * A map from non-null and non-empty parameter names (e.g., {@code p1}) to non-null and
-     * non-empty parameter values (e.g., {@code} v1) in the media type
-     * (e.g., {@code type/subtype; p1=v1; ...}).
-     *
-     * The constructor ensures parameter names conform to the {@code token} production  and values
-     * conform either to the {@code token} or {@code quoted-string} productions in
-     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">RFC2616</a>
-     */
-    private final @Singular Map<String, String> params;
-
-    /**
-     * A normalized view of the media type:
-     *
-     * <ul>
-     *     <li>All whitespace sequences are replaced with a single space sharacter</li>
-     *     <li>The param separator string is {@code "; "}</li>
-     *     <li>The string is lower-case</li>
-     *     <li>The string is trimmed</li>
-     * </ul>
-     */
-    @EqualsAndHashCode.Exclude
+    private final Map<String, String> params;
     private final String normalized;
 
     /* --- --- --- constants --- --- --- */
@@ -77,6 +33,49 @@ public final class MediaType {
             "\\s*;\\s*("+ TOKEN_STR+")\\s*=\\s*("+TOKEN_STR+"|\"(?:"+QUOTED_VAL+")*\")"
     );
     private static final Pattern RESIDUAL = Pattern.compile("\\s*[;,]?\\s*");
+
+    /* --- --- --- builder --- --- --- */
+
+    @SuppressWarnings("unused")
+    public static final class Builder {
+        private String type;
+        private String subtype;
+        private Map<String, String> params = null;
+
+        public Builder(String type, String subtype) {
+            this.type = type;
+            this.subtype = subtype;
+        }
+
+        public Builder    type(String value)              {    type = value; return this; }
+        public Builder subtype(String value)              { subtype = value; return this; }
+        public Builder  params(Map<String, String> value) {  params = value; return this; }
+
+        public Builder param(String name, String value) {
+            (params == null ? params = new HashMap<>() : params).put(name, value);
+            return this;
+        }
+
+        public MediaType build() {
+            return new MediaType(type, subtype, params);
+        }
+    }
+
+    public static Builder builder(String type, String subtype) {return new Builder(type, subtype);}
+
+    public Builder toBuilder() { return new Builder(type, subtype); }
+
+    public MediaType withoutParams(Collection<String> forbidden) {
+        if (params.isEmpty())
+            return this;
+        HashMap<String, String> copy = new HashMap<>(params);
+        for (String name : forbidden) copy.remove(name);
+        return new MediaType(type, subtype, copy);
+    }
+
+    public MediaType withoutParams() {
+        return params.isEmpty() ? this : new MediaType(type, subtype, emptyMap());
+    }
 
     /* --- --- --- constructors --- --- --- */
 
@@ -133,7 +132,7 @@ public final class MediaType {
      * Sanitizes and parses a media type according to the {@code media-type} production in
      * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-3.7">RFC2616</a>
      *
-     * Sanitization:
+     * <p>Sanitization:</p>
      * <ul>
      *     <li>Whitespace at the begin and end of the string is removed</li>
      *     <li>Type, subtype and parameter names are converted to lower-case</li>
@@ -211,6 +210,51 @@ public final class MediaType {
         }
     }
 
+    /* --- --- --- trivial getters --- --- --- */
+
+    /**
+     * The non-null and non-empty type in {@code type/subtype; p1=v1; ...}.
+     *
+     * <p>The constructor ensures this conforms to the
+     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">token production
+     * in RFC2616</a>.</p>
+     */
+    public String type() { return type; }
+
+
+    /**
+     * The non-null and non-empty subtype in {@code type/subtype; p1=v1; ...}.
+     *
+     * <p>The constructor ensures this conforms to the
+     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">token production
+     * in RFC2616</a>.</p>
+     */
+    public String subtype() { return subtype; }
+
+
+    /**
+     * A map from non-null and non-empty parameter names (e.g., {@code p1}) to non-null and
+     * non-empty parameter values (e.g., {@code} v1) in the media type
+     * (e.g., {@code type/subtype; p1=v1; ...}).
+     *
+     * <p>The constructor ensures parameter names conform to the {@code token} production  and values
+     * conform either to the {@code token} or {@code quoted-string} productions in
+     * <a href="https://datatracker.ietf.org/doc/html/rfc2616/#section-2.2">RFC2616</a></p>
+     */
+    public Map<String, String> params() { return params; }
+
+
+    /**
+     * A normalized view of the media type:
+     *
+     * <ul>
+     *     <li>All whitespace sequences are replaced with a single space sharacter</li>
+     *     <li>The param separator string is {@code "; "}</li>
+     *     <li>The string is lower-case</li>
+     *     <li>The string is trimmed</li>
+     * </ul>
+     */
+    public String normalized() { return normalized; }
 
     /* --- --- --- methods --- --- --- */
 
@@ -261,16 +305,18 @@ public final class MediaType {
         return Charset.forName(name);
     }
 
-    public MediaType withoutParams(Collection<String> forbidden) {
-        if (params.isEmpty())
-            return this;
-        HashMap<String, String> copy = new HashMap<>(params);
-        for (String name : forbidden) copy.remove(name);
-        return new MediaType(type, subtype, copy);
+    /* --- --- --- java.lang.Object methods --- --- --- */
+
+    @Override public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MediaType)) return false;
+        MediaType mediaType = (MediaType) o;
+        return type.equals(mediaType.type) && subtype.equals(mediaType.subtype)
+                                           && params.equals(mediaType.params);
     }
 
-    public MediaType withoutParams() {
-        return params.isEmpty() ? this : new MediaType(type, subtype, emptyMap());
+    @Override public int hashCode() {
+        return Objects.hash(type, subtype, params);
     }
 
     @Override public String toString() { return normalized; }

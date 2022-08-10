@@ -9,11 +9,11 @@ public abstract class AbstractNAryPlan<R, Implementation extends Plan<R>>
         extends AbstractPlan<R, Implementation> {
     private @MonotonicNonNull List<String> publicVars, allVars;
 
-    public AbstractNAryPlan(@lombok.NonNull Class<? super R> rowClass,
-                            @lombok.NonNull List<? extends Plan<R>> operands,
-                            @lombok.NonNull String name,
-                            @Nullable Implementation parent) {
+    public AbstractNAryPlan(Class<? super R> rowClass, List<? extends Plan<R>> operands,
+                            String name, @Nullable Implementation parent) {
         super(rowClass, operands, name, parent);
+        if (operands.isEmpty())
+            throw new IllegalArgumentException("N-ary plan with empty operands list");
     }
 
     @Override public List<String> publicVars() {

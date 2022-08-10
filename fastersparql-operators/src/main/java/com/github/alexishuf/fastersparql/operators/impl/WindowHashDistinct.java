@@ -8,18 +8,13 @@ import com.github.alexishuf.fastersparql.operators.Distinct;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
 import com.github.alexishuf.fastersparql.operators.plan.DistinctPlan;
 import com.github.alexishuf.fastersparql.operators.providers.DistinctProvider;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 
-@RequiredArgsConstructor
-@Accessors(fluent = true)
-public class WindowHashDistinct implements Distinct {
+public final class WindowHashDistinct implements Distinct {
     private final RowOperations rowOps;
-    @Getter private final int overrideWindow;
+    private final int overrideWindow;
 
     public static class Provider implements DistinctProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -33,6 +28,11 @@ public class WindowHashDistinct implements Distinct {
         @Override public Distinct create(long flags, RowOperations rowOperations) {
             return new WindowHashDistinct(rowOperations, -1);
         }
+    }
+
+    public WindowHashDistinct(RowOperations rowOps, int overrideWindow) {
+        this.rowOps = rowOps;
+        this.overrideWindow = overrideWindow;
     }
 
     @SuppressWarnings("unchecked") @Override public <R> Class<R> rowClass() {

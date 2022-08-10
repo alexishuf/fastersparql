@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import reactor.core.publisher.Flux;
 
@@ -58,7 +57,7 @@ public class TestHelpers {
 
     public static Results<List<String>> asResults(Collection<List<String>> collection) {
         int width = collection.isEmpty() ? 0 : collection.iterator().next().size();
-        val pub = FSPublisher.bindToAny(Flux.fromIterable(collection));
+        FSPublisher<List<String>> pub = FSPublisher.bindToAny(Flux.fromIterable(collection));
         return new Results<>(generateVars(width), List.class, pub);
     }
 

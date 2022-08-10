@@ -2,8 +2,6 @@ package com.github.alexishuf.fastersparql.client.model.row.impl;
 
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperationsProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -11,12 +9,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Value @Accessors(fluent = true)
 public class ListOperations implements RowOperations {
     private static final ConcurrentHashMap<Class<?>, ListOperations> CACHE
             = new ConcurrentHashMap<>();
     public static final Provider PROVIDER = new Provider();
-    Class<?> rowClass;
+    private final Class<?> rowClass;
+
+    public ListOperations(Class<?> rowClass) { this.rowClass = rowClass; }
+
+    public Class<?> rowClass() { return rowClass; }
 
     public static class Provider implements RowOperationsProvider {
         @Override public RowOperations get(Class<?> specializedClass) {

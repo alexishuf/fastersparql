@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import lombok.Builder;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -24,11 +23,37 @@ public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
     private @MonotonicNonNull List<String> publicVars;
     private @MonotonicNonNull List<String> allVars;
 
-    @Builder
-    public LeafPlan(@lombok.NonNull CharSequence query,
-                    @lombok.NonNull SparqlClient<R, ?> client,
-                    @Nullable SparqlConfiguration configuration,
-                    @Nullable LeafPlan<R> parent, @Nullable String name) {
+    @SuppressWarnings("unused")
+    public static final class Builder<T> {
+        private CharSequence query;
+        private SparqlClient<T, ?> client;
+        private @Nullable SparqlConfiguration configuration;
+        private @Nullable LeafPlan<T> parent;
+        private @Nullable String name;
+
+        public Builder(CharSequence query, SparqlClient<T, ?> client) {
+            this.query = query;
+            this.client = client;
+        }
+
+        public Builder<T> query(CharSequence value)                          { query = value; return this; }
+        public Builder<T> client(SparqlClient<T, ?> value)                   { client = value; return this; }
+        public Builder<T> configuration(@Nullable SparqlConfiguration value) { configuration = value; return this; }
+        public Builder<T> parent(@Nullable LeafPlan<T> value)                { parent = value; return this; }
+        public Builder<T> name(@Nullable String value)                       { name = value; return this; }
+
+        public LeafPlan<T> build() {
+            return new LeafPlan<>(query, client, configuration, parent, name);
+        }
+    }
+
+    public static <T> Builder<T> builder(SparqlClient<T, ?> client, CharSequence query) {
+        return new Builder<>(query, client);
+    }
+
+    public LeafPlan(CharSequence query,  SparqlClient<R, ?> client,
+                    @Nullable SparqlConfiguration configuration, @Nullable LeafPlan<R> parent,
+                    @Nullable String name) {
         super(client.rowClass(), emptyList(),
               name == null ? "Query-"+nextId.getAndIncrement() : name, parent);
         this.query = query.toString();
@@ -36,9 +61,8 @@ public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
         this.configuration = configuration == null ? SparqlConfiguration.EMPTY : configuration;
     }
 
-    private LeafPlan(@lombok.NonNull LeafPlan<R> parent, @lombok.NonNull CharSequence query,
-                     @lombok.NonNull SparqlClient<R, ?> client,
-                     @lombok.NonNull SparqlConfiguration configuration) {
+    private LeafPlan(LeafPlan<R> parent, CharSequence query, SparqlClient<R, ?> client,
+                     SparqlConfiguration configuration) {
         super(client.rowClass(), emptyList(), parent.name, parent);
         this.query = query;
         this.client = client;
@@ -48,10 +72,6 @@ public class LeafPlan<R> extends AbstractPlan<R, LeafPlan<R>> {
     public CharSequence        query()         { return query; }
     public SparqlClient<R, ?>  client()        { return client; }
     public SparqlConfiguration configuration() { return configuration; }
-
-    public static <T> LeafPlanBuilder<T> builder(SparqlClient<T, ?> client, CharSequence query) {
-        return new LeafPlanBuilder<T>().client(client).query(query);
-    }
 
     @Override public List<String> publicVars() {
         if (publicVars == null)

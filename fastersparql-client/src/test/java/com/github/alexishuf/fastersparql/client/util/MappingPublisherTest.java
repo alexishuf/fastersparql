@@ -2,9 +2,6 @@ package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.experimental.Accessors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -34,10 +31,19 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class MappingPublisherTest {
     private static final int LARGE = FasterSparqlProperties.reactiveQueueCapacity() + 16;
 
-    @AllArgsConstructor @Data @Accessors(fluent = true, chain = true)
     private static class Spec {
         int size;
         boolean offloadSubscribe, offloadPublish, dropFailed;
+
+        public Spec(int size, boolean offloadSubscribe, boolean offloadPublish, boolean dropFailed) {
+            this.size = size;
+            this.offloadSubscribe = offloadSubscribe;
+            this.offloadPublish = offloadPublish;
+            this.dropFailed = dropFailed;
+        }
+
+        @SuppressWarnings("SameParameterValue")
+        Spec dropFailed(boolean value) {dropFailed = value; return this;}
 
         public Flux<Integer> createFlux() {
             Flux<Integer> flux = Flux.range(1, size);
@@ -62,10 +68,6 @@ class MappingPublisherTest {
                     return null;
                 }
             }).filter(Objects::nonNull).collect(Collectors.toList());
-        }
-
-        public boolean hasOffload() {
-            return offloadSubscribe || offloadPublish;
         }
     }
 

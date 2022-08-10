@@ -12,12 +12,10 @@ public interface Minus extends Operator {
      * Create a plan for {@code run(left.execute(), right)}.
      */
     default <R> MinusPlan<R> asPlan(Plan<R> left, Plan<R> right) {
-        return new MinusPlan<>(rowClass(), this, left, right, null, null);
+        return new MinusPlan<>(this, left, right, null, null);
     }
 
-    default <R> MinusPlan.MinusPlanBuilder<R> asPlan() {
-        return MinusPlan.<R>builder().rowClass(rowClass()).op(this);
-    }
+    default <R> MinusPlan.Builder<R> asPlan() { return MinusPlan.builder(this); }
 
     /**
      * Returns the result of SPARQL algebra {@code Minus(left, right)} operator.

@@ -1,9 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util.async;
 
 import com.github.alexishuf.fastersparql.client.util.Throwing;
-import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -46,9 +43,9 @@ public class Async {
     /**
      * Get an {@link AsyncTask} that completes when and  as {@code future} completes.
      *
-     * If {@code future} does not happen to implement the {@link CompletionStage} interface,
+     * <p>If {@code future} does not happen to implement the {@link CompletionStage} interface,
      * it will be polled, which may incur a delay between {@code future} transitioning to
-     * the done state and the returned {@link AsyncTask} own transition.
+     * the done state and the returned {@link AsyncTask} own transition.</p>
      *
      * @param future The {@link Future} to wrap
      * @param <T> the result type of {@code future}
@@ -63,9 +60,9 @@ public class Async {
     /**
      * Convert a {@link Future} into a {@link SafeAsyncTask}.
      *
-     * If {@code future} completes exceptionally, the resulting {@link SafeAsyncTask} will still
+     * <p>If {@code future} completes exceptionally, the resulting {@link SafeAsyncTask} will still
      * throw that failure within a {@link RuntimeException}. Calling this method with
-     * a {@link Future} that may fail is wrong.
+     * a {@link Future} that may fail is wrong.</p>
      *
      * @param future A {@link Future} that certainly will not complete exceptionally
      * @param <T> the result type of {@code future}
@@ -93,10 +90,10 @@ public class Async {
     /**
      * Create a {@link SafeAsyncTask} that will be complete when and as {@code stage} completes.
      *
-     * If stage completes exceptionally, the {@link SafeAsyncTask} will still complete
+     * <p>If stage completes exceptionally, the {@link SafeAsyncTask} will still complete
      * exceptionally, but as it is not expected to fail, that will raise an
      * {@link RuntimeException}. Calling this method for a {@link CompletionStage} that may fail
-     * is wrong.
+     * is wrong.</p>
      *
      * @param stage the {@link CompletionStage}
      * @param <T> the return type of {@code stage}
@@ -111,7 +108,7 @@ public class Async {
     /**
      * Create an {@link AsyncTask} that completes with {@code null} when {@code poll} returns true.
      *
-     * The result of the {@code poll} function is polled every {@code delayMs} milliseconds.
+     * <p>The result of the {@code poll} function is polled every {@code delayMs} milliseconds.</p>
      *
      * @param delayMs how much time to wait before calling {@code poll} again.
      * @param poll a function that will return true once the desired state has been reached.
@@ -187,9 +184,9 @@ public class Async {
     /**
      * Execute {@code callable.call()} on a pooled thread ASAP.
      *
-     * The equivalent of a shared, long-lived {@link Executors#newCachedThreadPool()} is used. Thus,
+     * <p>The equivalent of a shared, long-lived {@link Executors#newCachedThreadPool()} is used. Thus,
      * execution will start soon, creating a new {@link Thread} if there is no free thread
-     * in the pool.
+     * in the pool.</p>
      *
      * @param callable what to execute. If null, will not use the {@link ExecutorService},
      *                 instead returning an {@link AsyncTask} completed with a null value.
@@ -204,9 +201,9 @@ public class Async {
     /**
      * Execute {@code runnable} in a pooled thread ASAP.
      *
-     * The equivalent of a shared, long-lived {@link Executors#newCachedThreadPool()} is used. Thus,
+     * <p>The equivalent of a shared, long-lived {@link Executors#newCachedThreadPool()} is used. Thus,
      * execution will start soon, creating a new {@link Thread} if there is no free thread
-     * in the pool.
+     * in the pool.</p>
      *
      * @param runnable what to execute. If null will just return an already done
      *                 {@link AsyncTask} without using a thread.
@@ -230,11 +227,14 @@ public class Async {
 
     /* --- --- --- implementation details --- --- --- */
 
-    @RequiredArgsConstructor
+
     private static class Factory implements ThreadFactory {
         private final ThreadGroup group = Thread.currentThread().getThreadGroup();
         private final AtomicInteger lastThreadId = new AtomicInteger(0);
         private final String factoryName;
+
+        public Factory(String factoryName) { this.factoryName = factoryName; }
+
         @Override public Thread newThread(@NonNull Runnable r) {
             String name = factoryName+"-"+lastThreadId.incrementAndGet();
             Thread thread = new Thread(group, r, name, 0);
@@ -275,13 +275,13 @@ public class Async {
         return UNBOUNDED;
     }
 
-    @Accessors(fluent = true, chain = true)
+
     private static final class RunnableTask<T> extends CompletableAsyncTask<T>
             implements AsyncTask<T>, Runnable {
         private @Nullable Callable<T> callable;
         private @Nullable Runnable runnable;
         private Throwing.@Nullable Runnable throwingRunnable;
-        private @Setter @MonotonicNonNull Future<?> cancelDelegate = null;
+        private @MonotonicNonNull Future<?> cancelDelegate = null;
 
         public RunnableTask(@Nullable Callable<T> c) {
             if ((this.callable = c) == null) complete(null);
@@ -293,6 +293,11 @@ public class Async {
 
         public RunnableTask(Throwing.@Nullable Runnable r) {
             if ((this.throwingRunnable = r) == null) complete(null);
+        }
+
+        public RunnableTask<T> cancelDelegate(Future<?> delegate) {
+            cancelDelegate = delegate;
+            return this;
         }
 
         @Override public boolean cancel(boolean mayInterruptIfRunning) {

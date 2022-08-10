@@ -1,11 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.expressions;
 
-import lombok.Getter;
-import lombok.experimental.Accessors;
-
 import java.util.List;
 
-@Getter @Accessors(fluent = true)
 public class UnboundVariablesException extends ExprCompilerException {
     private final String expression;
     private final List<String> unboundVars;
@@ -15,4 +11,9 @@ public class UnboundVariablesException extends ExprCompilerException {
         this.expression = expression;
         this.unboundVars = unboundVars;
     }
+
+    @SuppressWarnings("unused")
+    public String expression() { return expression; }
+    @SuppressWarnings("unused")
+    public List<String> unboundVars() { return unboundVars; }
 }

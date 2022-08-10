@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;
-import lombok.EqualsAndHashCode;
-import lombok.ToString;
 import org.apache.jena.atlas.io.StringWriterI;
 import org.apache.jena.graph.Node;
 import org.apache.jena.query.ARQ;
@@ -58,7 +56,6 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
         return writer.toString();
     }
 
-    @EqualsAndHashCode @ToString
     private static class RowBinding implements Binding {
         private final RowOperations ro;
         private final List<Var> vars;
@@ -100,5 +97,20 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
             int i = var2idx.getOrDefault(var, -1);
             return i < 0 ? null : values[i];
         }
+
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof RowBinding)) return false;
+            RowBinding that = (RowBinding) o;
+            return vars.equals(that.vars) && Arrays.equals(values, that.values);
+        }
+
+        @Override public int hashCode() {
+            int result = Objects.hash(vars);
+            result = 31 * result + Arrays.hashCode(values);
+            return result;
+        }
+
+        @Override public String toString() { return vars + "<-" + Arrays.toString(values); }
     }
 }

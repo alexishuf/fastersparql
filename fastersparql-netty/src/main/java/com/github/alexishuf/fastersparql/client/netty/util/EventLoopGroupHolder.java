@@ -8,10 +8,6 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.concurrent.Future;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.ToString;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -24,14 +20,15 @@ import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-@Accessors(fluent = true) @ToString
 public class EventLoopGroupHolder {
     private static final Logger log = LoggerFactory.getLogger(EventLoopGroupHolder.class);
 
     /**
      * The {@link NettyTransport} implementation
      */
-    @Getter private final NettyTransport transport;
+    @SuppressWarnings("unused") public NettyTransport transport() { return transport; }
+    private final NettyTransport transport;
+
 
     /**
      * How many {@link EventLoopGroupHolder#acquire()}s are active
@@ -45,12 +42,14 @@ public class EventLoopGroupHolder {
      * {@link EventLoopGroupHolder#acquire()} occurs within this time window, no shutdown will
      * occur.
      */
-    @Getter private final @NonNegative int keepAlive;
+    @SuppressWarnings("unused") public @NonNegative int keepAlive() { return keepAlive; }
+    private final @NonNegative int keepAlive;
 
     /**
      * The {@link TimeUnit} for {@link EventLoopGroupHolder#keepAlive()}.
      */
-    @Getter private final TimeUnit keepAliveTimeUnit;
+    @SuppressWarnings("unused") public TimeUnit keepAliveTimeUnit() { return keepAliveTimeUnit; }
+    private final TimeUnit keepAliveTimeUnit;
 
     /**
      * If present, is a scheduled task to shut down the {@link EventLoopGroupHolder#group}
@@ -77,11 +76,6 @@ public class EventLoopGroupHolder {
         return selected;
     }
 
-    public EventLoopGroupHolder() {
-        this(chooseTransport(), 0, MILLISECONDS);
-    }
-
-    @Builder
     public EventLoopGroupHolder(@Nullable NettyTransport transport,
                                 int keepAlive, @Nullable TimeUnit keepAliveTimeUnit) {
         this.transport = transport == null ? chooseTransport() : transport;
@@ -105,9 +99,9 @@ public class EventLoopGroupHolder {
     /**
      * Gets a {@link EventLoopGroup}, initializing one if necessary.
      *
-     * The caller receives ownership of a reference to the {@link EventLoopGroup}, which must
+     * <p>The caller receives ownership of a reference to the {@link EventLoopGroup}, which must
      * be released with a later call to {@link EventLoopGroupHolder#release()} or
-     * {@link EventLoopGroupHolder#release(long, TimeUnit)}.
+     * {@link EventLoopGroupHolder#release(long, TimeUnit)}.</p>
      *
      * @return a non-null usable {@link EventLoopGroup}.
      */
@@ -138,10 +132,10 @@ public class EventLoopGroupHolder {
      * Builds a {@link Bootstrap} with the {@link EventLoopGroupHolder#acquire()}d
      * {@link EventLoopGroup}.
      *
-     * Applicable configurations from {@link FasterSparqlProperties} will be set.
+     * <p>Applicable configurations from {@link FasterSparqlProperties} will be set.</p>
      *
-     * <strong>{@link EventLoopGroupHolder#release()} must be called once the
-     * {@link Bootstrap} is discarded.</strong>
+     * <p><strong>{@link EventLoopGroupHolder#release()} must be called once the
+     * {@link Bootstrap} is discarded.</strong></p>
      *
      * @param address the {@link Bootstrap#remoteAddress(SocketAddress)}
      * @return A new {@link Bootstrap} bound to the acquired {@link EventLoopGroup}.
@@ -176,12 +170,12 @@ public class EventLoopGroupHolder {
      * Releases the {@link EventLoopGroup}, allowing for its shutdown if the reference count
      * reaches zero.
      *
-     * If the reference count reaches zero, and {@link EventLoopGroupHolder#keepAlive()}
+     * <p>If the reference count reaches zero, and {@link EventLoopGroupHolder#keepAlive()}
      * {@code > 0}, the {@link EventLoopGroup} will only be shutdown if no
      * {@link EventLoopGroupHolder#acquire()} call happens within the keep alive window (which
      * starts now). If there is no {@code keepAlive} {@link EventLoopGroup#shutdownGracefully()}
      * is called immediately and its completion will be awaited for at most {@code wait}
-     * {@code waitTimeUnit}s.
+     * {@code waitTimeUnit}s.</p>
      *
      * @param wait how much time to wait on {@link EventLoopGroup#shutdownGracefully()} if
      *             {@link EventLoopGroupHolder#keepAlive()} is zero and the reference count
@@ -228,5 +222,14 @@ public class EventLoopGroupHolder {
                 shutdownTask = null;
             }
         }
+    }
+
+    @Override public String toString() {
+        return "EventLoopGroupHolder{" +
+                "transport=" + transport +
+                ", references=" + references +
+                ", keepAlive=" + keepAlive + keepAliveTimeUnit.name().toLowerCase() +
+                ", group=" + group +
+                '}';
     }
 }

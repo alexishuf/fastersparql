@@ -4,12 +4,8 @@ import com.github.alexishuf.fastersparql.client.util.reactive.AsyncIterable;
 import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.Getter;
-import lombok.experimental.Accessors;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
@@ -20,43 +16,43 @@ import java.util.stream.Stream;
  * A list of variables to bundled with a {@link Publisher} that produces solutions, each
  * represented by an instance of {@code Row}.
  *
- * Any {@code Row} type should fall into one of these categories:
+ * <p>Any {@code Row} type should fall into one of these categories:</p>
  * <ol>
  *     <li>It is iterable (array, {@link Iterable}, {@link Stream}, etc.)</li>
  *     <li>It maps vars to bindings ({@link Map} iterable of name-value pairs, etc)</li>
  * </ol>
  *
- * For {@code Row} types in the first category, iteration will yield as many values as
+ * <p>For {@code Row} types in the first category, iteration will yield as many values as
  * there are {@link Results#vars()} with the i-th value corresponding to
- * the i-th var. For unbound vars, {@code null} or {@code Optional.empty()} must be used.
+ * the i-th var. For unbound vars, {@code null} or {@code Optional.empty()} must be used.</p>
  *
- * For {@code Row} types in the second category, unbound vars can be either not mapped or
- * mapped to {@code null} or {@code Optional.empty()}.
+ * <p>For {@code Row} types in the second category, unbound vars can be either not mapped or
+ * mapped to {@code null} or {@code Optional.empty()}.</p>
  *
  * @param <Row>  the type that represents an individual solution, binding RDF terms to variables.
  */
-@Getter @Accessors(fluent = true)
 public class Results<Row> {
-    private static final Logger log = LoggerFactory.getLogger(Results.class);
-
     /**
      * The list of variables in the results.
      */
+    public List<String> vars() { return vars; }
     private final List<String> vars;
 
     /**
      * The class of items produced by {@link Results#publisher()}.
      */
+    public Class<? super Row> rowClass() { return rowClass; }
     private final Class<? super Row> rowClass;
 
     /**
      * A single-subscription {@link Publisher} that produces solutions, each providing bindings
      * to variables in {@link Results#vars()}.
      *
-     * If {@code Row} is iterable (e.g., array, {@link Iterable}, {@link Stream}, etc), the i-th
+     * <p>If {@code Row} is iterable (e.g., array, {@link Iterable}, {@link Stream}, etc), the i-th
      * iterated value must contain a null, {@code Optional.empty()} or an RDF term corresponding
-     * to the i-th variable in {@link Results#vars()}.
+     * to the i-th variable in {@link Results#vars()}.</p>
      */
+    public FSPublisher<Row> publisher() { return publisher; }
     private final FSPublisher<Row> publisher;
 
     public Results(List<String> vars, Class<? super Row> rowClass,
@@ -103,9 +99,9 @@ public class Results<Row> {
     /**
      * Get a lazy {@link Iterable} wrapping the {@link Publisher}.
      *
-     * As {@link Results#publisher} is single-subscription, calling {@link AsyncIterable#start()}
+     * <p>As {@link Results#publisher} is single-subscription, calling {@link AsyncIterable#start()}
      * will disallow subsequent calls to {@link Publisher#subscribe(Subscriber)} on
-     * {@link Results#publisher()}.
+     * {@link Results#publisher()}.</p>
      *
      * @return a non-null {@link AsyncIterable} wrapping {@link Results#publisher}
      */

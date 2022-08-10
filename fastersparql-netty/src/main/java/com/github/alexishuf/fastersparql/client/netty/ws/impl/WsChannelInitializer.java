@@ -11,18 +11,23 @@ import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.websocketx.extensions.compression.WebSocketClientCompressionHandler;
 import io.netty.handler.ssl.SslContext;
-import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.URI;
 
-@RequiredArgsConstructor
 class WsChannelInitializer extends ChannelInitializer<Channel> {
     private final int maxHttp = FasterSparqlNettyProperties.wsMaxHttpResponse();
     private final @Nullable SslContext sslContext;
     private final URI uri;
     private final HttpHeaders headers;
     private final WsRecycler recycler;
+
+    public WsChannelInitializer(@Nullable SslContext sslContext, URI uri, HttpHeaders headers, WsRecycler recycler) {
+        this.sslContext = sslContext;
+        this.uri = uri;
+        this.headers = headers;
+        this.recycler = recycler;
+    }
 
     @Override protected void initChannel(Channel ch) {
         ChannelPipeline pipe = ch.pipeline();

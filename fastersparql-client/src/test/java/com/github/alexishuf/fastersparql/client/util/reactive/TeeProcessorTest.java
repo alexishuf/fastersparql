@@ -2,11 +2,6 @@ package com.github.alexishuf.fastersparql.client.util.reactive;
 
 import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
 import com.github.alexishuf.fastersparql.client.util.async.CompletableAsyncTask;
-import lombok.RequiredArgsConstructor;
-import lombok.ToString;
-import lombok.Value;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -22,6 +17,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -54,9 +50,10 @@ class TeeProcessorTest {
         @Override public String toString() { return "FLUX_CONSUMER"; }
     };
 
-    @RequiredArgsConstructor
     private static class BatchConsumer implements TeeConsumer {
         private final int batch;
+
+        public BatchConsumer(int batch) { this.batch = batch; }
 
         @Override public List<Integer> apply(Publisher<Integer> tee) {
             CompletableAsyncTask<List<Integer>> f = new CompletableAsyncTask<>();
@@ -100,10 +97,14 @@ class TeeProcessorTest {
     private static final List<TeeConsumer> CONSUMERS
             = asList(SINGLE_REQ_CONSUMER, UNIT_CONSUMER, BATCH_CONSUMER, FLUX_CONSUMER);
 
-    @Value
     private static class AfterSubscribe<T> implements Publisher<T> {
-        Publisher<T> delegate;
-        Runnable runnable;
+        private final Publisher<T> delegate;
+        private final Runnable runnable;
+
+        public AfterSubscribe(Publisher<T> delegate, Runnable runnable) {
+            this.delegate = delegate;
+            this.runnable = runnable;
+        }
 
         @Override public void subscribe(Subscriber<? super T> s) {
             delegate.subscribe(s);
@@ -111,14 +112,26 @@ class TeeProcessorTest {
         }
     }
 
-    @Value @Accessors(fluent = true)
     private static class TestData {
-        @ToString.Exclude Supplier<Flux<Integer>> source;
-        int repetition, consumers;
-        TeeConsumer consumer;
+        final Supplier<Flux<Integer>> source;
+        final int repetition, consumers;
+        final TeeConsumer consumer;
 
-        @ToString.Include List<Integer> expected() {
+        public TestData(Supplier<Flux<Integer>> source, int repetition, int consumers,
+                        TeeConsumer consumer) {
+            this.source = source;
+            this.repetition = repetition;
+            this.consumers = consumers;
+            this.consumer = consumer;
+        }
+
+        List<Integer> expected() {
             return requireNonNull(source.get().collectList().block());
+        }
+
+        @Override public String toString() {
+            return String.format("TestData{rep=%d, consumers=%d, consumer=%s, expected=%s}",
+                                 repetition, consumers, consumer, expected());
         }
     }
 
@@ -126,7 +139,7 @@ class TeeProcessorTest {
         List<TestData> scenarios = new ArrayList<>();
         IntStream.of(2, 1, 0, 16, 1024).forEach(size -> {
             Supplier<Flux<Integer>> supplier = () -> Flux.range(0, size);
-            for (val consumer : CONSUMERS) {
+            for (TeeConsumer consumer : CONSUMERS) {
                 for (Integer nConsumers : asList(1, 2, 3, 16)) {
                     for (int repetition = 0; repetition < 4; repetition++)
                         scenarios.add(new TestData(supplier, nConsumers, repetition, consumer));
@@ -138,10 +151,10 @@ class TeeProcessorTest {
 
     @ParameterizedTest @MethodSource
     void test(TestData ts) {
-        val subscribed = new CountDownLatch(ts.consumers);
-        val rawTee = new TeeProcessor<>(bindToAny(ts.source.get()));
-        val tee = new AfterSubscribe<>(rawTee, subscribed::countDown);
-        val ex = ts.expected();
+        CountDownLatch subscribed = new CountDownLatch(ts.consumers);
+        TeeProcessor<Integer> rawTee = new TeeProcessor<>(bindToAny(ts.source.get()));
+        AfterSubscribe<Integer> tee = new AfterSubscribe<>(rawTee, subscribed::countDown);
+        List<Integer> ex = ts.expected();
         List<AsyncTask<?>> tasks = new ArrayList<>();
         tasks.add(async(() -> {
             while (true) {
@@ -160,14 +173,14 @@ class TeeProcessorTest {
 
     static Stream<Arguments> testSingleConsumer() {
         List<Arguments> list = new ArrayList<>();
-        for (val consumer : CONSUMERS)
+        for (TeeConsumer consumer : CONSUMERS)
             Stream.of(0, 1, 2, 32).forEach(i -> list.add(arguments(consumer, i)));
         return list.stream();
     }
 
     @Timeout(10) @ParameterizedTest @MethodSource
     void testSingleConsumer(TeeConsumer consumer, int size) {
-        val tee = new TeeProcessor<>(bindToAny(Flux.range(0, size))).start();
+        TeeProcessor<Integer> tee = new TeeProcessor<>(bindToAny(Flux.range(0, size))).start();
         assertEquals(range(0, size).boxed().collect(toList()),
                      consumer.apply(tee));
     }
@@ -175,7 +188,7 @@ class TeeProcessorTest {
 
     @Timeout(10) @ParameterizedTest @ValueSource(ints = {0, 1, 4})
     void testCanStartAfterSubscribe(int size) throws ExecutionException, InterruptedException {
-        val tee = new TeeProcessor<>(bindToAny(Flux.range(0, size)));
+        TeeProcessor<Integer> tee = new TeeProcessor<>(bindToAny(Flux.range(0, size)));
         CompletableFuture<List<Integer>> list = new CompletableFuture<>();
         Semaphore subscribed = new Semaphore(0);
         tee.subscribe(new Subscriber<Integer>() {
@@ -202,9 +215,9 @@ class TeeProcessorTest {
     @Timeout(10) @Test
     void testErrorSourceSingleConsumer() {
         RuntimeException ex = new RuntimeException("test");
-        for (val consumer : CONSUMERS) {
+        for (TeeConsumer consumer : CONSUMERS) {
             try {
-                val tee = new TeeProcessor<Integer>(bindToAny(Flux.error(ex))).start();
+                TeeProcessor<Integer> tee = new TeeProcessor<Integer>(bindToAny(Flux.error(ex))).start();
                 consumer.apply(tee);
                 fail("Expected "+ex+" to be thrown");
             } catch (Throwable t) {
@@ -216,8 +229,8 @@ class TeeProcessorTest {
     @Timeout(10) @Test
     void testErrorSource() {
         RuntimeException ex = new RuntimeException("test");
-        val tee = new TeeProcessor<Integer>(bindToAny(Flux.error(ex))).start();
-        for (val consumer : CONSUMERS) {
+        TeeProcessor<Integer> tee = new TeeProcessor<Integer>(bindToAny(Flux.error(ex))).start();
+        for (TeeConsumer consumer : CONSUMERS) {
             try {
                 consumer.apply(tee);
                 fail("Expected "+ex+" to be thrown");
@@ -229,9 +242,9 @@ class TeeProcessorTest {
 
     @Timeout(20) @ParameterizedTest @ValueSource(ints = {0, 1, 3, 16, 32, 1024})
     void testDelayErrors(int size) throws InterruptedException {
-        val exception = new RuntimeException("test");
-        val flux = bindToAny(Flux.concat(Flux.range(0, size), Flux.error(exception)));
-        val tee = new TeeProcessor<>(flux).start();
+        RuntimeException exception = new RuntimeException("test");
+        FSPublisher<Integer> flux = bindToAny(Flux.concat(Flux.range(0, size), Flux.error(exception)));
+        TeeProcessor<Integer> tee = new TeeProcessor<>(flux).start();
         List<Integer> actual = new ArrayList<>();
         List<Throwable> errors = new ArrayList<>();
         Semaphore ready = new Semaphore(0);
@@ -271,8 +284,8 @@ class TeeProcessorTest {
 
     @Test
     void testSkipLostItems() throws ExecutionException, InterruptedException {
-        val source = bindToAny(Flux.range(0, 4));
-        val tee = new TeeProcessor<>(source).start();
+        FSPublisher<Integer> source = bindToAny(Flux.range(0, 4));
+        TeeProcessor<Integer> tee = new TeeProcessor<>(source).start();
 
         // consume two items
         CompletableFuture<Subscription> subscription = new CompletableFuture<>();
@@ -319,8 +332,8 @@ class TeeProcessorTest {
 
     @Test
     void testLostAllItems() {
-        val source = bindToAny(Flux.range(0, 2));
-        val tee = new TeeProcessor<>(source).errorOnLostItems().start();
+        FSPublisher<Integer> source = bindToAny(Flux.range(0, 2));
+        TeeProcessor<Integer> tee = new TeeProcessor<>(source).errorOnLostItems().start();
         assertEquals(asList(0, 1), SINGLE_REQ_CONSUMER.apply(tee));
         CompletableFuture<?> future = new CompletableFuture<>();
         tee.subscribe(new Subscriber<Integer>() {
@@ -342,8 +355,8 @@ class TeeProcessorTest {
 
     @Test
     void testLostFirstItems() throws ExecutionException, InterruptedException {
-        val source = bindToAny(Flux.range(0, 4));
-        val tee = new TeeProcessor<>(source).errorOnLostItems().start();
+        FSPublisher<Integer> source = bindToAny(Flux.range(0, 4));
+        TeeProcessor<Integer> tee = new TeeProcessor<>(source).errorOnLostItems().start();
         List<Throwable> failures = new ArrayList<>();
 
         // first consumer consumes 2/4 items
@@ -364,7 +377,7 @@ class TeeProcessorTest {
                 } else if (received.size() == 4) {
                     allItems.complete(received);
                 } else if (received.size() > 4) {
-                    val ex = new IllegalStateException("More than 4 items received");
+                    Exception ex = new IllegalStateException("More than 4 items received");
                     twoItems.completeExceptionally(ex);
                     failures.add(ex);
                 }
@@ -374,7 +387,7 @@ class TeeProcessorTest {
                     failures.add(t);
             }
             @Override public void onComplete() {
-                val ex = new IllegalStateException("Unexpected completion");
+                Exception ex = new IllegalStateException("Unexpected completion");
                 if (!twoItems.completeExceptionally(ex) || !allItems.completeExceptionally(ex))
                     failures.add(ex);
             }
@@ -387,7 +400,7 @@ class TeeProcessorTest {
         tee.subscribe(new Subscriber<Integer>() {
             @Override public void onSubscribe(Subscription s) { s.request(Long.MAX_VALUE); }
             @Override public void onNext(Integer i) {
-                val ex = new IllegalStateException("Unexpected item: " + i);
+                Exception ex = new IllegalStateException("Unexpected item: " + i);
                 if (!missingHistory.completeExceptionally(ex))
                     failures.add(ex);
             }
@@ -399,7 +412,7 @@ class TeeProcessorTest {
             }
 
             @Override public void onComplete() {
-                val ex = new IllegalStateException("Expected onError(), got onComplete");
+                Exception ex = new IllegalStateException("Expected onError(), got onComplete");
                 if (!missingHistory.completeExceptionally(ex))
                     failures.add(ex);
             }
@@ -421,9 +434,9 @@ class TeeProcessorTest {
 
     private void doTestWithMergePublisher(int runId) {
         int concurrency = Runtime.getRuntime().availableProcessors();
-        val tee = new TeeProcessor<>(bindToAny(Flux.range(0, 1024)));
-        val merge = new MergePublisher<Integer>("test", concurrency, concurrency,
-                                                false, null);
+        TeeProcessor<Integer> tee = new TeeProcessor<>(bindToAny(Flux.range(0, 1024)));
+        MergePublisher<Integer> merge = new MergePublisher<>("test", concurrency, concurrency,
+                false, null);
         range(0, concurrency*2).forEach(i
                 -> merge.addPublisher(new AbstractProcessor<Integer, Integer>(tee) {
                     @Override protected void handleOnNext(Integer i) { emit(i); }
@@ -431,9 +444,9 @@ class TeeProcessorTest {
                 }));
         merge.markCompletable();
         tee.start();
-        val expected = range(0, concurrency * 2).flatMap(i -> range(0, 1024))
+        Set<Integer> expected = range(0, concurrency * 2).flatMap(i -> range(0, 1024))
                                                 .boxed().collect(toSet());
-        val actual = Flux.from(merge).collect(Collectors.toSet()).block();
+        Set<Integer> actual = Flux.from(merge).collect(Collectors.toSet()).block();
         assertEquals(expected, actual);
     }
 
@@ -450,8 +463,8 @@ class TeeProcessorTest {
     void testStartAfterSubscribers(int size, int subscribers, TeeConsumer consumer) {
         int repetitions = size < 8 ? 100 : 10;
         for (int repetition = 0; repetition < repetitions; repetition++) {
-            val expected = range(0, size).boxed().collect(toList());
-            val tee = new TeeProcessor<>(bindToAny(Flux.range(0, size)));
+            List<Integer> expected = range(0, size).boxed().collect(toList());
+            TeeProcessor<Integer> tee = new TeeProcessor<>(bindToAny(Flux.range(0, size)));
             tee.startAfterSubscribedBy(subscribers);
             List<AsyncTask<?>> tasks = new ArrayList<>();
             for (int i = 0; i < subscribers; i++)

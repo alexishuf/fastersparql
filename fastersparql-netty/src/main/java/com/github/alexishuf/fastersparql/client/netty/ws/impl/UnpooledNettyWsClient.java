@@ -12,7 +12,6 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.Future;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.InetSocketAddress;
@@ -31,7 +30,7 @@ public class UnpooledNettyWsClient implements NettyWsClient {
                                  HttpHeaders headers, @Nullable SslContext sslContext) {
         this.elgHolder = elgHolder;
         InetSocketAddress address = createUnresolved(uri.getHost(), Protocol.port(uri));
-        val initializer = new WsChannelInitializer(sslContext, uri, headers, WsRecycler.CLOSE);
+        WsChannelInitializer initializer = new WsChannelInitializer(sslContext, uri, headers, WsRecycler.CLOSE);
         this.bootstrap = elgHolder.acquireBootstrap(address).handler(initializer);
     }
 

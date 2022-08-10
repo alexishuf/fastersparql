@@ -30,7 +30,7 @@ public class FasterSparqlOps {
      * Add a listener to receive metrics for any operator that gets executed after this call.
      * @param listener the listener
      */
-    public static void addGlobalMetricsListener(@lombok.NonNull PlanMetricsListener listener) {
+    public static void addGlobalMetricsListener(PlanMetricsListener listener) {
         if (!listeners.contains(listener))
             listeners.add(listener);
     }
@@ -119,86 +119,86 @@ public class FasterSparqlOps {
         return registry.get(name, flags).create(flags, ops);
     }
 
-    public static <R> EmptyPlan.EmptyPlanBuilder<R> empty(Class<? super R> rowClass) {
-        return EmptyPlan.<R>builder().rowClass(rowClass);
+    public static <R> EmptyPlan.Builder<R> empty(Class<? super R> rowClass) {
+        return EmptyPlan.builder(rowClass);
     }
 
-    public static <R> LeafPlan.LeafPlanBuilder<R> query(SparqlClient<R, ?> client,
+    public static <R> LeafPlan.Builder<R> query(SparqlClient<R, ?> client,
                                                         CharSequence query) {
         return LeafPlan.builder(client, query);
     }
 
-    public static <R> JoinPlan.JoinPlanBuilder<R> join(List<? extends Plan<R>> inputs, long flags) {
+    public static <R> JoinPlan.Builder<R> join(List<? extends Plan<R>> inputs, long flags) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Join.class, flags, rowClass).<R>asPlan().operands(inputs);
     }
-    public static <R> JoinPlan.JoinPlanBuilder<R> join(List<? extends Plan<R>> inputs) {
+    public static <R> JoinPlan.Builder<R> join(List<? extends Plan<R>> inputs) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Join.class, ASYNC, rowClass).<R>asPlan().operands(inputs);
     }
 
-    public static <R> JoinPlan.JoinPlanBuilder<R> join(Plan<R> left, Plan<R> right, long flags) {
+    public static <R> JoinPlan.Builder<R> join(Plan<R> left, Plan<R> right, long flags) {
         return create(Join.class, flags, left.rowClass()).<R>asPlan().operands(asList(left, right));
     }
-    public static <R> JoinPlan.JoinPlanBuilder<R> join(Plan<R> left, Plan<R> right) {
+    public static <R> JoinPlan.Builder<R> join(Plan<R> left, Plan<R> right) {
         return create(Join.class, ASYNC, left.rowClass()).<R>asPlan().operands(asList(left, right));
     }
 
-    public static <R> UnionPlan.UnionPlanBuilder<R> union(List<? extends Plan<R>> inputs,
+    public static <R> UnionPlan.Builder<R> union(List<? extends Plan<R>> inputs,
                                                           long flags) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Union.class, flags, rowClass).<R>asPlan().inputs(inputs);
     }
-    public static <R> UnionPlan.UnionPlanBuilder<R> union(List<? extends Plan<R>> inputs) {
+    public static <R> UnionPlan.Builder<R> union(List<? extends Plan<R>> inputs) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Union.class, ASYNC, rowClass).<R>asPlan().inputs(inputs);
     }
 
-    public static <R> MergePlan.MergePlanBuilder<R> merge(List<? extends Plan<R>> inputs,
+    public static <R> MergePlan.Builder<R> merge(List<? extends Plan<R>> inputs,
                                                           long flags) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Merge.class, flags, rowClass).<R>asPlan().inputs(inputs);
     }
-    public static <R> MergePlan.MergePlanBuilder<R> merge(List<? extends Plan<R>> inputs) {
+    public static <R> MergePlan.Builder<R> merge(List<? extends Plan<R>> inputs) {
         Class<? super R> rowClass = inputs.iterator().next().rowClass();
         return create(Merge.class, ASYNC, rowClass).<R>asPlan().inputs(inputs);
     }
 
-    public static <R> LeftJoinPlan.LeftJoinPlanBuilder<R>
+    public static <R> LeftJoinPlan.Builder<R>
     leftJoin(Plan<R> left, Plan<R> right, long flags) {
         return create(LeftJoin.class, flags, left.rowClass()).<R>asPlan().left(left).right(right);
     }
-    public static <R> LeftJoinPlan.LeftJoinPlanBuilder<R> leftJoin(Plan<R> left, Plan<R> right) {
+    public static <R> LeftJoinPlan.Builder<R> leftJoin(Plan<R> left, Plan<R> right) {
         return create(LeftJoin.class, 0L, left.rowClass()).<R>asPlan().left(left).right(right);
     }
 
-    public static <R> SlicePlan.SlicePlanBuilder<R> slice(Plan<R> input, long flags) {
+    public static <R> SlicePlan.Builder<R> slice(Plan<R> input, long flags) {
         return create(Slice.class, flags, input.rowClass()).<R>asPlan().input(input);
 
     }
-    public static <R> SlicePlan.SlicePlanBuilder<R> slice(Plan<R> input) {
+    public static <R> SlicePlan.Builder<R> slice(Plan<R> input) {
         return create(Slice.class, 0L, input.rowClass()).<R>asPlan().input(input);
     }
 
-    public static <R> DistinctPlan.DistinctPlanBuilder<R>
+    public static <R> DistinctPlan.Builder<R>
     distinct(Plan<R> input, long flags) {
         return create(Distinct.class, flags, input.rowClass()).<R>asPlan().input(input);
     }
-    public static <R> DistinctPlan.DistinctPlanBuilder<R>
+    public static <R> DistinctPlan.Builder<R>
     distinct(Plan<R> input) {
         return create(Distinct.class, 0L, input.rowClass()).<R>asPlan().input(input);
     }
 
-    public static <R> ProjectPlan.ProjectPlanBuilder<R>
+    public static <R> ProjectPlan.Builder<R>
     project(Plan<R> input, List<String> vars, long flags) {
         return create(Project.class, flags, input.rowClass()).<R>asPlan().input(input).vars(vars);
     }
-    public static <R> ProjectPlan.ProjectPlanBuilder<R>
+    public static <R> ProjectPlan.Builder<R>
     project(Plan<R> input, List<String> vars) {
         return create(Project.class, 0L, input.rowClass()).<R>asPlan().input(input).vars(vars);
     }
 
-    public static <R> FilterPlan.FilterPlanBuilder<R>
+    public static <R> FilterPlan.Builder<R>
     filter(Plan<R> input, Collection<? extends CharSequence> filters,
            Class<? super R> rowClass, long flags) {
         List<String> filtersList;
@@ -220,27 +220,27 @@ public class FasterSparqlOps {
         }
         return create(Filter.class, flags, rowClass).<R>asPlan().input(input).filters(filtersList);
     }
-    public static <R> FilterPlan.FilterPlanBuilder<R>
+    public static <R> FilterPlan.Builder<R>
     filter(Plan<R> input, Collection<? extends CharSequence> filters) {
         return filter(input, filters, input.rowClass(), 0L);
     }
 
-    public static <R> ExistsPlan.ExistsPlanBuilder<R>
+    public static <R> ExistsPlan.Builder<R>
     exists(Plan<R> input, boolean negate, Plan<R> filter,
                  Class<? super R> rowClass, long flags) {
         return create(FilterExists.class, flags, rowClass).<R>asPlan()
                 .input(input).negate(negate).filter(filter);
     }
-    public static <R> ExistsPlan.ExistsPlanBuilder<R>
+    public static <R> ExistsPlan.Builder<R>
     exists(Plan<R> input, boolean negate, Plan<R> filter) {
         return exists(input, negate, filter, input.rowClass(), 0L);
     }
 
-    public static <R> MinusPlan.MinusPlanBuilder<R>
+    public static <R> MinusPlan.Builder<R>
     minus(Plan<R> left, Plan<R> right, long flags) {
         return create(Minus.class, flags, left.rowClass()).<R>asPlan().left(left).right(right);
     }
-    public static <R> MinusPlan.MinusPlanBuilder<R>
+    public static <R> MinusPlan.Builder<R>
     minus(Plan<R> left, Plan<R> right) {
         return create(Minus.class, 0L, left.rowClass()).<R>asPlan().left(left).right(right);
     }

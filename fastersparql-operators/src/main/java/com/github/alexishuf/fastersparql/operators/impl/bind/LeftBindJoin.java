@@ -5,16 +5,13 @@ import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.operators.LeftJoin;
 import com.github.alexishuf.fastersparql.operators.plan.LeftJoinPlan;
 import com.github.alexishuf.fastersparql.operators.providers.LeftJoinProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import static com.github.alexishuf.fastersparql.operators.impl.bind.NativeBindHelper.preferNative;
 
-@Value @Accessors(fluent = true)
-public class LeftBindJoin implements LeftJoin {
-    RowOperations rowOps;
-    int bindConcurrency;
+public final class LeftBindJoin implements LeftJoin {
+    private final RowOperations rowOps;
+    private final int bindConcurrency;
 
     public static class Provider implements LeftJoinProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -23,6 +20,11 @@ public class LeftBindJoin implements LeftJoin {
         @Override public LeftJoin create(long flags, RowOperations rowOperations) {
             return new LeftBindJoin(rowOperations, BindJoin.Provider.concurrency(flags));
         }
+    }
+
+    public LeftBindJoin(RowOperations rowOps, int bindConcurrency) {
+        this.rowOps = rowOps;
+        this.bindConcurrency = bindConcurrency;
     }
 
     @Override public <R> Class<R> rowClass() {

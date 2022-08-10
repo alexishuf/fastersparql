@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.sparql.Binding;
 import com.github.alexishuf.fastersparql.operators.Project;
-import lombok.Builder;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -15,11 +14,31 @@ public class ProjectPlan<R> extends AbstractUnaryPlan<R, ProjectPlan<R>> {
     private final Project op;
     private final List<String> vars;
 
-    @Builder
-    public ProjectPlan(@lombok.NonNull Class<? super R> rowClass, @lombok.NonNull Project op,
-                       @lombok.NonNull Plan<R> input, @lombok.NonNull List<String> vars,
+    public static final class Builder<T> {
+        private Project op;
+        private Plan<T> input;
+        private List<String> vars;
+        private @Nullable ProjectPlan<T> parent;
+        private @Nullable String name;
+
+        public Builder(Project op) { this.op = op; }
+
+        public Builder<T> op(Project value)                      { op = value; return this; }
+        public Builder<T> input(Plan<T> value)                   { input = value; return this; }
+        public Builder<T> vars(List<String> value)               { vars = value; return this; }
+        public Builder<T> parent(@Nullable ProjectPlan<T> value) { parent = value; return this; }
+        public Builder<T> name(@Nullable String value)           { name = value; return this; }
+
+        public ProjectPlan<T> build() {
+            return new ProjectPlan<>(op, input, vars, parent, name);
+        }
+    }
+
+    public static <T> Builder<T> builder(Project op) { return new Builder<>(op); }
+
+    public ProjectPlan(Project op, Plan<R> input, List<String> vars,
                        @Nullable ProjectPlan<R> parent, @Nullable String name) {
-        super(rowClass, Collections.singletonList(input),
+        super(input.rowClass(), Collections.singletonList(input),
               name == null ? "Project-"+input.name() : name, parent);
         this.op = op;
         this.vars = vars;
@@ -37,8 +56,7 @@ public class ProjectPlan<R> extends AbstractUnaryPlan<R, ProjectPlan<R>> {
         }
         if (remaining.size() == vars.size())
             remaining = vars; // let newer ArrayList<> be collected
-        return new ProjectPlan<>(rowClass, op, operands.get(0).bind(binding),
-                                 remaining, this, name);
+        return new ProjectPlan<>(op, operands.get(0).bind(binding), remaining, this, name);
     }
 
     @Override public boolean equals(Object o) {

@@ -16,8 +16,6 @@ import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.MergePlan;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.providers.MergeProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.reactivestreams.Subscriber;
 
@@ -29,11 +27,11 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlo
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 import static java.lang.System.nanoTime;
 
-@Value @Accessors(fluent = true)
-public class SimpleMerge implements Merge {
-    RowOperations rowOps;
-    boolean parallel;
-    int window;
+
+public final class SimpleMerge implements Merge {
+    private final RowOperations rowOps;
+    private final boolean parallel;
+    private final int window;
 
     public static class Provider implements MergeProvider {
         @Override public @NonNegative int bid(long flags) { return BidCosts.BUILTIN_COST; }
@@ -42,6 +40,12 @@ public class SimpleMerge implements Merge {
             boolean parallel = (flags & OperatorFlags.ASYNC) != 0;
             return new SimpleMerge(rowOps, parallel, -1);
         }
+    }
+
+    public SimpleMerge(RowOperations rowOps, boolean parallel, int window) {
+        this.rowOps = rowOps;
+        this.parallel = parallel;
+        this.window = window;
     }
 
     @Override public <R> Class<R> rowClass() {

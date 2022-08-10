@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.client.util.sparql;
 
-import lombok.Value;
-import lombok.experimental.Accessors;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -41,10 +39,17 @@ class BindingTest {
                 BindingTest::fillMapByName
         );
 
-        @Value @Accessors(fluent = true)
-        class P {
-            List<String> vars;
-            List<String> values;
+        final class P {
+            final List<String> vars;
+            final List<String> values;
+
+            public P(List<String> vars, List<String> values) {
+                this.vars = vars;
+                this.values = values;
+            }
+
+            List<String> vars() {return vars;}
+            List<String> values() {return values;}
         }
 
         return Stream.of(

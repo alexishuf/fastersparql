@@ -8,18 +8,14 @@ import com.github.alexishuf.fastersparql.operators.Project;
 import com.github.alexishuf.fastersparql.operators.errors.IllegalOperatorArgumentException;
 import com.github.alexishuf.fastersparql.operators.plan.ProjectPlan;
 import com.github.alexishuf.fastersparql.operators.providers.ProjectProvider;
-import lombok.Value;
-import lombok.experimental.Accessors;
-import lombok.val;
 import org.checkerframework.checker.index.qual.NonNegative;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
-@Value @Accessors(fluent = true)
-public class SimpleProject implements Project {
-    RowOperations rowOperations;
+public final class SimpleProject implements Project {
+    private final RowOperations rowOperations;
 
     public static class Provider implements ProjectProvider {
         @Override public @NonNegative int bid(long flags) {
@@ -32,6 +28,11 @@ public class SimpleProject implements Project {
             return new SimpleProject(rowOperations);
         }
     }
+
+    public SimpleProject(RowOperations rowOperations) {
+        this.rowOperations = rowOperations;
+    }
+
 
     @Override public <R> Class<R> rowClass() {
         //noinspection unchecked
@@ -48,7 +49,8 @@ public class SimpleProject implements Project {
         if (varsSet.size() < vars.size())
             vars = new ArrayList<>(varsSet);
         Results<R> input = plan.input().execute();
-        val processor = new ProjectingProcessor<>(input, vars, rowOperations, plan);
+        ProjectingProcessor<R> processor
+                = new ProjectingProcessor<>(input, vars, rowOperations, plan);
         return new Results<>(vars, input.rowClass(), processor);
     }
 

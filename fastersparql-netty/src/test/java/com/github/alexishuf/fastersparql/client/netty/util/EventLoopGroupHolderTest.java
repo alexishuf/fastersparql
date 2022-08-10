@@ -11,6 +11,8 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.*;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EventLoopGroupHolderTest {
@@ -32,8 +34,7 @@ class EventLoopGroupHolderTest {
     }
 
     private void doTestKeepAlive1Second() throws InterruptedException {
-        EventLoopGroupHolder holder = EventLoopGroupHolder.builder().keepAlive(500)
-                .keepAliveTimeUnit(TimeUnit.MILLISECONDS).transport(NettyTransport.NIO).build();
+        EventLoopGroupHolder holder = new EventLoopGroupHolder(NettyTransport.NIO, 500, MILLISECONDS);
         EventLoopGroup elg = holder.acquire();
         assertFalse(elg.isShutdown());
         assertFalse(elg.isShuttingDown());
@@ -68,7 +69,7 @@ class EventLoopGroupHolderTest {
     }
 
     private void doTestNoKeepAlive() {
-        EventLoopGroupHolder holder = EventLoopGroupHolder.builder().transport(NettyTransport.NIO).keepAlive(0).build();
+        EventLoopGroupHolder holder = new EventLoopGroupHolder(NettyTransport.NIO, 0, SECONDS);
         EventLoopGroup elg1 = holder.acquire();
         assertFalse(elg1.isShutdown());
         assertFalse(elg1.isShuttingDown());
@@ -99,7 +100,7 @@ class EventLoopGroupHolderTest {
     }
 
     private void doTestConcurrency() throws InterruptedException, ExecutionException {
-        EventLoopGroupHolder holder = EventLoopGroupHolder.builder().build();
+        EventLoopGroupHolder holder = new EventLoopGroupHolder(null, 0, SECONDS);
         int tasks = Runtime.getRuntime().availableProcessors() * 64;
         List<Future<Integer>> futures = new ArrayList<>(tasks);
         ExecutorService executor = Executors.newCachedThreadPool();

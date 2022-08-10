@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.Graph;
 import com.github.alexishuf.fastersparql.client.util.Throwing;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.reactive.MappingPublisher;
-import lombok.RequiredArgsConstructor;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 
 import java.nio.ByteBuffer;
@@ -20,12 +19,15 @@ import java.util.concurrent.Future;
 public class ByteArrayFragmentParser implements FragmentParser<byte[]> {
     public static final ByteArrayFragmentParser INSTANCE = new ByteArrayFragmentParser();
 
-    @RequiredArgsConstructor
     static final class Encoder implements Throwing.Function<CharSequence, byte[]> {
         private final Future<Charset> charsetFuture;
         private CharsetEncoder encoder;
         private ByteBuffer bb;
         private CharBuffer carry;
+
+        public Encoder(Future<Charset> charsetFuture) {
+            this.charsetFuture = charsetFuture;
+        }
 
         @EnsuresNonNull({"this.encoder", "this.bb", "this.carry"})
         private void init() throws ExecutionException, InterruptedException {

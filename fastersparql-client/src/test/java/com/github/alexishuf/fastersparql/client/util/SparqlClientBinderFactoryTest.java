@@ -8,8 +8,8 @@ import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
 import com.github.alexishuf.fastersparql.client.util.sparql.ListBinding;
 import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import lombok.val;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.value.qual.MinLen;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 
@@ -56,8 +56,8 @@ class SparqlClientBinderFactoryTest {
             assert bindType == null;
             assertEquals(expectSparql, sparql.toString());
             assertSame(expectConfiguration, configuration);
-            val vars = SparqlUtils.publicVars(sparql);
-            val publisher = FSPublisher.bindToAny(Flux.fromIterable(this.results));
+            List<@MinLen(1) String> vars = SparqlUtils.publicVars(sparql);
+            FSPublisher<List<String>> publisher = FSPublisher.bindToAny(Flux.fromIterable(this.results));
             return new Results<>(vars, rowClass(), publisher);
         }
         @Override
@@ -77,7 +77,7 @@ class SparqlClientBinderFactoryTest {
     @Test
     void testJoin() {
         MockClient client = new MockClient(BOUND_SPARQL, singletonList(singletonList("<yValue>")));
-        val binder = createBinder(singletonList("x"), client, BindType.JOIN);
+        SparqlClientBinder<List<String>> binder = createBinder(singletonList("x"), client, BindType.JOIN);
         FSPublisher<List<String>> boundPublisher = binder.bind(singletonList("<xValue>"));
         List<List<String>> actual = Flux.from(boundPublisher).collectList().block();
         assertEquals(singletonList(asList("<xValue>", "<yValue>")), actual);
@@ -86,7 +86,7 @@ class SparqlClientBinderFactoryTest {
     @Test
     void testLeftJoinMatching() {
         MockClient client = new MockClient(BOUND_SPARQL, singletonList(singletonList("<yValue>")));
-        val binder = createBinder(singletonList("x"), client, BindType.LEFT_JOIN);
+        SparqlClientBinder<List<String>> binder = createBinder(singletonList("x"), client, BindType.LEFT_JOIN);
         FSPublisher<List<String>> boundPublisher = binder.bind(singletonList("<xValue>"));
         List<List<String>> actual = Flux.from(boundPublisher).collectList().block();
         assertEquals(singletonList(asList("<xValue>", "<yValue>")), actual);
@@ -95,7 +95,7 @@ class SparqlClientBinderFactoryTest {
     @Test
     void testLeftJoinNotMatching() {
         MockClient client = new MockClient(BOUND_SPARQL, emptyList());
-        val binder = createBinder(singletonList("x"), client, BindType.LEFT_JOIN);
+        SparqlClientBinder<List<String>> binder = createBinder(singletonList("x"), client, BindType.LEFT_JOIN);
         FSPublisher<List<String>> boundPublisher = binder.bind(singletonList("<xValue>"));
         List<List<String>> actual = Flux.from(boundPublisher).collectList().block();
         assertEquals(singletonList(asList("<xValue>", null)), actual);
@@ -104,7 +104,7 @@ class SparqlClientBinderFactoryTest {
     @Test
     void testExistsMatches() {
         MockClient client = new MockClient(BOUND_SPARQL, singletonList(singletonList("<yValue>")));
-        val binder = createBinder(singletonList("x"), client, BindType.EXISTS);
+        SparqlClientBinder<List<String>> binder = createBinder(singletonList("x"), client, BindType.EXISTS);
         assertEquals(singletonList("x"), binder.resultVars());
 
         FSPublisher<List<String>> bp1 = binder.bind(singletonList("<xValue>"));
@@ -118,7 +118,7 @@ class SparqlClientBinderFactoryTest {
     @Test
     void testNotExists() {
         MockClient client = new MockClient(BOUND_SPARQL, singletonList(singletonList("<yValue>")));
-        val binder = createBinder(singletonList("x"), client, BindType.NOT_EXISTS);
+        SparqlClientBinder<List<String>> binder = createBinder(singletonList("x"), client, BindType.NOT_EXISTS);
         assertEquals(singletonList("x"), binder.resultVars());
 
         FSPublisher<List<String>> bp1 = binder.bind(singletonList("<xValue>"));

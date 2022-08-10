@@ -3,8 +3,6 @@ package com.github.alexishuf.fastersparql;
 import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.util.CSUtils;
 import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import lombok.Data;
-import lombok.experimental.Accessors;
 import org.opentest4j.AssertionFailedError;
 
 import java.util.*;
@@ -15,7 +13,6 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 import static org.junit.jupiter.api.Assertions.*;
 
-@Data @Accessors(fluent = true, chain = true)
 public class ResultsChecker {
     protected static final String PREFIX;
     protected static final Map<String, String> PREDEFINED;
@@ -70,16 +67,20 @@ public class ResultsChecker {
         return new ResultsChecker(vars, values);
     }
 
+    public List<String>               vars()          { return vars; }
+    public List<List<String>>         expected()      { return expected; }
+
     public void assertExpected(Results<?> results) {
         List<Object> actual = new ArrayList<>();
-        IterableAdapter<?> adapter = new IterableAdapter<>(results.publisher());
-        adapter.forEach(r -> actual.add(ResultsChecker.asCanonRow(r)));
-        if (adapter.hasError()) {
-            if (expectedError != null) {
-                Class<? extends Throwable> errorClass = requireNonNull(adapter.error()).getClass();
-                assertTrue(expectedError.isAssignableFrom(errorClass));
-            } else {
-                fail(adapter.error());
+        try (IterableAdapter<?> adapter = new IterableAdapter<>(results.publisher())) {
+            adapter.forEach(r -> actual.add(ResultsChecker.asCanonRow(r)));
+            if (adapter.hasError()) {
+                if (expectedError != null) {
+                    Class<? extends Throwable> errorClass = requireNonNull(adapter.error()).getClass();
+                    assertTrue(expectedError.isAssignableFrom(errorClass));
+                } else {
+                    fail(adapter.error());
+                }
             }
         }
         if (checkOrder) {
