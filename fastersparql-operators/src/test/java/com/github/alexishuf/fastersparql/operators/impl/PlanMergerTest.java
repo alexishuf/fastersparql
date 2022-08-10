@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class PlanMergerTest {
-    private static final DummySparqlClient<String[], byte[]> client = new DummySparqlClient<>();
+    private static final DummySparqlClient<String[], byte[]> client = new DummySparqlClient<>(String[].class, byte[].class);
 
     @SuppressWarnings("unused") static Stream<Arguments> testBind() {
         return Stream.of(

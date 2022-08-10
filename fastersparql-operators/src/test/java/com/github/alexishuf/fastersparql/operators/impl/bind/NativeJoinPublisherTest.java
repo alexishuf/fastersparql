@@ -46,6 +46,7 @@ class NativeJoinPublisherTest {
         private final SparqlEndpoint endpoint;
 
         public MockClient() {
+            super(String[].class, byte[].class);
             endpoint = SparqlEndpoint.parse("http://"+nextId.getAndIncrement()+".example.org/sparql");
         }
 

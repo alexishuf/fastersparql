@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class JoinHelpersTest {
-    private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>();
+    private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>(String[].class, byte[].class);
 
     @SuppressWarnings("unused") static Stream<Arguments> testIsProduct() {
         return Stream.of(

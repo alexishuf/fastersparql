@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class AvoidCartesianJoinReorderStrategyTest {
-    private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>();
+    private static final SparqlClient<String[], byte[]> client = new DummySparqlClient<>(String[].class, byte[].class);
 
     private Plan<String[]> asPlan(String sparql) {
         return LeafPlan.builder(client, sparql).build();

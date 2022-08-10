@@ -9,19 +9,23 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class DummySparqlClient<R,F> implements SparqlClient<R,F> {
-    @Override public Class<R> rowClass() {
-        //noinspection unchecked
-        return (Class<R>) Object.class;
+    Class<R> rowClass;
+    Class<F> fragmentClass;
+
+    public DummySparqlClient(Class<R> rowClass, Class<F> fragmentClass) {
+        this.rowClass = rowClass;
+        this.fragmentClass = fragmentClass;
     }
 
-    @Override public Class<F> fragmentClass() {
+    public DummySparqlClient(Class<R> rowClass) {
         //noinspection unchecked
-        return (Class<F>) Object.class;
+        this(rowClass, (Class<F>) Object.class);
     }
 
-    @Override public SparqlEndpoint endpoint() {
-        throw new UnsupportedOperationException();
-    }
+    @Override public Class<R>       rowClass() { return rowClass; }
+    @Override public Class<F>  fragmentClass() { return fragmentClass; }
+    @Override public SparqlEndpoint endpoint() { return SparqlEndpoint.parse("http://example.org/sparql"); }
+    @Override public void close() { }
 
     @Override
     public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration,
@@ -34,5 +38,5 @@ public class DummySparqlClient<R,F> implements SparqlClient<R,F> {
         throw new UnsupportedOperationException();
     }
 
-    @Override public void close() { }
+
 }
