@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.client.model.Results;
 import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
 import com.github.alexishuf.fastersparql.client.util.reactive.AbstractProcessor;
 import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
+import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
 import com.github.alexishuf.fastersparql.operators.BidCosts;
 import com.github.alexishuf.fastersparql.operators.FasterSparqlOpProperties;
 import com.github.alexishuf.fastersparql.operators.Filter;
@@ -29,6 +30,8 @@ import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.hasGlo
 import static com.github.alexishuf.fastersparql.operators.FasterSparqlOps.sendMetrics;
 
 public final class SimpleFilter implements Filter {
+    private static final Logger log = LoggerFactory.getLogger(SimpleFilter.class);
+
     private final RowOperations rowOperations;
     private final ExprEvaluatorCompiler compiler;
 
@@ -80,9 +83,18 @@ public final class SimpleFilter implements Filter {
             return left;
         Class<? super R> rowClass = left.rowClass();
         List<ExprEvaluator<R>> evaluators = new ArrayList<>();
+        List<String> knownVars = plan.input().publicVars();
+        List<String> missingVars = new ArrayList<>();
         for (CharSequence expr : filters) {
+            for (String v : SparqlUtils.publicVars(expr)) {
+                if (knownVars.contains(v))
+                    missingVars.add(v);
+            }
             evaluators.add(compiler.compile(rowClass, rowOperations, left.vars(), expr));
         }
+        if (!missingVars.isEmpty())
+            log.warn("Filter vars {} not provided by operand of {}", missingVars, this);
+
         FilterPublisher<R> pub = new FilterPublisher<>(left.publisher(), evaluators, plan);
         return new Results<>(left.vars(), rowClass, pub);
     }
