@@ -82,6 +82,8 @@ public class Async {
      * @return A new {@link AsyncTask} that will complete with stage result or exception.
      */
     public static <T> AsyncTask<T> wrap(CompletionStage<T> stage) {
+        if (stage instanceof AsyncTask)
+            return (AsyncTask<T>) stage;
         CompletableAsyncTask<T> task = new CompletableAsyncTask<>();
         stage.handle((r, t) -> t == null ? task.complete(r) : task.completeExceptionally(t));
         return task;
@@ -260,7 +262,7 @@ public class Async {
         return task;
     }
 
-    private static ScheduledExecutorService scheduled() {
+    public static ScheduledExecutorService scheduled() {
         if (SCHEDULED == null) {
             Factory f = new Factory("FasterSparqlScheduled");
             int core = Math.min(1, Runtime.getRuntime().availableProcessors() / 2);
@@ -269,7 +271,7 @@ public class Async {
         return SCHEDULED;
     }
 
-    private static ExecutorService unbounded() {
+    public static ExecutorService unbounded() {
         if (UNBOUNDED == null)
             UNBOUNDED = Executors.newCachedThreadPool(new Factory("FasterSparql"));
         return UNBOUNDED;
