@@ -37,4 +37,10 @@ public interface WebSocketResultsParserConsumer extends ResultsParserConsumer {
      * An {@link ResultsParserConsumer#end()} will nevertheless follow
      */
     void cancelled();
+
+    /** Called when the server sent a !ping message, which must be replied with an !ping-ack. */
+    void ping();
+
+    /** Called when the server sent a !ping-ack message. */
+    void pingAck();
 }

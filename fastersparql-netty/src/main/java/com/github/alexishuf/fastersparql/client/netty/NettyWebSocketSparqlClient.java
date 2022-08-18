@@ -423,6 +423,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
             @Override public void activeBinding(String[] row) {
                 tryComplete(null, "Unexpected !active-binding");
             }
+            @Override public void ping() { sendFrame("!ping-ack\n"); }
+            @Override public void pingAck() { }
             @Override public void vars(List<String> vars) {
                 projector = Merger.forProjection(ARRAY_OPS, QueryHandler.this.vars, vars);
             }
@@ -613,6 +615,8 @@ public class NettyWebSocketSparqlClient<R, F> implements SparqlClient<R, F> {
                 serverCancelled = true;
                 log.debug("{}: server-sent !cancelled", BindHandler.this);
             }
+            @Override public void ping() { sendFrame("!ping-ack\n"); }
+            @Override public void pingAck() { }
             @Override public void actionQueue(int n)          { }
             @Override public void onError(String message)     { tryComplete(null, message); }
         });

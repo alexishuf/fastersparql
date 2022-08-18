@@ -129,6 +129,10 @@ public class WebSocketResultsParser implements ResultsParser {
                 bindingTerms.add(null);
             consumer.activeBinding(bindingTerms.toArray(new String[0]));
             bindingTerms.clear();
+        } else if (startsWith(input, begin, end, "!ping-ack")) {
+            consumer.pingAck();
+        } else if (startsWith(input, begin, end, "!ping")) {
+            consumer.ping();
         } else if (input.charAt(begin) == '!') {
             consumer.onError("Unexpected control message: "+ input.subSequence(begin, end));
         }

@@ -90,7 +90,7 @@ class WebSocketResultsParserTest {
         private final List<List<String>> rows = new ArrayList<>();
         private final List<String> errors = new ArrayList<>();
         private int endCount = 0;
-        @SuppressWarnings("unused") private int cancelledCount = 0;
+        @SuppressWarnings("unused") private int cancelledCount = 0, pingCount, pingAckCount;
         private final List<List<String>> activeBindings = new ArrayList<>();
         private final List<String> bindRequests = new ArrayList<>();
         private final List<Integer> actionQueues = new ArrayList<>();
@@ -105,6 +105,8 @@ class WebSocketResultsParserTest {
         @Override public void end()                       { this.endCount++; }
         @Override public void cancelled()                 { this.cancelledCount++; }
         @Override public void onError(String message)     { this.errors.add(message); }
+        @Override public void ping()                      { this.pingCount++; }
+        @Override public void pingAck()                   { this.pingAckCount++; }
 
         public void check(ParseResult expected) {
             assertEquals(expected.vars, vars);
