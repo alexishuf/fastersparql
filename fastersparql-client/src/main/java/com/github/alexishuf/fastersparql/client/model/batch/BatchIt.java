@@ -66,8 +66,8 @@ public interface BatchIt<T> extends Iterator<T>, AutoCloseable {
     /**
      * Get the next batch as an array.
      *
-     * The array ownership is transferred to the called, meaning it can be mutated or held without
-     * affecting or being affected by subsequent {@code nextBatch()} calls.
+     * <p>The array ownership is transferred to the called, meaning it can be mutated or held without
+     * affecting or being affected by subsequent {@code nextBatch()} calls.</p>
      *
      * @return the next batch as an array. An empty batch signals the iterator end ,
      *         i.e., {@code hasNext() == false}.
@@ -78,9 +78,9 @@ public interface BatchIt<T> extends Iterator<T>, AutoCloseable {
      * Similar to {@link BatchIt#nextBatch()}, but adds elements to a pre-existing
      * collection instead of allocating a new array.
      *
-     * Note: {@link Collection#clear()} is not called before the elements are
+     * <p>Note: {@link Collection#clear()} is not called before the elements are
      * {@link Collection#add(Object)}ed. See {@link BatchIt#replaceWithNextBatch(Collection)}
-     * if a {@code clear} is desired.
+     * if a {@code clear} is desired.</p>
      *
      * @param destination where to add batch elements.
      * @return the batch size: number of elements added to {@code destination}.
@@ -99,12 +99,12 @@ public interface BatchIt<T> extends Iterator<T>, AutoCloseable {
      * Signals the iterator will not be used anymore and background processing (if any) as
      * well as resources (opn files and connections) may be safely closed.
      *
-     * Calling {@code nextBatch()} after this method will result in a {@link IllegalStateException}.
+     * <p>Calling {@code nextBatch()} after this method will result in a {@link IllegalStateException}.</p>
      *
-     * The cleanup performed by this method occurs implicitly if the {@link BatchIt} is
+     * <p>The cleanup performed by this method occurs implicitly if the {@link BatchIt} is
      * consumed until its end with {@code nextBatch()}/{@code next()} calls. However, if the
      * cleanup is implicit, subsequent {@code nextBatch()} calls will simply return empty batches
-     * instead of raising an {@link IllegalStateException}.
+     * instead of raising an {@link IllegalStateException}.</p>
      */
     @Override void close();
 }

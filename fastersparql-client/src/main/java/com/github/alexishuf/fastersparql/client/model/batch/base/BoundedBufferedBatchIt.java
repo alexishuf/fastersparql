@@ -18,9 +18,9 @@ public abstract class BoundedBufferedBatchIt<T> extends BufferedBatchIt<T> {
     /**
      * Set the maximum number of ready batches at any point.
      *
-     * If this limit is reached, calls to {@link BoundedBufferedBatchIt#feed(Object)} will block
+     * <p>If this limit is reached, calls to {@link BoundedBufferedBatchIt#feed(Object)} will block
      * until enough batches are consumed to bring the number of ready buffered batches below
-     * {@code max}.
+     * {@code max}.</p>
      *
      * The default is {@link Integer#MAX_VALUE}, meaning there is no limit.
      *
@@ -37,8 +37,8 @@ public abstract class BoundedBufferedBatchIt<T> extends BufferedBatchIt<T> {
     /**
      * Set the maximum number of elements distributed across all buffered ready batches.
      *
-     * If there are more than {@code max} elements ready,
-     * {@link BoundedBufferedBatchIt#feed(Object)} will block until a batch gets consumed.
+     * <p>If there are more than {@code max} elements ready,
+     * {@link BoundedBufferedBatchIt#feed(Object)} will block until a batch gets consumed.</p>
      *
      * The default is {@link Long#MAX_VALUE}, meaning there is no limit.
      *

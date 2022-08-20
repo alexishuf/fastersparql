@@ -16,8 +16,8 @@ public class IteratorBatchIt<T> extends UnitaryBatchIt<T> {
     /**
      * Create a new adapter for {@code it}.
      *
-     * If {@code it} imlements {@link AutoCloseable}, it will be {@code close()}d when
-     * this {@link IteratorBatchIt} finishes or is {@link IteratorBatchIt#close()}d.
+     * <p>If {@code it} imlements {@link AutoCloseable}, it will be {@code close()}d when
+     * this {@link IteratorBatchIt} finishes or is {@link IteratorBatchIt#close()}d.</p>
      *
      * @param it the iterator to wrap.
      * @param elementCls the class of elements produced by {@code it.next()}.
