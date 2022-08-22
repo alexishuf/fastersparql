@@ -140,7 +140,7 @@ public class SparqlClientTest {
     private @Nullable SparqlEndpoint asWs(SparqlEndpoint ep) {
         if (!ep.uri().equals(HDTSS.asEndpoint().uri()))
             return null;
-        String uri = ep.uri().replaceAll("http://", "ws://");
+        String uri = ep.uri().replaceAll("http://", "ws://")+"/ws";
         SparqlConfiguration wsConfig = ep.configuration().toBuilder().clearMethods().method(SparqlMethod.WS).build();
         return new SparqlEndpoint(uri, wsConfig);
     }
