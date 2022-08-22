@@ -90,6 +90,7 @@ public interface BatchIt<T> extends Iterator<T>, AutoCloseable {
     /**
      * Equivalent to {@code destination.clear(); return this.nextBatch(destination)}.
      */
+    @SuppressWarnings("unused")
     default int replaceWithNextBatch(Collection<? super T> destination) {
         destination.clear();
         return nextBatch(destination);

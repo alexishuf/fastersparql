@@ -30,7 +30,7 @@ public class SingletonBatchIterator<T> extends AbstractBatchIt<T> {
         int size = ended ? 0 : 1;
         Batch<T> batch = new Batch<>(elementClass, size, size);
         if (!ended) {
-            batch.array[0] = value;
+            batch.add(value);
             ended = true;
         }
         return batch;

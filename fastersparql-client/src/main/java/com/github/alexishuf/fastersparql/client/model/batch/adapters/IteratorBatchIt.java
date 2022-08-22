@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.client.model.batch.adapters;
 
+import com.github.alexishuf.fastersparql.client.model.batch.BatchIt;
 import com.github.alexishuf.fastersparql.client.model.batch.base.UnitaryBatchIt;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Iterator;
 
+/** Wrap a plain {@link Iterator} as a {@link BatchIt}. */
 public class IteratorBatchIt<T> extends UnitaryBatchIt<T> {
     private final Iterator<T> it;
 

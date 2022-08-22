@@ -4,6 +4,10 @@ import com.github.alexishuf.fastersparql.client.model.batch.Batch;
 
 import java.util.concurrent.locks.Condition;
 
+/**
+ * Implements a limit to how many ready {@link Batch}es can be held. If such upper bound is
+ * reached, callers to the {@code feed()} methods are blocked.
+ */
 public abstract class BoundedBufferedBatchIt<T> extends BufferedBatchIt<T> {
     private final Condition empty = lock.newCondition();
     private int maxReadyBatches = Integer.MAX_VALUE;

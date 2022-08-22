@@ -7,6 +7,15 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * A concrete implementation of {@link BoundedBufferedBatchIt}, exposing the {@code feed} and
+ * {@code complete} methods.
+ *
+ * <p>The use case for this is to feed/complete from one thread while another consumes the
+ * {@link Batch}es.</p>. Use the {@link BoundedBufferedBatchIt#maxReadyBatches(int)} and
+ * {@link BoundedBufferedBatchIt#maxReadyElements(long)} methods to set the upper bound of
+ * batches/elements that when reached will cause the feeding thread to block.
+ */
 public class CallbackBatchIt<T> extends BoundedBufferedBatchIt<T> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 

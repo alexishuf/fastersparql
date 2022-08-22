@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.model.batch.adapters;
 
 import com.github.alexishuf.fastersparql.client.model.batch.Batch;
+import com.github.alexishuf.fastersparql.client.model.batch.BatchIt;
 import com.github.alexishuf.fastersparql.client.model.batch.base.BufferedBatchIt;
 import com.github.alexishuf.fastersparql.client.util.async.RuntimeExecutionException;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -11,6 +12,7 @@ import org.reactivestreams.Subscription;
 
 import java.util.concurrent.locks.Condition;
 
+/** Wrap a reactivestreams {@link Publisher} as a {@link BatchIt} */
 public class PublisherBatchIt<T> extends BufferedBatchIt<T> {
     private final Publisher<T> publisher;
     private final Condition hasRequest = lock.newCondition();

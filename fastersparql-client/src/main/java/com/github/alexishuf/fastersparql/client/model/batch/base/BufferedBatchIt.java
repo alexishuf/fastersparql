@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.model.batch.base;
 
 import com.github.alexishuf.fastersparql.client.model.batch.Batch;
+import com.github.alexishuf.fastersparql.client.model.batch.BatchIt;
 import com.github.alexishuf.fastersparql.client.util.async.RuntimeExecutionException;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -13,6 +14,10 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * A {@link BatchIt} that can be asynchronously fed with batches or items, which are then
+ * buffered into a ring of {@link Batch}es to be delivered to consumers of this {@link BatchIt}.
+ */
 public abstract class BufferedBatchIt<T> extends AbstractBatchIt<T> {
     private final Logger log = LoggerFactory.getLogger(BufferedBatchIt.class);
 

@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.client.model.batch;
 
+import org.checkerframework.checker.index.qual.NonNegative;
+
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,7 +15,7 @@ import java.util.concurrent.TimeUnit;
  */
 public sealed class Batch<T> {
     public T[] array;
-    public int size;
+    public @NonNegative int size;
 
     /* --- --- --- constructors & factories --- --- --- */
 
@@ -23,19 +25,14 @@ public sealed class Batch<T> {
     }
 
     public Batch(Class<T> elementClass, int min, int max) {
+        int capacity = max <= min + (min >> 1) ? max : Math.max(min, 10);
         //noinspection unchecked
-        this.array = (T[]) Array.newInstance(elementClass, preferredSize(min, max));
+        this.array = (T[]) Array.newInstance(elementClass, capacity);
     }
 
     public Batch(Class<T> elementClass) {
         //noinspection unchecked
         this.array = (T[])Array.newInstance(elementClass, 0);
-    }
-
-    public static int preferredSize(int min, int max) {
-        if      (max <= 2*min || max <= min+32) return max;
-        else if (min < 64)                      return Math.min(max, 64);
-        else                                    return min;
     }
 
     /* --- --- --- builder --- --- --- */
@@ -66,8 +63,10 @@ public sealed class Batch<T> {
 
     /** Add {@code item} to the end of this batch, growing the array if needed. */
     public final void add(T item) {
-        if (size >= array.length)
-            array = Arrays.copyOf(array, size + Math.min(8, size/2));
+        if (size >= array.length) {
+            int newLength = size + Math.min(8, size >> 1);
+            array = Arrays.copyOf(array, newLength);
+        }
         array[size++] = item;
     }
 
@@ -115,16 +114,15 @@ public sealed class Batch<T> {
         for (int i = 0; i < size; i++)
             b.append(array[i]).append(", ");
         b.setLength(Math.max(1, b.length()-2));
-        return b.toString();
+        return b.append(']').toString();
     }
 
     @Override public final boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof Batch<?> rhs) || size != rhs.size) return false;
-        for (int i = 0; i < size; i++) {
-            if (!Objects.equals(array[i], rhs.array[i])) return false;
-        }
-        return true;
+        if (!(o instanceof Batch<?> rhs)) return false;
+        boolean ok = size == rhs.size;
+        for (int i = 0; ok && i < size; i++) ok = Objects.equals(array[i], rhs.array[i]);
+        return ok;
     }
 
     @Override public final int hashCode() {

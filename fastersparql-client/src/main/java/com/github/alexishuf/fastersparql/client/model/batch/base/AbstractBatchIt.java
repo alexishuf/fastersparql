@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
 
+/** Implements trivial methods of {@link BatchIt} and open/closed state */
 public abstract class AbstractBatchIt<T> implements BatchIt<T> {
     private static final Logger log = LoggerFactory.getLogger(AbstractBatchIt.class);
 
