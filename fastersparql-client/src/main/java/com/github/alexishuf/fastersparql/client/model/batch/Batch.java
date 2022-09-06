@@ -1,19 +1,21 @@
 package com.github.alexishuf.fastersparql.client.model.batch;
 
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 /**
  * A Batch is an array with elements in positions 0 (inclusive) to {@code size} (exclusive).
  * @param <T> the type of elements in the batch
  */
-public sealed class Batch<T> {
+public final class Batch<T> {
     public T[] array;
     public @NonNegative int size;
 
@@ -24,75 +26,39 @@ public sealed class Batch<T> {
         this.size = size;
     }
 
-    public Batch(Class<T> elementClass, int min, int max) {
-        int capacity = max <= min + (min >> 1) ? max : Math.max(min, 10);
+    public Batch(Class<T> elementClass, int capacity) {
         //noinspection unchecked
-        this.array = (T[]) Array.newInstance(elementClass, capacity);
+        this.array = (T[])Array.newInstance(elementClass, capacity);
     }
 
-    public Batch(Class<T> elementClass) {
-        //noinspection unchecked
-        this.array = (T[])Array.newInstance(elementClass, 0);
-    }
+    /* --- --- --- methods --- --- --- */
 
-    /* --- --- --- builder --- --- --- */
-
-    public static final class Builder<T> extends Batch<T> {
-        private int min = 1, max = 65_536;
-        private long minTs = 0;
-
-        public Builder(BatchIt<T> it) {
-            super(it.elementClass(), it.minBatch(), it.maxBatch());
-            update(it);
-        }
-
-        public boolean ready() { return size >= max || (size >= min && System.nanoTime() >= minTs); }
-
-        public Builder<T> update(BatchIt<?> it) {
-            min = it.minBatch();
-            max = it.maxBatch();
-            minTs = System.nanoTime() + it.minWait(TimeUnit.NANOSECONDS);
-            return this;
-        }
-    }
-
-    /* --- --- --- constructors & factories --- --- --- */
-
-    public final T[] array() { return array; }
-    public final int size() { return size; }
+    public T[]     array() { return array; }
+    public int      size() { return size; }
+    public boolean empty() { return size == 0; }
 
     /** Add {@code item} to the end of this batch, growing the array if needed. */
-    public final void add(T item) {
-        if (size >= array.length) {
-            int newLength = size + Math.min(8, size >> 1);
-            array = Arrays.copyOf(array, newLength);
-        }
+    public void add(T item) {
+        if (size >= array.length)
+            array = Arrays.copyOf(array, size <= 10 ? 15 : size + (size>>1));
         array[size++] = item;
     }
 
+    /** Add all items from {@code src[begin]} up to (and including) {@code src[begin+length-1]}. */
+    public void add(T[] src, int begin, int length) {
+        int required = size + length;
+        if (array.length < required) {
+            int capacity = Math.max(array.length, 10);
+            while (capacity < required)
+                capacity += capacity>>1;
+            array = Arrays.copyOf(array, capacity);
+        }
+        System.arraycopy(src, begin, array, size, length);
+        size += length;
+    }
+
     /** Set {@code size} to zero. */
-    public final void clear() { size = 0; }
-
-    /** Whether {@code size} is smaller than the array capacity. */
-    public final boolean needsTrimming() { return size < array.length; }
-
-    /** Get either {@code this} or a copy that has {@code array.length == size}. */
-    public final Batch<T> trimmed() {
-        return size < array.length ? new Batch<>(Arrays.copyOf(array, size), size) : this;
-    }
-
-    /**  Get a new {@link Batch} that is a copy of this but with {@code array.length == size}. */
-    public final Batch<T> trimmedCopy() {
-        return new Batch<>(Arrays.copyOf(array, size), size);
-    }
-
-    /** Get either {@code array} or a copy such that {@code copy.length == size}. */
-    public final T[] trimmedArray() {
-        return size < array.length ? Arrays.copyOf(array, size) : array;
-    }
-
-    /** Get a new copy of {@code array} with {@code copy.length == size}. */
-    public final T[] trimmedArrayCopy() { return Arrays.copyOf(array, size); }
+    public void clear() { size = 0; }
 
     /**
      * Add all elements of this batch to the given collection.
@@ -100,7 +66,7 @@ public sealed class Batch<T> {
      * @param collection the destination collection
      * @return the number of elements added to the collection: {@link Batch#size()}.
      */
-    public final int drainTo(Collection<? super T> collection) {
+    public int drainTo(Collection<? super T> collection) {
         if (collection instanceof ArrayList<?> al)
             al.ensureCapacity(al.size()+size);
         //noinspection ManualArrayToCollectionCopy
@@ -109,7 +75,30 @@ public sealed class Batch<T> {
         return size;
     }
 
-    @Override public final String toString() {
+
+    public @Nullable T reduce(BiFunction<T, T, T> combine) {
+        if (size == 0) return null;
+        T acc = array[0];
+        for (int i = 1, n = size; i < n; i++)
+            acc = combine.apply(acc, array[i]);
+        return acc;
+    }
+
+    public <R> R reduce(R initial, BiFunction<R, T, R> combine) {
+        R acc = initial;
+        for (int i = 0, n = size; i < n; i++)
+            acc = combine.apply(acc, array[i]);
+        return acc;
+    }
+
+    public void forEach(Consumer<T> consumer) {
+        for (int i = 0, n = size; i < n; i++)
+            consumer.accept(array[i]);
+    }
+
+    /* --- --- --- java.lang.Object methods --- --- --- */
+
+    @Override public String toString() {
         var b = new StringBuilder().append('[');
         for (int i = 0; i < size; i++)
             b.append(array[i]).append(", ");
@@ -117,7 +106,7 @@ public sealed class Batch<T> {
         return b.append(']').toString();
     }
 
-    @Override public final boolean equals(Object o) {
+    @Override public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof Batch<?> rhs)) return false;
         boolean ok = size == rhs.size;
@@ -125,7 +114,7 @@ public sealed class Batch<T> {
         return ok;
     }
 
-    @Override public final int hashCode() {
+    @Override public int hashCode() {
         if (size <= 0) return 0;
         int result = 1;
         for (int i = 0; i < size; i++) {

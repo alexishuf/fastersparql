@@ -1,87 +1,21 @@
 package com.github.alexishuf.fastersparql.client.model.batch.impl;
 
 import com.github.alexishuf.fastersparql.client.model.batch.Batch;
-import com.github.alexishuf.fastersparql.client.model.batch.EmptyBatchIt;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class BatchTest {
-    private static Batch.Builder<Integer> builder(int min, int max, long minNs, int size) {
-        try (var it = new EmptyBatchIt<>(Integer.class)) {
-            it.minBatch(min).maxBatch(max).minWait(minNs, TimeUnit.NANOSECONDS);
-            var builder = new Batch.Builder<>(it);
-            for (int i = 0; i < size; i++)
-                builder.add(i);
-            return builder;
-        }
-    }
-
-    public static Stream<Arguments> testReadySize() {
-        return Stream.of(
-        /* 1 */ arguments(builder(1, 3, 2_000_000_000, 0), false),
-        /* 2 */ arguments(builder(1, 3, 2_000_000_000, 1), false),
-        /* 3 */ arguments(builder(1, 3, 2_000_000_000, 2), false),
-        /* 5 */ arguments(builder(1, 3, 2_000_000_000, 3), true),
-        /* 6 */ arguments(builder(2, 3, 2_000_000_000, 1), false),
-        /* 7 */ arguments(builder(2, 3, 2_000_000_000, 2), false),
-        /* 8 */ arguments(builder(2, 3, 2_000_000_000, 3), true)
-        );
-    }
-
-    @ParameterizedTest @MethodSource
-    void testReadySize(Batch.Builder<Integer> batch, boolean expected) {
-        assertEquals(expected, batch.ready());
-    }
-
-    @Test
-    void testReadyOnIncrement() {
-        var batch = builder(1, 2, 5_000_000, 0);
-        assertFalse(batch.ready());
-        batch.add(23);
-        assertFalse(batch.ready());
-        batch.add(27);
-        assertTrue(batch.ready());
-    }
-
-    @Test
-    void testTimeDoesNotMakeReady() {
-        var batch = builder(1, 2, 1_000_000, 0);
-        long ts = System.nanoTime() + 1_000_000;
-        while (System.nanoTime() < ts)
-            Thread.yield();
-        assertFalse(batch.ready());
-        batch.add(23);
-        assertTrue(batch.ready());
-    }
-
-    @Test
-    void testTimeMakesReady() {
-        var batch = builder(2, 3, 5_000_000, 0);
-        long start = System.nanoTime();
-        assertFalse(batch.ready());
-        batch.add(23);
-        assertFalse(batch.ready());
-        batch.add(23);
-        assertFalse(batch.ready());
-        //noinspection StatementWithEmptyBody
-        while (System.nanoTime() < start+2_500_000) { }
-        assertFalse(batch.ready());
-
-        while (System.nanoTime() < start+5_000_000) Thread.yield();
-        assertTrue(batch.ready());
-    }
-
     static Stream<Arguments> testEquals() {
         return Stream.of(
-                arguments(new Batch<>(Integer.class), new Batch<>(Integer.class), true),
+                arguments(new Batch<>(Integer.class, 0), new Batch<>(Integer.class, 0), true),
                 arguments(new Batch<>(new Integer[] {23}, 1),
                           new Batch<>(new Integer[] {23}, 1), true),
                 arguments(new Batch<>(new Integer[] {23}, 1),
@@ -105,4 +39,56 @@ class BatchTest {
         assertEquals(expected, right.equals(left));
     }
 
+    @ParameterizedTest @ValueSource(ints = {0, 1, 3, 8, 9, 10, 11, 14, 15, 16, 21, 22, 23})
+    void testGrow(int capacity) {
+        Batch<Integer> batch = new Batch<>(Integer.class, capacity);
+        for (int i = 0; i < capacity; i++)
+            batch.add(1+i);
+        assertArrayEquals(range(1, 1+capacity).boxed().toArray(Integer[]::new), batch.array);
+
+        batch.add(capacity+1);
+        assertEquals(capacity+1, batch.size());
+        assertTrue(batch.array.length >= capacity+1);
+        for (int i = 0; i < capacity + 1; i++)
+            assertEquals(1+i, batch.array[i], "Mismatch at i="+i);
+    }
+
+    @ParameterizedTest @ValueSource(ints = {1, 2, 3, 4, 10, 14, 15, 16, 21, 22, 23, 512})
+    void testAddArray(int total) {
+        Integer[] src = range(1, 1+total+1).boxed().toArray(Integer[]::new);
+        for (int mid = 0; mid < total; mid++) {
+            Batch<Integer> b = new Batch<>(Integer.class, mid == 0 ? 0 : Math.min(total, 10));
+
+            b.add(src, 0, mid);
+            Integer[] expected = range(1, 1 + mid).boxed().toArray(Integer[]::new);
+            assertEquals(new Batch<>(expected, expected.length), b, "mid="+mid);
+
+            int rem = total - mid;
+            b.add(src, mid, rem);
+            expected = range(1, 1 + total).boxed().toArray(Integer[]::new);
+            assertEquals(new Batch<>(expected, expected.length), b);
+
+            if (b.array.length >= 10) {
+                int expectedCapacity = 10;
+                while (expectedCapacity < expected.length)
+                    expectedCapacity += expectedCapacity/2;
+                assertEquals(expectedCapacity, b.array.length, "mid="+mid);
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(ints = {0, 1, 2, 3, 4, 9, 10, 16, 4096})
+    void testReduce(int size) {
+        Batch<Integer> b = new Batch<>(Integer.class, 10);
+        int expected = 0;
+        for (int i = 0; i < size; i++) {
+            expected += i;
+            b.add(i);
+        }
+        assertEquals(expected, b.reduce(0, Integer::sum));
+        if (size == 0)
+            assertNull(b.reduce(Integer::sum));
+        else
+            assertEquals(expected, b.reduce(Integer::sum));
+    }
 }
