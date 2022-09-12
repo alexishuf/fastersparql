@@ -120,7 +120,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      */
     default Batch<T> nextBatch(Batch<T> offer) {
         recycle(offer);
-         return nextBatch();
+        return nextBatch();
     }
 
     /**
