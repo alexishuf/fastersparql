@@ -61,10 +61,9 @@
   </properties>
 
   <modules>
-    <module>fastersparql-client</module>
+    <module>fastersparql-core</module>
     <module>fastersparql-netty</module>
-    <module>fastersparql-operators</module>
-    <module>fastersparql-operators-jena</module>
+<!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-bom</module>
   </modules>
@@ -100,7 +99,7 @@
 
       <!-- Pull BOMs for libraries -->
 
-      <dependency> <!-- Used from fastersparql-client -->
+      <dependency> <!-- Used from fastersparql-core -->
         <groupId>io.netty</groupId>
         <artifactId>netty-bom</artifactId>
         <version>4.1.70.Final</version>
@@ -180,22 +179,23 @@
         </configuration>
       </plugin>
       <!-- Generate javadoc  -->
-      <plugin>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <configuration>
-          <javadocExecutable>${java.home}/bin/javadoc</javadocExecutable>
-          <source>19</source>
-          <!-- Enable all warnings but the missing documentation -->
-          <additionalJOption>-Xdoclint:all</additionalJOption>
-          <additionalJOption>-Xdoclint:-missing</additionalJOption>
-        </configuration>
-        <executions>
-          <execution>
-            <id>attach-javadoc</id>
-            <goals><goal>jar</goal></goals>
-          </execution>
-        </executions>
-      </plugin>
+<!--      <plugin>-->
+<!--        <artifactId>maven-javadoc-plugin</artifactId>-->
+<!--        <configuration>-->
+<!--          <javadocExecutable>${java.home}/bin/javadoc</javadocExecutable>-->
+<!--          <source>19</source>-->
+<!--          &lt;!&ndash; Enable all warnings but the missing documentation &ndash;&gt;-->
+<!--          <additionalJOption>&#45;&#45;enable-preview</additionalJOption>-->
+<!--          <additionalJOption>-Xdoclint:all</additionalJOption>-->
+<!--          <additionalJOption>-Xdoclint:-missing</additionalJOption>-->
+<!--        </configuration>-->
+<!--        <executions>-->
+<!--          <execution>-->
+<!--            <id>attach-javadoc</id>-->
+<!--            <goals><goal>jar</goal></goals>-->
+<!--          </execution>-->
+<!--        </executions>-->
+<!--      </plugin>-->
     </plugins>
   </build>
 </project>

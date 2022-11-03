@@ -1,73 +1,158 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
-import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
-import com.github.alexishuf.fastersparql.client.util.Throwing;
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
+import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.handler.codec.http.HttpMethod;
-import io.netty.handler.codec.http.HttpRequest;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.pool.AbstractChannelPoolHandler;
+import io.netty.channel.pool.ChannelHealthChecker;
+import io.netty.channel.pool.SimpleChannelPool;
+import io.netty.handler.codec.http.*;
+import io.netty.handler.ssl.SslContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.Charset;
+import java.util.concurrent.ExecutionException;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
-/**
- * Utility that allows executing HTTP(S) requests using Netty.
- *
- * Implementations will hold an {@link io.netty.channel.EventLoopGroup} and possibly a
- * connection pool. Each {@link NettyHttpClient} targets a single remote server and every
- * {@link SocketChannel} will always end its pipeline with an
- * {@link ReusableHttpClientInboundHandler} implementation {@code H}.
- *
- * Since a {@link NettyHttpClient} may pool its {@link SocketChannel}s, An {@code H} instance
- * may handle more than one request (but the {@link SocketChannel} will still be the same).
- * If that is the case, {@link ReusableHttpClientInboundHandler#onResponseEnd(Runnable)} will
- * be called before the handler processes its first response.
- *
- * @param <H> the application-specific HTTP response handler.
- */
-public interface NettyHttpClient<H extends ReusableHttpClientInboundHandler> extends AutoCloseable {
-    interface Setup<H2 extends ReusableHttpClientInboundHandler> {
-        void setup(Channel ch, HttpRequest request, H2 handler);
-        void connectionError(Throwable cause);
-        void requestError(Throwable cause);
+import static io.netty.handler.codec.http.HttpHeaderNames.*;
+
+public final class NettyHttpClient implements AutoCloseable {
+    public static final String HANDLER_NAME = "handler";
+
+    private final EventLoopGroupHolder groupHolder;
+    private final ActiveChannelSet activeChannels;
+    private final String host, baseUri;
+    private final @Nullable SimpleChannelPool pool;
+    private final Bootstrap bootstrap;
+    private final String connectionHeaderValue;
+
+    public NettyHttpClient(EventLoopGroupHolder groupHolder, String baseUri,
+                           Supplier<? extends ReusableHttpClientInboundHandler> handlerFactory,
+                           boolean pool, boolean poolFIFO, @Nullable SslContext sslContext) {
+        this.activeChannels = new ActiveChannelSet(baseUri);
+        this.baseUri = baseUri;
+        String host;
+        int port = 80;
+        try {
+            var uri = new URI(baseUri);
+            host = uri.getHost();
+            port = Math.max(port, uri.getPort());
+        } catch (URISyntaxException e) {
+            host = baseUri;
+        }
+        this.host = host;
+        this.bootstrap = groupHolder.acquireBootstrap(host, port);
+        try {
+            if (pool) {
+                this.pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
+                    @Override public void channelAcquired(Channel ch) {
+                        activeChannels.setActive(ch);
+                    }
+
+                    @Override public void channelReleased(Channel ch) {
+                        activeChannels.setInactive(ch);
+                    }
+
+                    @Override public void channelCreated(Channel ch) {
+                        activeChannels.add(ch);
+                        setupPipeline(ch, sslContext, handlerFactory).onResponseEnd(() -> release(ch));
+                    }
+                }, ChannelHealthChecker.ACTIVE, true, !poolFIFO);
+                this.connectionHeaderValue = "keep-alive";
+            } else {
+                this.pool = null;
+                var initializer = new ChannelInitializer<>() {
+                    @Override protected void initChannel(Channel ch) {
+                        activeChannels.add(ch).setActive(ch);
+                        setupPipeline(ch, sslContext, handlerFactory);
+                        ch.closeFuture().addListener(ignored -> activeChannels.setInactive(ch));
+                    }
+                };
+                this.bootstrap.handler(initializer);
+                this.connectionHeaderValue = "close";
+            }
+            this.groupHolder = groupHolder;
+        } catch (Throwable t) {
+            groupHolder.release();
+            throw t;
+        }
     }
 
-    /**
-     * Connect to the remote server and send an HTTP request of the given {@code method} using
-     * the {@code firstLine} as the target of that method.
-     *
-     * A body may be added to the request by providing a {@code bodyGenerator} parameter.
-     *
-     * Additional setup to change the behavior of the {@link SocketChannel}-specific handler for
-     * inbound data can be done using the {@code setup} parameter.
-     * {@link Setup#setup(Channel, HttpRequest, ReusableHttpClientInboundHandler)} will be
-     * called before request data is sent over the wire. Thus, the request can be changed and the
-     * handler will be ready once response data arrives.
-     *
-     * @param method the HTTP method of the request
-     * @param firstLine the target of the method. This should be only the path and query
-     *                  segments of the whole URI. If this happens to be a full URI
-     * @param bodyGenerator a function that fills a {@link ByteBuf} taken from the given allocator
-     *                      with the bytes of the request body. If this is non-null, remember to
-     *                      set Content-Type on {@code setup}. The Content-Length request header
-     *                      will be set to the length of the returned {@link ByteBuf}
-     * @param setup A function that receives the {@link SocketChannel}, the {@link HttpRequest}
-     *              and the {@code H} handler unique to the {@link SocketChannel}. This function
-     *              can mutate all three parameters it receives, as it will run before the request
-     *              is sent through netty.
-     */
-    void request(HttpMethod method, CharSequence firstLine,
-                 Throwing.@Nullable Function<ByteBufAllocator, ByteBuf> bodyGenerator,
-                 @Nullable Setup<H> setup);
+    private void release(Channel ch) { assert pool != null; pool.release(ch); }
 
-    /**
-     * Releases resources internally held by this instance, such as pools and
-     * non-shared {@link io.netty.channel.EventLoopGroup}s.
-     *
-     * This method should not block, and if necessary, cleanup may continue on background threads.
-     *
-     * No exceptions should be thrown.
-     */
-    @Override void close();
+    private static ReusableHttpClientInboundHandler
+    setupPipeline(Channel ch, @Nullable SslContext sslContext,
+                  Supplier<? extends ReusableHttpClientInboundHandler> hFactory) {
+        ChannelPipeline pipeline = ch.pipeline();
+        if (sslContext != null)
+            pipeline.addLast("ssl", sslContext.newHandler(ch.alloc()));
+        pipeline.addLast("http", new HttpClientCodec());
+        pipeline.addLast("decompress", new HttpContentDecompressor());
+        ReusableHttpClientInboundHandler handler = hFactory.get();
+        pipeline.addLast(HANDLER_NAME, handler);
+        return handler;
+    }
+
+
+    public static HttpRequest makeRequest(HttpMethod method, String pathAndParams,
+                                          @Nullable String accept,
+                                          String contentType,
+                                          CharSequence body, Charset charset) {
+        ByteBuf bb = Unpooled.copiedBuffer(body, charset);
+        var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, pathAndParams, bb);
+        HttpHeaders headers = req.headers();
+        headers.set(CONTENT_TYPE, contentType);
+        headers.set(CONTENT_LENGTH, bb.readableBytes());
+        if (accept != null)
+            headers.set(ACCEPT, accept);
+        return req;
+    }
+
+    public static HttpRequest makeGet(String pathAndParams, @Nullable String accept) {
+        var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, pathAndParams);
+        if (accept != null)
+            req.headers().set(ACCEPT, accept);
+        return req;
+    }
+
+    public <T extends ReusableHttpClientInboundHandler> void
+    request(HttpRequest request, BiConsumer<Channel, T> onConnected, Consumer<Throwable> onError) {
+        (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
+            try {
+                Channel ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
+                var headers = request.headers();
+                headers.set(CONNECTION, connectionHeaderValue);
+                headers.set(HOST, host);
+                if (request instanceof HttpContent hc && !headers.contains(CONTENT_LENGTH))
+                    headers.set(CONTENT_LENGTH, hc.content().readableBytes());
+                //noinspection unchecked
+                T handler = (T) ch.pipeline().get(HANDLER_NAME);
+                if (handler == null) {
+                    var msg = baseUri+" closed connection before the local Channel initialized";
+                    throw new SparqlClientException(msg);
+                }
+                onConnected.accept(ch, handler);
+                ch.writeAndFlush(request);
+            } catch (Throwable t) {
+                onError.accept(t instanceof ExecutionException ? t.getCause() : t);
+            }
+        });
+    }
+
+    @Override public void close() {
+        activeChannels.close();
+        groupHolder.release();
+        if (pool != null)
+            pool.close();
+    }
 }

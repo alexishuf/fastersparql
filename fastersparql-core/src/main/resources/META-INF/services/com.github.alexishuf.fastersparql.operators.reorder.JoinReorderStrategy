@@ -1,0 +1,2 @@
+com.github.alexishuf.fastersparql.operators.reorder.NoneJoinReorderStrategy
+com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy

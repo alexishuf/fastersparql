@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import io.netty.channel.EventLoopGroup;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -15,25 +13,19 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 
+@SuppressWarnings("SameReturnValue")
 class EventLoopGroupHolderTest {
-    static AsyncTask<?> keepAlive1Second;
-    static AsyncTask<?> noKeepAlive;
-    static AsyncTask<?> concurrency;
-
-    @BeforeAll
-    static void beforeAll() {
-        EventLoopGroupHolderTest instance = new EventLoopGroupHolderTest();
-        keepAlive1Second = Async.asyncThrowing(instance::doTestKeepAlive1Second);
-        noKeepAlive = Async.asyncThrowing(instance::doTestNoKeepAlive);
-        concurrency = Async.asyncThrowing(instance::doTestConcurrency);
-    }
 
     @Test
-    void testKeepAlive1Second() throws ExecutionException {
-        keepAlive1Second.get();
+    void test() throws Exception {
+        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+            tasks.add(this::doTestKeepAlive1Second);
+            tasks.add(this::doTestNoKeepAlive);
+            tasks.add(this::doTestConcurrency);
+        }
     }
 
-    private void doTestKeepAlive1Second() throws InterruptedException {
+    private Object doTestKeepAlive1Second() throws InterruptedException {
         EventLoopGroupHolder holder = new EventLoopGroupHolder(NettyTransport.NIO, 500, MILLISECONDS);
         EventLoopGroup elg = holder.acquire();
         assertFalse(elg.isShutdown());
@@ -61,14 +53,10 @@ class EventLoopGroupHolderTest {
         assertFalse(elg3.isShuttingDown());
         assertFalse(elg3.isTerminated());
         holder.release();
+        return null;
     }
 
-    @Test
-    void testNoKeepAlive() throws ExecutionException {
-        noKeepAlive.get();
-    }
-
-    private void doTestNoKeepAlive() {
+    private Object doTestNoKeepAlive() {
         EventLoopGroupHolder holder = new EventLoopGroupHolder(NettyTransport.NIO, 0, SECONDS);
         EventLoopGroup elg1 = holder.acquire();
         assertFalse(elg1.isShutdown());
@@ -92,37 +80,33 @@ class EventLoopGroupHolderTest {
         assertFalse(elg3.isShutdown());
         assertFalse(elg3.isShuttingDown());
         assertFalse(elg3.isTerminated());
+        return null;
     }
 
-    @Test
-    void testConcurrency() throws ExecutionException {
-        concurrency.get();
-    }
-
-    private void doTestConcurrency() throws InterruptedException, ExecutionException {
+    private Object doTestConcurrency() throws InterruptedException, ExecutionException {
         EventLoopGroupHolder holder = new EventLoopGroupHolder(null, 0, SECONDS);
         int tasks = Runtime.getRuntime().availableProcessors() * 64;
         List<Future<Integer>> futures = new ArrayList<>(tasks);
-        ExecutorService executor = Executors.newCachedThreadPool();
         boolean onTime;
-        try {
-            for (int i = 0; i < tasks; i++) {
-                int id = i;
-                futures.add(executor.submit(() -> {
-                    EventLoopGroup elg = holder.acquire();
-                    try {
-                        assertFalse(elg.isShutdown());
-                        assertFalse(elg.isShuttingDown());
-                        assertFalse(elg.isTerminated());
-                        return elg.submit(() -> id).get();
-                    } finally {
-                        holder.release();
-                    }
-                }));
+        try (ExecutorService executor = Executors.newCachedThreadPool()) {
+            try {
+                for (int i = 0; i < tasks; i++) {
+                    int id = i;
+                    futures.add(executor.submit(() -> {
+                        try (var elg = holder.acquire()) {
+                            assertFalse(elg.isShutdown());
+                            assertFalse(elg.isShuttingDown());
+                            assertFalse(elg.isTerminated());
+                            return elg.submit(() -> id).get();
+                        } finally {
+                            holder.release();
+                        }
+                    }));
+                }
+            } finally {
+                executor.shutdown();
+                onTime = executor.awaitTermination(1, TimeUnit.SECONDS);
             }
-        } finally {
-            executor.shutdown();
-            onTime = executor.awaitTermination(1, TimeUnit.SECONDS);
         }
         BitSet seen = new BitSet();
         for (Future<Integer> future : futures)
@@ -130,5 +114,6 @@ class EventLoopGroupHolderTest {
         assertEquals(tasks, seen.cardinality());
         assertEquals(tasks, seen.nextClearBit(0));
         assertTrue(onTime);
+        return null;
     }
 }

@@ -13,7 +13,7 @@ import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 public interface WsClientHandler {
     /**
      * Called once per instance when the handler is bound to a {@link Channel}.
-     *
+     * <p>
      * <strong>This method runs within the event loop. Do not block.</strong>
      *
      * @param ctx The {@link ChannelHandlerContext}
@@ -21,7 +21,7 @@ public interface WsClientHandler {
      *                 but the session is in a state that allows it to be reused by a new
      *                 {@link WsClientHandler} instance. Once {@link WsRecycler#recycle(Channel)}
      *                 is called, the effect is the same as if {@link WsClientHandler#detach()}
-     *                 had been called (it will not, however) and no futher event will be notified
+     *                 had been called (it will not, however) and no further event will be notified
      *                 to this {@link WsClientHandler}.
      */
     void attach(ChannelHandlerContext ctx, WsRecycler recycler);
@@ -43,7 +43,7 @@ public interface WsClientHandler {
     /**
      * Called when an exception is thrown from a {@link WsClientNettyHandler} method, from netty
      * or from a previous {@link ChannelHandler} in the pipeline of the bound {@link Channel}.
-     *
+     * <p>
      * <strong>This method runs within the event loop. Do not block.</strong>
      */
     void onError(Throwable cause);
@@ -51,10 +51,10 @@ public interface WsClientHandler {
     /**
      * Called for every {@link WebSocketFrame} received from the remote peer, in the same sequence
      * as frames are received.
-     *
+     * <p>
      * The {@link CloseWebSocketFrame} will be delivered to this method, but {@code ctx.close()}
      * will be called even if implementations ignore the {@link CloseWebSocketFrame}.
-     *
+     * <p>
      * <strong>This method runs within the event loop. Do not block.</strong>
      *
      * @param frame a {@link WebSocketFrame} object.

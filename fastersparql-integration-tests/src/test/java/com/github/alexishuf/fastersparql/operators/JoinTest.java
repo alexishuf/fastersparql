@@ -3,19 +3,13 @@ package com.github.alexishuf.fastersparql.operators;
 import com.github.alexishuf.fastersparql.HdtssContainer;
 import com.github.alexishuf.fastersparql.ResultsChecker;
 import com.github.alexishuf.fastersparql.TestUtils;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.model.row.impl.StringArrayOperations;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import com.github.alexishuf.fastersparql.client.util.sparql.VarUtils;
-import com.github.alexishuf.fastersparql.operators.impl.bind.BindJoin;
-import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
-import com.github.alexishuf.fastersparql.operators.providers.JoinProvider;
-import org.checkerframework.checker.index.qual.NonNegative;
+import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
+import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.operators.plan.Join;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -25,16 +19,15 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.*;
-import java.util.concurrent.ExecutionException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.operators.OperatorFlags.*;
 import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @Testcontainers
@@ -47,20 +40,23 @@ public class JoinTest {
     private static final HdtssContainer HDTSS =
             new HdtssContainer(MinusTest.class, "join.hdt", log);
 
-    private static class TestData extends ResultsChecker {
-        final List<String> operands;
+    interface JoinFactory {
+        Join<List<String>, String> create(List<? extends Plan<List<String>, String>> operands);
+    }
 
-        public TestData(List<String> operands, String... values) {
-            super(operands.stream().map(SparqlUtils::publicVars)
-                                   .reduce(emptyList(), VarUtils::union),
+    private static class TestData extends ResultsChecker {
+        final List<SparqlQuery> operands;
+
+        public TestData(List<SparqlQuery> operands, String... values) {
+            super(operands.stream().map(SparqlQuery::publicVars)
+                                   .reduce(Vars.EMPTY, Vars::union),
                   values);
-            this.operands = operands.stream().map(s -> PREFIX+s).collect(toList());
+            this.operands = operands.stream().map(q -> new SparqlQuery(PREFIX+q.sparql)).toList();
         }
 
         @Override public boolean equals(Object o) {
             if (this == o) return true;
-            if (!(o instanceof TestData)) return false;
-            TestData testData = (TestData) o;
+            if (!(o instanceof TestData testData)) return false;
             return operands.equals(testData.operands);
         }
 
@@ -74,10 +70,10 @@ public class JoinTest {
     }
 
     private static TestData data(String left, String right, String... expected) {
-        return new TestData(asList(left, right), expected);
+        return new TestData(asList(new SparqlQuery(left), new SparqlQuery(right)), expected);
     }
     private static TestData nData(List<String> operands, String... expected) {
-        return new TestData(operands, expected);
+        return new TestData(operands.stream().map(SparqlQuery::new).toList(), expected);
     }
 
     static Stream<Arguments> test() {
@@ -200,72 +196,57 @@ public class JoinTest {
                       "<$:s3>", "<$:s4>", "<$:s5>", "<$:s6>",
                       "<$:s3>", "<$:s4>", "<$:s5>", "<$:s7>")
         );
-        List<SparqlClientFactory> factories = TestUtils.allClientFactories();
-        List<JoinProvider> providers = new ArrayList<>();
-        ServiceLoader.load(JoinProvider.class).forEach(providers::add);
-        assertFalse(providers.isEmpty());
-        providers.add(new BindJoin.Provider() {
-            @Override public @NonNegative int bid(long flags) {
-                if ((flags & ASYNC) == 0) return BidCosts.UNSUPPORTED;
-                return super.bid(flags);
+        List<Arguments> list = new ArrayList<>();
+        List<JoinFactory> joinFactories = List.of(FSOps::join);
+        for (SparqlClientFactory factory : TestUtils.allClientFactories()) {
+            for (JoinFactory joinFactory : joinFactories) {
+                for (TestData data : base)
+                    list.add(arguments(factory, joinFactory, data));
             }
-            @Override public Join create(long flags, RowOperations ro) {
-                return new BindJoin(ro, (flags & ASYNC) != 0 ? 32 : 1);
-            }
-            @Override public String toString() {
-                return super.toString()+"[bindConcurrency=32]";
-            }
-        });
-        List<Long> flagsList = asList(0L, ASYNC, LARGE_FIRST | SMALL_SECOND);
-        return factories.stream().flatMap(fac -> providers.stream().flatMap(
-                prov -> flagsList.stream().flatMap(flags -> base.stream().map(
-                        data -> arguments(fac, prov, flags, data)))));
+        }
+        return list.stream();
     }
 
     @Test
-    void selfTest() throws ExecutionException {
+    void selfTest() throws Exception {
         Set<SparqlClientFactory> factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
-        Set<String> queries = test().map(a -> (TestData) a.get()[3])
+        Set<SparqlQuery> queries = test().map(a -> (TestData) a.get()[2])
                                     .flatMap(d -> d.operands.stream()).collect(toSet());
         for (SparqlClientFactory factory : factories) {
-            List<AsyncTask<?>> tasks = new ArrayList<>();
-            try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
-                for (String query : queries) {
-                    tasks.add(Async.async(() -> {
-                        List<String[]> list = new ArrayList<>();
-                        try (IterableAdapter<String[]> a = new IterableAdapter<>(client.query(query).publisher())) {
-                            a.forEach(list::add);
-                            if (a.hasError())
-                                fail(a.error());
-                        }
-                        assertFalse(list.isEmpty());
-                    }));
-                }
-                for (AsyncTask<?> task : tasks) task.get();
+            try (var client = factory.createFor(HDTSS.asEndpoint());
+                 var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+                for (var sparql : queries)
+                    tasks.add(() -> assertFalse(client.query(sparql).toList().isEmpty()));
             }
         }
     }
 
     @ParameterizedTest @MethodSource
-    void test(SparqlClientFactory clientFactory, JoinProvider provider, long flags,
-              TestData data) throws ExecutionException {
-        if (provider.bid(flags) == BidCosts.UNSUPPORTED)
-            return;
-        Join join = provider.create(flags, StringArrayOperations.get());
-        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            List<LeafPlan<String[]>> operands = data.operands.stream()
-                    .map(s -> LeafPlan.builder(client, s).build()).collect(toList());
-            ArrayList<LeafPlan<String[]>> operandsCopy = new ArrayList<>(operands);
-            List<AsyncTask<?>> futures = new ArrayList<>();
-            for (int thread = 0; thread < N_THREADS; thread++) {
-                futures.add(Async.async(() -> {
-                    for (int i = 0; i < N_ITERATIONS; i++) {
-                        data.assertExpected(join.checkedRun(join.asPlan(operands)));
-                        assertEquals(operandsCopy, operands, "operands mutated");
-                    }
-                }));
-            }
-            for (AsyncTask<?> future : futures) future.get();
+    void test(SparqlClientFactory clientFactory, JoinFactory joinFactory,
+              TestData data) throws Exception {
+        try (var client = clientFactory.createFor(HDTSS.asEndpoint(), ListRow.STRING);
+             var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+            var operands = data.operands.stream().map(s -> FSOps.query(client, s)).toList();
+            tasks.repeat(N_THREADS, () -> {
+                for (int i = 0; i < N_ITERATIONS; i++)
+                    data.assertExpected(joinFactory.create(operands).execute());
+            });
         }
+    }
+
+    @SuppressWarnings("ResultOfMethodCallIgnored")
+    public static void main(String[] args) throws Exception {
+        HDTSS.start();
+        System.out.println("HDTSS ready, hit [ENTER] to run tests");
+        System.in.read();
+        var test = new JoinTest();
+        List<Arguments> list = JoinTest.test().limit(5).toList();
+        for (int i = 0; i < list.size(); i++) {
+            System.out.printf("test row %d...\n", i);
+            Object[] a = list.get(i).get();
+            test.test((SparqlClientFactory) a[0], (JoinFactory) a[1], (TestData) a[2]);
+        }
+        System.out.println("Tests passed, hit [ENTER] to exit");
+        System.in.read();
     }
 }

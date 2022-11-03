@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -25,20 +27,10 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
 
     private final @Nullable File deleteOnClose;
 
-    public HdtssContainer(File hdtFile, Logger log) {
-        this(hdtFile, log, null);
-    }
     public HdtssContainer(Class<?> refClass, String resourcePath, Logger log) {
-        this(log, TestUtils.extract(refClass, resourcePath));
-    }
-
-    private HdtssContainer(Logger log, File deleteOnCloseHdtFile) {
-        this(deleteOnCloseHdtFile, log, deleteOnCloseHdtFile);
-    }
-
-    private HdtssContainer(File hdtFile, Logger log, @Nullable File deleteOnClose) {
         super(DockerImageName.parse("alexishuf/hdtss:jdk"));
-        this.deleteOnClose = deleteOnClose;
+        File hdtFile = TestUtils.extract(refClass, resourcePath);
+        this.deleteOnClose = hdtFile;
         //noinspection resource
         withFileSystemBind(hdtFile.getAbsolutePath(),
                 "/data/data.hdt", BindMode.READ_ONLY)
@@ -66,13 +58,15 @@ public final class HdtssContainer extends GenericContainer<HdtssContainer> {
     }
 
     public SparqlEndpoint asEndpoint() {
-        return asEndpoint("");
+        return asEndpoint(SparqlConfiguration.EMPTY);
     }
 
-    public SparqlEndpoint asEndpoint(String options) {
+    public SparqlEndpoint asEndpoint(SparqlConfiguration cfg) {
+        var method = cfg.methods().get(0);
+        var scheme = method == SparqlMethod.WS ? "ws" : "http";
         int port = getMappedPort(8080);
-        String sep = options == null || options.isEmpty() ? "" : "@";
-        String augmented = format("%s%shttp://%s:%d/sparql", options, sep, getHost(), port);
-        return SparqlEndpoint.parse(augmented);
+        var suffix = method == SparqlMethod.WS ? "/ws" : "";
+        var uri = format("%s://%s:%d/sparql%s", scheme, getHost(), port, suffix);
+        return new SparqlEndpoint(uri, cfg);
     }
 }

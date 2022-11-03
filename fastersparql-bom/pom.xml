@@ -58,7 +58,7 @@
         <dependencies>
             <dependency>
                 <groupId>com.github.alexishuf.fastersparql</groupId>
-                <artifactId>fastersparql-client</artifactId>
+                <artifactId>fastersparql-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

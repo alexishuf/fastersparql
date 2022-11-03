@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
-import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
+import com.github.alexishuf.fastersparql.client.model.row.RowType;
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;
@@ -17,6 +17,7 @@ import org.apache.jena.sparql.expr.NodeValue;
 import org.apache.jena.sparql.expr.VariableNotBoundException;
 import org.apache.jena.sparql.function.FunctionEnvBase;
 import org.apache.jena.sparql.util.Context;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.*;
 import java.util.function.BiConsumer;
@@ -32,13 +33,13 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
 
     private final String exprString;
     private final Expr expr;
-    private final RowBinding binding;
+    private final RowJenaBinding<R> binding;
 
 
-    public JenaExprEvaluator(String exprString, Expr expr, RowOperations rowOperations, List<String> varNames) {
+    public JenaExprEvaluator(String exprString, Expr expr, RowType<R, ?> rowType, List<String> varNames) {
         this.exprString = exprString;
         this.expr = expr;
-        this.binding = new RowBinding(rowOperations, varNames);
+        this.binding = new RowJenaBinding<>(rowType, varNames);
     }
 
     @Override public String evaluate(R row) {
@@ -56,13 +57,13 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
         return writer.toString();
     }
 
-    private static class RowBinding implements Binding {
-        private final RowOperations ro;
+    private static class RowJenaBinding<R> implements Binding {
+        private final RowType<R, ?> ro;
         private final List<Var> vars;
         private final Map<Var, Integer> var2idx;
         private final Node[] values;
 
-        public RowBinding(RowOperations ro, List<String> varNames) {
+        public RowJenaBinding(RowType<R, ?> ro, List<String> varNames) {
             int size = varNames.size();
             this.ro      = ro;
             this.vars    = new ArrayList<>(size);
@@ -75,11 +76,9 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
             }
         }
 
-        RowBinding setValues(Object row) {
-            for (int i = 0, size = vars.size(); i < size; i++) {
-                String name = vars.get(i).getVarName();
-                values[i] = JenaUtils.fromNT(ro.getNT(row, i, name));
-            }
+        @This RowJenaBinding<R> setValues(R row) {
+            for (int i = 0, size = vars.size(); i < size; i++)
+                values[i] = JenaUtils.fromNT(ro.getNT(row, i));
             return this;
         }
 
@@ -100,8 +99,7 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
 
         @Override public boolean equals(Object o) {
             if (this == o) return true;
-            if (!(o instanceof RowBinding)) return false;
-            RowBinding that = (RowBinding) o;
+            if (!(o instanceof JenaExprEvaluator.RowJenaBinding<?> that)) return false;
             return vars.equals(that.vars) && Arrays.equals(values, that.values);
         }
 

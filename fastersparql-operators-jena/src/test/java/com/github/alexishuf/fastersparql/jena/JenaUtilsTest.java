@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.jena;
 
-import com.github.alexishuf.fastersparql.operators.expressions.RDFValues;
+import com.github.alexishuf.fastersparql.sparql.RDFTypes;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -16,7 +16,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class JenaUtilsTest {
     static Stream<Arguments> testFromNt() {
         return Stream.of(
-                arguments("\"false\"^^<"+RDFValues.BOOLEAN+">",
+                arguments("\"false\"^^<"+ RDFTypes.BOOLEAN+">",
                           createLiteral("false", XSDDatatype.XSDboolean)),
                 arguments("false", createLiteral("false", XSDDatatype.XSDboolean)),
                 arguments("true", createLiteral("true", XSDDatatype.XSDboolean)),
@@ -24,7 +24,7 @@ class JenaUtilsTest {
                 arguments("\"bob\"@en", createLiteral("bob", "en")),
                 arguments("\"bob\"@en-US", createLiteral("bob", "en-US")),
                 arguments("\"bob\"@en_US", createLiteral("bob", "en-US")),
-                arguments("\"bob\"^^<"+RDFValues.string+">",
+                arguments("\"bob\"^^<"+ RDFTypes.string+">",
                           createLiteral("bob", XSDDatatype.XSDstring)),
                 arguments("'bob'@en", createLiteral("bob", "en")),
                 arguments("\"<\\\"^\"", createLiteral("<\"^")),

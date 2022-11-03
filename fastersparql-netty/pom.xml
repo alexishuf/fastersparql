@@ -32,7 +32,7 @@
   <dependencies>
     <dependency>
       <groupId>com.github.alexishuf.fastersparql</groupId>
-      <artifactId>fastersparql-client</artifactId>
+      <artifactId>fastersparql-core</artifactId>
       <version>${project.version}</version>
     </dependency>
 
@@ -52,7 +52,7 @@
     <dependency> <!-- linux >= 5.1 -->
       <groupId>io.netty.incubator</groupId>
       <artifactId>netty-incubator-transport-native-io_uring</artifactId>
-      <version>0.0.12.Final</version>
+      <version>0.0.15.Final</version>
       <classifier>linux-x86_64</classifier>
     </dependency>
     <dependency>

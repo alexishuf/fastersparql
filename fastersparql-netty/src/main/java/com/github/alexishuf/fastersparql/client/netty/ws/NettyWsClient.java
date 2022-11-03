@@ -1,12 +1,77 @@
 package com.github.alexishuf.fastersparql.client.netty.ws;
 
-import io.netty.channel.ChannelHandlerContext;
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
+import com.github.alexishuf.fastersparql.client.netty.http.ActiveChannelSet;
+import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.*;
+import io.netty.channel.pool.AbstractChannelPoolHandler;
+import io.netty.channel.pool.ChannelHealthChecker;
+import io.netty.channel.pool.SimpleChannelPool;
+import io.netty.handler.codec.http.HttpClientCodec;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpObjectAggregator;
+import io.netty.handler.codec.http.websocketx.extensions.compression.WebSocketClientCompressionHandler;
+import io.netty.handler.ssl.SslContext;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
-public interface NettyWsClient extends AutoCloseable {
+import java.net.URI;
+import java.util.concurrent.ExecutionException;
+
+public class NettyWsClient implements AutoCloseable {
+    private final EventLoopGroupHolder elgHolder;
+    private final Bootstrap bootstrap;
+    private final @Nullable SimpleChannelPool pool;
+    private final ActiveChannelSet activeChs;
+    private boolean closed;
+
+    public NettyWsClient(EventLoopGroupHolder elgHolder, URI uri,
+                         HttpHeaders headers, boolean pool,
+                         boolean poolFIFO, @Nullable SslContext sslContext) {
+        this.elgHolder = elgHolder;
+        this.activeChs = new ActiveChannelSet(uri.toString());
+        int maxHttp = FSNettyProperties.wsMaxHttpResponse();
+        WsRecycler recycler = pool ? this::recycle : WsRecycler.CLOSE;
+        var initializer = new ChannelInitializer<>() {
+            @Override protected void initChannel(Channel ch) {
+                ChannelPipeline pipe = ch.pipeline();
+                if (sslContext != null)
+                    pipe.addLast("ssl", sslContext.newHandler(ch.alloc()));
+                pipe.addLast("http", new HttpClientCodec());
+                pipe.addLast("aggregator", new HttpObjectAggregator(maxHttp));
+                pipe.addLast("comp", WebSocketClientCompressionHandler.INSTANCE);
+                pipe.addLast("ws", new WsClientNettyHandler(uri, headers, recycler));
+                activeChs.add(ch);
+            }
+        };
+        int port = uri.getPort() > 0 ? uri.getPort() : (uri.getScheme().endsWith("s") ? 443 : 80);
+        this.bootstrap = elgHolder.acquireBootstrap(uri.getHost(), port);
+        try {
+            if (pool) {
+                this.pool = new SimpleChannelPool(bootstrap, new AbstractChannelPoolHandler() {
+                    @Override public void channelAcquired(Channel c) { activeChs.setActive(c); }
+                    @Override public void channelReleased(Channel c) { activeChs.setInactive(c); }
+                    @Override public void channelCreated(Channel c)  { initializer.initChannel(c); }
+                }, ChannelHealthChecker.ACTIVE, true, !poolFIFO);
+            } else {
+                this.pool = null;
+                this.bootstrap.handler(initializer);
+            }
+        } catch (Throwable t) {
+            elgHolder.release();
+            throw t;
+        }
+    }
+
+    private void recycle(Channel ch) {
+        if (pool != null) pool.release(ch);
+    }
+
     /**
      * Open (or reuse an idle) WebSocket session and handle events with {@code handle}.
      *
-     * Eventually one of the following methods will be called:
+     * <p>Eventually one of the following methods will be called:</p>
      * <ul>
      *     <li>{@link WsClientHandler#attach(ChannelHandlerContext, WsRecycler)}
      *         once a WebSocket session has been established</li>
@@ -14,12 +79,37 @@ public interface NettyWsClient extends AutoCloseable {
      *         a WebSocket session (e.g., could not connect, WebSocket handshake failed, etc.).</li>
      * </ul>
      *
-     * Note that after {@code handler.attach(ctx, recycler)}, {@code onError} will still be called
-     * if an error occurrs after the session was established.
+     * <p>Note that after {@code handler.attach(ctx, recycler)}, {@code onError} will still be called
+     * if an error occurs after the session was established.</p>
      *
      * @param handler listener for WebSocket session events.
      */
-    void open(WsClientHandler handler);
+    public void open(WsClientHandler handler) {
+        (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
+            try {
+                Channel ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
+                var nettyHandler = (WsClientNettyHandler) ch.pipeline().get("ws");
+                if (nettyHandler == null) {
+                    String msg = ch.isOpen()
+                            ? "\"ws\" handler missing from pipeline in ch=" + ch
+                            : "Server closed the connection prematurely for ch=" + ch;
+                    handler.onError(new SparqlClientServerException(msg));
+                } else {
+                    nettyHandler.delegate(handler);
+                }
+            } catch (ExecutionException e) {
+                handler.onError(e.getCause());
+            } catch (Throwable t) {
+                handler.onError(t);
+            }
+        });
+    }
 
-    @Override void close();
+    @Override public void close() {
+        if (!closed) {
+            closed = true;
+            activeChs.close();
+            elgHolder.release();
+        }
+    }
 }

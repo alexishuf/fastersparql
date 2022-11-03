@@ -1,27 +1,20 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.client.model.Protocol;
-import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
-import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
-import com.github.alexishuf.fastersparql.client.netty.http.PooledNettyHttpClient;
-import com.github.alexishuf.fastersparql.client.netty.http.UnPooledNettyHttpClient;
+import com.github.alexishuf.fastersparql.client.netty.http.*;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
-import com.github.alexishuf.fastersparql.client.netty.util.FasterSparqlNettyProperties;
+import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
-import com.github.alexishuf.fastersparql.client.netty.ws.impl.PooledNettyWsClient;
-import com.github.alexishuf.fastersparql.client.netty.ws.impl.UnpooledNettyWsClient;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
 import java.io.File;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -32,13 +25,13 @@ import static io.netty.handler.ssl.SslContextBuilder.forClient;
 public final class NettyClientBuilder {
     private static final Logger log = LoggerFactory.getLogger(NettyClientBuilder.class);
 
-    private boolean shareEventLoopGroup = FasterSparqlNettyProperties.shareEventLoopGroup();
-    private boolean pooled = FasterSparqlNettyProperties.pool();
-    private boolean poolFIFO = FasterSparqlNettyProperties.poolFIFO();
-    private boolean ocsp = FasterSparqlNettyProperties.ocsp();
-    private boolean startTls = FasterSparqlNettyProperties.startTls();
+    private boolean shareEventLoopGroup = FSNettyProperties.shareEventLoopGroup();
+    private boolean pooled = FSNettyProperties.pool();
+    private boolean poolFIFO = FSNettyProperties.poolFIFO();
+    private boolean ocsp = FSNettyProperties.ocsp();
+    private boolean startTls = FSNettyProperties.startTls();
     private @Nullable File trustCertCollectionFile =
-            FasterSparqlNettyProperties.trustCertCollectionFile();
+            FSNettyProperties.trustCertCollectionFile();
 
     public boolean shareEventLoopGroup() { return shareEventLoopGroup; }
     public boolean pooled() { return pooled; }
@@ -63,41 +56,32 @@ public final class NettyClientBuilder {
     }
 
     /**
-     * Build a {@link NettyHttpClient} with the builder settings
+     * Create a new {@link NettyHttpClient} with current builder settings.
      *
-     * @param protocol The protocol to use, either HTTP or HTTPS
-     * @param address address and port of the remote server. Ideally this should've been
-     *                created from a hostname and not from the textual representation of the
-     *                IP address. The {@link InetSocketAddress#getHostString()} will be used
-     *                with the HTTP {@code Host} header.
-     * @param factory A factory for response handlers
-     * @param <H> The response handler type
-     * @return A new {@link NettyHttpClient}, whose ownership is given to the caller
-     * @throws SSLException If protocol is HTTPS and something goes wrong on {@link SslContext}
-     *         initialization. Such exceptions are usually configuration (or environment) issues.
+     * @param uri Base URI of the host where connections will be made. The path, query and
+     *            fragment portions of the URI will be ignored (scheme, host and port will be used).
+     *            The host may be a IPv4/IPv6 address or a DNS hostname that will be resolved at
+     *            connection time.
+     * @param factory {@link Supplier} that yields a new {@link ReusableHttpClientInboundHandler}
+     *                instances when requested.
+     * @return a new {@link NettyHttpClient}
+     * @throws SSLException If the URI scheme is https and the builder SSL settings could not be
+     *                      loaded
      */
-    public <H extends ReusableHttpClientInboundHandler> NettyHttpClient<H>
-    buildHTTP(Protocol protocol,
-              InetSocketAddress address,
-              Supplier<H> factory) throws SSLException {
-        if (protocol.isWebSocket())
+    public NettyHttpClient
+    buildHTTP(String uri,
+              Supplier<? extends ReusableHttpClientInboundHandler > factory) throws SSLException {
+        if (uri.startsWith("ws://"))
             throw new IllegalArgumentException("WS(S) not supported by buildHTTP");
-        SslContext sslContext = buildSslContext(protocol);
-        if (pooled)
-            return new PooledNettyHttpClient<>(elgHolder(), address, factory, poolFIFO, sslContext);
-        else
-            return new UnPooledNettyHttpClient<>(elgHolder(), address, factory, sslContext);
+        var sslContext = uri.startsWith("https://") ? buildSslContext() : null;
+        return new NettyHttpClient(elgHolder(), uri, factory, pooled, poolFIFO, sslContext);
     }
 
-    private @Nullable SslContext buildSslContext(@NonNull Protocol protocol) throws SSLException {
-        SslContext sslContext = null;
-        if (protocol.needsSsl()) {
-            SslContextBuilder sslBuilder = forClient().enableOcsp(ocsp).startTls(startTls);
-            if (trustCertCollectionFile != null)
-                sslBuilder.trustManager(trustCertCollectionFile);
-            sslContext = sslBuilder.build();
-        }
-        return sslContext;
+    private SslContext buildSslContext() throws SSLException {
+        SslContextBuilder sslBuilder = forClient().enableOcsp(ocsp).startTls(startTls);
+        if (trustCertCollectionFile != null)
+            sslBuilder.trustManager(trustCertCollectionFile);
+        return sslBuilder.build();
     }
 
     /**
@@ -114,10 +98,7 @@ public final class NettyClientBuilder {
     public NettyWsClient buildWs(Protocol protocol, URI uri, HttpHeaders headers) throws SSLException {
         if (!protocol.isWebSocket())
             throw new IllegalArgumentException("WS(S) not supported by buildWs");
-        SslContext sslContext = buildSslContext(protocol);
-        if (pooled)
-            return new PooledNettyWsClient(elgHolder(), uri, headers, poolFIFO, sslContext);
-        else
-            return new UnpooledNettyWsClient(elgHolder(), uri, headers, sslContext);
+        SslContext sslContext = protocol.needsSsl() ? buildSslContext() : null;
+        return new NettyWsClient(elgHolder(), uri, headers, pooled, poolFIFO, sslContext);
     }
 }

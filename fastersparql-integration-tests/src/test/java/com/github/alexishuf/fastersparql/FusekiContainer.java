@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -22,20 +23,12 @@ public final class FusekiContainer extends GenericContainer<FusekiContainer> {
     private final @Nullable File deleteOnClose;
 
     public FusekiContainer(Class<?> refClass, String resourcePath, Logger log) {
-        this(log, TestUtils.extract(refClass, resourcePath));
-    }
-    public FusekiContainer(File rdfFile, Logger log) {
-        this(rdfFile, log, null);
-    }
-    private FusekiContainer(Logger log, File deleteOnCloseRdfFile) {
-        this(deleteOnCloseRdfFile, log, deleteOnCloseRdfFile);
-    }
-    private FusekiContainer(File rdfFile, Logger log, @Nullable File deleteOnClose) {
         super(DockerImageName.parse("alexishuf/fuseki:3.17.0"));
+        File rdfFile = TestUtils.extract(refClass, resourcePath);
         String name = rdfFile.getName();
         if (name.isEmpty())
             throw new IllegalArgumentException("Empty name for rdfFile="+rdfFile);
-        this.deleteOnClose = deleteOnClose;
+        this.deleteOnClose = rdfFile;
         //noinspection resource
         withFileSystemBind(rdfFile.getAbsolutePath(),
                 "/data/" + name, BindMode.READ_ONLY)
@@ -64,8 +57,8 @@ public final class FusekiContainer extends GenericContainer<FusekiContainer> {
             log.error("Failed to delete file {}", deleteOnClose);
     }
 
-    public SparqlEndpoint asEndpoint() {
-        int port = getMappedPort(3030);
-        return SparqlEndpoint.parse(format("http://%s:%d/ds/sparql", getHost(), port));
+    public SparqlEndpoint asEndpoint(SparqlConfiguration cfg) {
+        String uri = format("http://%s:%d/ds/sparql", getHost(), getMappedPort(3030));
+        return new SparqlEndpoint(uri, cfg);
     }
 }

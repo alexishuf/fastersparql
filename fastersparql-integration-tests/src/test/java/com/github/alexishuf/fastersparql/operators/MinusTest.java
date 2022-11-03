@@ -3,17 +3,12 @@ package com.github.alexishuf.fastersparql.operators;
 import com.github.alexishuf.fastersparql.HdtssContainer;
 import com.github.alexishuf.fastersparql.ResultsChecker;
 import com.github.alexishuf.fastersparql.TestUtils;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.model.row.impl.StringArrayOperations;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
-import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
-import com.github.alexishuf.fastersparql.operators.impl.bind.BindMinus;
-import com.github.alexishuf.fastersparql.operators.plan.LeafPlan;
-import com.github.alexishuf.fastersparql.operators.providers.MinusProvider;
+import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
+import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.operators.plan.Minus;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -23,14 +18,14 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.*;
-import java.util.concurrent.ExecutionException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toSet;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @Testcontainers
@@ -43,19 +38,23 @@ public class MinusTest {
     private static final HdtssContainer HDTSS =
             new HdtssContainer(MinusTest.class, "minus.hdt", log);
 
+    interface MinusFactory {
+        Minus<List<String>, String> create(Plan<List<String>, String> left,
+                                           Plan<List<String>, String> right);
+    }
+
     private static class TestData extends ResultsChecker {
-        final String left, right;
+        final SparqlQuery left, right;
 
         public TestData(String left, String right, String... values) {
-            super(SparqlUtils.publicVars(left), values);
-            this.left = PREFIX+left;
-            this.right = PREFIX+right;
+            super(new SparqlQuery(left).publicVars, values);
+            this.left = new SparqlQuery(PREFIX+left);
+            this.right = new SparqlQuery(PREFIX+right);
         }
 
         @Override public boolean equals(Object o) {
             if (this == o) return true;
-            if (!(o instanceof TestData)) return false;
-            TestData testData = (TestData) o;
+            if (!(o instanceof TestData testData)) return false;
             return left.equals(testData.left) && right.equals(testData.right);
         }
 
@@ -134,63 +133,41 @@ public class MinusTest {
                      "<$:left23>", "\"36\"^^<$xsd:integer>",
                      "<$:left23>", "\"38\"^^<$xsd:integer>")
         );
-        List<SparqlClientFactory> factories = TestUtils.allClientFactories();
-        List<MinusProvider> providers = new ArrayList<>();
-        ServiceLoader.load(MinusProvider.class).forEach(providers::add);
-        assertFalse(providers.isEmpty());
-        providers.add(new BindMinus.Provider() {
-            @Override public Minus create(long flags, RowOperations ro) {
-                return new BindMinus(ro, (flags & OperatorFlags.ASYNC) != 0 ? 32 : 1);
+        List<Arguments> list = new ArrayList<>();
+        List<MinusFactory> minusFactories = List.of(FSOps::minus);
+        for (var factory : TestUtils.allClientFactories()) {
+            for (MinusFactory minusFactory : minusFactories) {
+                for (var data : base)
+                    list.add(arguments(factory, minusFactory, data));
             }
-            @Override public String toString() {
-                return super.toString()+"[32-concurrency]";
-            }
-        });
-        List<Long> flagsList = asList(0L, OperatorFlags.ASYNC);
-        return factories.stream().flatMap(fac -> providers.stream().flatMap(
-                prov -> flagsList.stream().flatMap(flags -> base.stream().map(
-                        data -> arguments(fac, prov, flags, data)))));
+        }
+        return list.stream();
     }
 
     @Test
-    void selfTest() throws ExecutionException {
+    void selfTest() throws Exception {
         Set<SparqlClientFactory> factories = test().map(a -> (SparqlClientFactory) a.get()[0]).collect(toSet());
-        Set<String> queries = test().map(a -> (TestData) a.get()[3])
+        Set<SparqlQuery> queries = test().map(a -> (TestData) a.get()[3])
                                     .flatMap(d -> Stream.of(d.left, d.right)).collect(toSet());
         for (SparqlClientFactory factory : factories) {
-            try (SparqlClient<String[], byte[]> client = factory.createFor(HDTSS.asEndpoint())) {
-                List<AsyncTask<?>> tasks = new ArrayList<>();
-                for (String query : queries) {
-                    tasks.add(Async.async(() -> {
-                        try (IterableAdapter<String[]> a = new IterableAdapter<>(client.query(query).publisher())) {
-                            if (a.hasError())
-                                fail(a.error());
-                        }
-                    }));
-                }
-                for (AsyncTask<?> task : tasks) task.get();
+            try (var client = factory.createFor(HDTSS.asEndpoint());
+                 var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+                for (var query : queries)
+                    tasks.add(() -> client.query(query).toList());
             }
         }
     }
 
     @ParameterizedTest @MethodSource
-    void test(SparqlClientFactory clientFactory, MinusProvider provider, long flags,
-              TestData testData) throws ExecutionException {
-        if (provider.bid(flags) == BidCosts.UNSUPPORTED)
-            return;
-        try (SparqlClient<String[], byte[]> client = clientFactory.createFor(HDTSS.asEndpoint())) {
-            LeafPlan<String[]> left = LeafPlan.builder(client, testData.left).build();
-            LeafPlan<String[]> right = LeafPlan.builder(client, testData.right).build();
-            List<AsyncTask<?>> futures = new ArrayList<>();
-            for (int thread = 0; thread < N_THREADS; thread++) {
-                futures.add(Async.async(() -> {
-                    for (int i = 0; i < N_ITERATIONS; i++) {
-                        Minus minus = provider.create(flags, StringArrayOperations.get());
-                        testData.assertExpected(minus.checkedRun(minus.asPlan(left, right)));
-                    }
-                }));
-            }
-            for (AsyncTask<?> future : futures) future.get();
+    void test(SparqlClientFactory clientFactory, MinusFactory minusFactory, TestData d) throws Exception {
+        try (var client = clientFactory.createFor(HDTSS.asEndpoint(), ListRow.STRING);
+             var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+            var left = FSOps.query(client, d.left);
+            var right = FSOps.query(client, d.right);
+            tasks.repeat(N_THREADS, () -> {
+                for (int i = 0; i < N_ITERATIONS; i++)
+                    d.assertExpected(minusFactory.create(left, right).execute());
+            });
         }
     }
 }

@@ -42,6 +42,7 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
             throw new IllegalStateException(msg);
         }
         this.delegate = delegate;
+        //noinspection resource
         EventExecutor el = ctx.executor();
         if (el.inEventLoop()) tryHandshake();
         else                  el.execute(this::tryHandshake);
@@ -49,6 +50,7 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
 
     private void tryHandshake() {
         assert ctx != null : "No ctx";
+        //noinspection resource
         assert ctx.executor().inEventLoop() : "Called from outside the event loop";
         Channel channel = ctx.channel();
         if (delegate == null) {
@@ -76,6 +78,7 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
     }
 
     private void detach() {
+        //noinspection resource
         assert ctx == null || ctx.executor().inEventLoop() : "detach() from outside event loop";
         if (delegate != null) {
             if (attached) {
@@ -114,7 +117,7 @@ public class WsClientNettyHandler extends SimpleChannelInboundHandler<Object> im
                 handshakeComplete = true;
                 attach();
             } catch (WebSocketHandshakeException e) {
-                exceptionCaught(ctx, e);
+                exceptionCaught(ctx, new SparqlClientServerException(e.getMessage() + " uri="+hs.uri()));
             }
         } else if (msg instanceof WebSocketFrame) {
             if (delegate == null) {

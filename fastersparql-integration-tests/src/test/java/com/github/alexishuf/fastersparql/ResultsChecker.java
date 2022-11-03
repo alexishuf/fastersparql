@@ -1,15 +1,13 @@
 package com.github.alexishuf.fastersparql;
 
-import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.CSUtils;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.client.util.Skip;
 import org.opentest4j.AssertionFailedError;
 
 import java.util.*;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
-import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -70,18 +68,17 @@ public class ResultsChecker {
     public List<String>               vars()          { return vars; }
     public List<List<String>>         expected()      { return expected; }
 
-    public void assertExpected(Results<?> results) {
+    public void assertExpected(BIt<?> results) {
         List<Object> actual = new ArrayList<>();
-        try (IterableAdapter<?> adapter = new IterableAdapter<>(results.publisher())) {
-            adapter.forEach(r -> actual.add(ResultsChecker.asCanonRow(r)));
-            if (adapter.hasError()) {
-                if (expectedError != null) {
-                    Class<? extends Throwable> errorClass = requireNonNull(adapter.error()).getClass();
-                    assertTrue(expectedError.isAssignableFrom(errorClass));
-                } else {
-                    fail(adapter.error());
-                }
-            }
+        Throwable error = null;
+        try {
+            while (results.hasNext()) actual.add(results.next());
+        } catch (Throwable t) { error = t; }
+        if (error != null) {
+            if (expectedError != null)
+                assertTrue(expectedError.isAssignableFrom(error.getClass()));
+            else
+                fail(error);
         }
         if (checkOrder) {
             assertEquals(expected, actual);
@@ -119,41 +116,47 @@ public class ResultsChecker {
 
     private static List<String> asCanonRow(Object row) {
         Collection<?> input;
-        if (row == null)
-            return null;
-        else if (row instanceof Collection)
-            input = (Collection<?>) row;
-        else if (row instanceof Object[])
-            input = Arrays.asList((Object[]) row);
-        else
-            throw new AssertionFailedError("Unexpected "+row.getClass());
+        switch (row) {
+            case null:
+                return null;
+            case Collection<?> collection:
+                input = collection;
+                break;
+            case Object[] objects:
+                input = Arrays.asList(objects);
+                break;
+            default:
+                throw new AssertionFailedError("Unexpected " + row.getClass());
+        }
         ArrayList<String> list = new ArrayList<>(input.size());
         for (Object o : input)
             list.add(ResultsChecker.makeStringImplicit(TestUtils.decodeOrToString(o)));
         return list;
     }
 
-    private static <T> Map<T, Integer> countMap(Collection<T> collection) {
-        Map<T, Integer> map = new HashMap<>();
-        for (T o : collection)
-            map.put(o, map.getOrDefault(o, 0)+1);
+    private static Map<List<String>, Integer> countMap(Collection<?> collection) {
+        Map<List<String>, Integer> map = new HashMap<>();
+        for (Object o : collection) {
+            List<String> row = asCanonRow(o);
+            map.put(row, map.getOrDefault(row, 0)+1);
+        }
         return map;
     }
 
     private void compareRows(List<Object> actual) {
-        Map<?, Integer> expectedCounts = ResultsChecker.countMap(expected);
-        Map<?, Integer> actualCounts = ResultsChecker.countMap(actual);
+        Map<List<String>, Integer> expectedCounts = ResultsChecker.countMap(expected);
+        Map<List<String>, Integer> actualCounts = ResultsChecker.countMap(actual);
         List<String> expectedSorted = expectedCounts.keySet().stream().map(Object::toString)
                 .sorted().collect(toList());
         List<String> actualSorted = actualCounts.keySet().stream().map(Object::toString)
                 .sorted().collect(toList());
         assertEquals(expectedSorted, actualSorted);
-        for (Map.Entry<?, Integer> e : expectedCounts.entrySet()) {
-            Integer count = actualCounts.getOrDefault(e.getKey(), 0);
+        for (var e : expectedCounts.entrySet()) {
+            int count = actualCounts.getOrDefault(e.getKey(), 0);
             assertEquals(e.getValue(), count,
                     "expected "+e.getValue()+" "+e.getKey()+", got "+count);
         }
-        for (Map.Entry<?, Integer> e : actualCounts.entrySet()) {
+        for (var e : actualCounts.entrySet()) {
             if (expectedCounts.containsKey(e.getKey())) continue;
             fail(e.getValue()+" unexpected occurrences of "+e.getKey());
         }
@@ -165,10 +168,10 @@ public class ResultsChecker {
         int len = string.length();
         StringBuilder b = new StringBuilder(len + 128);
         for (int i = 0, j; i < len; i = j+1) {
-            j = CSUtils.skipUntil(string, i, '$');
+            j = Skip.skipUntil(string, i, string.length(), '$');
             boolean replaced = false;
             for (Map.Entry<String, String> e : PREDEFINED.entrySet()) {
-                replaced = CSUtils.startsWith(string, j+1, len, e.getKey());
+                replaced = string.regionMatches(j+1, e.getKey(), 0, e.getKey().length());
                 if (replaced) {
                     b.append(string, i, j).append(e.getValue());
                     j += e.getKey().length();

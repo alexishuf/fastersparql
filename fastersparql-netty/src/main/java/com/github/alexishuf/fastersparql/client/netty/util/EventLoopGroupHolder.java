@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.client.FasterSparql;
-import com.github.alexishuf.fastersparql.client.util.FasterSparqlProperties;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
+import com.github.alexishuf.fastersparql.client.FS;
+import com.github.alexishuf.fastersparql.client.util.FSProperties;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
@@ -14,8 +12,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -56,7 +52,7 @@ public class EventLoopGroupHolder {
      * after {@link EventLoopGroupHolder#keepAlive()}
      * {@link EventLoopGroupHolder#keepAliveTimeUnit()}s if it still has no references.
      */
-    private @Nullable AsyncTask<?> shutdownTask;
+    private @Nullable Thread shutdownThread = null;
 
     /**
      * The current alvie {@link EventLoopGroup}. This field must be set to null before
@@ -118,11 +114,10 @@ public class EventLoopGroupHolder {
                 assert false : "group==null with references != 1";
             }
             group = transport.createGroup();
-            FasterSparql.addShutdownHook(() -> immediateShutdown("FasterSparql.shutdown()"));
-        } else if (shutdownTask != null) {
-            // if cancel() is too late, the task will see references > 0 and will do nothing
-            shutdownTask.cancel(false);
-            shutdownTask = null;
+            FS.addShutdownHook(() -> immediateShutdown("FasterSparql.shutdown()"));
+        } else if (shutdownThread != null) {
+            // if interrupted too late, it will see references > 0 and will do nothing
+            shutdownThread.interrupt();
         }
         assert group != null : "null group";
         return group;
@@ -132,24 +127,25 @@ public class EventLoopGroupHolder {
      * Builds a {@link Bootstrap} with the {@link EventLoopGroupHolder#acquire()}d
      * {@link EventLoopGroup}.
      *
-     * <p>Applicable configurations from {@link FasterSparqlProperties} will be set.</p>
+     * <p>Applicable configurations from {@link FSProperties} will be set.</p>
      *
      * <p><strong>{@link EventLoopGroupHolder#release()} must be called once the
      * {@link Bootstrap} is discarded.</strong></p>
      *
-     * @param address the {@link Bootstrap#remoteAddress(SocketAddress)}
+     * @param host The DNS host name or IPv4/IPv6 address of the remote server
+     * @param port The TCP port where the HTTP server is listening
      * @return A new {@link Bootstrap} bound to the acquired {@link EventLoopGroup}.
      */
-    public Bootstrap acquireBootstrap(InetSocketAddress address) {
+    public Bootstrap acquireBootstrap(String host, int port) {
         EventLoopGroup group = acquire();
         try {
-            Bootstrap bootstrap = new Bootstrap().group(group).remoteAddress(address)
+            Bootstrap bootstrap = new Bootstrap().group(group).remoteAddress(host, port)
                                                  .channel(transport.channelClass());
-            int connTimeoutMs = FasterSparqlProperties.connectTimeoutMs();
+            int connTimeoutMs = FSProperties.connectTimeoutMs();
             if (connTimeoutMs > 0)
                 bootstrap = bootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, connTimeoutMs);
 
-            int soTimeoutMs = FasterSparqlProperties.soTimeoutMs();
+            int soTimeoutMs = FSProperties.soTimeoutMs();
             if (soTimeoutMs > 0)
                 bootstrap = bootstrap.option(ChannelOption.SO_TIMEOUT, soTimeoutMs);
             return bootstrap;
@@ -196,9 +192,13 @@ public class EventLoopGroupHolder {
             }
             --references;
             if (references == 0) {
-                if (keepAlive > 0 && shutdownTask == null) {
-                    shutdownTask = Async.schedule(keepAlive, keepAliveTimeUnit, () ->
-                                                  immediateShutdown("keepAlive timeout"));
+                if (keepAlive > 0 && shutdownThread == null) {
+                    shutdownThread = Thread.startVirtualThread(() -> {
+                        try {
+                            Thread.sleep(keepAliveTimeUnit.toMillis(keepAlive));
+                            immediateShutdown("keepAlive timeout");
+                        } catch (InterruptedException ignored) {}
+                    });
                 } else {
                     future = (shuttingDown = group).shutdownGracefully();
                     group = null;
@@ -217,9 +217,9 @@ public class EventLoopGroupHolder {
                 log.debug("{}.shutdownGracefully() reason: {}", group, reason);
                 group.shutdownGracefully();
                 group = null;
-                if (shutdownTask != null)
-                    shutdownTask.cancel(false);
-                shutdownTask = null;
+                if (shutdownThread != null && Thread.currentThread() != shutdownThread)
+                    shutdownThread.interrupt();
+                shutdownThread = null;
             }
         }
     }

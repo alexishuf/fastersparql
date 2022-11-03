@@ -1,20 +1,18 @@
 package com.github.alexishuf.fastersparql;
 
-import com.github.alexishuf.fastersparql.client.FasterSparql;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.model.Results;
-import com.github.alexishuf.fastersparql.client.util.reactive.IterableAdapter;
+import com.github.alexishuf.fastersparql.client.FS;
+import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
+import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
-import static java.util.Arrays.asList;
-import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Testcontainers
@@ -27,13 +25,12 @@ class FusekiContainerTest {
 
     @Test
     void test() {
-        try (SparqlClient<String[], ?> client = FasterSparql.clientFor(FUSEKI.asEndpoint())) {
-            Results<String[]> results = client.query("SELECT * WHERE { ?x <http://xmlns.com/foaf/0.1/age> 23 }");
-            try (IterableAdapter<String[]> adapter = new IterableAdapter<>(results.publisher())) {
-                Set<String> ex = new HashSet<>(asList("<http://example.org/Alice>",
-                                                            "<http://example.org/Eric>"));
-                assertEquals(ex, adapter.stream().map(r -> r[0]).collect(toSet()));
-            }
+        try (var client = FS.clientFor(FUSEKI.asEndpoint(SparqlConfiguration.EMPTY), ListRow.STRING)) {
+            var sparql = new SparqlQuery("SELECT * WHERE { ?x <http://xmlns.com/foaf/0.1/age> 23 }");
+            var actual = client.query(sparql).toSet();
+            var expected = Set.of(List.of("<http://example.org/Alice>"),
+                                  List.of("<http://example.org/Eric>"));
+            assertEquals(expected, actual);
         }
     }
 

@@ -24,7 +24,7 @@ You can use the BOM and include other modules as discussed
 <dependency>
   <groupId>com.github.alexishuf.fastersparql</groupId>
   <artifactId>fastersparql-netty</artifactId>
-  <version>1.0.0-SNAPSHOT/version>
+  <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -32,7 +32,7 @@ Then create a `SparqlClient` for an endpoint. In this example, we have an
 endpoint that only supports JSON or TSV serialization with GET methods:
 
 ```java
-SparqlClient<String[], byte[]> client = FasterSparql.clientFor("json,tsv,get@http://example.org/sparql");
+var client = FasterSparql.clientFor("json,tsv,get@http://example.org/sparql");
 ```
 
 > Side notes:
@@ -82,7 +82,7 @@ if (iterable.hasError()) { // check for errors, if you care
 
 To avoid dependency conflicts, fastersparql is split into the following modules:
 
-- [fastersparql-client](fastersparql-client/README.md)
+- [fastersparql-core](fastersparql-core/README.md)
 - fastersparql-netty: provides a implementation of SparqlClient over [netty](https://netty.io/)
 - [fastersparql-operators](fastersparql-operators/README.md): implementations 
   for SPARQL algebra operators (_Join_, _Filter_, _Union_, etc.). Use this to 

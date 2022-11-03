@@ -4,7 +4,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.github.alexishuf.fastersparql.client.netty.util.FasterSparqlNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
+import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class SharedEventLoopGroupHolder {

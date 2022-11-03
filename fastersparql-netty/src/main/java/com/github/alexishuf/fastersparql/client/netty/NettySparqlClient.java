@@ -1,594 +1,340 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
+import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
-import com.github.alexishuf.fastersparql.client.model.*;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperations;
-import com.github.alexishuf.fastersparql.client.model.row.RowOperationsRegistry;
-import com.github.alexishuf.fastersparql.client.model.row.impl.StringArrayOperations;
-import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
+import com.github.alexishuf.fastersparql.client.model.Graph;
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
+import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
+import com.github.alexishuf.fastersparql.client.netty.http.ReusableHttpClientInboundHandler;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackBIt;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
-import com.github.alexishuf.fastersparql.client.parser.results.*;
-import com.github.alexishuf.fastersparql.client.parser.row.RowParser;
+import com.github.alexishuf.fastersparql.client.parser.results.InvalidSparqlResultsException;
+import com.github.alexishuf.fastersparql.client.parser.results.ResultsParser;
+import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserConsumer;
+import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.Merger;
-import com.github.alexishuf.fastersparql.client.util.Throwing;
-import com.github.alexishuf.fastersparql.client.util.async.Async;
-import com.github.alexishuf.fastersparql.client.util.async.AsyncTask;
-import com.github.alexishuf.fastersparql.client.util.async.SafeAsyncTask;
-import com.github.alexishuf.fastersparql.client.util.async.SafeCompletableAsyncTask;
-import com.github.alexishuf.fastersparql.client.util.bind.BindPublisher;
-import com.github.alexishuf.fastersparql.client.util.bind.Binder;
-import com.github.alexishuf.fastersparql.client.util.bind.SparqlClientBinder;
-import com.github.alexishuf.fastersparql.client.util.reactive.CallbackPublisher;
-import com.github.alexishuf.fastersparql.client.util.reactive.EmptyPublisher;
-import com.github.alexishuf.fastersparql.client.util.reactive.FSPublisher;
-import com.github.alexishuf.fastersparql.client.util.sparql.SparqlUtils;
+import com.github.alexishuf.fastersparql.client.util.bind.ClientBindingBIt;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.EventLoop;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
-import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Arrays.asList;
-import static java.util.Collections.unmodifiableSet;
 
+public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, F> {
+    private static final Set<SparqlMethod> SUPPORTED_METHODS
+            = Set.of(SparqlMethod.GET, SparqlMethod.FORM, SparqlMethod.POST);
+    private final AtomicInteger nextHandlerId = new AtomicInteger(1);
+    private final NettyHttpClient netty;
 
-public class NettySparqlClient<R, F> implements SparqlClient<R, F> {
-    private static final AtomicInteger nextBindPublisherId = new AtomicInteger(1);
-    private static final Logger log = LoggerFactory.getLogger(NettySparqlClient.class);
-    private static final Set<SparqlMethod> SUPPORTED_METHODS = unmodifiableSet(new HashSet<>(asList(
-            SparqlMethod.GET, SparqlMethod.FORM, SparqlMethod.POST
-    )));
-
-    private final AtomicLong nextHandler = new AtomicLong(1);
-    private final SparqlEndpoint endpoint;
-    private final AsyncTask<NettyHttpClient<Handler>> netty;
-    private final RowParser<R> rowParser;
-    private final FragmentParser<F> fragParser;
-    private final Supplier<Handler> handlerFactory =
-            () -> new Handler(this +"-"+nextHandler.getAndIncrement());
-
-
-    public NettySparqlClient(SparqlEndpoint endpoint, RowParser<R> rowParser,
-                             FragmentParser<F> fragmentParser) {
-        if (endpoint == null) throw new NullPointerException("endpoint is null");
-        if (rowParser == null) throw new NullPointerException("rowParser is null");
-        if (fragmentParser == null) throw new NullPointerException("fragmentParser is null");
-        this.endpoint = withSupported(endpoint, ResultsParserRegistry.get(), SUPPORTED_METHODS);
-        this.netty = endpoint.resolvedHost().thenApplyThrowing(a ->
-                new NettyClientBuilder().buildHTTP(endpoint.protocol(), a, handlerFactory));
-        this.rowParser = rowParser;
-        this.fragParser = fragmentParser;
+    public NettySparqlClient(SparqlEndpoint ep, RowType<R, I> rowType,
+                             FragmentParser<F> fragParser) {
+        super(withSupported(ep, ResultsParserRegistry.get(), SUPPORTED_METHODS),
+                rowType, fragParser);
+        try {
+            Supplier<NettyHandler> handlerFac = () -> new NettyHandler(nextHandlerId.getAndIncrement());
+            this.netty = new NettyClientBuilder().buildHTTP(ep.uri(), handlerFac);
+        } catch (Throwable t) {
+            throw SparqlClientException.wrap(ep, t);
+        }
     }
 
-    @Override public Class<R> rowClass() {
-        //noinspection unchecked
-        return (Class<R>) rowParser.rowClass();
-    }
-
-    @Override public Class<F> fragmentClass() {
-        //noinspection unchecked
-        return (Class<F>) fragParser.fragmentClass();
-    }
-
-    @Override public SparqlEndpoint endpoint() {
-        return endpoint;
-    }
-
-    @Override public String toString() {
-        return String.format("NettySparqlClient[%s]@%x", endpoint.uri(), identityHashCode(this));
+    @Override protected String endpointString() {
+        var reg = ResultsParserRegistry.get();
+        var cfg = this.endpoint.configuration();
+        //noinspection SlowListContainsAll
+        boolean trivial = cfg.methods().containsAll(SUPPORTED_METHODS) &&
+                cfg.resultsAccepts().stream().allMatch(fmt -> reg.canParse(fmt.asMediaType()));
+        return trivial ? endpoint.uri() : endpoint.toString();
     }
 
     @Override
-    public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration,
-                            @Nullable Results<R> bindings, @Nullable BindType bindType) {
-        if (bindings == null)
-            return query(sparql, configuration);
+    public BIt<R> query(SparqlQuery sparql, @Nullable BIt<R> bindings, @Nullable BindType bindType) {
+        if (bindings == null || bindings instanceof EmptyBIt<R>)
+            return query(sparql);
         else if (bindType == null)
             throw new NullPointerException("bindings != null, but bindType is null!");
-        RowOperations rowOps = RowOperationsRegistry.get().forClass(rowClass());
-        Binder<R> binder = new SparqlClientBinder<>(rowOps, bindings.vars(), this, sparql,
-                                                     configuration, bindType);
-        String name = this.toString()+bindType+"-"+nextBindPublisherId.getAndIncrement();
-        BindPublisher<R> publisher = new BindPublisher<>(bindings.publisher(), 1,
-                                                         binder, name, null);
-        return new Results<>(binder.resultVars(), rowClass(), publisher);
+        if (sparql.isGraph)
+            throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+        try {
+            return new ClientBindingBIt<>(bindings, bindType, rowType, this,
+                                          sparql);
+        } catch (Throwable t) {
+            throw SparqlClientException.wrap(endpoint, t);
+        }
     }
 
     @Override
-    public Results<R> query(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
-        List<String> vars = SparqlUtils.publicVars(sparql);
-        Throwable cause;
+    public BIt<R> query(SparqlQuery sp) {
+        if (sp.isGraph)
+            throw new SparqlClientInvalidArgument("query() method only takes SELECT/ASK queries");
         try {
-            PublisherAdapter<String[]> publisher = new PublisherAdapter<>(endpoint);
-            publisher.requester = () -> {
-                try {
-                    SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-                    SparqlMethod method = eff.methods().get(0);
-                    HttpMethod nettyMethod = method2netty(method);
-                    String accept = resultsAcceptString(eff.resultsAccepts());
-                    netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                            nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                            new QueryHandlerSetup(vars, accept, method, publisher));
-                } catch (Throwable t) {
-                    publisher.complete(t);
-                }
-            };
-            Results<String[]> raw = new Results<>(vars, String[].class, publisher);
-            FSPublisher<R> parsedPub = rowParser.parseStringsArray(raw);
-            if (parsedPub == raw.publisher()) //noinspection unchecked
-                return (Results<R>) raw;
-            return new Results<>(vars, rowParser.rowClass(), parsedPub);
-        } catch (Throwable t) {
-            cause = t;
-        }
-        return Results.error(vars, rowParser.rowClass(), cause);
+            return new QueryBIt(sp);
+        } catch (Throwable t) { throw SparqlClientException.wrap(endpoint, t); }
     }
 
     @Override
-    public Graph<F> queryGraph(CharSequence sparql, @Nullable SparqlConfiguration configuration) {
-        Throwable cause;
+    public Graph<F> queryGraph(SparqlQuery sp) {
+        if (!sp.isGraph)
+            throw new SparqlClientInvalidArgument("query() method only takes CONSTRUCT/DESCRIBE queries");
         try {
-            PublisherAdapter<byte[]> publisher = new PublisherAdapter<>(endpoint);
-            SafeCompletableAsyncTask<MediaType> mtTask = new SafeCompletableAsyncTask<>();
-            publisher.requester = () -> {
-                try {
-                    SparqlConfiguration eff = effectiveConfig(endpoint, configuration, sparql.length());
-                    SparqlMethod method = eff.methods().get(0);
-                    HttpMethod nettyMethod = method2netty(method);
-                    MediaType errorMT = eff.rdfAccepts().get(0);
-                    String accept = rdfAcceptString(eff.rdfAccepts());
-                    netty.get().request(nettyMethod, firstLine(endpoint, eff, sparql),
-                            nettyMethod == HttpMethod.GET ? null : a -> generateBody(a, eff, sparql),
-                            new GraphHandlerSetup(mtTask, errorMT, accept, method, publisher));
-                } catch (Throwable t) {
-                    mtTask.complete(new MediaType("text", "plain"));
-                    publisher.complete(t);
-                }
-            };
-            Graph<byte[]> raw = new Graph<>(mtTask, byte[].class, publisher);
-            FSPublisher<F> parsedPub = fragParser.parseBytes(raw);
-            if (parsedPub == raw.publisher()) //noinspection unchecked
-                return (Graph<F>) raw;
-            return new Graph<>(mtTask, fragParser.fragmentClass(), parsedPub);
-        } catch (Throwable t) {
-            cause = t;
-        }
-        SafeAsyncTask<MediaType> nullMT = Async.wrap((MediaType) null);
-        FSPublisher<F> empty = FSPublisher.bindToAny(new EmptyPublisher<>(cause));
-        return new Graph<>(nullMT, fragParser.fragmentClass(), empty);
+            GraphBIt bit = new GraphBIt(sp);
+            return new Graph<>(bit.mediaTypeFuture, bit);
+        } catch (Throwable t) { throw SparqlClientException.wrap(endpoint, t); }
     }
 
-    @Override public void close() {
-        boolean cancel = !netty.isDone();
-        if (cancel)
-            netty.cancel(true);
-        NettyHttpClient<Handler> client = null;
-        try {
-            client = netty.orElse(null);
-        } catch (CancellationException ignored) {
-        } catch (ExecutionException e) {
-            if (cancel) {
-                log.debug("{}.close(): NettyHttpClient construction failed after cancel: ",
-                          this, e.getCause());
-            } else {
-                log.info("{}.close(): NettyHttpClient construction failed: ", this, e.getCause());
-            }
-        }
-        if (client != null)
-            client.close();
-    }
+    @Override public void close() { netty.close(); }
 
     /* --- --- --- helper methods  --- --- ---  */
 
     private static HttpMethod method2netty(SparqlMethod method) {
-        switch (method) {
-            case GET:
-                return HttpMethod.GET;
-            case POST:
-            case FORM:
-                return HttpMethod.POST;
-            default:
-                throw new IllegalArgumentException("Unexpected SparqlMethod "+ method);
-        }
+        return switch (method) {
+            case GET -> HttpMethod.GET;
+            case POST, FORM -> HttpMethod.POST;
+            default -> throw new IllegalArgumentException("Unexpected " + method);
+        };
     }
 
-    private ByteBuf generateBody(ByteBufAllocator allocator, SparqlConfiguration config,
-                                 CharSequence sparql) {
-        CharSequence body;
-        switch (config.methods().get(0)) {
-            case POST: body = sparql; break;
-            case FORM: body = formString(sparql, config.params()); break;
-            default: return null;
-        }
-        ByteBuf bb = allocator.buffer(body.length());
-        bb.writeCharSequence(body, UTF_8);
-        return bb;
+    private HttpRequest createRequest(SparqlQuery qry) {
+        var cfg = endpoint.configuration();
+        var method = method(cfg, qry.sparql.length());
+        CharSequence body = switch (method) {
+            case POST -> qry.sparql;
+            case FORM -> formString(qry.sparql, cfg.params());
+            case GET  -> null;
+            default   -> throw new SparqlClientInvalidArgument(method+" not supported by "+this);
+        };
+        String pathAndParams = firstLine(endpoint, cfg, qry.sparql).toString();
+        String accept        = qry.isGraph ? rdfAcceptString(cfg.rdfAccepts())
+                                           : resultsAcceptString(cfg.resultsAccepts());
+        if (body == null)
+            return NettyHttpClient.makeGet(pathAndParams, accept);
+        return NettyHttpClient.makeRequest(method2netty(method), pathAndParams, accept,
+                                           method.contentType(), body, UTF_8);
     }
 
-    /* --- --- --- inner classes  --- --- ---  */
+    /* --- --- --- inner classes --- --- ---  */
 
-    private abstract static class HandlerSetupBase<T> implements NettyHttpClient.Setup<Handler> {
-        protected final String accept;
-        protected final SparqlMethod method;
-        protected final PublisherAdapter<T> publisher;
-
-        public HandlerSetupBase(String accept, SparqlMethod method, PublisherAdapter<T> publisher) {
-            this.accept = accept;
-            this.method = method;
-            this.publisher = publisher;
-        }
-
-        @Override public void setup(Channel ch, HttpRequest request, Handler handler) {
-            request.headers().set(HttpHeaderNames.ACCEPT, accept);
-            if (method.hasRequestBody())
-                request.headers().set(CONTENT_TYPE, method.contentType());
-            ch.eventLoop().execute(() -> ch.config().setAutoRead(true));
-            setupHandler(ch, handler);
-        }
-
-        protected abstract void setupHandler(Channel ch, Handler handler);
-
-        @Override public void connectionError(Throwable cause) {
-            log.debug("Cannot connect: {}. completing the publisher", cause.getMessage());
-            publisher.complete(cause);
-        }
-
-        @Override public void requestError(Throwable cause) {
-            log.error("Unexpected error when building the request on a connected channel", cause);
-            publisher.complete(cause);
-        }
-    }
-
-
-    private static final class QueryHandlerSetup extends HandlerSetupBase<String[]> {
-        private final List<String> vars;
-
-        public QueryHandlerSetup(List<String> vars, String accept, SparqlMethod method,
-                                 PublisherAdapter<String[]> publisher) {
-            super(accept, method, publisher);
-            this.vars = vars;
-        }
-
-        @Override protected void setupHandler(Channel ch, Handler handler) {
-            handler.setupResults(ch, vars, publisher);
-        }
-    }
-
-    private static final class GraphHandlerSetup extends HandlerSetupBase<byte[]> {
-        private final SafeCompletableAsyncTask<MediaType> mtTask;
-        private final MediaType mtOnEarlyError;
-
-        public GraphHandlerSetup(SafeCompletableAsyncTask<MediaType>  mtTask,
-                                 MediaType mtOnEarlyError, String accept,
-                                 SparqlMethod method, PublisherAdapter<byte[]> publisher) {
-            super(accept, method, publisher);
-            this.mtTask = mtTask;
-            this.mtOnEarlyError = mtOnEarlyError;
-        }
-
-        @Override protected void setupHandler(Channel ch, Handler handler) {
-            handler.setupGraph(ch, mtTask, publisher);
-        }
-
-        @Override public void connectionError(Throwable cause) {
-            mtTask.complete(mtOnEarlyError);
-            super.connectionError(cause);
-        }
-
-        @Override public void requestError(Throwable cause) {
-            mtTask.complete(mtOnEarlyError);
-            super.requestError(cause);
-        }
-    }
-
-    /**
-     * The {@link Publisher} exposed by {@link NettySparqlClient} query methods
-     * (when no row/fragment parser is used)
+    /** Asynchronous {@code BIt} that sends an HTTP request on first access
+     *  and is fed with results from the server.
+     *
+     *  <p>This object is distinct from {@link NettyHandler} since it is unique to a query,
+     *  while {@link NettyHandler}'s lifecycle is attached to the Netty channel which may be
+     *  reused for multiple SPARQL queries.</p>
      */
-    private static class PublisherAdapter<T> extends CallbackPublisher<T> {
-        private static final  Logger log = LoggerFactory.getLogger(PublisherAdapter.class);
-        private static final AtomicInteger nextId = new AtomicInteger(1);
+    private abstract class ClientBIt<T> extends NettyCallbackBIt<T> {
+        private final HttpRequest request;
 
-        private final SparqlEndpoint endpoint;
-        private Throwing.@MonotonicNonNull Runnable requester;
-        private boolean pendingAutoRead, pendingCancel;
-        private @MonotonicNonNull Handler handler;
-        private int cycle = -1;
-        public PublisherAdapter(SparqlEndpoint endpoint) {
-            super("NettySparqlClient.PublisherAdapter-"+nextId.getAndIncrement()+"["+endpoint+"]");
-            this.endpoint = endpoint;
-        }
-        public synchronized void handler(Handler handler, int cycle) {
-            log.trace("{}.handler({})", this, handler);
-            this.handler = handler;
-            this.cycle = cycle;
-            if (pendingCancel)
-                this.handler.abort(cycle);
-            else if (pendingAutoRead)
-                this.handler.autoRead(cycle, true);
+        public ClientBIt(Class<T> eCls, Vars vars, HttpRequest request) {
+            super(eCls, vars);
+            this.request = request;
         }
 
-        @Override public void subscribe(Subscriber<? super T> s) {
-            Throwable cause = null;
-            if (!isSubscribed()) {
-                try {
-                    requester.run();
-                } catch (ExecutionException e) {
-                    cause = e.getCause() == null ? e : e.getCause();
-                } catch (Throwable t) {
-                    cause = t;
-                }
-            }
-            super.subscribe(s);
-            if (cause != null)
-                s.onError(cause);
+        @Override public SparqlClient<?, ?, ?> client() { return NettySparqlClient.this; }
+        @Override protected void request() { netty.request(request, this::connected, this::complete); }
+
+        private void connected(Channel ch, NettyHandler handler) {
+            lock.lock();
+            try {
+                this.channel = ch;
+                handler.setup(this);
+            } finally { lock.unlock(); }
         }
+
+        /** Called once for the {@link FullHttpResponse} or the first {@link HttpContent}. */
+        public abstract void startResponse(MediaType mediaType, Charset charset);
+        /** Called for every {@link HttpContent}, which includes a {@link FullHttpResponse} */
+        public abstract void readContent(HttpContent httpContent);
+    }
+
+    /** {@link ClientBIt} for ASK/SELECT queries */
+    private class QueryBIt extends ClientBIt<R> implements ResultsParserConsumer {
+        private @MonotonicNonNull Charset charset;
+        private @MonotonicNonNull ResultsParser parser;
+        private boolean ignoreParserError;
+        private Merger<R, I> projector;
+        private Function<String[], R> converter;
+
+        public QueryBIt(SparqlQuery sparql) {
+            super(rowClass(), sparql.publicVars, createRequest(sparql));
+            projector = Merger.identity(rowType, sparql.publicVars);
+            converter = rowType.converter(ArrayRow.STRING, vars);
+        }
+
+        /* --- --- --- BIt methods --- --- --- */
 
         @Override public void complete(@Nullable Throwable error) {
-            if (error instanceof SparqlClientException)
-                ((SparqlClientException)error).offerEndpoint(endpoint);
-            else if (error != null)
-                error = new SparqlClientException(endpoint, error.getMessage(), error);
+            if (!ended && parser != null) {
+                ignoreParserError = true;
+                parser.end();
+            }
             super.complete(error);
         }
 
-        @Override protected synchronized void onRequest(long n) {
-            log.trace("{}.onRequest({}), handler={}", this, n, handler);
-            if (handler != null) handler.autoRead(cycle, true);
-            else                 pendingAutoRead = true;
-        }
-        @Override protected synchronized void onBackpressure() {
-            if (handler != null) handler.autoRead(cycle, false);
-        }
-        @Override protected synchronized void onCancel() {
-            if (handler != null) handler.abort(cycle);
-            else                 pendingCancel = true;
-        }
-    }
-    /**
-     * Listens as a {@link ResultsParserConsumer} and feeds a {@link PublisherAdapter}.
-     */
-    private static class ResultsParserAdapter implements ResultsParserConsumer {
-        private static final StringArrayOperations ARRAY_OPS = StringArrayOperations.get();
-        private final PublisherAdapter<String[]> publisher;
-        private Merger<String[]> projector;
-        private boolean gotVars = false;
+        /* --- --- --- ClientBIt message-parsing methods --- --- --- */
 
-        public ResultsParserAdapter(List<String> expectedVars,
-                                    PublisherAdapter<String[]> publisher) {
-            this.projector = Merger.identity(ARRAY_OPS, expectedVars);
-            this.publisher = publisher;
+        @Override
+        public void startResponse(MediaType mt, Charset cs) {
+            charset = cs;
+            parser = ResultsParserRegistry.get().createFor(mt, this);
         }
-        @Override public void vars(List<String> vars) {
-            gotVars = true;
-            projector = Merger.forProjection(ARRAY_OPS, projector.outVars(), vars);
+
+        @Override public void readContent(HttpContent httpContent) {
+            parser.feed(httpContent.content().toString(charset));
         }
-        @Override public void row(@Nullable String[] row) {
-            publisher.feed(projector.merge(row, null));
-        }
-        @Override public void end() {
-            Throwable error = gotVars ? null
-                    : new InvalidSparqlResultsException("Premature response end before var names");
-            publisher.complete(error);
-        }
-        @Override public void onError(String message) {
-            publisher.complete(new InvalidSparqlResultsException(message));
+
+        /* --- --- --- ResultsParserConsumer methods --- --- --- */
+
+        @Override public void end()                                  { /* end on response end */ }
+        @Override public void onError(String message)                { if (!ignoreParserError) complete(new InvalidSparqlResultsException(endpoint, message)); }
+        @Override public void row(@Nullable String[] row)            { feed(projector.merge(converter.apply(row), null)); }
+        @Override public void vars(Vars vars)                {
+            converter = rowType.converter(ArrayRow.STRING, vars);
+            projector = Merger.forProjection(rowType, projector.outVars(), vars);
         }
     }
 
+    /** {@link ClientBIt} for fragments (i.e., {@link Graph}) results */
+    private class GraphBIt extends ClientBIt<F> {
+        private @MonotonicNonNull Function<ByteBuf, F> parser;
+        final CompletableFuture<MediaType> mediaTypeFuture = new CompletableFuture<>();
 
-    private static class Handler extends SimpleChannelInboundHandler<HttpObject>
+        public GraphBIt(SparqlQuery sparql) {
+            super(fragmentClass(), Vars.EMPTY, createRequest(sparql));
+        }
+
+        /* --- --- --- ClientBIt message-parsing methods --- --- --- */
+
+        @Override
+        public void startResponse(MediaType mediaType, Charset charset) {
+            mediaTypeFuture.complete(mediaType);
+            Class<? super F> fragClass = fragParser.fragmentClass();
+            if (fragClass.isAssignableFrom(String.class)) {
+                parser = bb -> fragParser.parseString(bb.toString(charset), charset);
+            } else {
+                parser = bb -> {
+                    byte[] bytes = new byte[bb.readableBytes()];
+                    bb.readBytes(bytes);
+                    return fragParser.parseBytes(bytes, charset);
+                };
+            }
+        }
+
+        @Override public void readContent(HttpContent httpContent) {
+            feed(parser.apply(httpContent.content()));
+        }
+    }
+
+    private final class NettyHandler extends SimpleChannelInboundHandler<HttpObject>
             implements ReusableHttpClientInboundHandler {
-        private static final Logger log = LoggerFactory.getLogger(Handler.class);
-        private final String name;
-        private int cycle = 0;
-        private Runnable onResponseEnd;
-        private @MonotonicNonNull Channel channel;
-        private Throwable failure;
-        private ResultsParserAdapter resultsAdapter;
-        private PublisherAdapter<byte[]> fragmentPublisher;
-        private SafeCompletableAsyncTask<MediaType> mediaTypeTask;
-        private ResultsParser resultsParser;
-        private MediaType mediaType;
-        private Charset charset = UTF_8;
+        private final int id;
+        private boolean gotResponse;
+        private @MonotonicNonNull Runnable onResponseEnd;
+        private @Nullable ClientBIt<?> it;
+        private @Nullable Throwable earlyFailure;
 
-        public Handler(String name) { this.name = name; }
-
-        @Override public String toString() {
-            if (resultsAdapter != null) return name+"["+resultsAdapter.publisher+"]";
-            return name;
+        public NettyHandler(int id) {
+            this.id = id;
         }
+        @Override public String toString() {return NettySparqlClient.this+"-NettyHandler-"+id;}
+        @Override public void onResponseEnd(Runnable runnable) { onResponseEnd = runnable; }
 
-        @Override public void onResponseEnd(Runnable runnable) { this.onResponseEnd = runnable; }
-
-        protected void responseEnded() {
-            // as the Channel may be reused, from this point onwards refuse abort()/setAutoRead()
-            // from the PublisherAdapter
-            ++cycle;
-            assert channel != null : "responseEnded() channelRegistered()";
-            assert channel.eventLoop().inEventLoop() : "responseEnded() not run in eventLoop()";
-            if (resultsParser != null) resultsParser.end();
-            else if (resultsAdapter != null) resultsAdapter.end();
-            if (fragmentPublisher != null) fragmentPublisher.complete(null);
-            channel.config().setAutoRead(true); //return to pool with autoRead enabled
-            if (onResponseEnd != null) onResponseEnd.run();
-        }
-
-        private void reset(Channel channel) {
-            assert channel != null : "reset() before channelRegistered()";
-            assert channel.eventLoop().inEventLoop(): "reset() not running in event loop";
-            this.failure = null;
-            this.mediaType = null;
-            this.charset = null;
-            this.fragmentPublisher = null;
-            this.mediaTypeTask = null;
-            this.resultsParser = null;
-            this.resultsAdapter = null;
-            assert this.channel == null || this.channel == channel;
-            this.channel = channel;
-        }
-
-        public void setupResults(Channel channel, List<String> outVars,
-                                              PublisherAdapter<String[]> rowPublisher) {
-            reset(channel);
-            this.resultsAdapter = new ResultsParserAdapter(outVars, rowPublisher);
-            rowPublisher.handler(this, cycle);
-        }
-
-        public void setupGraph(Channel channel,
-                                            SafeCompletableAsyncTask<MediaType> mediaTypeTask,
-                                            PublisherAdapter<byte[]> fragmentPublisher) {
-            reset(channel);
-            this.mediaTypeTask = mediaTypeTask;
-            (this.fragmentPublisher = fragmentPublisher).handler(this, cycle);
-        }
-
-        public void autoRead(int cycle, boolean value) {
-            assert channel != null;
-            EventLoop el = channel.eventLoop();
-            if (el.inEventLoop())
-                doAutoRead("", cycle, value);
-            else
-                el.execute(() -> doAutoRead(" runnable", cycle, value));
-        }
-
-        private void doAutoRead(String suffix, int cycle, boolean value) {
-            assert this.channel.eventLoop().inEventLoop();
-            if (this.cycle == cycle) {
-                log.trace("{}.autoRead({}){}: setting", this, value, suffix);
-                channel.config().setAutoRead(value);
+        private void complete(@Nullable Throwable error) {
+            if (it == null) {
+                if (error == null)
+                    error = new IllegalStateException("NettyHandler completing before setup()");
+                if (earlyFailure == null) earlyFailure = error;
+                else                      earlyFailure.addSuppressed(error);
             } else {
-                log.trace("{}.autoRead({}){}: stale cycle", this, value, suffix);
+                it.complete(error == null ? earlyFailure : error);
+                it = null;
+                earlyFailure = null;
+                gotResponse = false;
+                if (onResponseEnd != null) onResponseEnd.run();
             }
         }
 
-        public void abort(int cycle) {
-            assert channel != null;
-            EventLoop el = channel.eventLoop();
-            if (el.inEventLoop())
-                doAbort("", cycle);
-            else
-                el.execute(() -> doAbort(" runnable", cycle));
-        }
-
-        private void doAbort(String suffix, int cycle) {
-            assert this.channel.eventLoop().inEventLoop();
-            if (this.cycle == cycle) {
-                log.trace("{}.abort(){}: close()ing", this, suffix);
-                channel.close();
-            } else {
-                log.trace("{}.abort(){}: stale cycle", this, suffix);
-            }
+        public void setup(ClientBIt<?> msgHandler) {
+            this.it = msgHandler;
+            if (earlyFailure != null)
+                complete(earlyFailure);
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) throws Exception {
-            if (failure != null) {
-                if (msg instanceof HttpContent) {
-                    log.debug("Chunk after {}: {}", failure.getClass().getSimpleName(),
-                              ((HttpContent) msg).content().toString(charset));
+        protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
+            if (!gotResponse && msg instanceof HttpResponse resp) {
+                gotResponse = true;
+                var mt = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
+                var cs = mt == null ? UTF_8 : mt.charset(UTF_8);
+
+                HttpStatusClass codeClass = resp.status().codeClass();
+                if (codeClass == HttpStatusClass.REDIRECTION) {
+                    String errMsg = "NettyBItSparqlClient does not support redirection";
+                    throw new SparqlClientServerException(errMsg);
+                } else if (codeClass != HttpStatusClass.SUCCESS) {
+                    var errMsg = "Request failed with "+resp.status();
+                    if (resp instanceof HttpContent httpContent)
+                        errMsg += ": " + httpContent.content().toString(cs);
+                    var ex = new SparqlClientServerException(errMsg);
+                    throw ex.shouldRetry(codeClass == HttpStatusClass.SERVER_ERROR);
+                } else if (msg instanceof LastHttpContent hc && hc.content().readableBytes() == 0) {
+                    String errMsg = "Empty HTTP " + resp.status();
+                    throw new SparqlClientServerException(errMsg).shouldRetry(true);
                 }
-                return;
+                if (mt == null)
+                    throw new InvalidSparqlResultsException(endpoint, "No Content-Type in HTTP response");
+                else if (it == null)
+                    throw new SparqlClientException(endpoint, "HTTP response received before setup()");
+                it.startResponse(mt, cs);
+            } else if (it == null) {
+                throw new SparqlClientException(endpoint, "HttpResponse received before setup()");
             }
-            if (msg instanceof HttpResponse) {
-                HttpResponse resp = (HttpResponse) msg;
-                mediaType = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
-                if (mediaTypeTask != null)
-                    mediaTypeTask.complete(mediaType);
-                charset = mediaType == null ? UTF_8 : mediaType.charset(UTF_8);
-                String exception = null;
-                if (resp.status().codeClass() == HttpStatusClass.REDIRECTION) {
-                    exception = "NettySparqlClient does not support redirection";
-                } else if (resp.status().codeClass() != HttpStatusClass.SUCCESS) {
-                    exception = "Request failed with "+resp.status();
-                    if (resp instanceof HttpContent) {
-                        exception += ": "+((HttpContent) resp).content().toString(charset);
-                    }
-                }
-                if (exception != null)
-                    throw new SparqlClientServerException(exception);
-                else if (mediaType == null)
-                    throw new InvalidSparqlResultsException("Bad server did not set Content-Type");
+            if (msg instanceof HttpContent content)
+                it.readContent(content);
+            if (msg instanceof LastHttpContent httpContent) {
+                ctx.channel().config().setAutoRead(true);
+                if (msg instanceof HttpResponse && httpContent.content().readableBytes() == 0)
+                    complete(new InvalidSparqlResultsException(endpoint, "Empty HTTP response"));
+                else
+                    complete(null);
             }
-
-            if (resultsAdapter != null) {
-                assert fragmentPublisher == null : "both fragment row publishers set";
-                readRows(msg);
-            } else {
-                assert fragmentPublisher != null : "no publisher set";
-                readFragments(msg);
-            }
-            if (msg instanceof LastHttpContent) {
-                log.trace("{}.channelRead0: LastHttpContent", this);
-                responseEnded();
-            }
-        }
-
-        private void readRows(HttpObject msg) throws NoParserException {
-            if (msg instanceof HttpResponse)
-                resultsParser = ResultsParserRegistry.get().createFor(mediaType, resultsAdapter);
-            if (msg instanceof HttpContent) {
-                String string = ((HttpContent) msg).content().toString(charset);
-                log.trace("{} << {}", this, string);
-                resultsParser.feed(string);
-            }
-        }
-
-        private void readFragments(HttpObject msg) {
-            if (msg instanceof HttpContent) {
-                ByteBuf bb = ((HttpContent) msg).content();
-                byte[] heap = new byte[bb.readableBytes()];
-                bb.readBytes(heap);
-                fragmentPublisher.feed(heap);
-            }
-        }
-
-        @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
-            channel = ctx.channel();
-            super.channelRegistered(ctx);
         }
 
         @Override public void channelInactive(ChannelHandlerContext ctx) {
-            log.trace("{}.channelInactive", this);
-            responseEnded();
+            String msg = "Connection closed before "
+                    + (gotResponse ? "completing the response"
+                                   : "server started an HTTP response");
+            complete(new SparqlClientServerException(msg));
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            log.debug("{}.exceptionCaught({})", this, cause);
-            if (resultsAdapter != null) resultsAdapter.publisher.complete(cause);
-            if (mediaTypeTask != null && !mediaTypeTask.isDone())
-                mediaTypeTask.complete(null);
-            if (fragmentPublisher != null) fragmentPublisher.complete(cause);
-            failure = cause;
             ctx.close();
+            complete(cause);
         }
     }
 }

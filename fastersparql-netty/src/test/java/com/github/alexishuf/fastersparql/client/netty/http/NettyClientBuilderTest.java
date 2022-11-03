@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
-import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.netty.NettyClientBuilder;
-import com.github.alexishuf.fastersparql.client.netty.handler.ReusableHttpClientInboundHandler;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -19,14 +17,16 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient.makeRequest;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -79,7 +79,7 @@ class NettyClientBuilderTest {
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
             //read request
             HttpHeaders headers = req.headers();
-            assertEquals("text/x.payload+req", headers.get(HttpHeaderNames.CONTENT_TYPE));
+            assertEquals("text/x.payload+req", headers.get(CONTENT_TYPE));
             assertEquals(Integer.toString(req.content().readableBytes()),
                          headers.get(HttpHeaderNames.CONTENT_LENGTH));
             Matcher matcher = Pattern.compile("\\?x=(\\d+)").matcher(req.uri());
@@ -95,7 +95,7 @@ class NettyClientBuilderTest {
 
         private HttpResponse createResponse(int x) {
             DefaultHttpHeaders responseHeaders = new DefaultHttpHeaders();
-            responseHeaders.set(HttpHeaderNames.CONTENT_TYPE, "text/x.payload+res");
+            responseHeaders.set(CONTENT_TYPE, "text/x.payload+res");
             responseHeaders.set("x-vnd-number", x);
             responseHeaders.set(HttpHeaderNames.TRANSFER_ENCODING, "chunked");
             return new DefaultHttpResponse(HTTP_1_1, OK, responseHeaders);
@@ -110,6 +110,7 @@ class NettyClientBuilderTest {
                 ctx.writeAndFlush(new DefaultLastHttpContent(bb));
             } else {
                 ctx.writeAndFlush(new DefaultHttpContent(bb));
+                //noinspection resource
                 ctx.executor().schedule(() -> sendChunk(ctx, from + 16, totalSize),
                         1, TimeUnit.MILLISECONDS);
             }
@@ -212,7 +213,7 @@ class NettyClientBuilderTest {
             assertEquals(0, responseBuilder.length());
             hadResponse = true;
             HttpHeaders headers = msg.headers();
-            assertEquals("text/x.payload+res", headers.get(HttpHeaderNames.CONTENT_TYPE));
+            assertEquals("text/x.payload+res", headers.get(CONTENT_TYPE));
             assertEquals(Integer.toString(expectNumber), headers.get("x-vnd-number"));
             assertEquals("chunked", headers.get(HttpHeaderNames.TRANSFER_ENCODING));
         }
@@ -257,9 +258,9 @@ class NettyClientBuilderTest {
                                 .map(clients -> arguments(size, clients, builder))));
     }
 
-    @ParameterizedTest @MethodSource
+    @ParameterizedTest @MethodSource("test")
     void test(int payloadSize, int clients, NettyClientBuilder builder) throws Exception {
-        InetSocketAddress address = new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port);
+        String uri = "http://127.0.0.1:" + port + "/sparql";
         ExecutorService executor = Executors.newCachedThreadPool();
         List<Future<String>> futures = new ArrayList<>();
         String expectedResponse = generateResponse(payloadSize);
@@ -269,27 +270,17 @@ class NettyClientBuilderTest {
             for (int i = 0; i < clients; i++) {
                 int id = 1000+i;
                 futures.add(executor.submit(() -> {
-                    NettyHttpClient<ClientHandler> client =
-                            builder.buildHTTP(Protocol.HTTP, address, ClientHandler::new);
-                    CompletableFuture<String> response = new CompletableFuture<>();
-                    client.request(HttpMethod.POST, "/endpoint?x=" + id, a -> {
-                        ByteBuf bb = a.buffer();
-                        bb.writeCharSequence("" + payloadSize, UTF_8);
-                        return bb;
-                    }, new NettyHttpClient.Setup<ClientHandler>() {
-                        @Override
-                        public void setup(Channel ch, HttpRequest req, ClientHandler handler) {
-                            req.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/x.payload+req");
-                            handler.setup(response, id, payloadSize);
-                        }
-                        @Override public void connectionError(Throwable cause) {
-                            response.completeExceptionally(cause);
-                        }
-                        @Override public void requestError(Throwable cause) {
-                            response.completeExceptionally(cause);
-                        }
-                    });
-                    return response.get();
+                    try (var c = builder.buildHTTP(uri, ClientHandler::new)) {
+                        var req = makeRequest(HttpMethod.POST, "/endpoint?x=" + id,
+                                             "text/x.payload+res",
+                                             "text/x.payload+req",
+                                             "" + payloadSize, UTF_8);
+                        var response = new CompletableFuture<String>();
+                        c.request(req, (BiConsumer<Channel, ClientHandler>)
+                                  (ch, h) -> h.setup(response, id, payloadSize),
+                                  response::completeExceptionally);
+                        return response.get();
+                    }
                 }));
             }
         } finally {
