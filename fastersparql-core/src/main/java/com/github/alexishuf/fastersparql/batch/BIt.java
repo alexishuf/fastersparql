@@ -12,6 +12,7 @@ import java.util.stream.StreamSupport;
 
 import static java.util.Spliterator.IMMUTABLE;
 import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public interface BIt<T> extends Iterator<T>, AutoCloseable {
     /** {@link Class} of elements produced by this iterator. */
@@ -120,6 +121,16 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @return {@code this} {@link BIt}, for chaining.
      */
     @This BIt<T> tempEager();
+
+
+    /**
+     * EQuivalent to setting {@link BIt#minBatch(int)} to {@code 1} and both
+     * {@link BIt#minWait(long, TimeUnit)} and {@link BIt#maxWait(long, TimeUnit)} to {@code 0}.
+     * @return {@code this} {@link BIt}, for chaining.
+     */
+    default @This BIt<T> eager() {//noinspection resource
+        return minBatch(1).minWait(0, NANOSECONDS).maxWait(0, NANOSECONDS);
+    }
 
     /** Get current {@link BIt#maxBatch(int)} constraint. */
     int maxBatch();

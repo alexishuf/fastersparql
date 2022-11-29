@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.client.model.*;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFLanguages;
@@ -19,12 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
 public class GraphData {
     private static final String PREFIX, TTL_PREFIX;
 
-    private Class<? extends Throwable> error;
-    private SparqlQuery sparql;
+    private OpaqueSparqlQuery sparql;
     private String expectedTTL;
 
     public GraphData(String sparql, String expectedTTL) {
-        this.sparql = new SparqlQuery(PREFIX+sparql);
+        this.sparql = new OpaqueSparqlQuery(PREFIX+sparql);
         this.expectedTTL = TTL_PREFIX+expectedTTL;
     }
 
@@ -40,12 +39,7 @@ public class GraphData {
         var actual = new StringBuilder();
         try (var it = graph.it()) {
             it.forEachRemaining(f -> decodeFragment(f, actual, charset));
-        } catch (Throwable t) {
-            if (error == null)
-                fail(t);
-            else if (!error.isAssignableFrom(t.getClass()))
-                fail("Expected "+error.getSimpleName()+", got "+t);
-        }
+        } catch (Throwable t) { fail(t); }
         assertTrue(expectedMediaType.accepts(actualMediaType),
                    "expected "+expectedMediaType+", got "+actualMediaType);
         String ttl = this.expectedTTL;

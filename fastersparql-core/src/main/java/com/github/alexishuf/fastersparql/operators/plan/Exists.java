@@ -24,6 +24,11 @@ public abstract class Exists<R, I> extends Plan<R, I> {
 
     @Override public String algebraName() { return negate ? "NotExists" : "Exists"; }
 
+    @Override protected void bgpSuffix(StringBuilder out, int indent) {
+        newline(out, indent).append(negate ? "FILTER NOT EXISTS" : "FILTER EXISTS");
+        operands.get(1).groupGraphPattern(out, indent);
+    }
+
     @Override public boolean equals(Object o) {
         return o instanceof Exists<?, ?> that && negate == that.negate && super.equals(o);
     }

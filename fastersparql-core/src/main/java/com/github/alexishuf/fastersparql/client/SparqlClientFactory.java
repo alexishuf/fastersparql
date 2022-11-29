@@ -22,7 +22,7 @@ public interface SparqlClientFactory {
      *
      * @return The tag for this {@link SparqlClientFactory} implementation.
      */
-    @SuppressWarnings("SameReturnValue") @Pure String tag();
+    @Pure String tag();
 
     /**
      * If there is a tie in {@link FS#factory(String...)} and related methods,
@@ -31,6 +31,11 @@ public interface SparqlClientFactory {
      * @return any integer, including negative values.
      */
     @Pure int order();
+
+    /**
+     * Whether this factory can create a {@link SparqlClient} for the given {@code endpoint}.
+     */
+    boolean supports(SparqlEndpoint endpoint);
 
     /**
      * Create a new {@link SparqlEndpoint} querying the given endpoint.

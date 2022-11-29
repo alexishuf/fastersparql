@@ -4,9 +4,14 @@ import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
 import com.github.alexishuf.fastersparql.client.util.Skip;
+import com.github.alexishuf.fastersparql.operators.FSOps;
+import com.github.alexishuf.fastersparql.operators.FSOpsProperties;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.parser.TriplePattern;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -16,13 +21,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Represents a tree of operators applied to their arguments
  * @param <R>
  */
-public abstract class Plan<R, I> {
+public abstract class Plan<R, I> implements SparqlQuery {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     public final RowType<R, I> rowType;
     public final List<? extends Plan<R, I>> operands;
     public final @Nullable Plan<R, I> unbound;
-    public final String name;
+    protected @Nullable String name; // used by subclasses and FSOps
     private @Nullable Vars publicVars, allVars;
 
     protected Plan(RowType<R, I> rowType, List<? extends Plan<R, I>> operands,
@@ -30,11 +35,15 @@ public abstract class Plan<R, I> {
         this.rowType = rowType;
         this.operands = operands;
         this.unbound = unbound;
-        this.name = name != null ? name : getClass().getSimpleName()+'-'+nextId.getAndIncrement();
+        this.name = name;
     }
-    
+
     /** A name for this plan. */
-    public final String name() { return name; }
+    public final String name() {
+        if (name == null)
+            name = getClass().getSimpleName()+"-"+nextId.getAndIncrement();
+        return name;
+    }
 
     /** Operator name to be used in {@link Plan#toString()} */
     public String algebraName() { return getClass().getSimpleName(); }
@@ -53,13 +62,58 @@ public abstract class Plan<R, I> {
     /** {@link BIt#elementClass()} of {@link Plan#execute(boolean)}; */
     public final Class<R> rowClass() { return rowType.rowClass(); }
 
+    @Override public String sparql() {
+        StringBuilder sb = new StringBuilder(256).append("SELECT *");
+        groupGraphPattern(sb, 0);
+        return sb.toString();
+    }
+
+    /**
+     * Write this plan as a {@code GroupGraphPattern} production from the SPARQL grammar
+     *
+     * @param out where to write the SPARQL to.
+     */
+    public final void groupGraphPattern(StringBuilder out, int indent) {
+        newline(out, indent++).append('{');
+        groupGraphPatternInner(out, indent);
+        newline(out, --indent).append('}');
+    }
+
+    /**
+     * Equivalent to {@code groupGraphPattern(out, indent)} without the surrounding
+     * {@code '{'} and {@code'}'}.
+     */
+    public void groupGraphPatternInner(StringBuilder out, int indent) {
+        if (isBGPSuffix()) {
+            ArrayDeque<Plan<R, I>> stack = new ArrayDeque<>();
+            var o = this;
+            for (; o.isBGPSuffix(); o = o.operands.get(0))
+                stack.push(o);
+            if (o instanceof Join<R, I> j)
+                j.groupGraphPatternInner(out, indent);
+            else if (o instanceof TriplePattern<R,I> tp)
+                tp.groupGraphPatternInner(out, indent);
+            else
+                o.groupGraphPattern(out, indent);
+            while (!stack.isEmpty()) {
+                Plan<R, I> m = stack.pop();
+                m.bgpSuffix(out, indent);
+            }
+        } else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** This algebra does not support graph queries */
+    @Override public boolean isGraph() { return false; }
+
     /**
      * The would-be value of {@link BIt#vars()} upon {@link Plan#execute(boolean)}.
      *
      * @return a non-null (but possibly empty) list of non-null and non-empty variable names
      *         (i.e., no leading {@code ?} or {@code $}).
      */
-    public final Vars publicVars() {
+    @Override public final Vars publicVars() {
         if (publicVars == null) publicVars = computeVars(false);
         return publicVars;
     }
@@ -73,7 +127,7 @@ public abstract class Plan<R, I> {
      * @return a non-null (possibly empty) list of non-null and non-empty variable names
      *         (i.e., no preceding {@code ?} or {@code $}).
      */
-    public final Vars allVars() {
+    @Override public final Vars allVars() {
         if (allVars == null) allVars = computeVars(true);
         return allVars;
     }
@@ -107,6 +161,27 @@ public abstract class Plan<R, I> {
         return noOp ? this : with(operands, unbound, name);
     }
 
+    @Override public Plan<R, I> toDistinct(DistinctType distinctType) {
+        if (this instanceof Modifier<R,I> m) {
+            int capacity = switch (distinctType) {
+                case WEAK -> FSOpsProperties.reducedCapacity();
+                case STRONG -> Integer.MAX_VALUE;
+            };
+            if (m.distinctCapacity == capacity)
+                return this;
+        }
+        return switch (distinctType) {
+            case WEAK -> FSOps.reduced(this);
+            case STRONG -> FSOps.distinct(this);
+        };
+    }
+
+    @Override public Plan<R, I> toAsk() {
+        if (this instanceof Modifier<R,I> m && m.limit == 1 && m.projection == Vars.EMPTY)
+            return this;
+        return FSOps.modifiers(this, Vars.EMPTY, 0, 0, 1, List.of());
+    }
+
     /**
      * Create a copy of this {@link Plan} replacing the variables with the values they map to.
      *
@@ -114,7 +189,7 @@ public abstract class Plan<R, I> {
      * @return a non-null Plan, being a copy of this with replaced variables or {@code this}
      *         if there is no variable to replace.
      */
-    public Plan<R, I> bind(Binding binding) {
+    @Override public Plan<R, I> bind(Binding binding) {
         int size = operands.size();
         if (size == 1) {
             Plan<R, I> input = operands.get(0);
@@ -136,12 +211,12 @@ public abstract class Plan<R, I> {
 
     @Override public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof Plan<?, ?> that)) return false;
-        return rowType.equals(that.rowType) && name.equals(that.name)
-                && Objects.equals(unbound, that.unbound) && operands.equals(that.operands);
+        if (!(o instanceof Plan<?, ?> p) || !rowType.equals(p.rowType)) return false;
+        if (name != null && p.name != null && !name.equals(p.name)) return false;
+        return Objects.equals(unbound, p.unbound) && operands.equals(p.operands);
     }
 
-    @Override public int hashCode() { return Objects.hash(rowType, name, unbound, operands); }
+    @Override public int hashCode() { return Objects.hash(rowType, unbound, operands); }
 
     @Override public String toString() {
         if (operands.isEmpty())
@@ -184,6 +259,57 @@ public abstract class Plan<R, I> {
     }
 
     /* --- --- --- helpers --- --- --- */
+
+    private static final String[] LINE_BREAKS = {
+            "\n", "\n ", "\n  ", "\n   ", "\n    ", "\n     ", "\n      ", "\n       ",
+            "\n        ", "\n         ", "\n          ", "\n           ", "\n            ",
+            "\n             ", "\n              ", "               ", "                ",
+    };
+
+    /** Writes {@code '\n'} followed by {@code indent} {@code ' '}s to {@code out}*/
+    protected final StringBuilder newline(StringBuilder b, int indent) {
+        if (indent < LINE_BREAKS.length)
+            return b.append(LINE_BREAKS[indent]);
+        else
+            return b.append('\n').append(" ".repeat(indent));
+    }
+
+    /** If this is a {@link Join} or {@link Union}, return a list of operands replacing children
+     *  of the same type with their children */
+    protected final List<? extends Plan<R, I>> flatOperands() {
+        List<Plan<R, I>> flat = null;
+        Class<?> cls;
+        if (this instanceof Join<R,I>)
+            cls = Join.class;
+        else if (this instanceof Union<R,I>)
+            cls = Union.class;
+        else
+            return operands;
+        for (int i = 0, n = operands.size(); i < n; i++) {
+            Plan<R, I> o = operands.get(i);
+            if (cls.isInstance(o)) {
+                if (flat == null) {
+                    flat = new ArrayList<>();
+                    for (int j = 0; j < i; j++)
+                        flat.add(operands.get(j));
+                }
+                flat.addAll(o.flatOperands());
+            } else if (flat != null) {
+                flat.add(o);
+            }
+        }
+        return flat == null ? operands : flat;
+    }
+
+    /** Whether this operator forgoes nesting in SPARQL syntax. */
+    private boolean isBGPSuffix() {
+        return this instanceof Exists || this instanceof LeftJoin ||
+               this instanceof Minus  || this instanceof Modifier;
+    }
+
+    protected void bgpSuffix(StringBuilder out, int indent) {
+        throw new UnsupportedOperationException();
+    }
 
     private StringBuilder indent(StringBuilder sb, String string) {
         for (int start = 0, i, len = string.length(); start < len; start = i+1) {

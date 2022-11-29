@@ -42,7 +42,11 @@ public abstract class Binding {
         if (i < 0)
             return null;
         String nt = get(i);
-        return nt == null ? null : TermParser.parse(nt);
+        if (nt == null)
+            return null;
+        TermParser termParser = new TermParser();
+        termParser.parse(nt, 0, nt.length());
+        return termParser.asTerm();
     }
 
     /**

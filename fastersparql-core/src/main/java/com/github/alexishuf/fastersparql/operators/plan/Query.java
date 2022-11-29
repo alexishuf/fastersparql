@@ -24,17 +24,26 @@ public class Query<R, I> extends Plan<R, I> {
         this.client = client;
     }
 
-    public final SparqlQuery           sparql() { return sparql; }
+    public final SparqlQuery           query() { return sparql; }
     public final SparqlClient<R, I, ?> client() { return client; }
 
+    @Override public String sparql() { return sparql.sparql(); }
+
+    @Override public void groupGraphPatternInner(StringBuilder out, int indent) {
+        if (sparql instanceof Plan<?,?> p)
+            p.groupGraphPatternInner(out, indent);
+        else
+            out.append(sparql.sparql().replaceAll("\n", '\n'+" ".repeat(indent)));
+    }
+
     @Override protected Vars computeVars(boolean all) {
-        return all ? sparql.allVars : sparql.publicVars;
+        return all ? sparql.allVars() : sparql.publicVars();
     }
 
     @Override public String algebraName() {
         StringBuilder sb = new StringBuilder();
         sb.append("Query[").append(client.endpoint().uri()).append("](");
-        String sparql = this.sparql.sparql;
+        String sparql = sparql();
         if (sparql.length() < 80) {
             return sb.append(sparql.replace("\n", "\\n")).append(')').toString();
         } else {

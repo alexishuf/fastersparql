@@ -9,6 +9,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.client.util.Skip.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.isVar;
 import static java.util.Collections.singletonList;
 
 public abstract class AbstractSVResultsParser implements ResultsParser {
@@ -130,10 +131,8 @@ public abstract class AbstractSVResultsParser implements ResultsParser {
         if (!headersDone) {
             var trimmed = new Vars.Mutable(current.size());
             if (current.size() > 1 || current.get(0) != null) {
-                for (String v : current) {
-                    char first = v == null ? '\0' : v.charAt(0);
-                    trimmed.add(v == null ? "" : (first == '?' || first == '$' ? v.substring(1) : v));
-                }
+                for (String v : current)
+                    trimmed.add(v == null ? "" : isVar(v, 0, v.length()) ? v.substring(1) : v);
             } // else: zero-vars header (ASK query)
             nColumns = trimmed.size();
             headersDone = true;

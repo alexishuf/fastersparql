@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,7 +42,7 @@ public class BindData extends ResultsData {
 
     public BindData(String sparql, Vars bindingVars, List<String[]> bindingRows,
                     BindType bindType, String... values) {
-        super(sparql, bindType.resultVars(bindingVars, new SparqlQuery(sparql).publicVars), values);
+        super(sparql, bindType.resultVars(bindingVars, new OpaqueSparqlQuery(sparql).publicVars), values);
         this.bindingVars = bindingVars;
         this.bindingRows = new ArrayList<>();
         for (String[] row : bindingRows) {

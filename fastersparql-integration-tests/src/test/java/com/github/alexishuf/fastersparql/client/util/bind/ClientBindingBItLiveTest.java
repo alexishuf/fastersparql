@@ -13,7 +13,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -160,7 +160,7 @@ class ClientBindingBItLiveTest {
 
         List<Arguments> argumentsList = new ArrayList<>();
         for (D d : base) {
-            SparqlQuery sparql = new SparqlQuery(prefix + d.sparql);
+            OpaqueSparqlQuery sparql = new OpaqueSparqlQuery(prefix + d.sparql);
             var left = new IteratorBIt<>(expandPrefixes(d.bindings), List.class, Vars.EMPTY);
             var it = new ClientBindingBIt<>(left, d.bindType, ListRow.STRING, client, sparql);
             Supplier<List<List<String>>> binder = it::toList;

@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.client.model.row.dedup.WeakCrossSourceD
 import com.github.alexishuf.fastersparql.client.model.row.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.client.util.Merger;
 import com.github.alexishuf.fastersparql.client.util.bind.BS;
+import com.github.alexishuf.fastersparql.operators.FSOpsProperties;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
@@ -22,11 +23,12 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.client.util.Merger.forProjection;
 import static com.github.alexishuf.fastersparql.client.util.bind.BS.*;
 import static com.github.alexishuf.fastersparql.operators.FSOpsProperties.dedupCapacity;
-import static com.github.alexishuf.fastersparql.operators.FSOpsProperties.distinctCapacity;
+import static com.github.alexishuf.fastersparql.operators.FSOpsProperties.reducedCapacity;
 import static java.lang.System.arraycopy;
 
 @SuppressWarnings("unused")
@@ -48,16 +50,27 @@ public final class Modifier<R, I> extends Plan<R, I> {
     }
 
     public @Nullable Vars     projection() { return projection; }
-    public int            distinctWindow() { return distinctCapacity; }
+    public int distinctCapacity() { return distinctCapacity; }
     public long                   offset() { return offset; }
     public long                    limit() { return limit; }
     public List<Expr>            filters() { return filters; }
 
     @Override protected Vars computeVars(boolean all) {
-        Plan<R, I> in = operands.get(0);
-        if (projection == null)
-            return all ? in.allVars() : in.publicVars();
-        return all ? in.allVars() : projection;
+        var in = operands.get(0);
+        if (!all && projection != null)
+            return projection;
+        Vars inVars = all ? in.allVars() : in.publicVars();
+        if (projection != null)
+            inVars = projection.union(inVars);
+        if (filters.isEmpty()) {
+            return inVars;
+        } else {
+            var union = Vars.fromSet(inVars, Math.max(10, inVars.size() + 5));
+            int novel = 0;
+            for (Expr e : filters)
+                novel += Expr.addVars(union, e);
+            return novel == 0 ? inVars : union;
+        }
     }
 
     @Override public String algebraName() {
@@ -79,6 +92,16 @@ public final class Modifier<R, I> extends Plan<R, I> {
         return sb.toString();
     }
 
+    @Override public boolean equals(Object o) {
+        if (o == this) return true;
+        if (!(o instanceof Modifier<?,?> m)) return false;
+        return Objects.equals(m.projection, projection)
+                && Objects.equals(m.distinctCapacity, distinctCapacity)
+                && Objects.equals(m.offset, offset)
+                && Objects.equals(m.limit, limit)
+                && Objects.equals(m.filters, filters);
+    }
+
     @Override public String toString() {
         var sb = new StringBuilder();
         sb.append(algebraName()).append(operands.get(0));
@@ -89,6 +112,38 @@ public final class Modifier<R, I> extends Plan<R, I> {
         if (offset > 0)                          sb.append(')');
         if (projection != null)                  sb.append(')');
         return sb.toString();
+    }
+
+    @Override public String sparql() {
+        StringBuilder sb = new StringBuilder(256);
+        if (projection != null && projection.isEmpty() && limit == 1 && offset == 0) {
+            groupGraphPattern(sb.append("ASK "), 0);
+        } else {
+            sb.append("SELECT ");
+            if      (distinctCapacity > reducedCapacity()) sb.append("DISTINCT ");
+            else if (distinctCapacity > 0)                 sb.append("REDUCED ");
+
+            if (projection != null) {
+                for (String s : projection) sb.append('?').append(s).append(' ');
+                sb.setLength(sb.length()-1);
+            } else {
+                sb.append("*");
+            }
+
+            groupGraphPattern(sb, 0);
+            if (offset > 0)             sb.append(" OFFSET ").append(offset);
+            if (limit < Long.MAX_VALUE) sb.append(" LIMIT ").append(limit);
+        }
+        return sb.toString();
+    }
+
+    @Override protected void bgpSuffix(StringBuilder out, int indent) {
+        if (filters.isEmpty())
+            return;
+        for (Expr filter : filters) {
+            newline(out, indent).append("FILTER ");
+            filter.toSparql(out);
+        }
     }
 
     @Override
@@ -158,7 +213,7 @@ public final class Modifier<R, I> extends Plan<R, I> {
             pendingSkips = plan.offset;
             if (plan.distinctCapacity > 0 || canDedup) {
                 if (plan.distinctCapacity == Integer.MAX_VALUE) {
-                    outerSet = new StrongDedup<>(rt, distinctCapacity());
+                    outerSet = new StrongDedup<>(rt, FSOpsProperties.distinctCapacity());
                 } else {
                     int c = plan.distinctCapacity > 0 ? plan.distinctCapacity : dedupCapacity();
                     outerSet = new WeakCrossSourceDedup<>(rt, c);

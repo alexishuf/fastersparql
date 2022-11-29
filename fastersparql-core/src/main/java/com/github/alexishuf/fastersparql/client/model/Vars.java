@@ -186,6 +186,18 @@ public sealed class Vars extends AbstractList<String> implements RandomAccess, S
 
     @Override public final int lastIndexOf(Object o) { return indexOf(o); }
 
+    /** Equivalent to {@code indexOf(string.substring(begin, end))}. */
+    public final int indexOf(String string, int begin, int end) {
+        if (string == null || end <= begin) return -1;
+        int len = end - begin;
+        for (int i = 0; i < size; i++) {
+            String candidate = array[i];
+            if (candidate.length() == len && candidate.regionMatches(0, string, begin, len))
+                return i;
+        }
+        return -1;
+    }
+
     @Override public final int indexOf(Object o) {
         if (o == null) return -1;
         if ((has & (1L << (o.hashCode() & 63))) == 0) return -1;

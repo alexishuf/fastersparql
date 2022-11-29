@@ -4,6 +4,7 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 public class Skip {
+    public static final long[] ANY = new long[] {-1, -1};
     /** An alphabet equivalent to the {@code [a-zA-Z0-9]} regex accepting only ASCII chars. */
     public static final long[] ALPHANUMERIC = alphabet().letters().digits().get();
     /** An alphabet equivalent to the {@code [0-9]} regex accepting only ASCII chars. */

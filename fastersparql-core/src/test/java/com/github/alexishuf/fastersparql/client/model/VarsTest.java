@@ -147,8 +147,12 @@ class VarsTest {
 
         // indexOf
         for (int i = 0; i < size; i++) {
-            assertEquals(i, vars.indexOf(Integer.toString(i)));
-            assertEquals(i, vars.lastIndexOf(Integer.toString(i)));
+            String iStr = Integer.toString(i);
+            assertEquals(i, vars.indexOf(iStr), "i="+i);
+            assertEquals(i, vars.indexOf(iStr, 0, iStr.length()), "i="+i);
+            assertEquals(i, vars.indexOf("_"+iStr, 1, 1+iStr.length()), "i="+i);
+            assertEquals(i, vars.indexOf("_"+iStr+"!", 1, 1+iStr.length()), "i="+i);
+            assertEquals(i, vars.lastIndexOf(Integer.toString(i)), "i="+i);
         }
 
         // negative indexOf

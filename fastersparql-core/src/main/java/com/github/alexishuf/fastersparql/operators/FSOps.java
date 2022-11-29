@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
 import com.github.alexishuf.fastersparql.operators.bind.BindExists;
 import com.github.alexishuf.fastersparql.operators.bind.BindJoin;
 import com.github.alexishuf.fastersparql.operators.bind.BindLeftJoin;
@@ -11,6 +13,7 @@ import com.github.alexishuf.fastersparql.operators.bind.BindMinus;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
 import com.github.alexishuf.fastersparql.operators.metrics.PlanMetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
@@ -22,6 +25,24 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 @SuppressWarnings({"unused"})
 public class FSOps {
     private static final Queue<PlanMetricsListener> listeners = new ConcurrentLinkedQueue<>();
+
+    private static final class NameGetter extends Plan<Object[], Object> {
+        private NameGetter() {
+            super(new ArrayRow<>(Object.class), List.of(), null, null);
+        }
+
+        public static String get(Plan<?,?> plan) { return plan.name(); }
+
+        @Override public BIt<Object[]> execute(boolean canDedup) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Plan<Object[], Object> with(List<? extends Plan<Object[], Object>> replacement, @Nullable Plan<Object[], Object> unbound, @Nullable String name) {
+            throw new UnsupportedOperationException();
+        }
+
+    }
 
     /**
      * Add a listener to receive metrics for any operator that gets executed after this call.
@@ -84,7 +105,7 @@ public class FSOps {
     }
 
     public static <R, I> Query<R, I> query(SparqlClient<R, I, ?> client, CharSequence query) {
-        return new Query<>(new SparqlQuery(query.toString()), client, null, null);
+        return new Query<>(new OpaqueSparqlQuery(query.toString()), client, null, null);
     }
     public static <R, I> Query<R, I> query(SparqlClient<R, I, ?> client, SparqlQuery query) {
         return new Query<>(query, client, null, null);
@@ -127,6 +148,25 @@ public class FSOps {
 
 
     public static <R, I> Union<R, I> union(List<? extends Plan<R, I>> operands) {
+        Boolean flatten = null, canFlatten = true;
+        for (Plan<R, I> o : operands) {
+            if (o instanceof Union<R,I> u){
+                if (u.crossDedupCapacity > 0)
+                    flatten = false;
+                else if (flatten == null)
+                    flatten = true;
+            }
+        }
+        if (flatten == Boolean.TRUE) {
+            ArrayList<Plan<R, I>> flat = new ArrayList<>();
+            for (Plan<R, I> o : operands) {
+                if (o instanceof Union<R,I>)
+                    flat.addAll(o.operands);
+                else
+                    flat.add(o);
+            }
+            operands = flat;
+        }
         return new Union<>(operands, 0, null, null);
     }
 
@@ -160,14 +200,19 @@ public class FSOps {
      * Apply the given modifiers around {@code input}. If {@code input} already is a
      * {@link Modifier}, apply to its first (and only) operand.
      *
+     * <p>If {@code input} is a modifier, no-op values for parameters {@code projection},
+     * {@code distinctCapacity}, {@code offset}, {@code limit} and {@code filters} will be
+     * replaced with the values set in {@code input}. In the specific case of {@code filters},
+     * the expressions given in this call will be concatenated with any filters in {@code input}.</p>
+     *
      * <p>If all modifiers are given simultaneously, the SPARQL algebra that is executed is
      * Limit(limit, Offset(offset, Distinct(Project[projection](Filter(input, filters...)))))</p>
      *
      * @param input input of the modifier. May also be a {@link Modifier}.
      * @param projection If non-null applies a projection of the given vars over {@code input}
-     * @param distinctWindow If 0, do not apply DISTINCT; If {@link Integer#MAX_VALUE}, apply
+     * @param distinctCapacity If 0, do not apply DISTINCT; If {@link Integer#MAX_VALUE}, apply
      *                       strict DISTINCT semantics; else apply weaker DISTINCT semantics
-     *                       but keep at most {@code distinctWindow} rows in main memory, which
+     *                       but keep at most {@code distinctCapacity} rows in main memory, which
      *                       might lead to duplicate rows not being filtered-out.
      * @param offset discard the first {@code offset} rows that passed Filter and Distinct evaluation
      * @param limit discard all subsequent rows after {@code offset+limit} rows passed Filter
@@ -177,14 +222,31 @@ public class FSOps {
      *                These may be {@link Expr} instances or any {@link Object} whose
      *                {@link Object#toString()} evaluates to a valid SPARQL expression.
      */
-    public static <R, I> Modifier<R, I> modifiers(Plan<R, I> input, @Nullable Vars projection,
-                                                  int distinctWindow, long offset, long limit,
-                                                  Collection<?> filters) {
+    public static <R, I> Plan<R, I> modifiers(Plan<R, I> input, @Nullable Vars projection,
+                                              int distinctCapacity, long offset, long limit,
+                                              Collection<?> filters) {
+        boolean nop = distinctCapacity == 0
+                && offset == 0 && limit == Long.MAX_VALUE
+                && filters.isEmpty()
+                && (projection == null || projection.equals(input.publicVars()));
+        if (nop)
+            return input;
         List<Expr> parsed = parseFilters(input, filters);
-        if (input instanceof Modifier<R,I>)
+        String name = null;
+        if (input instanceof Modifier<R,I> m) {
             input = input.operands.get(0);
-        return new Modifier<>(input, projection, distinctWindow, offset, limit,
-                              parsed, null, null);
+            if (projection == null)
+                projection = m.projection;
+            if (distinctCapacity == 0)
+                distinctCapacity = m.distinctCapacity;
+            if (offset == 0)
+                offset = m.offset;
+            if (limit == Long.MAX_VALUE)
+                limit = m.limit;
+            name = NameGetter.get(input);
+        }
+        return new Modifier<>(input, projection, distinctCapacity, offset, limit,
+                              parsed, null, name);
     }
 
     /**
@@ -197,7 +259,7 @@ public class FSOps {
     public static <R, I> Modifier<R, I> limit(Plan<R, I> input, long limit) {
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(m.operands.get(0), m.projection, m.distinctCapacity, m.offset,
-                                  limit, m.filters, m.unbound, m.name);
+                                  limit, m.filters, m.unbound, NameGetter.get(m));
         }
         return new Modifier<>(input, null, 0, 0, limit,
                              null, null, null);
@@ -212,7 +274,7 @@ public class FSOps {
     public static <R, I> Modifier<R, I> offset(Plan<R, I> input, long offset) {
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(m.operands.get(0), m.projection, m.distinctCapacity, offset,
-                                  m.limit, m.filters, m.unbound, m.name);
+                                  m.limit, m.filters, m.unbound, NameGetter.get(m));
         }
         return new Modifier<>(input, null, 0, offset, Long.MAX_VALUE,
                              null, null, null);
@@ -222,7 +284,7 @@ public class FSOps {
     public static <R, I> Modifier<R, I> slice(Plan<R, I> input, long offset, long limit) {
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(m.operands.get(0), m.projection, m.distinctCapacity, offset,
-                                  limit, m.filters, m.unbound, m.name);
+                                  limit, m.filters, m.unbound, NameGetter.get(m));
         }
         return new Modifier<>(input, null, 0, offset, limit,
                              null, null, null);
@@ -262,7 +324,7 @@ public class FSOps {
     public static <R, I> Modifier<R, I> distinct(Plan<R, I> input, int capacity) {
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(m.operands.get(0), m.projection, capacity, m.offset,
-                                  m.limit, m.filters, m.unbound, m.name);
+                                  m.limit, m.filters, m.unbound, NameGetter.get(m));
         }
         return new Modifier<>(input, null, capacity, 0, Long.MAX_VALUE, null, null, null);
     }
@@ -277,7 +339,7 @@ public class FSOps {
     public static <R, I> Modifier<R, I> project(Plan<R, I> input, Vars vars) {
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(m.operands.get(0), vars, m.distinctCapacity, m.offset,
-                                  m.limit, m.filters, m.unbound, m.name);
+                                  m.limit, m.filters, m.unbound, NameGetter.get(m));
         }
         return new Modifier<>(input, vars, 0, 0, Long.MAX_VALUE,
                               null, null, null);
@@ -286,10 +348,11 @@ public class FSOps {
     private static List<Expr> parseFilters(Plan<?,?> maybeModifier, Collection<?> filters) {
         List<Expr> oldFilters = maybeModifier instanceof Modifier<?,?> m ? m.filters : List.of();
         int size = oldFilters.size() + filters.size();
-        List<Expr> parsed = size == 0 ? List.of() : new ArrayList<>(size);
-        //noinspection ConstantConditions
+        if (size == 0)
+            return List.of();
+        List<Expr> parsed = new ArrayList<>(size);
         parsed.addAll(oldFilters);
-        var p = new ExprParser();
+        var p = new ExprParser().rowType(maybeModifier.rowType);
         for (Object o : filters) {
             if (o instanceof Expr e)
                 parsed.add(e);
@@ -314,7 +377,7 @@ public class FSOps {
         var parsed = parseFilters(input, filters);
         if (input instanceof Modifier<R,I> m) {
             return new Modifier<>(input.operands.get(0), m.projection, m.distinctCapacity,
-                                  m.offset, m.limit, parsed, m.unbound, input.name);
+                                  m.offset, m.limit, parsed, m.unbound, NameGetter.get(input));
         } else {
             return new Modifier<>(input, null, 0, 0, Long.MAX_VALUE,
                                   parsed, null, null);

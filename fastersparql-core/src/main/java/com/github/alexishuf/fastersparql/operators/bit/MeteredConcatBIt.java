@@ -65,6 +65,6 @@ public class MeteredConcatBIt<R> extends ConcatBIt<R> {
     }
 
     @Override protected String toStringNoArgs() {
-        return plan.name;
+        return plan.name();
     }
 }

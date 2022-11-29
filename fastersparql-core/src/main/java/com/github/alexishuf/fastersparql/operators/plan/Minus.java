@@ -13,4 +13,9 @@ public abstract class Minus<R, I> extends Plan<R, I> {
     @Override protected Vars computeVars(boolean all) {
         return all ? super.computeVars(true) : operands.get(0).publicVars();
     }
+
+    @Override protected void bgpSuffix(StringBuilder out, int indent) {
+        newline(out, indent).append("MINUS");
+        operands.get(1).groupGraphPattern(out, indent+1);
+    }
 }

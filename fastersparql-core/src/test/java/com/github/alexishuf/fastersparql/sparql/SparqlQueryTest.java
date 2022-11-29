@@ -1,9 +1,13 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
+import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -19,26 +23,97 @@ import static java.util.Comparator.naturalOrder;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SparqlQueryTest {
+    interface Parser {
+        SparqlQuery parse(String sparql) throws SilentSkip;
+        @Nullable String preprocess(String sparql);
+        boolean isFull();
+    }
 
-    record D(String sparql, boolean graph, Vars pub, Vars all) {
+    public static final class SilentSkip extends Exception {
+    }
+
+    private static final Parser OPAQUE = new Parser() {
+        @Override public SparqlQuery parse(String sparql) {
+            return new OpaqueSparqlQuery(sparql);
+        }
+        @Override public String toString() { return "OPAQUE"; }
+        @Override public @Nullable String preprocess(String sparql) { return sparql; }
+        @Override public boolean isFull() { return false; }
+    };
+
+    private static final Pattern GRAPH_RX = Pattern.compile("(?mi)^\\s*(?:CONSTRUCT|DESCRIBE)");
+
+    private static <R, I> SparqlQuery
+    parseFull(SparqlParser<R, I> parser, String sparql) throws SilentSkip {
+        try {
+            return parser.parse(sparql, 0);
+        } catch (InvalidSparqlException e) {
+            if (e.getMessage().startsWith("binding vars to expressions"))
+                throw new SilentSkip();
+            if (e.getMessage().startsWith("FROM clauses are not supported"))
+                throw new SilentSkip();
+            if (e.getMessage().matches("(?i)Expected SELECT or ASK at position \\d+, got \"CONSTRUCT\""))
+                throw new SilentSkip();
+            throw e;
+        }
+    }
+
+    private static final Parser FULL_LIST = new Parser() {
+        private final SparqlParser<List<String>, String> parser = new SparqlParser<>(ListRow.STRING);
+        @Override public SparqlQuery parse(String sparql) throws SilentSkip {
+            return parseFull(parser, sparql);
+        }
+        @Override public String toString() { return "FULL_LIST"; }
+        @Override public @Nullable String preprocess(String sparql) {
+            if (GRAPH_RX.matcher(sparql).find()) return null;
+            if (sparql.indexOf(':') == -1)
+                return sparql;
+            return  """
+                    PREFIX : <http://example.org/>
+                    PREFIX ex: <http://example.org/>
+                    """ + sparql;
+        }
+        @Override public boolean isFull() { return true; }
+    };
+
+    private static final Parser FULL_ARRAY = new Parser() {
+        private final SparqlParser<String[], String> parser = new SparqlParser<>(ArrayRow.STRING);
+        @Override public SparqlQuery parse(String sparql) throws SilentSkip {
+            return parseFull(parser, sparql);
+        }
+        @Override public String toString() { return "FULL_ARRAY"; }
+        @Override public @Nullable String preprocess(String sparql) { return FULL_LIST.preprocess(sparql); }
+        @Override public boolean isFull() { return true; }
+    };
+
+    private static final List<Parser> PARSERS = List.of(OPAQUE, FULL_LIST, FULL_ARRAY);
+
+    record D(String sparql, boolean graph, Vars pub, Vars all, Vars strictPub) {
         public D(String sparql, Vars pub, Vars all) {
-            this(sparql, false, pub, all);
+            this(sparql, false, pub, all, pub);
         }
         public D(String sparql, String pub) {
-            this(sparql, false,
+            this(sparql,
                     Vars.of(Arrays.stream(pub.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new)),
                     Vars.of(Arrays.stream(pub.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new))
             );
         }
         public D(String sparql, String pub, String all) {
-            this(sparql, false,
+            this(sparql,
                     Vars.of(Arrays.stream(pub.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new)),
                     Vars.of(Arrays.stream(all.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new))
             );
         }
+        public D(String sparql, String pub, String all, String strictPub) {
+            this(sparql, false,
+                    Vars.of(Arrays.stream(pub.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new)),
+                    Vars.of(Arrays.stream(all.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new)),
+                    Vars.of(Arrays.stream(strictPub.split(",")).filter(s -> !s.isEmpty()).toArray(String[]::new))
+            );
+        }
 
         public D(String sparql) {
-            this(sparql, true, Vars.EMPTY, Vars.EMPTY);
+            this(sparql, true, Vars.EMPTY, Vars.EMPTY, Vars.EMPTY);
         }
     }
 
@@ -66,9 +141,9 @@ class SparqlQueryTest {
                 // parse var inside filters
                 new D("ASK { <a> :p ?age FILTER (?age < ?max)}", "", "age,max"),
                 new D("SELECT * WHERE { <a> :p ?age FILTER(?age<?max)}", "age,max"),
-                new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x }", "", "y,x"),
-                new D("SELECT * WHERE { <a> :p ?y FILTER NOT EXISTS { ?y :q $x }", "y,x"),
-                new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x FILTER (?x != ?max) }", "", "y,x,max")
+                new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x }}", "", "y,x"),
+                new D("SELECT * WHERE { <a> :p ?y FILTER NOT EXISTS { ?y :q $x }}", "y,x", "y,x", "y"),
+                new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x FILTER (?x != ?max) }}", "", "y,x,max")
         ));
         base.addAll(List.of(//ignore vars inside <>
                 new D("SELECT * WHERE { <a> :p <?x>, ?v}", "v"),
@@ -167,8 +242,8 @@ class SparqlQueryTest {
                 new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > 23) }", "x"),
                 new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > ?y) }", "x,y"),
                 new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > $y) }", "x,y"),
-                new D("SELECT DISTINCT * WHERE { ?x > ?y }", "x,y"),
-                new D("SELECT DISTINCT * WHERE { $x > $y }", "x,y"),
+                new D("SELECT DISTINCT * WHERE { ?x ex:p ?y }", "x,y"),
+                new D("SELECT DISTINCT * WHERE { $x ex:p $y }", "x,y"),
 
                 // SELECT * with string literal before vars
                 new D("SELECT * WHERE { :s :p \"?x\", ?y; :q ?long}", "y,long"),
@@ -194,43 +269,57 @@ class SparqlQueryTest {
         List<D> list = new ArrayList<>();
         for (String prologue : prologues) {
             for (D d : base)
-                list.add(new D(prologue+d.sparql, d.graph, d.pub, d.all));
+                list.add(new D(prologue+d.sparql, d.graph, d.pub, d.all, d.strictPub));
         }
         return list;
     }
 
     @Test //@ParameterizedTest will be annoyingly slow
     void test() {
-        for (D d : data()) {
-            var msg = " for d=" + d;
-            var q = new SparqlQuery(d.sparql());
-            assertSame(d.sparql, q.sparql(), "bad sparql" + msg);
-            assertEquals(d.graph, q.isGraph(), "bad isGraph()" + msg);
-            assertEquals(d.pub, q.publicVars(), "bad publicVars()" + msg);
-            assertEquals(d.all, q.allVars(), "bad allVars()" + msg);
+        for (Parser parser : PARSERS) {
+            List<D> data = data();
+            for (int row = 0; row < data.size(); row++) {
+                D d = data.get(row);
+                String sparql = parser.preprocess(d.sparql);
+                if (sparql == null)
+                    continue;
+                var msg = " for parser=" + parser + ", data()["+row+"]=" + d;
+                SparqlQuery q;
+                try {
+                    q = parser.parse(sparql);
+                } catch (SilentSkip e) { continue; }
+                assertEquals(d.graph, q.isGraph(), "bad isGraph()" + msg);
+                if (parser.isFull())
+                    assertEquals(d.strictPub, q.publicVars(), "bad publicVars()" + msg);
+                else
+                    assertEquals(d.pub, q.publicVars(), "bad publicVars()" + msg);
+                assertEquals(d.all, q.allVars(), "bad allVars()" + msg);
+                assertSame(q, q.bind(ArrayBinding.EMPTY), "bind() failed to detect no-op" + msg);
 
-            List<Integer> posList = new ArrayList<>();
-            for (String name : d.all) {
-                for (String marker : List.of("?", "$")) {
-                    int i = -1;
-                    while (true) {
-                        i = d.sparql.indexOf(marker + name, i + 1);
-                        if (i == -1) break;
-                        posList.addAll(List.of(i, i + 1 + name.length()));
+                if (q instanceof OpaqueSparqlQuery oq) {
+                    assertSame(sparql, oq.sparql(), "bad sparql" + msg);
+                    List<Integer> posList = new ArrayList<>();
+                    for (String name : d.all) {
+                        for (String marker : List.of("?", "$")) {
+                            int i = -1;
+                            while (true) {
+                                i = sparql.indexOf(marker + name, i + 1);
+                                if (i == -1) break;
+                                posList.addAll(List.of(i, i + 1 + name.length()));
+                            }
+                        }
+                    }
+                    //posList is naive and has errors:
+                    // - sees variables inside quoted literals and IRIs
+                    // - sees "?name" where SparqlQuery sees "(... AS ?name)"
+                    if (posList.size() <= oq.varPos.length
+                            && !Pattern.compile("(?i) AS ?[$?]").matcher(sparql).find()) {
+                        posList.sort(naturalOrder());
+                        int[] exPositions = posList.stream().mapToInt(Integer::intValue).toArray();
+                        assertArrayEquals(exPositions, oq.varPos, "bad varPositions" + msg);
                     }
                 }
             }
-            //posList is naive and has errors:
-            // - sees variables inside quoted literals and IRIs
-            // - sees "?name" where SparqlQuery sees "(... AS ?name)"
-            if (posList.size() <= q.varPos.length
-                    && !Pattern.compile("(?i) AS ?[$?]").matcher(d.sparql).find()) {
-                posList.sort(naturalOrder());
-                int[] exPositions = posList.stream().mapToInt(Integer::intValue).toArray();
-                assertArrayEquals(exPositions, q.varPos, "bad varPositions" + msg);
-            }
-
-            assertSame(q, q.bind(ArrayBinding.EMPTY), "bind() failed to detect no-op");
         }
     }
 
@@ -265,11 +354,11 @@ class SparqlQueryTest {
                 new B("SELECT * WHERE { ?s :p ?o. ?o :q ?s }",
                       "SELECT * WHERE { <http://example.org/a> :p ?o. ?o :q <http://example.org/a> }",
                       copy(Map.of("s", "<http://example.org/a>"))),
-                new B("SELECT ?x WHERE { ?x :p ?y FILTER(?y < ?max)",
-                      "SELECT ?x WHERE { ?x :p ?y FILTER(?y < 23)",
+                new B("SELECT ?x WHERE { ?x :p ?y FILTER(?y < ?max) }",
+                      "SELECT ?x WHERE { ?x :p ?y FILTER(?y < 23) }",
                       copy(Map.of("max", "23"))),
-                new B("SELECT ?y WHERE { ?x :p ?y FILTER(?y < ?max)",
-                      "SELECT ?y WHERE { <test> :p ?y FILTER(?y < 23)",
+                new B("SELECT ?y WHERE { ?x :p ?y FILTER(?y < ?max)}",
+                      "SELECT ?y WHERE { <test> :p ?y FILTER(?y < 23)}",
                       copy(Map.of("max", "23", "x", "<test>")))
         ));
 
@@ -335,20 +424,35 @@ class SparqlQueryTest {
 
     @Test
     void testBind() {
-        for (B d : bindData()) {
-            var ctx = " at d=" + d;
-            var q = new SparqlQuery(d.sparql);
-            var ex = new SparqlQuery(d.expected);
-            var b = q.bind(d.binding);
+        for (Parser parser : PARSERS) {
+            List<B> bindData = bindData();
+            for (int row = 0; row < bindData.size(); row++) {
+                B d = bindData.get(row);
+                var ctx = " at parser=" + parser + ", bindData()["+row+"]=" + d;
+                SparqlQuery q, ex;
+                try {
+                    String sparql = parser.preprocess(d.sparql);
+                    String expectedSparql = parser.preprocess(d.expected);
+                    if (sparql == null) continue;
+                    q = parser.parse(sparql);
+                    ex = parser.parse(expectedSparql);
+                } catch (SilentSkip e) {
+                    continue;
+                }
+                var b = q.bind(d.binding);
 
-            assertEquals(d.expected, b.sparql, "bad sparql" + ctx);
-            assertEquals(ex.publicVars(), b.publicVars(), "bad publicVars" + ctx);
-            assertEquals(ex.allVars(), b.allVars(), "bad allVars" + ctx);
-            assertEquals(ex.isGraph(), b.isGraph(), "bad isGraph" + ctx);
-            assertArrayEquals(ex.varPos, b.varPos, "bad varPositions" + ctx);
+                assertEquals(ex.publicVars(), b.publicVars(), "bad publicVars" + ctx);
+                assertEquals(ex.allVars(), b.allVars(), "bad allVars" + ctx);
+                assertEquals(ex.isGraph(), b.isGraph(), "bad isGraph" + ctx);
+                if (b instanceof OpaqueSparqlQuery ob) {
+                    assertEquals(d.expected, ob.sparql, "bad sparql" + ctx);
+                    assertArrayEquals(((OpaqueSparqlQuery) ex).varPos, ob.varPos,
+                            "bad varPositions" + ctx);
+                }
 
-            if (d.expected.equals(d.sparql))
-                assertSame(q, b);
+                if (d.expected.equals(d.sparql))
+                    assertSame(q, b);
+            }
         }
     }
 
@@ -393,7 +497,7 @@ class SparqlQueryTest {
                 new A("SELECT * FROM <a> WHERE { ?s ?p ?o }", "ASK FROM <a> WHERE { ?s ?p ?o }")
         );
         List<A> list = new ArrayList<>();
-        for (String prologue : List.of("", "PREFIX : <select * WHERE>\nBASE <select ?s>\n#?s\n# select ?s {\n")) {
+        for (String prologue : List.of("", "PREFIX : <select>\nBASE <select?s>\n#?s\n# select ?s {\n")) {
             for (A a : base)
                 list.add(new A(prologue+a.in, prologue+a.expected));
         }
@@ -402,27 +506,39 @@ class SparqlQueryTest {
 
     @Test
     void testToAsk() {
-        for (A d : askData()) {
-            var ctx = " for d=" + d;
-            var q = new SparqlQuery(d.in);
-            var b = new SparqlQuery(d.in);
-            var e = new SparqlQuery(d.expected);
-            var a = q.toAsk();
+        for (Parser parser : PARSERS) {
+            for (A d : askData()) {
+                var ctx = " for d=" + d;
+                SparqlQuery q, b, e;
+                try {
+                    q = parser.parse(d.in);
+                    b = parser.parse(d.in);
+                    e = parser.parse(d.expected);
+                } catch (SilentSkip ignored) { continue; }
+                var a = q.toAsk();
 
-            assertEquals(d.expected, a.sparql(), "bad sparql" + ctx);
-            assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
-            assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
-            assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
-            assertEquals(e.aliasVars, a.aliasVars, "bad aliasVars" + ctx);
+                assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
+                assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
+                assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
+                if (a instanceof OpaqueSparqlQuery oa) {
+                    var oe = (OpaqueSparqlQuery) e;
+                    assertEquals(d.expected, oa.sparql(), "bad sparql" + ctx);
+                    assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
+                    assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
+                }
 
-            assertEquals(b.allVars, q.allVars, "q mutated by toAsk()");
-            assertEquals(b.publicVars, q.publicVars, "q mutated by toAsk()");
-            assertEquals(b.aliasVars, q.aliasVars, "q mutated by toAsk()");
-            assertEquals(b.sparql, q.sparql, "q mutated by toAsk()");
-            assertEquals(b.isGraph, q.isGraph, "q mutated by toAsk()");
-            assertArrayEquals(b.varPos, q.varPos, "q mutated by toAsk()");
+                assertEquals(b.allVars(), q.allVars(), "q mutated by toAsk()");
+                assertEquals(b.publicVars(), q.publicVars(), "q mutated by toAsk()");
+                assertEquals(b.isGraph(), q.isGraph(), "q mutated by toAsk()");
+                if (q instanceof OpaqueSparqlQuery oq) {
+                    var ob = (OpaqueSparqlQuery) b;
+                    assertEquals(ob.aliasVars, oq.aliasVars, "q mutated by toAsk()");
+                    assertEquals(ob.sparql, oq.sparql, "q mutated by toAsk()");
+                    assertArrayEquals(ob.varPos, oq.varPos, "q mutated by toAsk()");
+                }
 
-            assertArrayEquals(e.varPos, a.varPos, "bad varPos" + ctx);
+
+            }
         }
     }
 
@@ -432,7 +548,6 @@ class SparqlQueryTest {
         List<T> base = List.of(
                 new T("ASK { ?s ?p ?o }", WEAK, "ASK { ?s ?p ?o }"),
                 new T("ASK { ?s ?p ?o. }", WEAK, "ASK { ?s ?p ?o. }"),
-                new T("ASK { #SELECT\n }", WEAK, "ASK { #SELECT\n }"),
                 new T("CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}", STRONG,
                       "CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}"),
                 new T("SELECT REDUCED * WHERE {?s ?p ?o}", STRONG,
@@ -461,7 +576,7 @@ class SparqlQueryTest {
                       "SELECT REDUCED\n?o WHERE {<a> :p ?o}")
         );
         List<T> list = new ArrayList<>();
-        for (String prologue : List.of("", "PREFIX : <select * WHERE>\nBASE <select ?s>\n#?s\n# select ?s {\n")) {
+        for (String prologue : List.of("", "PREFIX : <select>\nBASE <select?s>\n#?s\n# select ?s {\n")) {
             for (T t : base)
                 list.add(new T(prologue+t.in, t.type, prologue+t.expected));
         }
@@ -471,19 +586,36 @@ class SparqlQueryTest {
 
     @Test
     void testDistinct() {
-        for (T t : distinctData()) {
-            var ctx = " for t=" + t;
-            var q = new SparqlQuery(t.in);
-            var e = new SparqlQuery(t.expected);
-            var a = q.toDistinct(t.type());
+        for (Parser parser : PARSERS) {
+            List<T> distinctData = distinctData();
+            for (int row = 0; row < distinctData.size(); row++) {
+                T t = distinctData.get(row);
+                var ctx = " for parser=" + parser + ", distinctData()["+row+"]=" + t;
+                SparqlQuery q, e;
+                try {
+                    String inSparql = parser.preprocess(t.in);
+                    String expectedSparql = parser.preprocess(t.expected);
+                    if (inSparql == null) continue;
+                    q = parser.parse(inSparql);
+                    e = parser.parse(expectedSparql);
+                } catch (SilentSkip ignored) {
+                    continue;
+                } catch (Throwable error) {
+                    fail(error.getClass().getSimpleName()+ctx, error);
+                    throw error;
+                }
+                var a = q.toDistinct(t.type());
 
-            assertEquals(t.expected, a.sparql(), "bad sparql" + ctx);
-            assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
-            assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
-            assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
-            assertEquals(e.aliasVars, a.aliasVars, "bad aliasVars" + ctx);
-
-            assertArrayEquals(e.varPos, a.varPos, "bad varPos" + ctx);
+                assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
+                assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
+                assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
+                if (a instanceof OpaqueSparqlQuery oa) {
+                    var oe = (OpaqueSparqlQuery) e;
+                    assertEquals(t.expected, oa.sparql(), "bad sparql" + ctx);
+                    assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
+                    assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
+                }
+            }
         }
     }
 }

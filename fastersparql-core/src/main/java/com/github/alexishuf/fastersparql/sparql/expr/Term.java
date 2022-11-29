@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.sparql.RDF;
 import com.github.alexishuf.fastersparql.sparql.RDFTypes;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -20,11 +21,11 @@ public sealed interface Term extends Expr {
     /** Interpret this as a boolean or raise an {@link InvalidExprTypeException} */
     boolean asBool();
 
-    @Override default int  argCount()            { return 0; }
-    @Override default Expr arg(int i)            { throw new IndexOutOfBoundsException(i); }
-    @Override default Term eval(Binding ignored) { return this; }
-
-    @Override default Expr bind(Binding ignored) { return this; }
+    @Override default int  argCount()                  { return 0; }
+    @Override default Expr arg(int i)                  { throw new IndexOutOfBoundsException(i); }
+    @Override default Term eval(Binding ignored)       { return this; }
+    @Override default Expr bind(Binding ignored)       { return this; }
+    @Override default void toSparql(StringBuilder out) { out.append(nt()); }
 
     final class Var implements Term {
         private final String nt;
@@ -58,33 +59,48 @@ public sealed interface Term extends Expr {
     }
 
     final class IRI implements Term {
-        private final String nt;
-        private @Nullable Lit str;
+        public static final IRI type = new IRI(RDF.type_nt, RDF.type);
 
-        public IRI(String nt) {
+        private @Nullable String nt;
+        private @Nullable String iri;
+
+        public IRI(@Nullable String nt, @Nullable String iri) {
             this.nt = nt;
+            this.iri = iri;
         }
 
-        @Override public Lit str() {
-            if (str == null)
-                str = new Lit(nt.substring(1, nt.length() - 1), string, null);
-            return str;
+        public IRI(String ntOrIRI) {
+            if (ntOrIRI.charAt(0) == '<')
+                nt = ntOrIRI;
+            else
+                iri = ntOrIRI;
         }
+
+        public String iri() {
+            if (iri == null) //noinspection ConstantConditions
+                iri = nt.substring(1, nt.length()-1);
+            return iri;
+        }
+
+        @Override public Lit str() { return new Lit(iri(), string, null); }
 
         @Override public boolean asBool() {
             throw new IllegalArgumentException("BNodes do not have a boolean value");
         }
 
-        @Override public String nt() { return nt; }
-        @Override public int hashCode() { return Objects.hash(nt); }
-        @Override public String toString() { return nt; }
+        @Override public String nt() {
+            if (nt == null) nt = '<'+iri+'>';
+            return nt;
+        }
+        @Override public int hashCode() { return Objects.hash(nt()); }
+        @Override public String toString() { return nt(); }
 
         @Override
         public boolean equals(Object obj) {
             if (obj == this) return true;
             if (obj == null || obj.getClass() != this.getClass()) return false;
             var that = (IRI) obj;
-            return Objects.equals(this.nt, that.nt);
+            return Objects.equals(this.nt(), that.nt());
         }
     }
 
@@ -119,6 +135,7 @@ public sealed interface Term extends Expr {
     }
 
 
+    @SuppressWarnings("StringEquality")
     final class Lit implements Term {
         private final String lexical;
         private final String datatype;
@@ -132,10 +149,16 @@ public sealed interface Term extends Expr {
         public static final Lit FALSE = new Lit("false", RDFTypes.BOOLEAN, null);
         public static final Lit EMPTY = new Lit("", RDFTypes.string, null);
 
-        public Lit(String lexical, String datatype, @Nullable String lang) {
+        public Lit(String lexical, String datatype, @Nullable String lang, @Nullable String nt) {
+            assert (!datatype.equals(string) || datatype == string)
+                    && (!datatype.equals(BOOLEAN) || datatype == BOOLEAN);
             this.lexical = lexical;
             this.datatype = datatype;
             this.lang = lang;
+            this.nt = nt;
+        }
+        public Lit(String lexical, String datatype, @Nullable String lang) {
+            this(lexical, datatype, lang, null);
         }
 
         /** The lexical form of the literal with escape sequences used in {@link Lit#nt()}
@@ -164,9 +187,14 @@ public sealed interface Term extends Expr {
             };
         }
 
+        @Override public void toSparql(StringBuilder out) {
+            out.append(datatype==integer||datatype==decimal||datatype==DOUBLE||datatype==BOOLEAN
+                       ? lexical : nt());
+        }
+
         @Override public String nt() {
             if (this.nt == null) {
-                if (isXsd(datatype, string))
+                if (datatype == string)
                     nt = "\"" + lexical + "\"";
                 else if (lang != null)
                     nt = "\"" + lexical + "\"@" + lang;
@@ -177,18 +205,16 @@ public sealed interface Term extends Expr {
         }
 
         @Override public Lit str() {
-            if (RDFTypes.isXsd(datatype, string))
-                return this;
-            return new Lit(lexical, string, null);
+            return datatype == string ? this : new Lit(lexical, string, null);
         }
 
         @Override public boolean asBool() {
             if (bool != null)
                 return bool;
-            if (RDFTypes.isXsd(datatype, RDFTypes.BOOLEAN)) {
+            if (datatype == BOOLEAN) {
                 char c = lexical.charAt(0);
                 return bool = c == 't' || c == 'T';
-            } else if (RDFTypes.isXsd(datatype, string) || lang != null) {
+            } else if (datatype == string || lang != null) {
                 return bool = !lexical.isEmpty();
             } else {
                 Number n = asNumber();

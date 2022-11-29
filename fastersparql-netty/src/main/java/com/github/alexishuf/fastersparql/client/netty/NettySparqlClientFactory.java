@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
+import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
 import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
@@ -12,7 +13,11 @@ public class NettySparqlClientFactory implements SparqlClientFactory {
     }
 
     @Override public int order() {
-        return -100;
+        return 100;
+    }
+
+    @Override public boolean supports(SparqlEndpoint endpoint) {
+        return endpoint.protocol() != Protocol.FILE;
     }
 
     @Override

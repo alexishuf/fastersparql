@@ -12,7 +12,7 @@ import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentPa
 import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
 import com.github.alexishuf.fastersparql.client.util.MediaType;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -203,7 +203,7 @@ public class SparqlClientTest {
 
     private void testUnreachable(String tag, String uri) {
         try (var client = FS.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
-            var results = client.query(new SparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
+            var results = client.query(new OpaqueSparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
             assertEquals(List.of("x"), results.vars());
             assertThrows(SparqlClientException.class,
                     () -> assertEquals(0, results.nextBatch().size));
@@ -217,7 +217,7 @@ public class SparqlClientTest {
 
     private void testServerEarlyClose(String tag, String uri) {
         try (var client = FS.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
-            var it = client.query(new SparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
+            var it = client.query(new OpaqueSparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
             assertEquals(List.of("s", "p", "o"), it.vars());
             assertThrows(SparqlClientException.class, () -> assertEquals(0, it.nextBatch().size));
         }
@@ -430,7 +430,7 @@ public class SparqlClientTest {
 
     @ParameterizedTest @MethodSource("bindData")
     void testBindNetty(BindData data) throws Exception {
-        testBind(data, "netty");
+         testBind(data, "netty");
     }
 
     private void testGraph(GraphData data, String tag) throws Exception {

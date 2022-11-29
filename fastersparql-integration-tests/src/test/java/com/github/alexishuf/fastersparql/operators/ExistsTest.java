@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.plan.Exists;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -45,14 +46,14 @@ public class ExistsTest {
     }
 
     private static final class TestData extends ResultsChecker {
-        final SparqlQuery left;
+        final OpaqueSparqlQuery left;
         final boolean negate;
-        final SparqlQuery filter;
+        final OpaqueSparqlQuery filter;
 
         public TestData(String left, boolean negate, String filter, String... values) {
-            super(new SparqlQuery(left).publicVars, values);
-            this.left = new SparqlQuery(PREFIX+left);
-            this.filter = new SparqlQuery(PREFIX+filter);
+            super(new OpaqueSparqlQuery(left).publicVars, values);
+            this.left = new OpaqueSparqlQuery(PREFIX+left);
+            this.filter = new OpaqueSparqlQuery(PREFIX+filter);
             this.negate = negate;
         }
 

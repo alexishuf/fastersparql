@@ -162,6 +162,10 @@ public class ExprParserTest {
                 new TestData("true  || 'false'^^<http://www.w3.org/2001/XMLSchema#boolean>",           TRUE),
                 new TestData("false || \"\"\"true\"\"\"^^<http://www.w3.org/2001/XMLSchema#boolean>",  TRUE),
                 new TestData("false || '''false'''^^<http://www.w3.org/2001/XMLSchema#boolean>",       FALSE),
+                new TestData("true  || \"true\"^^xsd:boolean",          TRUE),
+                new TestData("true  || 'false'^^xsd:boolean",           TRUE),
+                new TestData("false || \"\"\"true\"\"\"^^xsd:boolean",  TRUE),
+                new TestData("false || '''false'''^^xsd:boolean",       FALSE),
 
                 //parse math binary operators with integer
                 new TestData("2 + 3", new Lit("5", integer, null)),

@@ -1,6 +1,10 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,11 +14,17 @@ import static com.github.alexishuf.fastersparql.client.util.Skip.*;
 
 public final class ExprParser {
     private String in;
-    private int pos, len;
-    private final int[] termParserPos = {0};
+    private int consumedPos, pos, len;
+    public final TermParser termParser = new TermParser();
+    private @Nullable RowType<?, ?> rowType;
     private @Nullable Symbol symbol;
     private @Nullable Expr term;
 
+    /** Set the {@link RowType} to use when parsing the {@code GroupGraphPattern} block. */
+    public @This ExprParser rowType(RowType<?, ?> rt) {
+        this.rowType = rt;
+        return this;
+    }
 
     /**
      * Parse a {@link Term} starting at index 0 of {@code in}.
@@ -38,6 +48,31 @@ public final class ExprParser {
             throw new InvalidExprException(in, pos, "Expected EOF, found"+(symbol == null ? term : symbol));
         return expr;
     }
+
+    /** Sets input String to be used in subsequent {@link ExprParser#parse(int)} calls. */
+    public void input(String in) {
+        this.len = (this.in = in).length();
+    }
+
+    /** Parse an expression that starts at char {@code pos} of the previously set
+     *  {@link ExprParser#input(String)}. */
+    public Expr parse(int pos) {
+        assert in != null;
+        this.consumedPos = this.pos = pos;
+        this.symbol = null;
+        this.term = null;
+        read();
+        return pExpression();
+    }
+
+    /**
+     * Index of the first char not included in the {@link Expr} returned by the last
+     * {@code parse} call.
+     *
+     * @return a non-negative integer.
+     */
+    public int consumedPos() { return consumedPos; }
+
 
     private enum Symbol {
         EOF,
@@ -180,7 +215,7 @@ public final class ExprParser {
     /** Given the first uppercase char {@code f} of a function name such name (in uppercase)
      *  should be between {@code FUNCTION_INPUTS_RANGE[2*(f-'A')+0]} and
      *  {@code FUNCTION_INPUTS_RANGE[2*(f-'A')+1]} (exclusive) in {@code SYMBOL_INPUTS}. */
-    private static final byte[] FUNCTION_INPUTS_RANGE = new byte[2*('Z'-'A'+1)];
+    private static final byte[] SYMBOL_INPUTS_RANGE = new byte[2*('Z'-'A'+1)];
     /** Chars that by themselves constitute an operator */
     private static final long IS_SINGLE_CHAR_OP = (1L << '(') | (1L << ')') | (1L << ',')
                                                 | (1L << '=') | (1L << '+') | (1L << '-')
@@ -222,8 +257,8 @@ public final class ExprParser {
                 if (SYMBOL_INPUTS[j].charAt(0) > c)
                     end = j;
             }
-            FUNCTION_INPUTS_RANGE[rangeIdx] = (byte) begin;
-            FUNCTION_INPUTS_RANGE[rangeIdx+1] = (byte) end;
+            SYMBOL_INPUTS_RANGE[rangeIdx] = (byte) begin;
+            SYMBOL_INPUTS_RANGE[rangeIdx+1] = (byte) end;
         }
     }
 
@@ -250,7 +285,6 @@ public final class ExprParser {
         }
     }
 
-    private static final long[] WS = alphabet().control().whitespace().get();
     private void readComments() { //precondition: input.charAt(pos) == '#'
         int next = skipUntil(in, pos+1, len, '\n');
         while (next != pos) {
@@ -261,6 +295,8 @@ public final class ExprParser {
     }
 
     void read() {
+        if (symbol != null || term != null) return;
+        consumedPos = pos;
         pos = skip(in, pos, len, WS); // skip all whitespace
         if (pos < len && in.charAt(pos) == '#')  //coldest branch in this function: do not inline
             readComments();
@@ -313,31 +349,52 @@ public final class ExprParser {
             else                         throw new InvalidExprException(in, pos-1, "Expected ||");
         } else if ((c >= 'A' && c<='Z') || (c>='a' && c<='z')) {
             if (c >= 'a') c -= 'a'-'A';
-            readFunctionName(c); // do not inline: colder than termParser.parse() below
+            readNamedSymbol(c); // do not inline: colder than termParser.parse() below
         }
-        if (symbol == null) {
-            term = TermParser.parse(in, pos, termParserPos);
-            pos = termParserPos[0];
+        if (symbol == null && termParser.parse(in, pos, len)) {
+            term = termParser.asTerm();
+            pos = termParser.termEnd();
         }
     }
 
-    private void readFunctionName(char uppercaseFirst) {
+    private void readNamedSymbol(char uppercaseFirst) {
         int rIdx = 2 * (uppercaseFirst - 'A');
-        byte begin = FUNCTION_INPUTS_RANGE[rIdx], end = FUNCTION_INPUTS_RANGE[rIdx+1];
+        byte begin = SYMBOL_INPUTS_RANGE[rIdx], end = SYMBOL_INPUTS_RANGE[rIdx+1];
         if (end > begin) {
             // find next ( or {, then reverse any space before that
             int tokenLen = skip(in, pos, len, ALPHANUMERIC)-pos;
             if (tokenLen == 0)
                 return; // not a function name
+            if (tokenLen == 3 && "NOT".regionMatches(true, 0, in, pos, 3)) {
+                readNotNamedSymbol();
+                return;
+            }
             int inputIdx = begin;
-            while (inputIdx < end  && !SYMBOL_INPUTS[inputIdx]
-                    .regionMatches(true, 0, in, pos, tokenLen)) {
+            while (inputIdx < end) {
+                String candidate = SYMBOL_INPUTS[inputIdx];
+                if (candidate.regionMatches(true, 0, in, pos, candidate.length()))
+                    break;
                 ++inputIdx;
             }
             if (inputIdx < end) {
                 symbol = SYMBOL_INPUTS_VALUES[inputIdx];
                 pos += tokenLen;
             }
+        }
+    }
+
+    private void readNotNamedSymbol() {
+        int wBegin = skip(in, pos + 3, len, WS);
+        if (wBegin >= len)
+            return;
+        int wEnd = skip(in, wBegin, len, ALPHANUMERIC);
+        char c = in.charAt(wBegin);
+        if ((c=='I' || c=='i') && "IN".regionMatches(true, 0, in, wBegin, wEnd-wBegin)) {
+            symbol = Symbol.NOT_IN;
+            pos = wEnd;
+        } else if ((c=='E' || c=='e') && "EXISTS".regionMatches(true, 0, in, wBegin, wEnd-wBegin)) {
+            symbol = Symbol.NOT_EXISTS;
+            pos = wEnd;
         }
     }
 
@@ -418,6 +475,8 @@ public final class ExprParser {
         } else {
             if (symbol == null)
                 throw new InvalidExprException(in, pos, "Expected a symbol, found null");
+            if (symbol == Symbol.EXISTS || symbol == Symbol.NOT_EXISTS)
+                return pExists(); //special because arg is SPARQL, not Expr
             Symbol s = symbol;
             symbol = null;
             read();
@@ -472,10 +531,10 @@ public final class ExprParser {
                 case SUBSTR -> new Expr.Substr(list);
                 case UCASE -> new Expr.UCase(l);
                 case UUID -> new Expr.Uuid();
-                case default
-                        -> throw new InvalidExprException(in, pos, s+" not supported (yet)");
-                case null
-                        -> throw new InvalidExprException(in, pos, "Expected a symbol, found "+term);
+                case default ->
+                        throw new InvalidExprException(in, pos, s + " not supported (yet)");
+                case null ->
+                        throw new InvalidExprException(in, pos, "Expected a symbol, found " + term);
             };
         }
         return switch (unary) {
@@ -483,6 +542,16 @@ public final class ExprParser {
             case MINUS -> new Expr.Minus(primary);
             case null, default -> primary;
         };
+    }
+
+    private Expr.Exists<?,?> pExists() {
+        boolean negate = symbol == Symbol.NOT_EXISTS;
+        var spParser = new SparqlParser<>(rowType);
+        Plan<?, ?> filter = spParser.parseGroup(in, pos, termParser.prefixMap);
+        pos = spParser.pos();
+        symbol = null;
+        read();
+        return new Expr.Exists<>(filter, negate);
     }
 
     private Expr[] pExprList(@Nullable Expr first) {

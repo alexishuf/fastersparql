@@ -13,7 +13,7 @@ public final class ClientBindingBIt<R, I> extends BindingBIt<R, I> {
     public ClientBindingBIt(BIt<R> left, BindType bindType, RowType<R, I> rowType,
                             SparqlClient<R, I, ?> client,
                             SparqlQuery sparql) {
-        super(left, bindType, rowType, left.vars(), sparql.publicVars, null);
+        super(left, bindType, rowType, left.vars(), sparql.publicVars(), null);
         this.client        = client;
         this.sparql        = sparql;
     }

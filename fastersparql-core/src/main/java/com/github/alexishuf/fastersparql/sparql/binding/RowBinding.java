@@ -10,6 +10,7 @@ public final class RowBinding<R, I> extends Binding {
     private final RowType<R, I> rowType;
     private @Nullable R row;
     private @Nullable Object[] cache;
+    private @Nullable TermParser termParser;
 
     public RowBinding(RowType<R, I> rowType, Vars vars) {
         super(vars);
@@ -35,12 +36,15 @@ public final class RowBinding<R, I> extends Binding {
         if (i == -1) return null;
         String nt = get(i);
         if (nt == null) return null;
-        if (cache == null)
+        if (cache == null || termParser == null) {
             cache = new Object[16];
+            termParser = new TermParser();
+        }
         int keyBucket = nt.hashCode() & 7, valueBucket = keyBucket + 8;
         if (nt.equals(cache[keyBucket]))
             return (Term) cache[valueBucket];
-        Term term = TermParser.parse(nt, 0, null);
+        termParser.parse(nt, 0, nt.length());
+        Term term = termParser.asTerm();
         cache[keyBucket] = nt;
         cache[valueBucket] = term;
         return term;

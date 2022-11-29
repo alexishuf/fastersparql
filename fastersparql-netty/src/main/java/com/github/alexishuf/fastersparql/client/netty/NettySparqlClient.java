@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
+import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.exceptions.InvalidSparqlQueryType;
@@ -45,7 +46,7 @@ import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, F> {
+public class NettySparqlClient<R, I, F> extends AbstractSparqlClient<R, I, F> {
     private static final Set<SparqlMethod> SUPPORTED_METHODS
             = Set.of(SparqlMethod.GET, SparqlMethod.FORM, SparqlMethod.POST);
     private final AtomicInteger nextHandlerId = new AtomicInteger(1);
@@ -63,22 +64,13 @@ public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, 
         }
     }
 
-    @Override protected String endpointString() {
-        var reg = ResultsParserRegistry.get();
-        var cfg = this.endpoint.configuration();
-        //noinspection SlowListContainsAll
-        boolean trivial = cfg.methods().containsAll(SUPPORTED_METHODS) &&
-                cfg.resultsAccepts().stream().allMatch(fmt -> reg.canParse(fmt.asMediaType()));
-        return trivial ? endpoint.uri() : endpoint.toString();
-    }
-
     @Override
     public BIt<R> query(SparqlQuery sparql, @Nullable BIt<R> bindings, @Nullable BindType bindType) {
         if (bindings == null || bindings instanceof EmptyBIt<R>)
             return query(sparql);
         else if (bindType == null)
             throw new NullPointerException("bindings != null, but bindType is null!");
-        if (sparql.isGraph)
+        if (sparql.isGraph())
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         try {
             return new ClientBindingBIt<>(bindings, bindType, rowType, this,
@@ -90,7 +82,7 @@ public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, 
 
     @Override
     public BIt<R> query(SparqlQuery sp) {
-        if (sp.isGraph)
+        if (sp.isGraph())
             throw new SparqlClientInvalidArgument("query() method only takes SELECT/ASK queries");
         try {
             return new QueryBIt(sp);
@@ -99,7 +91,7 @@ public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, 
 
     @Override
     public Graph<F> queryGraph(SparqlQuery sp) {
-        if (!sp.isGraph)
+        if (!sp.isGraph())
             throw new SparqlClientInvalidArgument("query() method only takes CONSTRUCT/DESCRIBE queries");
         try {
             GraphBIt bit = new GraphBIt(sp);
@@ -121,15 +113,15 @@ public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, 
 
     private HttpRequest createRequest(SparqlQuery qry) {
         var cfg = endpoint.configuration();
-        var method = method(cfg, qry.sparql.length());
+        var method = method(cfg, qry.sparql().length());
         CharSequence body = switch (method) {
-            case POST -> qry.sparql;
-            case FORM -> formString(qry.sparql, cfg.params());
+            case POST -> qry.sparql();
+            case FORM -> formString(qry.sparql(), cfg.params());
             case GET  -> null;
             default   -> throw new SparqlClientInvalidArgument(method+" not supported by "+this);
         };
-        String pathAndParams = firstLine(endpoint, cfg, qry.sparql).toString();
-        String accept        = qry.isGraph ? rdfAcceptString(cfg.rdfAccepts())
+        String pathAndParams = firstLine(endpoint, cfg, qry.sparql()).toString();
+        String accept        = qry.isGraph() ? rdfAcceptString(cfg.rdfAccepts())
                                            : resultsAcceptString(cfg.resultsAccepts());
         if (body == null)
             return NettyHttpClient.makeGet(pathAndParams, accept);
@@ -180,8 +172,8 @@ public class NettySparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, 
         private Function<String[], R> converter;
 
         public QueryBIt(SparqlQuery sparql) {
-            super(rowClass(), sparql.publicVars, createRequest(sparql));
-            projector = Merger.identity(rowType, sparql.publicVars);
+            super(rowClass(), sparql.publicVars(), createRequest(sparql));
+            projector = Merger.identity(rowType, sparql.publicVars());
             converter = rowType.converter(ArrayRow.STRING, vars);
         }
 

@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.sparql.RDF;
+import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -7,7 +9,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.sparql.RDFTypes.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.TermParser.parse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -17,9 +18,6 @@ public class TermParserTest {
 
     static Stream<Arguments> testParse() {
         return Stream.of(
-                arguments(ERROR, null),
-
-                arguments(ERROR, "a"),
                 arguments(ERROR, "/"),
                 arguments(ERROR, "@"),
                 arguments(ERROR, "^^xsd:"),
@@ -46,11 +44,11 @@ public class TermParserTest {
                 arguments(new Term.Lit("a\\nb", string, null), "'''a\\nb'''"),
 
                 arguments(new Term.Lit("a\\\"b", string, null), "\"a\\\"b\""),
-                arguments(new Term.Lit("a\"b", string, null), "\"\"\"a\"b\"\"\""),
+                arguments(new Term.Lit("a\\\"b", string, null), "\"\"\"a\"b\"\"\""),
                 arguments(new Term.Lit("a'b", string, null), "\"a'b\""),
                 arguments(new Term.Lit("a'b", string, null), "\"\"\"a'b\"\"\""),
-                arguments(new Term.Lit("a\"b", string, null), "'a\"b'"),
-                arguments(new Term.Lit("a\"b", string, null), "'''a\"b'''"),
+                arguments(new Term.Lit("a\\\"b", string, null), "'a\"b'"),
+                arguments(new Term.Lit("a\\\"b", string, null), "'''a\"b'''"),
                 arguments(new Term.Lit("a\\'b", string, null), "'a\\'b'"),
                 arguments(new Term.Lit("a'b", string, null), "'''a'b'''"),
 
@@ -110,9 +108,11 @@ public class TermParserTest {
                 arguments(new Term.Lit("23", INT, null), "'23'^^xsd:int"),
                 arguments(new Term.Lit("23", INT, null), "'''23'''^^xsd:int"),
 
+                //boolean literals (Turtle)
                 arguments(Term.Lit.TRUE, "true"),
                 arguments(Term.Lit.FALSE, "false"),
 
+                //number literals (Turtle)
                 arguments(new Term.Lit("23", integer, null), "23"),
                 arguments(new Term.Lit("-23", integer, null), "-23"),
                 arguments(new Term.Lit("23.5", decimal, null), "23.5"),
@@ -120,12 +120,28 @@ public class TermParserTest {
                 arguments(new Term.Lit("23e+2", DOUBLE, null), "23e+2"),
                 arguments(new Term.Lit("23E-2", DOUBLE, null), "23E-2"),
 
+                // vars
                 arguments(new Term.Var("?x"), "?x"),
                 arguments(new Term.Var("?xX"), "?xX"),
                 arguments(new Term.Var("?1"), "?1"),
                 arguments(new Term.Var("$1_2"), "$1_2"),
                 arguments(new Term.Var("$x"), "$x"),
 
+                //prefixed IRIs
+                arguments(new Term.IRI(string), "xsd:string"),
+                arguments(new Term.IRI(RDF.NS+"type"), "rdf:type"),
+                arguments(new Term.IRI(RDF.type), "a"),
+                arguments(new Term.IRI("http://example.org/ns#predicate"), "ex:predicate"),
+                arguments(new Term.IRI("http://example.org/ns#predicate-1"), "ex:predicate-1"),
+                arguments(new Term.IRI("http://example.org/ns#p"), "ex:p"),
+                arguments(new Term.IRI("http://example.org/p"), ":p"),
+
+                //prefixed datatypes
+                arguments(new Term.Lit("5", string, null), "\"5\"^^xsd:string"),
+                arguments(new Term.Lit("23", INT, null), "\"23\"^^xsd:int"),
+                arguments(new Term.Lit("<p>", HTML, null), "\"<p>\"^^rdf:HTML"),
+
+                //errors
                 arguments(ERROR, "\"\"\"a\""),
                 arguments(ERROR, "'''a''"),
                 arguments(ERROR, "'''''"),
@@ -139,20 +155,39 @@ public class TermParserTest {
         );
     }
 
-    private void assertParse(Term expected, String in, int start, int end) {
-        if (expected.equals(ERROR)) {
-            assertThrows(InvalidTermException.class, () -> parse(in, start, null));
-            return;
+    private void assertParse(Term expected, String in, int start, int termEnd) {
+        int len = in.length();
+        TermParser parser = new TermParser();
+        parser.prefixMap = new PrefixMap().resetToBuiltin();
+        parser.prefixMap.add("ex", "http://example.org/ns#");
+        parser.prefixMap.add("", "http://example.org/");
+        assertEquals(expected != ERROR, parser.parse(in, start, len));
+
+        if (expected == ERROR) {
+            assertThrows(InvalidTermException.class, parser::asTerm);
+            assertThrows(InvalidTermException.class, parser::asNT);
+        } else {
+            assertEquals(termEnd, parser.termEnd());
+            assertEquals(expected, parser.asTerm());
+            if (start == 0 && termEnd == in.length() && parser.isNTOrVar()) {
+                // avoid string copy even with ^^<....#string> suffix
+                assertEquals(in, parser.asNT());
+            } else if (in.substring(start, termEnd).endsWith("^^<"+string+">")) {
+                // do not copy ^^<...#string> into substring
+                String string = '"' + ((Term.Lit) expected).lexical() + '"';
+                assertEquals(string, parser.asNT());
+            } else {
+                // general case: behave as Term does
+                assertEquals(expected.nt(), parser.asNT());
+            }
+            assertEquals(expected.nt(), parser.asTerm().nt());
+            assertEquals(termEnd, parser.termEnd(), "termEnd changed by as*() methods");
         }
-        int[] acEnd = {0};
-        assertEquals(expected, parse(in, start, null));
-        assertEquals(expected, parse(in, start, acEnd));
-        assertEquals(end, acEnd[0]);
     }
 
     @ParameterizedTest @MethodSource
     void testParse(Term expected, String ntOrTtl) {
-        int len = ntOrTtl == null ? 0 : ntOrTtl.length();
+        int len = ntOrTtl.length();
         assertParse(expected, ntOrTtl, 0, len);
         // parser must ignore everything before start
         String traps = "?$_:<>\"\"''\\";
@@ -161,7 +196,7 @@ public class TermParserTest {
             assertParse(expected, in, traps.length()+1, in.length());
         }
         // parser must detect by itself when the term ends
-        for (char stop : ".,;){ \n#".toCharArray()) {
+        for (char stop : ".,;){ \n".toCharArray()) {
             assertParse(expected, ntOrTtl+stop, 0, len);
             assertParse(expected, stop+ntOrTtl+stop, 1, len +1);
         }

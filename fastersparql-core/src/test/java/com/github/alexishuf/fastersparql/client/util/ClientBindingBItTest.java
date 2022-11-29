@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
 import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.bind.ClientBindingBIt;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -24,15 +25,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ClientBindingBItTest {
 
-    private final SparqlQuery SPARQL = new SparqlQuery("SELECT * WHERE { ?x a ?y } ");
+    private final OpaqueSparqlQuery SPARQL = new OpaqueSparqlQuery("SELECT * WHERE { ?x a ?y } ");
 
     private static class MockClient implements SparqlClient<List<String>, String, Object> {
-        final SparqlQuery sparql;
+        final OpaqueSparqlQuery sparql;
         SparqlQuery expectedSparql;
         final Vars boundVars;
         List<List<String>> results;
 
-        public MockClient(SparqlQuery sparql, Vars boundVars, List<List<String>> results) {
+        public MockClient(OpaqueSparqlQuery sparql, Vars boundVars, List<List<String>> results) {
             this.expectedSparql = this.sparql = sparql;
             this.boundVars      = boundVars;
             this.results        = results;
@@ -58,7 +59,7 @@ class ClientBindingBItTest {
             assert bindings == null;
             assert bindType == null;
             assertEquals(expectedSparql, sparql);
-            return new IteratorBIt<>(results, List.class, sparql.publicVars);
+            return new IteratorBIt<>(results, List.class, sparql.publicVars());
         }
         @Override
         public Graph<Object> queryGraph(SparqlQuery ignored) {

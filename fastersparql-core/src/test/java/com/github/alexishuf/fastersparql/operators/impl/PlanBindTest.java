@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
 import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
 import com.github.alexishuf.fastersparql.operators.FSOps;
@@ -51,6 +51,6 @@ class PlanBindTest {
         var right = FSOps.query(client, rightSparql);
         var binding = new RowBinding<>(ArrayRow.STRING, leftVars).row(leftRow);
         var bound = (Query<String[], String>)right.bind(binding);
-        assertEquals(new SparqlQuery(expectedSparql), bound.sparql());
+        assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
     }
 }

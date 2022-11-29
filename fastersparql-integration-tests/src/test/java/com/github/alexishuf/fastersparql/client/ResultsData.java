@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.ResultsChecker;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 
 import java.util.List;
 
 class ResultsData extends ResultsChecker {
-    private final SparqlQuery sparql;
+    private final OpaqueSparqlQuery sparql;
 
     public ResultsData(ResultsData other) {
         super(other);
@@ -22,19 +22,19 @@ class ResultsData extends ResultsChecker {
 
     public ResultsData(String sparql, boolean value) {
         super(value);
-        this.sparql = new SparqlQuery(PREFIX+sparql);
+        this.sparql = new OpaqueSparqlQuery(PREFIX+sparql);
     }
     public ResultsData(String sparql, String... values) {
-        super(new SparqlQuery(sparql).publicVars, values);
-        this.sparql = new SparqlQuery(PREFIX+sparql);
+        super(new OpaqueSparqlQuery(sparql).publicVars, values);
+        this.sparql = new OpaqueSparqlQuery(PREFIX+sparql);
     }
 
     public ResultsData(String sparql, List<String> vars, String... values) {
         super(vars, values);
-        this.sparql = new SparqlQuery(PREFIX+sparql);
+        this.sparql = new OpaqueSparqlQuery(PREFIX+sparql);
     }
 
-    public SparqlQuery         sparql() { return sparql; }
+    public OpaqueSparqlQuery sparql() { return sparql; }
 
     @Override public String toString() {
         return sparql.sparql.replace(PREFIX, "").replace("\n", "\\n");

@@ -7,7 +7,8 @@ public enum SparqlMethod {
     GET,
     POST,
     FORM,
-    WS;
+    WS,
+    FILE;
 
     private static final String[] LOWERCASE =
             Arrays.stream(values()).map(m -> m.name().toLowerCase()).toArray(String[]::new);
@@ -29,7 +30,7 @@ public enum SparqlMethod {
      */
     public String contentType() {
         return switch (this) {
-            case GET -> "";
+            case GET,FILE -> "";
             case POST, WS -> "application/sparql-query";
             case FORM -> "application/x-www-form-urlencoded";
         };

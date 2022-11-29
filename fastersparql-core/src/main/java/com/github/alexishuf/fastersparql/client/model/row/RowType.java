@@ -50,9 +50,52 @@ public abstract class RowType<R, I> {
      * @return the previous value for the set term in N-Triples syntax.
      */
     public @Nullable String setNT(R row, int column, @Nullable String nt) {
-        //noinspection unchecked
-        I old = set(row, column, (I) nt);
+        I old = set(row, column, fromNT(nt, 0, nt == null ? 0 : nt.length()));
         return old == null ? null : old.toString();
+    }
+
+    /**
+     * Convert the N-Triples representation of an RDF term in {@code source.substring(begin, end)}
+     * into a term which can be put into a row using {@link RowType#set(Object, int, Object)}.
+     *
+     * @param source where there is a N-Triples representation of a term
+     * @param begin index of the first char of the N-Triples representation in {@code source}
+     * @param end index of the first char after the N-Triples representation in {@code source}
+     * @return an RDF term to be used with {@link RowType#set(Object, int, Object)}.
+     */
+    public @Nullable I fromNT(@Nullable String source, int begin, int end) {
+        if (source == null || end <= begin) return null;
+        //noinspection unchecked
+        return (I)source.substring(begin, end);
+    }
+
+    /**
+     * Convert an RDF term into a N-Triples representation.
+     *
+     * @param term the term to convert, can be null
+     * @return Equivalent N-Triples syntax for {@code term} or {@code null} if {@code term} is null.
+     */
+    public @Nullable String toNT(@Nullable I term) {
+        return term == null ? null : term.toString();
+    }
+
+    /**
+     * Convert an RDF term into a SPARQL representation. Equivalent to
+     * {@link RowType#toNT(Object)} in the general case. For rdf:type returns {@code "a"}, and for
+     * xsd:decimal/xsd:double/xsd:integer/xsd:boolean return their unquoted lexical forms.
+     *
+     * @param term the term to be converted into SPARQL syntax.
+     * @return a String with the SPARQL representation of {@code term}.
+     */
+    public @Nullable String toSparql(@Nullable I term) {
+        String s = toNT(term);
+        if (s == null || s.isEmpty()) return null;
+        if (s.length() == 49  &&  s.endsWith("-ns#type>")) return "a";
+        if (s.charAt(0) == '"' && (   s.endsWith("#integer>") || s.endsWith("#decimal>")
+                                   || s.endsWith("#double>")  || s.endsWith("#boolean>"))) {
+            return s.substring(1, s.lastIndexOf('"'));
+        }
+        return s;
     }
 
     /**
@@ -80,8 +123,7 @@ public abstract class RowType<R, I> {
      *         {@link RowType#createEmpty(Vars)}).
      */
     public @Nullable String getNT(@Nullable R row, int column) {
-        I item = get(row, column);
-        return item == null ? null : item.toString();
+        return toNT(get(row, column));
     }
 
     /** If necessary, convert a {@link BIt} of {@code S} rows into one of {@code R} rows. */

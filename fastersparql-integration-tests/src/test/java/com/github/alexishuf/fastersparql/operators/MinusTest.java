@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.plan.Minus;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -44,12 +45,12 @@ public class MinusTest {
     }
 
     private static class TestData extends ResultsChecker {
-        final SparqlQuery left, right;
+        final OpaqueSparqlQuery left, right;
 
         public TestData(String left, String right, String... values) {
-            super(new SparqlQuery(left).publicVars, values);
-            this.left = new SparqlQuery(PREFIX+left);
-            this.right = new SparqlQuery(PREFIX+right);
+            super(new OpaqueSparqlQuery(left).publicVars, values);
+            this.left = new OpaqueSparqlQuery(PREFIX+left);
+            this.right = new OpaqueSparqlQuery(PREFIX+right);
         }
 
         @Override public boolean equals(Object o) {

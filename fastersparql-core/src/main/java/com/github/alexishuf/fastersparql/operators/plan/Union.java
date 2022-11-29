@@ -94,4 +94,12 @@ public class Union<R, I> extends Plan<R, I> {
         name = name == null ? this.name : name;
         return new Union<>(replacement, crossDedupCapacity, unbound, name);
     }
+
+    @Override public void groupGraphPatternInner(StringBuilder out, int indent) {
+        var flat = flatOperands();
+        for (int i = 0; i < flat.size(); i++) {
+            if (i > 0) out.append(" UNION");
+            flat.get(i).groupGraphPattern(out, indent);
+        }
+    }
 }

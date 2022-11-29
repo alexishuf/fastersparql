@@ -45,4 +45,6 @@ public class Empty<R, I> extends Plan<R, I> {
     @Override protected Vars computeVars(boolean all) {
         return all ? allVars : publicVars;
     }
+
+    @Override public void groupGraphPatternInner(StringBuilder out, int indent) { }
 }

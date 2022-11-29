@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.plan.LeftJoin;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -44,12 +45,12 @@ class LeftJoinTest {
     }
 
     private static class TestData extends ResultsChecker {
-        private final SparqlQuery left, right;
+        private final OpaqueSparqlQuery left, right;
 
         public TestData(String left, String right, String... values) {
-            super(new SparqlQuery(left).publicVars.union(new SparqlQuery(right).publicVars), values);
-            this.left = new SparqlQuery(PREFIX+left);
-            this.right = new SparqlQuery(PREFIX+right);
+            super(new OpaqueSparqlQuery(left).publicVars.union(new OpaqueSparqlQuery(right).publicVars), values);
+            this.left = new OpaqueSparqlQuery(PREFIX+left);
+            this.right = new OpaqueSparqlQuery(PREFIX+right);
         }
 
         @Override public boolean equals(Object o) {

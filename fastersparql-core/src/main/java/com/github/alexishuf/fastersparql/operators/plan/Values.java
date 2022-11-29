@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.model.row.dedup.StrongDedup;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -23,13 +24,21 @@ public final class Values<R, I> extends Plan<R, I> {
         super(rowType, List.of(), unbound, name);
         this.vars = vars;
         this.rows = rows;
+        assert rows.stream().allMatch(r -> {
+            if (r instanceof Object[] arr) return arr.length >= vars.size();
+            else if (r instanceof Collection<?> coll) return coll.size() >= vars.size();
+            return true;
+        }) : "Some rows have less columns than #vars";
     }
+
+    public List<R> rows() { return rows; }
 
     @Override protected Vars computeVars(boolean all) { return vars; }
 
     @Override public String algebraName() {
         return "Values"+vars;
     }
+
 
     @Override public BIt<R> execute(boolean canDedup) {
         return new ValuesBIt<>(this, canDedup);
@@ -56,6 +65,22 @@ public final class Values<R, I> extends Plan<R, I> {
         else if (displayed > 0)
             sb.setLength(sb.length()-1);
         return sb.append("\n)").toString();
+    }
+
+    @Override public void groupGraphPatternInner(StringBuilder out, int indent) {
+        newline(out, indent++).append("VALUES ( ");
+        for (String name : vars)
+            out.append('?').append(name).append(' ');
+        out.append(") {");
+        for (R row : rows) {
+            newline(out, indent).append("( ");
+            for (int i = 0, n = vars.size(); i < n; i++) {
+                String sparql = rowType.toSparql(rowType.get(row, i));
+                out.append(sparql == null ? "UNDEF" : sparql).append(' ');
+            }
+            out.append(')');
+        }
+        newline(out, --indent).append('}');
     }
 
     private static final class ValuesBIt<R> extends AbstractBIt<R> {

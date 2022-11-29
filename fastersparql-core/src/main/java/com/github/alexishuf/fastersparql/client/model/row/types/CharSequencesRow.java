@@ -30,8 +30,6 @@ public class CharSequencesRow<I extends CharSequence> extends ArrayRow<I> {
         return true;
     }
 
-    @Override public boolean needsCustomHash() { return true; }
-
     @Override public int hash(@Nullable Object row) {
         if (row == null) return 0;
         int h = 0;

@@ -46,7 +46,7 @@ public class NativeBind {
         for (int i = 0; i < nOperands; i++)
             queues.add(new ShortQueueBIt<>(rClass, vars));
 
-        Thread.ofVirtual().name("Scatter-"+ join.name).start(() -> {
+        Thread.ofVirtual().name("Scatter-"+ join.name()).start(() -> {
             if (left instanceof BoundedBIt<R> bounded)
                 bounded.maxReadyBatches(8);
             Throwable error = null;
@@ -63,7 +63,7 @@ public class NativeBind {
         var binds = new ArrayList<BIt<R>>(queues.size());
         for (int i = 0; i < nOperands; i++) {
             Query<R, ?> q = (Query<R, I>) operands.get(i);
-            var s = canDedup ? q.sparql().toDistinct(WEAK) : q.sparql();
+            var s = canDedup ? q.query().toDistinct(WEAK) : q.query();
             binds.add(q.client().query(s, queues.get(i), type));
         }
 
@@ -79,7 +79,7 @@ public class NativeBind {
         var r = join.operands().get(1);
         var left = join.operands().get(0).execute(canDedup);
         if (r instanceof Query<R, I> q && q.client().usesBindingAwareProtocol()) {
-            var sparql = canDedup ? q.sparql().toDistinct(WEAK) : q.sparql();
+            var sparql = canDedup ? q.query().toDistinct(WEAK) : q.query();
             return q.client().query(sparql, left, type);
         } else if (r instanceof Union<R, I> rUnion && allNativeOperands(r)) {
             return multiBind(join, left, type, rUnion, canDedup);

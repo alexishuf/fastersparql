@@ -10,4 +10,9 @@ public abstract class LeftJoin<R, I> extends Plan<R, I> {
                        @Nullable Plan<R, I> unbound, @Nullable String name) {
         super(rowType, operands, unbound, name);
     }
+
+    @Override protected void bgpSuffix(StringBuilder out, int indent) {
+        newline(out, indent).append("OPTIONAL");
+        operands.get(1).groupGraphPattern(out, indent);
+    }
 }

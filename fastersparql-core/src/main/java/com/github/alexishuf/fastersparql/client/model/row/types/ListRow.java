@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.model.row.types;
 
 import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import java.util.ArrayList;
 import java.util.List;

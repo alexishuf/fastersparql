@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.model.row.types;
 
 import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.reflect.Array;

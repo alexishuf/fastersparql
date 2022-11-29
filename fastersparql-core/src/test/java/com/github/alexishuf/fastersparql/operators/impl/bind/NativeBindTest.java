@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
 import com.github.alexishuf.fastersparql.operators.bind.NativeBind;
 import com.github.alexishuf.fastersparql.operators.bind.PlanBindingBIt;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
@@ -77,7 +78,7 @@ class NativeBindTest {
                 if (!exBindings.isEmpty())
                     throw error("bindings == null");
                 var it = results.stream().map(l -> l.toArray(new String[0])).iterator();
-                return new IteratorBIt<>(it, String[].class, sq.publicVars);
+                return new IteratorBIt<>(it, String[].class, sq.publicVars());
             }
             // we must consume bindings from another thread as doing so durectly from query()
             // would cause a deadlock: (NativeBind's scatter thread is blocked because
@@ -87,7 +88,7 @@ class NativeBindTest {
             // While this could be fixed in NativeBind, query() implementations really
             // should'nt consume bindings fully before returning as that will only work on trivial
             // scenarios.
-            var vars = requireNonNull(bindType).resultVars(bindings.vars(), sq.publicVars);
+            var vars = requireNonNull(bindType).resultVars(bindings.vars(), sq.publicVars());
             var cb = new CallbackBIt<>(String[].class, vars);
             Thread.startVirtualThread(() -> {
                 var acBindings = bindings.stream().map(Arrays::asList).toList();
@@ -115,13 +116,13 @@ class NativeBindTest {
              List<List<String>> results,
              List<List<String>> bindings) implements Runnable {
         @Override public void run() {
-            var leftSparql = new SparqlQuery("SELECT ?x WHERE { ?x a <http://example.org/L> }");
+            var leftSparql = new OpaqueSparqlQuery("SELECT ?x WHERE { ?x a <http://example.org/L> }");
             if (dedup)
                 leftSparql = leftSparql.toDistinct(STRONG);
             var leftClient = new MockClient().expect(leftSparql, bindings, List.of());
             var left = query(leftClient, leftSparql);
 
-            var rightSparqlTmp = new SparqlQuery("SELECT ?y WHERE { ?x <http://example.org/p> ?y }");
+            var rightSparqlTmp = new OpaqueSparqlQuery("SELECT ?y WHERE { ?x <http://example.org/p> ?y }");
             var rightSparql = dedup ? rightSparqlTmp.toDistinct(WEAK) : rightSparqlTmp;
             var clients = new ArrayList<MockClient>();
             for (int i = 0; i < operands; i++) //noinspection resource

@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -47,12 +48,12 @@ class FilterTest {
     }
 
     private static final class TestData extends ResultsChecker {
-        private final SparqlQuery left;
+        private final OpaqueSparqlQuery left;
         private final List<String> filters;
 
         public TestData(String left, List<String> filters, String... values) {
-            super(new SparqlQuery(left).publicVars, values);
-            this.left = new SparqlQuery(PREFIX+left);
+            super(new OpaqueSparqlQuery(left).publicVars, values);
+            this.left = new OpaqueSparqlQuery(PREFIX+left);
             this.filters = filters;
         }
 

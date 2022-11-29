@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -11,11 +12,12 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import static com.github.alexishuf.fastersparql.client.util.Skip.*;
 import static com.github.alexishuf.fastersparql.sparql.RDFTypes.langString;
 import static com.github.alexishuf.fastersparql.sparql.RDFTypes.string;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Lit.*;
 
-public sealed interface Expr permits Term, Expr.Function {
+public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     int argCount();
     Expr arg(int i);
 
@@ -29,6 +31,9 @@ public sealed interface Expr permits Term, Expr.Function {
      *  mapped non-var {@link Term}s. If no var in {@code binding} appears in this {@link Expr},
      *  returns {@code this}*/
     Expr bind(Binding binding);
+
+    /** Write this {@link Expr} in SPARQL syntax to {@code out} */
+    void toSparql(StringBuilder out);
 
     default <T extends Expr> T evalAs(Binding binding, Class<T> cls) {
         Term value = eval(binding);
@@ -46,6 +51,47 @@ public sealed interface Expr permits Term, Expr.Function {
         for (int i = 0, n = e.argCount(); i < n; i++)
             added += addVars(out, e.arg(i));
         return added;
+    }
+
+    /**
+     * Implements {@code FILTER EXISTS} and {@code FILTER NOT EXISTS} (if {@code negate == true}).
+     *
+     * <p>This is not a {@link Function} since it has no {@link Expr} instances as arguments and
+     * its semantics is not that of a {@link Supplier}.</p>
+     */
+    record Exists<R, I>(Plan<R, I> filter, boolean negate) implements Expr {
+        @Override public int argCount() { return 0; }
+
+        @Override public Expr arg(int i) { throw new IndexOutOfBoundsException(i); }
+
+        @Override public Term eval(Binding binding) {
+            try (var it = filter.bind(binding).execute().eager()) {
+                return it.hasNext() ^ negate ? TRUE : FALSE;
+            }
+        }
+
+        @Override public Expr bind(Binding binding) {
+            return new Exists<>(filter.bind(binding), negate);
+        }
+
+        @Override public void toSparql(StringBuilder out) {
+            int indent;
+            if (out.isEmpty()) {
+                indent = 0;
+            } else {
+                int lineBegin = reverseSkip(out, 0, out.length(), UNTIL_LF);
+                if (out.charAt(lineBegin) == '\n') lineBegin++;
+                indent = skip(out, lineBegin, out.length(), WS) - lineBegin;
+            }
+            out.append(negate ? "NOT EXISTS" : "EXISTS");
+            filter.groupGraphPattern(out, indent);
+        }
+
+        @Override public String toString() {
+            var sb = new StringBuilder(256);
+            toSparql(sb);
+            return sb.toString();
+        }
     }
 
     sealed abstract class Function implements Expr permits BinaryFunction, NAryFunction, Supplier, UnaryFunction {
@@ -72,6 +118,19 @@ public sealed interface Expr permits Term, Expr.Function {
                 hash = h;
             }
             return hash;
+        }
+
+        @Override public void toSparql(StringBuilder out) {
+            out.append(sparqlName()).append('(');
+            for (int i = 0, n = argCount(); i < n; i++)
+                arg(i).toSparql(i == 0 ? out : out.append(", "));
+            out.append(')');
+        }
+
+        @Override public String toString() {
+            StringBuilder sb = new StringBuilder(33);
+            toSparql(sb);
+            return sb.toString();
         }
     }
 
@@ -110,7 +169,15 @@ public sealed interface Expr permits Term, Expr.Function {
 
     abstract class BinaryOperator extends BinaryFunction {
         public BinaryOperator(Expr l, Expr r) { super(l, r); }
-        @Override public String toString() { return l + " " + sparqlName() + " " + r; }
+        @Override public String toString() { return "(" + l + ' ' + sparqlName() + ' ' + r + ')'; }
+
+        @Override public void toSparql(StringBuilder out) {
+            out.append('(');
+            l.toSparql(out);
+            out.append(' ').append(sparqlName()).append(' ');
+            r.toSparql(out);
+            out.append(')');
+        }
     }
 
     abstract non-sealed class NAryFunction extends Function {

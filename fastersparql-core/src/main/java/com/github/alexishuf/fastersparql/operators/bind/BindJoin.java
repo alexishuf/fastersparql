@@ -14,7 +14,7 @@ public class BindJoin<R, I> extends Join<R, I> {
 
     public BindJoin(Plan<R, I> left, Plan<R, I> right, @Nullable Vars projection,
                     @Nullable Plan<R, I> unbound, @Nullable String name) {
-        super(left.rowType, List.of(left, right), unbound, name);
+        super(List.of(left, right), unbound, name);
         this.projection = projection;
     }
 

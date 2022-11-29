@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -26,6 +27,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
+import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -51,7 +53,7 @@ public class JoinTest {
             super(operands.stream().map(SparqlQuery::publicVars)
                                    .reduce(Vars.EMPTY, Vars::union),
                   values);
-            this.operands = operands.stream().map(q -> new SparqlQuery(PREFIX+q.sparql)).toList();
+            this.operands = operands.stream().map(q -> new OpaqueSparqlQuery(PREFIX+q.sparql())).collect(toList());
         }
 
         @Override public boolean equals(Object o) {
@@ -70,10 +72,10 @@ public class JoinTest {
     }
 
     private static TestData data(String left, String right, String... expected) {
-        return new TestData(asList(new SparqlQuery(left), new SparqlQuery(right)), expected);
+        return new TestData(asList(new OpaqueSparqlQuery(left), new OpaqueSparqlQuery(right)), expected);
     }
     private static TestData nData(List<String> operands, String... expected) {
-        return new TestData(operands.stream().map(SparqlQuery::new).toList(), expected);
+        return new TestData(operands.stream().map(OpaqueSparqlQuery::new).collect(toList()), expected);
     }
 
     static Stream<Arguments> test() {

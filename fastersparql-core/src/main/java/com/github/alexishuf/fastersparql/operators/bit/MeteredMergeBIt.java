@@ -19,7 +19,7 @@ public class MeteredMergeBIt<R> extends MergeBIt<R> {
         this.plan = plan;
     }
 
-    @Override protected String toStringNoArgs() { return plan.name; }
+    @Override protected String toStringNoArgs() { return plan.name(); }
 
     @Override protected void feed(R item) {
         rows.incrementAndGet();

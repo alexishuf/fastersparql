@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.BindType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
@@ -49,7 +50,7 @@ import static java.lang.Thread.ofVirtual;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-public class NettyWebSocketSparqlClient<R, I, F> extends AbstractNettySparqlClient<R, I, F> {
+public class NettyWebSocketSparqlClient<R, I, F> extends AbstractSparqlClient<R, I, F> {
     private static final Logger log = LoggerFactory.getLogger(NettyWebSocketSparqlClient.class);
     private final NettyWsClient netty;
 
@@ -87,15 +88,11 @@ public class NettyWebSocketSparqlClient<R, I, F> extends AbstractNettySparqlClie
         }
     }
 
-    @Override protected String endpointString() {
-        return endpoint.toString();
-    }
-
     @Override public boolean        usesBindingAwareProtocol() { return true; }
 
     @Override
     public BIt<R> query(SparqlQuery sparql) {
-        if (sparql.isGraph)
+        if (sparql.isGraph())
             throw new SparqlClientInvalidArgument("query() method only takes SELECT/ASK queries");
         try {
             return new QueryBIt(sparql);
@@ -108,15 +105,15 @@ public class NettyWebSocketSparqlClient<R, I, F> extends AbstractNettySparqlClie
             return query(sp);
         if (bindType == null)
             throw new SparqlClientInvalidArgument("bindType is null with non-null bindings");
-        if (sp.isGraph)
+        if (sp.isGraph())
             throw new SparqlClientInvalidArgument("query() method only takes SELECT/ASK queries");
         try {
-            if (bindType == MINUS && !bindings.vars().intersects(sp.allVars))
+            if (bindType == MINUS && !bindings.vars().intersects(sp.allVars()))
                 return bindings;
             else if (!bindType.isJoin())
                 sp = sp.toAsk();
-            Vars exVars = bindType.resultVars(bindings.vars(), sp.publicVars);
-            return new BindBIt(exVars, bindings, bindType, sp, sp.publicVars, sp.allVars);
+            Vars exVars = bindType.resultVars(bindings.vars(), sp.publicVars());
+            return new BindBIt(exVars, bindings, bindType, sp, sp.publicVars(), sp.allVars());
         } catch (Throwable t) { throw SparqlClientException.wrap(endpoint, t); }
     }
 
@@ -214,8 +211,8 @@ public class NettyWebSocketSparqlClient<R, I, F> extends AbstractNettySparqlClie
         private Function<String[], R> converter;
 
         public QueryBIt(SparqlQuery sp) {
-            super(createRequest(QUERY_VERB, sp.sparql), sp.publicVars);
-            projector = Merger.identity(rowType, sp.publicVars);
+            super(createRequest(QUERY_VERB, sp.sparql()), sp.publicVars());
+            projector = Merger.identity(rowType, sp.publicVars());
             converter = rowType.converter(ArrayRow.STRING, vars);
         }
 
@@ -247,7 +244,7 @@ public class NettyWebSocketSparqlClient<R, I, F> extends AbstractNettySparqlClie
 
         public BindBIt(Vars expectedVars, BIt<R> bindings, BindType bindType,
                        SparqlQuery sp, Vars pubSparqlVars, Vars allSparqlVars) {
-            super(createRequest(BIND_VERB, sp.sparql), expectedVars);
+            super(createRequest(BIND_VERB, sp.sparql()), expectedVars);
             this.bindings = bindings;
             this.bindingsVars = bindings.vars();
             this.bindType = bindType;
