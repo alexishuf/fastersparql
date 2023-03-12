@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 public class InvalidExprTypeException extends ExprEvalException {
-    protected InvalidExprTypeException(String message) {
+    public InvalidExprTypeException(String message) {
         super(message);
     }
 

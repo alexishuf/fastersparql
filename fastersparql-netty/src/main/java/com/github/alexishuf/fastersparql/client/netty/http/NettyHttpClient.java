@@ -1,10 +1,11 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
@@ -35,9 +36,10 @@ public final class NettyHttpClient implements AutoCloseable {
     private final @Nullable SimpleChannelPool pool;
     private final Bootstrap bootstrap;
     private final String connectionHeaderValue;
+    private final ChannelRecycler recycler;
 
     public NettyHttpClient(EventLoopGroupHolder groupHolder, String baseUri,
-                           Supplier<? extends ReusableHttpClientInboundHandler> handlerFactory,
+                           Supplier<? extends NettyHttpHandler> handlerFactory,
                            boolean pool, boolean poolFIFO, @Nullable SslContext sslContext) {
         this.activeChannels = new ActiveChannelSet(baseUri);
         this.baseUri = baseUri;
@@ -65,12 +67,14 @@ public final class NettyHttpClient implements AutoCloseable {
 
                     @Override public void channelCreated(Channel ch) {
                         activeChannels.add(ch);
-                        setupPipeline(ch, sslContext, handlerFactory).onResponseEnd(() -> release(ch));
+                        setupPipeline(ch, sslContext, handlerFactory).recycler(recycler);
                     }
                 }, ChannelHealthChecker.ACTIVE, true, !poolFIFO);
+                this.recycler = this.pool::release;
                 this.connectionHeaderValue = "keep-alive";
             } else {
                 this.pool = null;
+                this.recycler = ChannelRecycler.CLOSE;
                 var initializer = new ChannelInitializer<>() {
                     @Override protected void initChannel(Channel ch) {
                         activeChannels.add(ch).setActive(ch);
@@ -88,17 +92,16 @@ public final class NettyHttpClient implements AutoCloseable {
         }
     }
 
-    private void release(Channel ch) { assert pool != null; pool.release(ch); }
-
-    private static ReusableHttpClientInboundHandler
+    private static NettyHttpHandler
     setupPipeline(Channel ch, @Nullable SslContext sslContext,
-                  Supplier<? extends ReusableHttpClientInboundHandler> hFactory) {
+                  Supplier<? extends NettyHttpHandler> hFactory) {
         ChannelPipeline pipeline = ch.pipeline();
         if (sslContext != null)
             pipeline.addLast("ssl", sslContext.newHandler(ch.alloc()));
         pipeline.addLast("http", new HttpClientCodec());
         pipeline.addLast("decompress", new HttpContentDecompressor());
-        ReusableHttpClientInboundHandler handler = hFactory.get();
+
+        NettyHttpHandler handler = hFactory.get();
         pipeline.addLast(HANDLER_NAME, handler);
         return handler;
     }
@@ -108,7 +111,7 @@ public final class NettyHttpClient implements AutoCloseable {
                                           @Nullable String accept,
                                           String contentType,
                                           CharSequence body, Charset charset) {
-        ByteBuf bb = Unpooled.copiedBuffer(body, charset);
+        ByteBuf bb =  NettyRopeUtils.wrap(body, charset);
         var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, pathAndParams, bb);
         HttpHeaders headers = req.headers();
         headers.set(CONTENT_TYPE, contentType);
@@ -125,7 +128,7 @@ public final class NettyHttpClient implements AutoCloseable {
         return req;
     }
 
-    public <T extends ReusableHttpClientInboundHandler> void
+    public <T extends NettyHttpHandler> void
     request(HttpRequest request, BiConsumer<Channel, T> onConnected, Consumer<Throwable> onError) {
         (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
             try {
@@ -139,7 +142,7 @@ public final class NettyHttpClient implements AutoCloseable {
                 T handler = (T) ch.pipeline().get(HANDLER_NAME);
                 if (handler == null) {
                     var msg = baseUri+" closed connection before the local Channel initialized";
-                    throw new SparqlClientException(msg);
+                    throw new FSException(msg);
                 }
                 onConnected.accept(ch, handler);
                 ch.writeAndFlush(request);

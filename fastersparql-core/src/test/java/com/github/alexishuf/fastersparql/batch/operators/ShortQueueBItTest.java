@@ -2,7 +2,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.adapters.AbstractBItTest;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,7 +38,7 @@ class ShortQueueBItTest extends AbstractBItTest {
 
     @Override protected void run(Scenario scenario) {
         QueueScenario s = (QueueScenario) scenario;
-        try (var q = new ShortQueueBIt<>(Integer.class, Vars.EMPTY)) {
+        try (var q = new ShortQueueBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             List<Batch<Integer>> copied = new ArrayList<>();
             List<List<Integer>> copiedValues = new ArrayList<>();
             Thread producer = Thread.startVirtualThread(() -> {

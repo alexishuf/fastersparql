@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
-import com.github.alexishuf.fastersparql.client.model.row.dedup.Dedup;
+import com.github.alexishuf.fastersparql.model.row.dedup.Dedup;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,7 +14,7 @@ public final class DedupConcatBIt<R> extends MeteredConcatBIt<R> {
     private final Dedup<R> dedup;
     private @Nullable R polled = null;
 
-    public DedupConcatBIt(List<? extends BIt<R>> sources, Plan<R, ?> plan,
+    public DedupConcatBIt(List<? extends BIt<R>> sources, Plan plan,
                           Dedup<R> dedup) {
         super(sources, plan);
         this.dedup = dedup;
@@ -30,7 +30,10 @@ public final class DedupConcatBIt<R> extends MeteredConcatBIt<R> {
                     polled = row;
             }
             return polled != null;
-        } catch (Throwable t) { error = error == null ? t : error; throw t; }
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
     }
 
     @Override public R next() {
@@ -38,25 +41,38 @@ public final class DedupConcatBIt<R> extends MeteredConcatBIt<R> {
             if (!hasNext()) throw new NoSuchElementException();
             R r = projector == null ? polled : projector.merge(polled, null);
             polled = null;
-            ++rows;
+            if (metrics != null) metrics.rowsEmitted(1);
             return r;
-        } catch (Throwable t) { error = error == null ? t : error; throw t; }
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
     }
 
     @Override public Batch<R> nextBatch() {
         try {
             while (true) {
-                Batch<R> b = super.nextBatch();
+                Batch<R> b;
+                do {
+                    b = source.nextBatch();
+                    if (b.size > 0 && projector != null)
+                        projector.projectInPlace(b);
+                } while (b.size == 0 && nextSource());
                 if (polled != null)  //cold branch
                     addPolled(b);
                 if (b.size == 0)
                     return b;
                 dedup.filter(b, sourceIdx, projector);
-                rows += b.size;
-                if (b.size > 0)
+                if (b.size > 0) {
+                    if (metrics != null)
+                        metrics.rowsEmitted(b.size);
                     return b;
+                }
             }
-        } catch (Throwable t) { error = error == null ? t : error; throw t; }
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
     }
 
     private void addPolled(Batch<R> b) {

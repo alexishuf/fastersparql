@@ -1,37 +1,45 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
+import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Objects;
 
-public abstract class Exists<R, I> extends Plan<R, I> {
-    protected final boolean negate;
+public final class Exists extends Plan {
+    final boolean negate;
 
-    public Exists(Plan<R, I> input, boolean negate, Plan<R, I> filter,
-                  @Nullable Plan<R, I> unbound, @Nullable String name) {
-        super(input.rowType, List.of(input, filter), unbound, name);
+    public Exists(Plan in, boolean negate, Plan filter) {
+        super(negate ? Operator.NOT_EXISTS : Operator.EXISTS);
         this.negate = negate;
+        this.left = in;
+        this.right = filter;
     }
 
-    public final Plan<R, I> input()  { return operands.get(0); }
-    public final Plan<R, I> filter() { return operands.get(1); }
-    public final boolean negate()  { return negate; }
+    public Plan  input()    { return left; }
+    public Plan filter()    { return right; }
+    @SuppressWarnings("unused")
+    public boolean negate() { return negate; }
 
-    @Override protected Vars computeVars(boolean all) {
-        return all ? super.computeVars(true) : operands.get(0).publicVars();
+    @Override public Plan copy(@Nullable Plan[] ops) {
+        return ops == null ? new Exists(left,  negate, right)
+                           : new Exists(ops[0], negate, ops[1]);
     }
 
-    @Override public String algebraName() { return negate ? "NotExists" : "Exists"; }
-
-    @Override protected void bgpSuffix(StringBuilder out, int indent) {
-        newline(out, indent).append(negate ? "FILTER NOT EXISTS" : "FILTER EXISTS");
-        operands.get(1).groupGraphPattern(out, indent);
+    @Override
+    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+        return NativeBind.preferNative(rt, this, binding, canDedup);
     }
 
     @Override public boolean equals(Object o) {
-        return o instanceof Exists<?, ?> that && negate == that.negate && super.equals(o);
+        return o instanceof Exists e && negate == e.negate
+                && Objects.equals (left, e.left )
+                && Objects.equals(right, e.right);
     }
 
-    @Override public int hashCode() { return 31*super.hashCode() + Boolean.hashCode(negate); }
+    @Override public int hashCode() {
+        return Objects.hash(negate, left, right);
+    }
 }

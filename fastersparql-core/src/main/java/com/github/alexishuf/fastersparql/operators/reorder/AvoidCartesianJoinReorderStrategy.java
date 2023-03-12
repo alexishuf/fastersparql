@@ -1,74 +1,74 @@
 package com.github.alexishuf.fastersparql.operators.reorder;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-
-import java.util.*;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 
 public class AvoidCartesianJoinReorderStrategy implements JoinReorderStrategy {
     public static final AvoidCartesianJoinReorderStrategy INSTANCE
             = new AvoidCartesianJoinReorderStrategy();
 
-    static boolean isProduct(Vars left, Plan<?, ?> right, boolean useBind) {
-        return !left.intersects(useBind ? right.allVars() : right.publicVars());
+    @Override public @Nullable Vars reorder(Plan left, Plan right) {
+        boolean swap = !left .publicVars().intersects(right.allVars())
+                    &&  right.publicVars().intersects( left.allVars());
+        return swap ? left.publicVars().union(right.publicVars()) : null;
     }
 
-    @Override public <P extends Plan<?, ?>> List<P> reorder(List<P> originalOperands, boolean useBind) {
-        int size = originalOperands.size();
-        if (size <= 1)
-            return originalOperands;
-        List<P> operands = new ArrayList<>(originalOperands);
-        Vars accVars = new Vars.Mutable(22);
-        accVars.addAll(operands.get(0).publicVars());
-        boolean change = useBind && fixFirstProductWithBind(operands, accVars);
-        int start = change ? 2 : 1;
-        for (int i = start, last = size-1; i < last; i++) {
-            P right = operands.get(i);
-            if (isProduct(accVars, right, useBind)) {
-                change = true;
-                right = moveFirstCompatible(operands, accVars, i, useBind);
+    @Override public @Nullable Vars reorder(Plan[] operands) {
+        if (operands.length < 2) return null;
+        Vars acc = new Vars.Mutable(10);
+        acc.addAll(operands[0].publicVars());
+        Vars projection = fixFirstProductWithBind(operands, acc);
+        boolean change = projection != null;
+        for (int last = operands.length-1, i = 1 + (projection != null ? 1 : 0); i < last; i++) {
+            Plan right = operands[i];
+            if (!acc.intersects(right.allVars())) {
+                if (projection == null)
+                    projection = Plan.publicVars(operands);
+                if (moveFirstCompatible(operands, acc, i))
+                    change = true;
             }
-            accVars.addAll(right.publicVars());
+            acc.addAll(right.publicVars());
         }
-        return change ? operands : originalOperands;
+        return change ? projection : null;
     }
 
-    private <P extends Plan<?, ?>>
-    boolean fixFirstProductWithBind(List<P> operands, Vars accVars) {
-        if (!isProduct(accVars, operands.get(1), true))
-            return false;
-        int size = operands.size();
-        P first = operands.get(0);
-        for (int i = 1; i < size; i++) {
-            P candidate = operands.get(i);
-            if (!isProduct(accVars, candidate, true)) {
-                operands.remove(i);
-                operands.add(1, candidate);
-                accVars.addAll(candidate.publicVars());
-                return true;
-            } else if (!isProduct(candidate.publicVars(), first, true)) {
-                operands.remove(i);
-                operands.set(0, candidate);
-                operands.add(1, first);
-                accVars.addAll(candidate.publicVars());
+    private @Nullable Vars fixFirstProductWithBind(Plan[] operands, Vars acc) {
+        Plan second = operands[1];
+        if (acc.intersects(second.allVars()))
+            return null;
+        Vars firstAllVars = operands[0].allVars(), projection;
+        for (int i = 1; i < operands.length; ++i) {
+            Plan candidate = operands[i];
+            if (acc.intersects(candidate.allVars())) {
+                projection = Plan.publicVars(operands);
+                operands[1] = candidate;
+            } else if (candidate.publicVars().intersects(firstAllVars)) {
+                projection = Plan.publicVars(operands);
+                operands[1] = operands[0]; operands[0] = candidate;
+            } else {
+                continue;
+            }
+            for (int j = i; j > 2; j--) operands[j] = operands[j-1];
+            if (i > 1) operands[2] = second;
+            acc.addAll(candidate.publicVars());
+            return projection;
+        }
+        return null;
+    }
+
+    private boolean moveFirstCompatible(Plan[] operands, Vars acc,
+                                       int incompatible) {
+        for (int i = incompatible+1; i < operands.length; i++) {
+            Plan candidate = operands[i];
+            if (acc.intersects(candidate.allVars())) {
+                for (int j = i; j > incompatible; j--) operands[j] = operands[j-1];
+                operands[incompatible] = candidate;
                 return true;
             }
         }
         return false;
-    }
-
-    private <P extends Plan<?, ?>> P moveFirstCompatible(List<P> operands, Vars accVars,
-                                                         int i, boolean useBind) {
-        for (int candidateIdx = i+1, size = operands.size(); candidateIdx < size; candidateIdx++) {
-            P candidate = operands.get(candidateIdx);
-            if (!isProduct(accVars, candidate, useBind)) {
-                operands.remove(candidateIdx);
-                operands.add(i, candidate);
-                return candidate;
-            }
-        }
-        return operands.get(i+1);
     }
 
     @Override public String name() {

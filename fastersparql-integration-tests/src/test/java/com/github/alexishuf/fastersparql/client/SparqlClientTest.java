@@ -1,18 +1,19 @@
 package com.github.alexishuf.fastersparql.client;
 
+import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FusekiContainer;
 import com.github.alexishuf.fastersparql.HdtssContainer;
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
-import com.github.alexishuf.fastersparql.client.model.*;
-import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
-import com.github.alexishuf.fastersparql.client.model.row.types.CharSequencesRow;
-import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
-import com.github.alexishuf.fastersparql.client.parser.fragment.ByteArrayFragmentParser;
-import com.github.alexishuf.fastersparql.client.parser.fragment.StringFragmentParser;
-import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.model.*;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
+import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -28,9 +29,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.FSProperties.*;
 import static com.github.alexishuf.fastersparql.client.GraphData.graph;
-import static com.github.alexishuf.fastersparql.client.ResultsData.results;
-import static com.github.alexishuf.fastersparql.client.util.FSProperties.*;
+import static com.github.alexishuf.fastersparql.client.model.SparqlEndpoint.parse;
+import static com.github.alexishuf.fastersparql.model.row.RowType.*;
+import static com.github.alexishuf.fastersparql.util.Results.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -47,68 +50,81 @@ public class SparqlClientTest {
     private static final int REPETITIONS_PER_CLIENT = 2;
     private static final int THREADS_PER_CLIENT = Runtime.getRuntime().availableProcessors();
 
+    private static final List<RowType<?>> ROW_TYPES = List.of(LIST, ARRAY, COMPRESSED);
+
     private static Stream<Arguments> resultsData() {
         return Stream.of(
                 /* single-column, single-row results */
                 //fetch a single URI
-        /*  1 */results("SELECT ?x WHERE { ?x foaf:knows :Charlie. }", "<$:Bob>"),
+        /*  1 */results(Vars.of("x"), ":Bob")
+                        .query("SELECT ?x WHERE { ?x foaf:knows :Charlie. }"),
                 //fetch a single lang-tagged literal
-        /*  2 */results("SELECT ?x WHERE { :Alice foaf:name ?x. }", "\"alice\"@en-US"),
+        /*  2 */results(Vars.of("x"), "\"alice\"@en-US")
+                        .query("SELECT ?x WHERE { :Alice foaf:name ?x. }"),
                 //fetch a single explicit xsd:string
-        /*  3 */results("SELECT ?x WHERE { :Bob foaf:name ?x. }", "\"bob\""),
+        /*  3 */results(Vars.of("x"), "\"bob\"")
+                        .query("SELECT ?x WHERE { :Bob foaf:name ?x. }"),
                 //fetch a single implicit xsd:string
-        /*  4 */results("SELECT ?x WHERE { :Charlie foaf:name ?x. }", "\"charlie\""),
+        /*  4 */results(Vars.of("x"), "\"charlie\"")
+                        .query("SELECT ?x WHERE { :Charlie foaf:name ?x. }"),
                 //fetch a single xsd:integer
-        /*  5 */results("SELECT ?x WHERE { :Alice foaf:age ?x. }", "\"23\"^^<$xsd:integer>"),
+        /*  5 */results(Vars.of("x"), "23")
+                        .query("SELECT ?x WHERE { :Alice foaf:age ?x. }"),
                 //fetch a single xsd:int
-        /*  6 */results("SELECT ?x WHERE { :Bob foaf:age ?x. }", "\"25\"^^<$xsd:int>"),
+        /*  6 */results(Vars.of("x"), "\"25\"^^xsd:int")
+                        .query("SELECT ?x WHERE { :Bob foaf:age ?x. }"),
                 // fetch a null
-        /*  7 */results("SELECT ?x WHERE { :Alice foaf:knows ?bob. OPTIONAL {?bob a ?x.}}", "$null"),
+        /*  7 */results(Vars.of("x"), new Object[]{null})
+                        .query("SELECT ?x WHERE { :Alice foaf:knows ?bob. OPTIONAL {?bob a ?x.}}"),
 
                 /* zero results */
                 //no results, single var
-        /*  8 */results("SELECT ?x WHERE { ?x foaf:knows :William. }"),
+        /*  8 */results(Vars.of("x")).query("SELECT ?x WHERE { ?x foaf:knows :William. }"),
                 //no results, two vars
-        /*  9 */results("SELECT ?x ?y WHERE { ?x foaf:knows ?y. ?y foaf:knows :William }"),
+        /*  9 */results(Vars.of("x", "y"))
+                        .query("SELECT ?x ?y WHERE { ?x foaf:knows ?y. ?y foaf:knows :William }"),
 
                 /* ASK queries */
                 // positive ASK
-        /* 10 */results("ASK { ?x foaf:knows :Bob }", true),
+        /* 10 */positiveResult().query("ASK { ?x foaf:knows :Bob }"),
                 //negative ASK
-        /* 11 */results("ASK { ?x foaf:knows :Williams }", false),
+        /* 11 */negativeResult().query("ASK { ?x foaf:knows :Williams }"),
 
                 /* 2 columns, single row */
                 // get URI and literal on single row
-        /* 12 */results("SELECT ?age ?knows WHERE {:Alice foaf:age ?age; foaf:knows ?knows. }",
-                        "\"23\"^^<$xsd:integer>", "<$:Bob>"),
+        /* 12 */results(Vars.of("age", "knows"), "23", ":Bob")
+                        .query( "SELECT ?age ?knows WHERE {:Alice foaf:age ?age; foaf:knows ?knows. }"),
                 // get string and number on single row
-        /* 13 */results("SELECT ?name ?age WHERE {:Alice foaf:age ?age; foaf:name ?name. }",
-                        "\"alice\"@en-US", "\"23\"^^<$xsd:integer>"),
+        /* 13 */results(Vars.of("name", "age"), "\"alice\"@en-US", "23")
+                        .query("SELECT ?name ?age WHERE {:Alice foaf:age ?age; foaf:name ?name. }"),
 
                 /* 1 column, 2 rows */
                 // get two URIs
-        /* 14 */results("SELECT ?x WHERE {:Bob foaf:knows ?x}", "<$:Bob>", "<$:Charlie>"),
+        /* 14 */results(Vars.of("x"), ":Bob", ":Charlie")
+                        .query("SELECT ?x WHERE {:Bob foaf:knows ?x}"),
                 // get 2 strings with newlines
-        /* 15 */results("SELECT ?x WHERE {:Dave foaf:name ?x}",
-                        "\"Dave\\nNewline\"", "\"Dave\\r\\nWindows\"@en-US"),
+        /* 15 */results(Vars.of("x"), "\"Dave\\nNewline\"", "\"Dave\\r\\nWindows\"@en-US")
+                        .query("SELECT ?x WHERE {:Dave foaf:name ?x}"),
 
                 /* 3 columns, 2 rows with nulls */
-        /* 16 */results("""
-                        SELECT ?name ?age ?where WHERE {
-                          ?x foaf:knows :Dave.
-                          OPTIONAL {?x foaf:age ?age }
-                          OPTIONAL {?x foaf:name ?name}
-                          OPTIONAL {?x foaf:based_near ?where}
-                        }""",
-                        "\"Eric\\r\\nNewline\"@en", "\"23\"^^<$xsd:integer>", "$null",
-                        "\"Harry\"",                "$null",                  "<$:Springfield>")
+        /* 16 */results(Vars.of("name", "age"),
+                            "\"Eric\\r\\nNewline\"@en", "23",  null,
+                            "\"Harry\"",                 null, ":Springfield")
+                        .query("""
+                                SELECT ?name ?age ?where WHERE {
+                                  ?x foaf:knows :Dave.
+                                  OPTIONAL {?x foaf:age ?age }
+                                  OPTIONAL {?x foaf:name ?name}
+                                  OPTIONAL {?x foaf:based_near ?where}
+                                }""")
         ).map(Arguments::arguments);
     }
 
-    private record ClientSet(List<SparqlClient<?, ?, ?>> list) implements AutoCloseable {
+    private static class ClientSet extends AutoCloseableSet<SparqlClient> {
+        public ClientSet() { }
+
         public static ClientSet forSelect(String tag) {
-            List<SparqlClient<?,?,?>> list = new ArrayList<>();
-            SparqlClientFactory fac = FS.factory(tag);
+            ClientSet set = new ClientSet();
             for (var fmt : List.of(SparqlResultFormat.TSV, SparqlResultFormat.JSON)) {
                 for (SparqlMethod method : SparqlMethod.VALUES) {
                     if (method == SparqlMethod.WS && fmt != SparqlResultFormat.TSV)
@@ -120,20 +136,15 @@ public class SparqlClientTest {
                     eps.add(HDTSS.asEndpoint(cfg));
                     if (method != SparqlMethod.WS)
                         eps.add(FUSEKI.asEndpoint(cfg));
-                    for (SparqlEndpoint ep : eps) {
-                        for (var rt : List.of(ArrayRow.STRING, ListRow.STRING,
-                                              CharSequencesRow.INSTANCE)) {
-                            list.add(fac.createFor(ep, rt));
-                        }
-                    }
+                    for (SparqlEndpoint ep : eps)
+                        set.add(FS.clientFor(ep, tag));
                 }
             }
-            return new ClientSet(list);
+            return set;
         }
 
         public static ClientSet forGraph(String tag) {
-            List<SparqlClient<?,?,?>> list = new ArrayList<>();
-            var fac = FS.factory(tag);
+            ClientSet set = new ClientSet();
             for (MediaType mt : RDFMediaTypes.DEFAULT_ACCEPTS) {
                 for (SparqlMethod method : SparqlMethod.VALUES) {
                     if (method == SparqlMethod.WS) continue;
@@ -141,37 +152,18 @@ public class SparqlClientTest {
                             .clearRdfAccepts().rdfAccept(mt)
                             .clearMethods().method(method).build();
                     var ep = FUSEKI.asEndpoint(cfg);
-                    list.add(fac.createFor(ep, ByteArrayFragmentParser.INSTANCE));
-                    list.add(fac.createFor(ep, StringFragmentParser.INSTANCE));
+                    set.add(FS.clientFor(ep, tag));
                 }
             }
-            return new ClientSet(list);
+            return set;
         }
 
-        public SparqlClient<?,?,?> first() { return list.get(0); }
-
-        @Override public void close() {
-            for (SparqlClient<?, ?, ?> client : list)
-                client.close();
-        }
-    }
-
-    private void testResults(ResultsData d, String clientTag) throws Exception {
-        try (ClientSet clients = ClientSet.forSelect(clientTag);
-             var tasks = new VThreadTaskSet(getClass().getSimpleName() + ".testResults")) {
-            d.assertExpected(clients.first().query(d.sparql()));
-            for (SparqlClient<?, ?, ?> client : clients.list) {
-                tasks.repeat(THREADS_PER_CLIENT, thread -> {
-                    for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
-                        d.assertExpected(client.query(d.sparql()));
-                });
-            }
-        }
+        public SparqlClient first() { return get(0); }
     }
 
     @ParameterizedTest @MethodSource("resultsData")
-    void testResultsNetty(ResultsData data) throws Exception {
-        testResults(data, "netty");
+    void testResultsNetty(Results data) throws Exception {
+        test(data, "netty");
     }
 
     private void testUnreachable(String tag) throws Exception {
@@ -191,7 +183,7 @@ public class SparqlClientTest {
                     tasks.add(() -> testUnreachable(tag, uri));
                 } else {
                     for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
-                        if (ResultsParserRegistry.get().canParse(fmt.asMediaType())) {
+                        if (ResultsParserBIt.supports(fmt)) {
                             String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
                             tasks.add(() -> testUnreachable(tag, uri));
                         }
@@ -202,10 +194,10 @@ public class SparqlClientTest {
     }
 
     private void testUnreachable(String tag, String uri) {
-        try (var client = FS.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
-            var results = client.query(new OpaqueSparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
+        try (var client = FS.clientFor(parse(uri), tag)) {
+            var results = client.query(ARRAY, new OpaqueSparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
             assertEquals(List.of("x"), results.vars());
-            assertThrows(SparqlClientException.class,
+            assertThrows(FSException.class,
                     () -> assertEquals(0, results.nextBatch().size));
         }
     }
@@ -216,10 +208,10 @@ public class SparqlClientTest {
     }
 
     private void testServerEarlyClose(String tag, String uri) {
-        try (var client = FS.factory(tag).createFor(SparqlEndpoint.parse(uri))) {
-            var it = client.query(new OpaqueSparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
+        try (var client = FS.clientFor(parse(uri), tag)) {
+            var it = client.query(ARRAY, new OpaqueSparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
             assertEquals(List.of("s", "p", "o"), it.vars());
-            assertThrows(SparqlClientException.class, () -> assertEquals(0, it.nextBatch().size));
+            assertThrows(FSException.class, () -> assertEquals(0, it.nextBatch().size));
         }
     }
 
@@ -248,7 +240,7 @@ public class SparqlClientTest {
                         tasks.add(() -> testServerEarlyClose(tag, uri));
                     } else {
                         for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
-                            if (ResultsParserRegistry.get().canParse(fmt.asMediaType())) {
+                            if (ResultsParserBIt.supports(fmt)) {
                                 String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
                                 tasks.add(() -> testServerEarlyClose(tag, uri));
                             }
@@ -280,164 +272,195 @@ public class SparqlClientTest {
     }
 
     private static Stream<Arguments> bindData() {
-        List<BindData> reused = new ArrayList<>();
+        List<Results> reused = new ArrayList<>();
         resultsData().forEach(args -> {
-            BindData d = new BindData((ResultsData) args.get()[0]);
-            reused.add(d);
-            if (!d.expected().isEmpty())
-                reused.add(new BindData(d).bindType(BindType.LEFT_JOIN));
+            var plain = (Results) args.get()[0];
+            reused.add(plain.bindings(Vars.EMPTY).bindType(BindType.JOIN));
+            if (!plain.isEmpty())
+                reused.add(plain.bindType(BindType.LEFT_JOIN));
         });
 
-        List<BindData> own = new ArrayList<>();
+        List<Results> own = new ArrayList<>();
+
         // expose bound values
-        own.add(BindData.join("SELECT * WHERE {?x foaf:name ?name}", "name")
-                .to("\"alice\"@en-US", "\"charlie\"")
-                .expecting("\"alice\"@en-US", "<$:Alice>", "\"charlie\"", "<$:Charlie>"));
+        own.add(results("name", "x",
+                        "\"alice\"@en-US", ":Alice",
+                        "\"charlie\"", ":Charlie")
+                .query("SELECT * WHERE {?x foaf:name ?name}")
+                .bindings("?name", "\"alice\"@en-US", "\"charlie\""));
         // do not omit bound values even if query asks
-        own.add(BindData.join("SELECT ?x WHERE {?x foaf:name ?name}", "name")
-                .to("\"alice\"@en-US", "\"charlie\"")
-                .expecting("\"alice\"@en-US", "<$:Alice>", "\"charlie\"", "<$:Charlie>"));
+        own.add(results("?name", "?x",
+                        "\"alice\"@en-US", ":Alice",
+                        "\"charlie\"", ":Charlie")
+                .query("SELECT ?x WHERE {?x foaf:name ?name}")
+                .bindings("?name", "\"alice\"@en-US", "\"charlie\""));
         // repeat 2 previous tests using LEFT_JOIN
         //noinspection ConstantConditions
-        own.add(new BindData(own.get(own.size()-2)).bindType(BindType.LEFT_JOIN));
-        own.add(new BindData(own.get(own.size()-2)).bindType(BindType.LEFT_JOIN));
+        own.add(own.get(own.size()-2).bindType(BindType.LEFT_JOIN));
+        own.add(own.get(own.size()-2).bindType(BindType.LEFT_JOIN));
         // exists (charlie does not match)
-        own.add(BindData.exists("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}", "name")
-                .to("\"bob\"", "\"charlie\"").expecting("\"bob\""));
+        own.add(results("?name", "\"bob\"")
+                .query("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}").
+                bindings("?name", "\"bob\"", "\"charlie\"")
+                .bindType(BindType.EXISTS));
         // not exists
-        own.add(BindData.notExists("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}", "name")
-                .to("\"bob\"", "\"charlie\"").expecting("\"charlie\""));
+        own.add(results("?name", "\"charlie\"")
+                .query("SELECT * WHERE { ?x foaf:name ?name; foaf:knows :Bob}")
+                .bindings("?name", "\"bob\"", "\"charlie\"")
+                .bindType(BindType.NOT_EXISTS));
         // minus
-        own.add(new BindData(own.get(own.size()-1)).bindType(BindType.MINUS));
+        own.add(own.get(own.size()-1).bindType(BindType.MINUS));
 
         // join with two-column bindings
-        own.add(BindData.join("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}",
-                               "name", "age")
-                         .to("\"alice\"@en-US", "\"23\"^^<$xsd:integer>",
-                                    "\"alice\"@en-US", "\"25\"^^<$xsd:integer>",
-                                    "\"bob\"", "\"25\"^^<$xsd:int>",
-                                    "\"bob\"", "\"23\"^^<$xsd:int>")
-                         .expecting("\"alice\"@en-US", "\"23\"^^<$xsd:integer>", "<$:Bob>",
-                                 "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Bob>",
-                                 "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Charlie>"));
+        own.add(results("?name", "?age", "?who",
+                        "\"alice\"@en-US", "23",             ":Bob",
+                        "\"bob\"",         "\"25\"^^xsd:int", ":Bob",
+                        "\"bob\"",         "\"25\"^^xsd:int", ":Charlie")
+                .query("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}")
+                .bindType(BindType.JOIN)
+                .bindings("\"alice\"@en-US", "23",
+                         "\"alice\"@en-US", "25",
+                         "\"bob\"",         "\"25\"^^xsd:int",
+                         "\"bob\"",         "\"23\"^^xsd:int"));
         // now with a left join...
-        own.add(BindData.leftJoin("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}",
-                        "name", "age")
-                .to("\"alice\"@en-US", "\"23\"^^<$xsd:integer>",
-                        "\"alice\"@en-US", "\"25\"^^<$xsd:integer>",
-                        "\"bob\"", "\"25\"^^<$xsd:int>",
-                        "\"bob\"", "\"23\"^^<$xsd:integer>")
-                .expecting("\"alice\"@en-US", "\"23\"^^<$xsd:integer>", "<$:Bob>",
-                        "\"alice\"@en-US", "\"25\"^^<$xsd:integer>", null,
-                        "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Bob>",
-                        "\"bob\"", "\"25\"^^<$xsd:int>", "<$:Charlie>",
-                        "\"bob\"", "\"23\"^^<$xsd:integer>", null));
+        own.add(results("?name",           "?age",            "?who",
+                        "\"alice\"@en-US", "23",              ":Bob",
+                        "\"alice\"@en-US", "25",              null,
+                        "\"bob\"",         "\"25\"^^xsd:int", ":Bob",
+                        "\"bob\"",         "\"25\"^^xsd:int", ":Charlie",
+                        "\"bob\"",         "23",              null)
+                .query("SELECT ?who WHERE {?x foaf:age ?age; foaf:name ?name; foaf:knows ?who}")
+                .bindType(BindType.LEFT_JOIN)
+                .bindings("?name",           "?age",
+                          "\"alice\"@en-US", "23",
+                          "\"alice\"@en-US", "25",
+                          "\"bob\"",         "\"25\"^^xsd:int",
+                          "\"bob\"",         "23"));
         // preserve useless binding column
-        own.add(BindData.join("SELECT ?who WHERE {?who foaf:age ?age.}",
-                               "x", "age")
-                .to("\"row1\"", "\"23\"^^<$xsd:integer>",
-                    "\"row2\"", "\"24\"",
-                    "\"row3\"", "\"25\"^^<$xsd:int>")
-                .expecting("\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Alice>",
-                           "\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Eric>",
-                           "\"row3\"", "\"25\"^^<$xsd:int>", "<$:Bob>"));
+        own.add(results("?x",       "?age",           "?who",
+                        "\"row1\"", "23",              ":Alice",
+                        "\"row1\"", "23",              ":Eric",
+                        "\"row3\"", "\"25\"^^xsd:int", ":Bob")
+                .query("SELECT ?who WHERE {?who foaf:age ?age.}")
+                .bindType(BindType.JOIN)
+                .bindings("?x",       "?age",
+                          "\"row1\"", "23",
+                          "\"row2\"", "\"24\"",
+                          "\"row3\"", "\"25\"^^xsd:int"));
         // same but as a left join...
-        own.add(BindData.leftJoin("SELECT ?who WHERE {?who foaf:age ?age.}",
-                        "x", "age")
-                .to("\"row1\"", "\"23\"^^<$xsd:integer>",
-                    "\"row2\"", "\"24\"",
-                    "\"row3\"", "\"25\"^^<$xsd:int>")
-                .expecting("\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Alice>",
-                           "\"row1\"", "\"23\"^^<$xsd:integer>", "<$:Eric>",
-                           "\"row2\"", "\"24\"",                 null,
-                           "\"row3\"", "\"25\"^^<$xsd:int>",     "<$:Bob>"));
+        own.add(results("?x",       "?age",            "?who",
+                        "\"row1\"", "23",              ":Alice",
+                        "\"row1\"", "23",              ":Eric",
+                        "\"row2\"", "\"24\"",          null,
+                        "\"row3\"", "\"25\"^^xsd:int", ":Bob")
+                .query("SELECT ?who WHERE {?who foaf:age ?age.}")
+                .bindType(BindType.LEFT_JOIN)
+                .bindings("?x",      "?age",
+                          "\"row1\"", "23",
+                          "\"row2\"", "\"24\"",
+                          "\"row3\"", "\"25\"^^xsd:int"));
         // preserve useless binding column (reverse order)
-        own.add(BindData.join("SELECT ?who WHERE {?who foaf:age ?age.}",
-                        "age", "x")
-                .to("\"23\"^^<$xsd:integer>", "\"row1\"",
-                    "\"24\"",                    "\"row2\"",
-                    "\"25\"^^<$xsd:int>",        "\"row3\"")
-                .expecting("\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Alice>",
-                           "\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Eric>",
-                           "\"25\"^^<$xsd:int>",     "\"row3\"", "<$:Bob>"));
+        own.add(results("?age",            "?x",       "?who",
+                        "23",              "\"row1\"", ":Alice",
+                        "23",              "\"row1\"", ":Eric",
+                        "\"25\"^^xsd:int", "\"row3\"", ":Bob")
+                .query("SELECT ?who WHERE {?who foaf:age ?age.}")
+                .bindType(BindType.JOIN)
+                .bindings("?age",            "?x",
+                          "23",              "\"row1\"",
+                          "\"24\"",          "\"row2\"",
+                          "\"25\"^^xsd:int", "\"row3\""));
         //same as a left join
-        own.add(BindData.leftJoin("SELECT ?who WHERE {?who foaf:age ?age.}",
-                        "age", "x")
-                .to("\"23\"^^<$xsd:integer>",    "\"row1\"",
-                    "\"24\"",                    "\"row2\"",
-                    "\"25\"^^<$xsd:int>",        "\"row3\"")
-                .expecting("\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Alice>",
-                           "\"23\"^^<$xsd:integer>", "\"row1\"", "<$:Eric>",
-                           "\"24\"",                 "\"row2\"", null,
-                           "\"25\"^^<$xsd:int>",     "\"row3\"", "<$:Bob>"));
+        own.add(results("?age",           "?x",       "?who",
+                        "23",             "\"row1\"", ":Alice",
+                        "23",             "\"row1\"", ":Eric",
+                        "\"24\"",         "\"row2\"", null,
+                        "\"25\"^^xsd:int","\"row3\"", ":Bob")
+                .query("SELECT ?who WHERE {?who foaf:age ?age.}")
+                .bindType(BindType.LEFT_JOIN)
+                .bindings("?age",            "?x",
+                          "23",              "\"row1\"",
+                          "\"24\"",          "\"row2\"",
+                          "\"25\"^^xsd:int", "\"row3\""));
 
         //join with long own bindings
-        own.add(BindData.join("SELECT * WHERE {?x foaf:age ?age}", "age")
-                         .to("\"22\"^^<$xsd:integer>",
-                                 "\"23\"^^<$xsd:integer>",
-                                 "\"24\"^^<$xsd:integer>",
-                                 "\"25\"^^<$xsd:int>",
-                                 "\"26\"^^<$xsd:integer>",
-                                 "\"27\"^^<$xsd:integer>",
-                                 "\"28\"^^<$xsd:integer>",
-                                 "\"29\"^^<$xsd:integer>",
-                                 "\"30\"^^<$xsd:integer>",
-                                 "\"31\"^^<$xsd:integer>",
-                                 "\"32\"^^<$xsd:integer>")
-                         .expecting("\"23\"^^<$xsd:integer>", "<$:Alice>",
-                                 "\"23\"^^<$xsd:integer>", "<$:Eric>",
-                                 "\"25\"^^<$xsd:int>", "<$:Bob>"));
+        own.add(results("?age",           "?x",
+                        "23",              ":Alice",
+                        "23",              ":Eric",
+                        "\"25\"^^xsd:int", ":Bob")
+                .query("SELECT * WHERE {?x foaf:age ?age}")
+                .bindType(BindType.JOIN)
+                .bindings("?age",
+                          "22",
+                          "23",
+                          "24",
+                          "\"25\"^^xsd:int",
+                          "26",
+                          "27",
+                          "28",
+                          "29",
+                          "30",
+                          "31",
+                          "32"));
         // same as a left join
-        own.add(BindData.leftJoin("SELECT * WHERE {?x foaf:age ?age}", "age")
-                .to("\"22\"^^<$xsd:integer>",
-                        "\"23\"^^<$xsd:integer>",
-                        "\"24\"^^<$xsd:integer>",
-                        "\"25\"^^<$xsd:int>",
-                        "\"26\"^^<$xsd:integer>",
-                        "\"27\"^^<$xsd:integer>",
-                        "\"28\"^^<$xsd:integer>",
-                        "\"29\"^^<$xsd:integer>",
-                        "\"30\"^^<$xsd:integer>",
-                        "\"31\"^^<$xsd:integer>",
-                        "\"32\"^^<$xsd:integer>")
-                .expecting("\"22\"^^<$xsd:integer>", null,
-                        "\"23\"^^<$xsd:integer>", "<$:Alice>",
-                        "\"23\"^^<$xsd:integer>", "<$:Eric>",
-                        "\"24\"^^<$xsd:integer>", null,
-                        "\"25\"^^<$xsd:int>", "<$:Bob>",
-                        "\"26\"^^<$xsd:integer>", null,
-                        "\"27\"^^<$xsd:integer>", null,
-                        "\"28\"^^<$xsd:integer>", null,
-                        "\"29\"^^<$xsd:integer>", null,
-                        "\"30\"^^<$xsd:integer>", null,
-                        "\"31\"^^<$xsd:integer>", null,
-                        "\"32\"^^<$xsd:integer>", null));
+        own.add(results("?age",            "?x",
+                        "22",              null,
+                        "23",              ":Alice",
+                        "23",              ":Eric",
+                        "24",              null,
+                        "\"25\"^^xsd:int", ":Bob",
+                        "26",              null,
+                        "27",              null,
+                        "28",              null,
+                        "29",              null,
+                        "30",              null,
+                        "31",              null,
+                        "32",              null)
+                .query("SELECT * WHERE {?x foaf:age ?age}")
+                .bindType(BindType.LEFT_JOIN)
+                .bindings("?age",
+                          "22",
+                          "23",
+                          "24",
+                          "\"25\"^^xsd:int",
+                          "26",
+                          "27",
+                          "28",
+                          "29",
+                          "30",
+                          "31",
+                          "32"));
         return Stream.concat(reused.stream(), own.stream()).map(Arguments::arguments);
     }
 
-    private void testBind(BindData d, String clientTag) throws Exception {
-        try (var clients = ClientSet.forGraph(clientTag);
+    private void test(Results d, String clientTag) throws Exception {
+        try (var clients = ClientSet.forSelect(clientTag);
              var tasks = new VThreadTaskSet(getClass().getSimpleName() + ".testBind")) {
-            d.assertExpected(d.query(clients.first()));
-            for (var client : clients.list) {
+            d.check(clients.first());
+            for (SparqlClient client : clients) {
+                for (RowType<?> rt : ROW_TYPES)
+                    d.check(client, rt);
+            }
+            for (var client : clients) {
                 tasks.repeat(THREADS_PER_CLIENT, thread -> {
                     for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
-                        d.assertExpected(d.query(client));
+                        for (RowType<?> rt : ROW_TYPES)
+                            d.check(client, rt);
                 });
             }
         }
     }
 
     @ParameterizedTest @MethodSource("bindData")
-    void testBindNetty(BindData data) throws Exception {
-         testBind(data, "netty");
+    void testBindNetty(Results data) throws Exception {
+         test(data, "netty");
     }
 
     private void testGraph(GraphData data, String tag) throws Exception {
         try (var clients = ClientSet.forGraph(tag);
              var tasks = new VThreadTaskSet(getClass().getSimpleName()+".testGraph")) {
             data.assertExpected(clients.first());
-            for (SparqlClient<?, ?, ?> client : clients.list) {
+            for (SparqlClient client : clients) {
                 tasks.repeat(THREADS_PER_CLIENT, thread -> {
                     for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
                         data.assertExpected(client);

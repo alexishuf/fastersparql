@@ -1,10 +1,11 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
-import com.github.alexishuf.fastersparql.batch.EmptyBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.Collection;
@@ -17,19 +18,19 @@ public class ConcatBIt<T> extends AbstractBIt<T> {
     private final Iterator<? extends BIt<T>> sourcesIt;
     protected BIt<T> source;
 
-    public ConcatBIt(Collection<? extends BIt<T>> sources, Class<T> elementClass,
+    public ConcatBIt(Collection<? extends BIt<T>> sources, RowType<T> rowType,
                      Vars vars) {
-        super(elementClass, vars);
+        super(rowType, vars);
+        this.source = new EmptyBIt<>(rowType, vars);
         this.sourcesIt = (this.sources = sources).iterator();
-        this.source = new EmptyBIt<>(elementClass, vars);
     }
     
     /* --- --- --- helper --- --- --- */
 
     protected boolean nextSource() {
         if (sourcesIt.hasNext()) {
-            this.source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
-                                          .minWait(minWait(NANOSECONDS), NANOSECONDS);
+            source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
+                                     .minWait(minWait(NANOSECONDS), NANOSECONDS);
             return true;
         }
         return false;
@@ -43,28 +44,45 @@ public class ConcatBIt<T> extends AbstractBIt<T> {
     }
 
     @Override public Batch<T> nextBatch() {
-        do {
-            Batch<T> batch = source.nextBatch();
-            if (batch.size > 0)
-                return batch;
-        } while (nextSource());
-        onExhausted();
-        return Batch.terminal();
+        try {
+            do {
+                Batch<T> batch = source.nextBatch();
+                if (batch.size > 0)
+                    return batch;
+            } while (nextSource());
+            onTermination(null);
+            return Batch.terminal();
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
     }
 
     @Override public boolean hasNext() {
-        do {
-            if (source.hasNext()) return true;
-        } while (nextSource());
-        onExhausted();
-        return false;
+        try {
+            do {
+                if (source.hasNext()) return true;
+            } while (nextSource());
+            onTermination(null);
+            return false;
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
     }
 
-    @Override public T next() { return source.next(); }
+    @Override public T next() {
+        try {
+            return source.next();
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
+    }
     @Override public boolean recycle(Batch<T> batch) { return source.recycle(batch); }
 
-    @Override protected void cleanup(boolean interrupted) {
-        if (!interrupted)
+    @Override protected void cleanup(Throwable cause) {
+        if (cause == null)
             return; // source.close() is a no-op and sourcesIt.hasNext() == false
         Throwable error = null;
         try {

@@ -10,6 +10,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -123,9 +124,7 @@ class NettyClientBuilderTest {
         }
     }
 
-    private static class ClientHandler extends SimpleChannelInboundHandler<HttpObject> implements ReusableHttpClientInboundHandler {
-        private static final Runnable NOP = () -> {};
-        private Runnable onResponseEnd = NOP;
+    private static class ClientHandler extends NettyHttpHandler {
         private CompletableFuture<String> future;
         private boolean hadResponse = false;
         private int expectNumber = -1, expectSize = -1;
@@ -140,90 +139,60 @@ class NettyClientBuilderTest {
             this.expectSize = expectSize;
         }
 
-        void reset() {
-            this.future = null;
-            expectNumber = expectSize = -1;
-            hadResponse = false;
-            responseBuilder.setLength(0);
+        @Override protected void response(HttpResponse response) {
+            assertFalse(hadResponse, "not the fist handleResponse()!");
+            assertEquals(0, responseBuilder.length());
+            hadResponse = true;
+            HttpHeaders headers = response.headers();
+            assertEquals("text/x.payload+res", headers.get(CONTENT_TYPE));
+            assertEquals(Integer.toString(expectNumber), headers.get("x-vnd-number"));
+            assertEquals("chunked", headers.get(HttpHeaderNames.TRANSFER_ENCODING));
         }
 
-        @Override public void onResponseEnd(Runnable runnable) {
-            onResponseEnd = runnable == null ? NOP : runnable;
-        }
-
-        @Override
-        protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
-            if (msg instanceof HttpResponse) {
-                handleResponse((HttpResponse) msg);
-            } else if (msg instanceof HttpContent) {
-                handleChunk((HttpContent)msg);
-            } else {
-                fail("Unexpected HttpObject type: "+msg.getClass());
-            }
-        }
-
-        @Override public void channelInactive(ChannelHandlerContext ctx) {
-            if (!future.isDone()) {
-                String msg = "Channel closed before response end";
-                future.completeExceptionally(new IllegalStateException(msg));
-            }
-        }
-
-        private void handleEnd() {
-            assertTrue(hadResponse, "LastHttpContent before HttpResponse");
-            assertEquals(expectSize, responseBuilder.length());
-            assertTrue(future.complete(responseBuilder.toString()),
-                       "future already complete");
-            reset();
-            onResponseEnd.run();
-        }
-
-        private void handleChunk(HttpContent msg) {
+        @Override protected void content(HttpContent content) {
             assertTrue(hadResponse, "HttpContent before HttpResponse");
-            String string = msg.content().toString(UTF_8);
+            String string = content.content().toString(UTF_8);
             if (string.isEmpty()) {
-                assertTrue(msg instanceof LastHttpContent, "if empty, chunk must be last");
-                handleEnd();
+                assertTrue(content instanceof LastHttpContent, "if empty, chunk must be last");
                 return;
             }
             assertTrue(string.length() <= 16,
-                       "chunk is too long ("+string.length()+")");
+                    "chunk is too long ("+string.length()+")");
             assertTrue(string.matches("^[0-9a-f]+$"), "Invalid chars in "+string);
             if (responseBuilder.length() > 0) {
                 char lastChar = responseBuilder.charAt(responseBuilder.length() - 1);
                 int lastValue = Integer.parseInt("" + lastChar, 16);
                 int first = Integer.parseInt("" + string.charAt(0), 16);
                 assertEquals((lastValue+1) % 16, first,
-                             "chunk is not contiguous with previous");
+                        "chunk is not contiguous with previous");
             } else {
                 assertEquals('0', string.charAt(0),
-                             "First chunk must start with 0");
+                        "First chunk must start with 0");
             }
             for (int i = 1; i < string.length(); i++) {
                 int prev = Integer.parseInt("" + string.charAt(i - 1), 16);
                 int curr = Integer.parseInt("" + string.charAt(i    ), 16);
                 assertEquals((prev+1) % 16, curr,
-                             "char "+i+" not contiguous in "+string);
+                        "char "+i+" not contiguous in "+string);
             }
             responseBuilder.append(string);
         }
 
-        private void handleResponse(HttpResponse msg) {
-            assertFalse(hadResponse, "not the fist handleResponse()!");
-            assertEquals(0, responseBuilder.length());
-            hadResponse = true;
-            HttpHeaders headers = msg.headers();
-            assertEquals("text/x.payload+res", headers.get(CONTENT_TYPE));
-            assertEquals(Integer.toString(expectNumber), headers.get("x-vnd-number"));
-            assertEquals("chunked", headers.get(HttpHeaderNames.TRANSFER_ENCODING));
-        }
-
-        @Override
-        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-            if (!future.isDone())
-                future.completeExceptionally(cause);
-            clientHandlerExceptions.add(cause);
-            super.exceptionCaught(ctx, cause);
+        @Override protected void responseEnd(@Nullable Throwable error) {
+            assertTrue(hadResponse, "LastHttpContent before HttpResponse");
+            assertEquals(expectSize, responseBuilder.length());
+            if (error == null) {
+                assertTrue(future.complete(responseBuilder.toString()),
+                        "future already complete");
+                recycle();
+            } else {
+                future.completeExceptionally(error);
+                clientHandlerExceptions.add(error);
+            }
+            this.future = null;
+            expectNumber = expectSize = -1;
+            hadResponse = false;
+            responseBuilder.setLength(0);
         }
     }
 

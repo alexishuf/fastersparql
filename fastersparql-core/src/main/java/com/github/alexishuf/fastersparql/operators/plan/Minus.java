@@ -1,21 +1,36 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
+import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Objects;
 
-public abstract class Minus<R, I> extends Plan<R, I> {
-    public Minus(Plan<R, I> input, Plan<R, I> filter, @Nullable Plan<R, I> unbound, @Nullable String name) {
-        super(input.rowType, List.of(input, filter), unbound, name);
+public final class Minus extends Plan {
+    public Minus(Plan left, Plan right) {
+        super(Operator.MINUS);
+        this.left  = left;
+        this.right = right;
     }
 
-    @Override protected Vars computeVars(boolean all) {
-        return all ? super.computeVars(true) : operands.get(0).publicVars();
+    @Override public Plan copy(@Nullable Plan[] ops) {
+        return ops == null ? new Minus(left, right) : new Minus(ops[0], ops[1]);
     }
 
-    @Override protected void bgpSuffix(StringBuilder out, int indent) {
-        newline(out, indent).append("MINUS");
-        operands.get(1).groupGraphPattern(out, indent+1);
+    @Override
+    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+        return NativeBind.preferNative(rt, this, binding, canDedup);
+    }
+
+    @Override public boolean equals(Object obj) {
+        return obj instanceof Minus r
+                && Objects.equals(left , r.left )
+                && Objects.equals(right, r.right);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(type, left, right);
     }
 }

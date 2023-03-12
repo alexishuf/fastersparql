@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;

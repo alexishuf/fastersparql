@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.client.model;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.LazyBIt;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.model.MediaType;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -11,32 +11,21 @@ import java.util.concurrent.Future;
  * A bundle of a {@link BIt} over graph fragments and the {@link MediaType} of the
  * graph representation.
  *
- * <p>If {@code Fragment} is a {@link CharSequence} or {@link String}, consumers of the fragments
- * the concatenation of fragments will yield the serialization of the RDF graph. If
- * {@code Fragment} is an iterable of textual types, the same holds, but for the
- * concatenation of all {@link CharSequence} in all iterables.</p>
- *
- * <p>If {@code Fragment} is {@code byte[]} or an iterable of {@code byte[]}, the same
- * interpretation of textual types holds, with the bytes being the UTF-8 encoding of the
- * serialization, unless the serialization is a binary format, uses a default that is not UTF-8 or
- * includes a charset attribute in {@link Graph#mediaType()}.</p>
- *
  * <p>Consumers should not assume textual or bytes fragments end in the border of RDF terms,
  * triples or quads. An individual fragment may end in the middle of one RDF term and
  * may contain no complete term or triple/quad.</p>
  *
- * @param <Fragment> - the type representing fragments of the RDF graph serialization.
  */
-public final class Graph<Fragment>{
+public final class Graph{
     private final Future<MediaType> mediaTypeFuture;
-    public final BIt<Fragment> it;
+    public final BIt<byte[]> it;
 
-    public Graph(Future<MediaType> mediaTypeFuture, BIt<Fragment> it) {
+    public Graph(Future<MediaType> mediaTypeFuture, BIt<byte[]> it) {
         this.mediaTypeFuture = mediaTypeFuture;
         this.it = it;
     }
 
-    public BIt<Fragment> it() { return it; }
+    public BIt<byte[]> it() { return it; }
 
     /**
      * The media type identifying the RDF graph serialization format. This method may block

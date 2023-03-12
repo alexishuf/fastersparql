@@ -40,7 +40,7 @@ public sealed interface BatchGetter {
             var list = new ArrayList<T>();
             it.nextBatch(list);
             //noinspection unchecked
-            T[] empty = (T[]) Array.newInstance(it.elementClass(), 0);
+            T[] empty = (T[]) Array.newInstance(it.rowType().rowClass, 0);
             return new Batch<>(list.toArray(empty), list.size());
         }
         @Override public String toString() { return "ListBatchGetter"; }
@@ -65,7 +65,7 @@ public sealed interface BatchGetter {
             return list;
         }
         @Override public <T> Batch<T> getBatch(BIt<T> it) {
-            Batch<T> batch = new Batch<>(it.elementClass(), 10);
+            Batch<T> batch = new Batch<>(it.rowType().rowClass, 10);
             long start = System.nanoTime();
             while (shouldFetch(batch.size, start, it))
                 batch.add(it.next());

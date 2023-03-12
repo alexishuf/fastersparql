@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.*;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -37,7 +38,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
         @Override public BIt<Integer> get(int begin, int end, @Nullable Throwable error) {
             var list = range(begin, end).boxed().toList();
             var it = ThrowingIterator.andThrow(list.iterator(), error);
-            return new IteratorBIt<>(it, Integer.class, Vars.EMPTY) {
+            return new IteratorBIt<>(it, NotRowType.INTEGER, Vars.EMPTY) {
                 @Override public String toString() { return "listGenerator:"+name(begin, end, error); }
             };
         }
@@ -46,7 +47,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
     protected static final ItGenerator threadedGenerator = new ItGenerator() {
         @Override public String toString() { return "ThreadedGenerator"; }
         @Override public BIt<Integer> get(int begin, int end, @Nullable Throwable error) {
-            var cb = new CallbackBIt<>(Integer.class, Vars.EMPTY) {
+            var cb = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
                 @Override public String toString() { return "threadedGenerator:"+name(begin, end, error); }
             };
             Thread.ofVirtual().start(() -> {
@@ -75,7 +76,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
         }
 
         public List<BIt<Integer>> operands() { return operands; }
-        public List<Integer>          expected() { return expected; }
+        public List<Integer>      expected() { return expected; }
 
         @Override public String toString() {
             return "AbstractMergeScenario{"+", size="+size+", minBatch="+minBatch
@@ -190,11 +191,10 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
     @ParameterizedTest @MethodSource("generatorData")
     void testDoNotSplitBatches(ItGenerator gen, BatchGetter getter) {
         int delay = 10;
-        //noinspection resource
         var sources = List.of(gen.get(0, 2).minBatch(2).maxBatch(2),
                 gen.get(5, 5).minBatch(3).maxBatch(3),
                 gen.get(10, 12).minBatch(2).maxBatch(2));
-        try (MergeBIt<Integer> it = new MergeBIt<>(sources, Integer.class, Vars.EMPTY)) {
+        try (MergeBIt<Integer> it = new MergeBIt<>(sources, NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).minWait(delay, TimeUnit.MILLISECONDS);
             List<List<Integer>> batches = new ArrayList<>();
             for (var batch = getter.getList(it); !batch.isEmpty(); batch = getter.getList(it))

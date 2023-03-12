@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
-import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.model.Vars;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -11,9 +9,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.operators.FSOps.query;
+import static com.github.alexishuf.fastersparql.FS.query;
+import static com.github.alexishuf.fastersparql.client.DummySparqlClient.DUMMY;
 import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -21,54 +19,40 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class PlanTest {
 
     static Stream<Arguments> varsUnion() {
-        DummySparqlClient<String[], String, ?> c = new DummySparqlClient<>(ArrayRow.STRING);
-        var xy = query(c, "SELECT * WHERE {?x a ?y}");
-        var x = query(c, "SELECT * WHERE {?x a <http://example.org/C>}");
-        var y = query(c, "SELECT * WHERE {?y a <http://example.org/C>}");
-        var x_y = query(c, "SELECT ?x WHERE {?x a ?y}");
-        var yx_z = query(c, "SELECT ?y ?x WHERE {?x ?z ?y}");
+
+        var xy = query(DUMMY, "SELECT * WHERE {?x a ?y}");
+        var x = query(DUMMY, "SELECT * WHERE {?x a <http://example.org/C>}");
+        var y = query(DUMMY, "SELECT * WHERE {?y a <http://example.org/C>}");
+        var x_y = query(DUMMY, "SELECT ?x WHERE {?x a ?y}");
+        var yx_z = query(DUMMY, "SELECT ?y ?x WHERE {?x ?z ?y}");
+
+        assertEquals(Vars.of("x"), x_y.publicVars());
+        assertEquals(Vars.of("x", "y"), x_y.allVars());
+        assertEquals(Vars.of("y", "x"), yx_z.publicVars());
+        assertEquals(Vars.of("y", "x", "z"), yx_z.allVars());
 
         return Stream.of(
-        /*  1 */arguments(emptyList(), emptyList(), emptyList()),
+                arguments(singletonList(x), Vars.of("x"), Vars.of("x")),
+                arguments(singletonList(xy), Vars.of("x", "y"), Vars.of("x", "y")),
+                arguments(singletonList(x_y), Vars.of("x"), Vars.of("x", "y")),
+                arguments(singletonList(yx_z), Vars.of("y", "x"), Vars.of("y", "x", "z")),
 
-        /*  2 */arguments(singletonList(x), singletonList("x"), singletonList("x")),
-        /*  3 */arguments(singletonList(xy), asList("x", "y"), asList("x", "y")),
-        /*  4 */arguments(singletonList(x_y), singletonList("x"), asList("x", "y")),
-        /*  5 */arguments(singletonList(yx_z), asList("y", "x"), asList("y", "x", "z")),
+                arguments(asList(x, xy), Vars.of("x", "y"), Vars.of("x", "y")),
+                arguments(asList(y, xy), Vars.of("y", "x"), Vars.of("y", "x")),
 
-        /*  6 */arguments(asList(x, xy), asList("x", "y"), asList("x", "y")),
-        /*  7 */arguments(asList(y, xy), asList("y", "x"), asList("y", "x")),
-
-        /*  8 */arguments(asList(x, x_y), singletonList("x"), asList("x", "y")),
-        /*  9 */arguments(asList(y, x_y), asList("y", "x"), asList("y", "x")),
-        /* 10 */arguments(asList(yx_z, x, y), asList("y", "x"), asList("y", "x", "z"))
+                arguments(asList(x, x_y), Vars.of("x"), Vars.of("x", "y")),
+                arguments(asList(y, x_y), Vars.of("y", "x"), Vars.of("y", "x")),
+                arguments(asList(yx_z, x, y), Vars.of("y", "x"), Vars.of("y", "x", "z"))
         );
     }
 
-    private static final class HelperPlan extends Plan<String[], String> {
-        public HelperPlan(List<? extends Plan<String[], String>> operands) {
-            super(ArrayRow.STRING, operands, null, null);
-        }
-
-        @Override public BIt<String[]> execute(boolean canDedup) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Plan<String[], String> with(List<? extends Plan<String[], String>> replacement,
-                                           @Nullable Plan<String[], String> unbound,
-                                           @Nullable String name) {
-            throw new UnsupportedOperationException();
-        }
+    @ParameterizedTest @MethodSource("varsUnion")
+    void testPublicVarsUnion(List<Plan> plans, Vars expected, Vars ignored) {
+        assertEquals(expected, FS.union(plans.toArray(Plan[]::new)).publicVars());
     }
 
     @ParameterizedTest @MethodSource("varsUnion")
-    void testPublicVarsUnion(List<Plan<String[], String>> plans, List<String> publicVars, List<String> ignored) {
-        assertEquals(publicVars, new HelperPlan(plans).publicVars());
-    }
-
-    @ParameterizedTest @MethodSource("varsUnion")
-    void testAllVarsUnion(List<Plan<String[], String>> plans, List<String> ignored, List<String> allVars) {
-        assertEquals(allVars, new HelperPlan(plans).allVars());
+    void testAllVarsUnion(List<Plan> plans, Vars ignored, Vars expected) {
+        assertEquals(expected, FS.union(plans.toArray(Plan[]::new)).allVars());
     }
 }

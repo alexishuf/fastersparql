@@ -1,9 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.batch.BItClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -13,7 +14,10 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -30,7 +34,7 @@ class CallbackBItTest extends AbstractBItTest {
     @Override protected void run(Scenario genericScenario) {
         if (!(genericScenario instanceof BoundedScenario s))
             throw new IllegalArgumentException("Expected BoundedScenario");
-        var cb = new CallbackBIt<>(Integer.class, Vars.EMPTY);
+        var cb = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
         cb.maxReadyBatches(s.maxReadyBatches()).maxReadyItems(s.maxReadyItems());
         cb.minBatch(s.minBatch()).maxBatch(s.maxBatch());
         Thread feeder = Thread.ofVirtual().name("feeder-"+s).start(() -> {
@@ -90,7 +94,7 @@ class CallbackBItTest extends AbstractBItTest {
 
     @Test @Timeout(5)
     void testMergeBatches() throws Exception {
-        try (var bit = new CallbackBIt<>(Integer.class, Vars.EMPTY)) {
+        try (var bit = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             assertEquals(1, bit.minBatch());
             bit.maxBatch(3);
             bit.feed(0);
@@ -117,7 +121,7 @@ class CallbackBItTest extends AbstractBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWait(BatchGetter getter) {
         int delay = 20;
-        try (var it = new CallbackBIt<>(Integer.class, Vars.EMPTY)) {
+        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).minWait(delay, TimeUnit.MILLISECONDS);
 
             long start = nanoTime();
@@ -150,7 +154,7 @@ class CallbackBItTest extends AbstractBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMaxWait(BatchGetter getter) throws Exception {
         int delay = 20, tolerance = 5;
-        try (var it = new CallbackBIt<>(Integer.class, Vars.EMPTY)) {
+        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).maxWait(delay, TimeUnit.MILLISECONDS);
             List<List<Integer>> batches = new ArrayList<>();
             it.feed(1);
@@ -174,7 +178,7 @@ class CallbackBItTest extends AbstractBItTest {
         var stop = new AtomicBoolean();
         var prematureExhaust = new AtomicBoolean(false);
         var suffix = format("{round=%d, min=%d, wait=%d}", round, minBatch, waitBatches);
-        try (var it = new CallbackBIt<>(Integer.class, Vars.EMPTY)) {
+        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.maxReadyItems(Math.max(65_536, 2*minBatch)).minBatch(minBatch);
             var batchDrained = new Semaphore(0);
             Thread.ofVirtual().name("Feeder"+suffix).start(() -> {
@@ -193,7 +197,7 @@ class CallbackBItTest extends AbstractBItTest {
                     if (stop.compareAndSet(false, true))
                         prematureExhaust.set(true);
                     drain.complete(null);
-                } catch (BItClosedException e) {
+                } catch (BItReadClosedException e) {
                     drain.complete(null);
                 } catch (Throwable t) {
                     drain.completeExceptionally(t);
@@ -230,6 +234,7 @@ class CallbackBItTest extends AbstractBItTest {
         int rounds = multiplier*Runtime.getRuntime().availableProcessors();
         String name = ".testRaceFeedNextAndClose("+minBatch+", "+waitBatches+")";
         try {
+            testRaceFeedNextAndClose(-1, minBatch, waitBatches);
             repeatAndWait(name, rounds, (Consumer<Integer>) round
                     -> testRaceFeedNextAndClose(round, minBatch, waitBatches));
         } finally {

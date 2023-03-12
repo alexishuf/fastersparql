@@ -1,9 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.impl;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -67,13 +68,11 @@ public class BatchReadyTest {
     }
 
     private static final class ReadyHelper extends AbstractBIt<Integer> {
-        public ReadyHelper() { super(Integer.class, Vars.EMPTY); }
+        public ReadyHelper() { super(NotRowType.INTEGER, Vars.EMPTY); }
         @Override public boolean ready(int size, long start) { return super.ready(size, start); }
         @Override public @This BIt<Integer> tempEager() { return this; }
         @Override public Batch<Integer> nextBatch() { throw new UnsupportedOperationException(); }
         @Override public int nextBatch(Collection<? super Integer> destination) { throw new UnsupportedOperationException(); }
-        @Override public boolean recycle(Batch<Integer> batch) { return false; }
-        @Override protected void cleanup(boolean interrupted) { }
         @Override public boolean hasNext() { throw new UnsupportedOperationException(); }
         @Override public Integer next() { throw new UnsupportedOperationException(); }
         @Override public String toString() { return "test"; }

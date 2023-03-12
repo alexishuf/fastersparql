@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.util.CSUtils;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;

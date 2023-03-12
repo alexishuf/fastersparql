@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
@@ -24,7 +25,7 @@ class IteratorBItTest extends AbstractBItTest {
     @Override protected void run(Scenario s) {
         var list = IntStream.range(0, s.size()).boxed().toList();
         var it = ThrowingIterator.andThrow(list.iterator(), s.error);
-        var bit = new IteratorBIt<>(it, Integer.class, Vars.EMPTY);
+        var bit = new IteratorBIt<>(it, NotRowType.INTEGER, Vars.EMPTY);
         s.drainer.drainOrdered(bit, s.expected(), s.error());
     }
 
@@ -40,7 +41,7 @@ class IteratorBItTest extends AbstractBItTest {
                 return next <= 3;
             }
             @Override public Integer next() { return next++; }
-        }, Integer.class, Vars.EMPTY);
+        }, NotRowType.INTEGER, Vars.EMPTY);
         bit.minBatch(2).maxWait(Duration.ofMillis(50));
 
         Semaphore started = new Semaphore(0);
@@ -83,7 +84,7 @@ class IteratorBItTest extends AbstractBItTest {
                 return true;
             }
             @Override public Integer next() { return next++; }
-        }, Integer.class, Vars.EMPTY);
+        }, NotRowType.INTEGER, Vars.EMPTY);
         bit.minBatch(2).minWait(Duration.ofMillis(2*delay + delay/2));
 
         List<List<Integer>> batches = new ArrayList<>();

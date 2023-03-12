@@ -1,52 +1,37 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-public final class RowBinding<R, I> extends Binding {
-    private final RowType<R, I> rowType;
+public final class RowBinding<R> extends Binding {
+    private final RowType<R> rowType;
     private @Nullable R row;
-    private @Nullable Object[] cache;
-    private @Nullable TermParser termParser;
 
-    public RowBinding(RowType<R, I> rowType, Vars vars) {
+    public RowBinding(RowType<R> rowType, Vars vars) {
         super(vars);
         this.rowType = rowType;
     }
 
-    public RowBinding<R, I> row(@Nullable R row) {
+    public RowBinding<R> row(@Nullable R row) {
         this.row = row;
         return this;
     }
 
-    @Override public Binding set(int i, @Nullable String value) {
-        if (row == null)
-            row = rowType.createEmpty(vars);
-        rowType.setNT(row, i, value);
+    @Override public Binding set(int column, @Nullable Term value) {
+        int n = vars.size();
+        if (row == null) {
+            row = rowType.builder(n).set(column, value).build();
+        } else {
+            var b = rowType.builder(n);
+            for (int i = 0; i < n; i++)
+                b.set(i, rowType.get(row, i));
+            b.set(column, value);
+            row = b.build();
+        }
         return this;
     }
 
-    @Override public @Nullable String get(int i) { return rowType.getNT(row, i); }
-
-    @Override public @Nullable Term parse(String var) {
-        int i = vars.indexOf(var);
-        if (i == -1) return null;
-        String nt = get(i);
-        if (nt == null) return null;
-        if (cache == null || termParser == null) {
-            cache = new Object[16];
-            termParser = new TermParser();
-        }
-        int keyBucket = nt.hashCode() & 7, valueBucket = keyBucket + 8;
-        if (nt.equals(cache[keyBucket]))
-            return (Term) cache[valueBucket];
-        termParser.parse(nt, 0, nt.length());
-        Term term = termParser.asTerm();
-        cache[keyBucket] = nt;
-        cache[valueBucket] = term;
-        return term;
-    }
+    @Override public @Nullable Term get(int i) { return rowType.get(row, i); }
 }

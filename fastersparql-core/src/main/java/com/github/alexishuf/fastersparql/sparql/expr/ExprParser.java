@@ -1,30 +1,24 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.*;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public final class ExprParser {
-    private String in;
+    private Rope in;
     private int consumedPos, pos, len;
     public final TermParser termParser = new TermParser();
-    private @Nullable RowType<?, ?> rowType;
     private @Nullable Symbol symbol;
     private @Nullable Expr term;
-
-    /** Set the {@link RowType} to use when parsing the {@code GroupGraphPattern} block. */
-    public @This ExprParser rowType(RowType<?, ?> rt) {
-        this.rowType = rt;
-        return this;
-    }
+    private @Nullable SparqlParser spParser;
 
     /**
      * Parse a {@link Term} starting at index 0 of {@code in}.
@@ -35,10 +29,10 @@ public final class ExprParser {
      * @throws InvalidTermException if there is a syntax error.
      * @return A non-null {@link Term} parsed from the SPARQL string
      */
-    public Expr parse(String in) {
-        if (in == null || in.isEmpty())
+    public Expr parse(Rope in) {
+        if (in == null || in.len() == 0)
             throw new InvalidExprException("null and \"\" are not valid expressions");
-        this.len = (this.in = in).length();
+        this.len = (this.in = in).len();
         this.pos = 0;
         this.symbol = null;
         this.term = null;
@@ -50,12 +44,12 @@ public final class ExprParser {
     }
 
     /** Sets input String to be used in subsequent {@link ExprParser#parse(int)} calls. */
-    public void input(String in) {
-        this.len = (this.in = in).length();
+    public void input(Rope in) {
+        this.len = (this.in = in).len();
     }
 
     /** Parse an expression that starts at char {@code pos} of the previously set
-     *  {@link ExprParser#input(String)}. */
+     *  {@link ExprParser#input(Rope)}. */
     public Expr parse(int pos) {
         assert in != null;
         this.consumedPos = this.pos = pos;
@@ -184,8 +178,8 @@ public final class ExprParser {
             return o < 64 && (BINARY0 & (1L << o)) != 0;
         }
 
-        public String input() {
-            return switch (this) {
+        public byte[] input() {
+            return (switch (this) {
                 case NEG   -> "!";
                 case NEQ   -> "!=";
                 case AND   -> "&&";
@@ -204,14 +198,14 @@ public final class ExprParser {
                 case OR    -> "||";
                 case EOF    -> "~EOF";
                 default -> name().replace('_', ' ').toUpperCase();
-            };
+            }).getBytes(UTF_8);
         }
     }
 
     /** The Symbol corresponding to {@code SYMBOL_INPUTS[i]} */
     private static final Symbol[] SYMBOL_INPUTS_VALUES;
     /** Sorted list of all {@link Symbol#input()} values */
-    private static final String[] SYMBOL_INPUTS;
+    private static final byte[][] SYMBOL_INPUTS;
     /** Given the first uppercase char {@code f} of a function name such name (in uppercase)
      *  should be between {@code FUNCTION_INPUTS_RANGE[2*(f-'A')+0]} and
      *  {@code FUNCTION_INPUTS_RANGE[2*(f-'A')+1]} (exclusive) in {@code SYMBOL_INPUTS}. */
@@ -238,23 +232,22 @@ public final class ExprParser {
     static {
         Symbol[] symbols = Symbol.values();
         SYMBOL_INPUTS_VALUES = new Symbol[symbols.length];
-        List<String> inputs = new ArrayList<>(symbols.length);
-        for (Symbol value : symbols) inputs.add(value.input());
-        String[] sortedInputs = inputs.toArray(new String[symbols.length]);
-        Arrays.sort(sortedInputs);
-        SYMBOL_INPUTS = sortedInputs;
+
+        List<ByteRope> inputs = Arrays.stream(symbols).map(s -> new ByteRope(s.input())).toList();
+        SYMBOL_INPUTS = inputs.stream().map(Rope::toString).sorted()
+                              .map(s -> s.getBytes(UTF_8)).toArray(byte[][]::new);
         for (int i = 0; i < SYMBOL_INPUTS.length; i++)
-            SYMBOL_INPUTS_VALUES[i] = symbols[inputs.indexOf(SYMBOL_INPUTS[i])];
+            SYMBOL_INPUTS_VALUES[i] = symbols[inputs.indexOf(new ByteRope(SYMBOL_INPUTS[i]))];
 
         for (char c = 'A'; c <= 'Z'; ++c) {
             int rangeIdx = 2*(c-'A');
             int len = SYMBOL_INPUTS.length, begin = len, end = len;
             for (int j = 0; begin == len && j < len; j++) {
-                if (SYMBOL_INPUTS[j].charAt(0) == c)
+                if (SYMBOL_INPUTS[j][0] == c)
                     begin = j;
             }
             for (int j = begin; end == len && j < len; j++) {
-                if (SYMBOL_INPUTS[j].charAt(0) > c)
+                if (SYMBOL_INPUTS[j][0] > c)
                     end = j;
             }
             SYMBOL_INPUTS_RANGE[rangeIdx] = (byte) begin;
@@ -285,26 +278,16 @@ public final class ExprParser {
         }
     }
 
-    private void readComments() { //precondition: input.charAt(pos) == '#'
-        int next = skipUntil(in, pos+1, len, '\n');
-        while (next != pos) {
-            next = skip(in, pos = next, len, WS);
-            if (in.charAt(next) == '#')
-                next = skipUntil(in, next+1, len, '\n');
-        }
-    }
-
     void read() {
         if (symbol != null || term != null) return;
         consumedPos = pos;
-        pos = skip(in, pos, len, WS); // skip all whitespace
-        if (pos < len && in.charAt(pos) == '#')  //coldest branch in this function: do not inline
-            readComments();
+        for (pos = in.skipWS(pos, len); pos != len && in.get(pos) == '#';)
+            pos = in.skipWS(in.skipUntil(pos, len, '\n'), len);
         if (pos == len) {
             symbol = Symbol.EOF;
             return;
         }
-        char c = in.charAt(pos);
+        byte c = in.get(pos);
         if (c < 64) { // handle all operators except ||
             long bit = 1L << c;
             if ((IS_SINGLE_CHAR_OP & bit) != 0) {
@@ -316,13 +299,12 @@ public final class ExprParser {
                 ++pos; // consume c
                 if (pos >= len)
                     throw new InvalidExprException(in, pos, "Premature EOF");
-                char next = in.charAt(pos);
+                byte next = in.get(pos);
                 switch (c) {
                     case '<' -> { // could also be an <IRI>, try that first
-                        int end = skip(in, pos, len, SparqlSkip.IRIREF);
-                        if (end < len && in.charAt(end) == '>') {
-                            term = new Term.IRI(in.substring(pos - 1, end + 1));
-                            pos = end + 1;
+                        if (termParser.parse(in, pos, len) == TermParser.Result.NT) {
+                            pos = termParser.termEnd();
+                            term = termParser.asTerm();
                             return;
                         }
                         if (next == '=') { ++pos; symbol = Symbol.LTE; }
@@ -345,54 +327,50 @@ public final class ExprParser {
             }
         } else if (c == '|') { // '|' > 64, so it couldn't be in the previous branch
             ++pos; // consume first |
-            if (in.charAt(pos++) == '|') symbol = Symbol.OR;
-            else                         throw new InvalidExprException(in, pos-1, "Expected ||");
+            if (in.get(pos++) == '|') symbol = Symbol.OR;
+            else                      throw new InvalidExprException(in, pos-1, "Expected ||");
         } else if ((c >= 'A' && c<='Z') || (c>='a' && c<='z')) {
             if (c >= 'a') c -= 'a'-'A';
             readNamedSymbol(c); // do not inline: colder than termParser.parse() below
         }
-        if (symbol == null && termParser.parse(in, pos, len)) {
+        if (symbol == null && termParser.parse(in, pos, len).isValid()) {
             term = termParser.asTerm();
             pos = termParser.termEnd();
         }
     }
 
-    private void readNamedSymbol(char uppercaseFirst) {
+    private static final byte[] NOT = "NOT".getBytes(UTF_8);
+    private void readNamedSymbol(byte uppercaseFirst) {
         int rIdx = 2 * (uppercaseFirst - 'A');
         byte begin = SYMBOL_INPUTS_RANGE[rIdx], end = SYMBOL_INPUTS_RANGE[rIdx+1];
         if (end > begin) {
             // find next ( or {, then reverse any space before that
-            int tokenLen = skip(in, pos, len, ALPHANUMERIC)-pos;
-            if (tokenLen == 0)
-                return; // not a function name
-            if (tokenLen == 3 && "NOT".regionMatches(true, 0, in, pos, 3)) {
+            int tokenLen = in.skip(pos, len, ALPHANUMERIC)-pos;
+            if (tokenLen == 3 && in.hasAnyCase(pos, NOT)) {
                 readNotNamedSymbol();
-                return;
-            }
-            int inputIdx = begin;
-            while (inputIdx < end) {
-                String candidate = SYMBOL_INPUTS[inputIdx];
-                if (candidate.regionMatches(true, 0, in, pos, candidate.length()))
-                    break;
-                ++inputIdx;
-            }
-            if (inputIdx < end) {
-                symbol = SYMBOL_INPUTS_VALUES[inputIdx];
-                pos += tokenLen;
+            } else if (tokenLen > 0) {
+                int inputIdx = begin;
+                while (inputIdx != end && !in.hasAnyCase(pos, SYMBOL_INPUTS[inputIdx]))
+                    ++inputIdx;
+                if (inputIdx != end) {
+                    symbol = SYMBOL_INPUTS_VALUES[inputIdx];
+                    pos += tokenLen;
+                }
             }
         }
     }
 
+    private static final byte[] IN = "IN".getBytes(UTF_8);
+    private static final byte[] EXISTS = "EXISTS".getBytes(UTF_8);
     private void readNotNamedSymbol() {
-        int wBegin = skip(in, pos + 3, len, WS);
+        int wBegin = in.skipWS(pos+3, len);
         if (wBegin >= len)
             return;
-        int wEnd = skip(in, wBegin, len, ALPHANUMERIC);
-        char c = in.charAt(wBegin);
-        if ((c=='I' || c=='i') && "IN".regionMatches(true, 0, in, wBegin, wEnd-wBegin)) {
+        int wEnd = in.skip(wBegin, len, ALPHANUMERIC);
+        if (in.hasAnyCase(wBegin, IN)) {
             symbol = Symbol.NOT_IN;
             pos = wEnd;
-        } else if ((c=='E' || c=='e') && "EXISTS".regionMatches(true, 0, in, wBegin, wEnd-wBegin)) {
+        } else if (in.hasAnyCase(wBegin, EXISTS)) {
             symbol = Symbol.NOT_EXISTS;
             pos = wEnd;
         }
@@ -544,14 +522,14 @@ public final class ExprParser {
         };
     }
 
-    private Expr.Exists<?,?> pExists() {
+    private Expr.Exists pExists() {
         boolean negate = symbol == Symbol.NOT_EXISTS;
-        var spParser = new SparqlParser<>(rowType);
-        Plan<?, ?> filter = spParser.parseGroup(in, pos, termParser.prefixMap);
+        spParser = spParser == null ? new SparqlParser() : spParser;
+        Plan filter = spParser.parseGroup(in, pos, termParser.prefixMap);
         pos = spParser.pos();
         symbol = null;
         read();
-        return new Expr.Exists<>(filter, negate);
+        return new Expr.Exists(filter, negate);
     }
 
     private Expr[] pExprList(@Nullable Expr first) {

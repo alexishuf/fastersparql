@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.client.model.Protocol;
-import com.github.alexishuf.fastersparql.client.netty.http.*;
+import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
+import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
@@ -62,7 +63,7 @@ public final class NettyClientBuilder {
      *            fragment portions of the URI will be ignored (scheme, host and port will be used).
      *            The host may be a IPv4/IPv6 address or a DNS hostname that will be resolved at
      *            connection time.
-     * @param factory {@link Supplier} that yields a new {@link ReusableHttpClientInboundHandler}
+     * @param factory {@link Supplier} that yields a new {@link NettyHttpHandler}
      *                instances when requested.
      * @return a new {@link NettyHttpClient}
      * @throws SSLException If the URI scheme is https and the builder SSL settings could not be
@@ -70,7 +71,7 @@ public final class NettyClientBuilder {
      */
     public NettyHttpClient
     buildHTTP(String uri,
-              Supplier<? extends ReusableHttpClientInboundHandler > factory) throws SSLException {
+              Supplier<? extends NettyHttpHandler > factory) throws SSLException {
         if (uri.startsWith("ws://"))
             throw new IllegalArgumentException("WS(S) not supported by buildHTTP");
         var sslContext = uri.startsWith("https://") ? buildSslContext() : null;
@@ -100,5 +101,16 @@ public final class NettyClientBuilder {
             throw new IllegalArgumentException("WS(S) not supported by buildWs");
         SslContext sslContext = protocol.needsSsl() ? buildSslContext() : null;
         return new NettyWsClient(elgHolder(), uri, headers, pooled, poolFIFO, sslContext);
+    }
+
+    @Override public String toString() {
+        return "NettyClientBuilder"
+                + '[' + (shareEventLoopGroup ? "sharedELG" : "exclusiveELG")
+                + ',' + (pooled ? "" : "!") + "pooled"
+                + (pooled ? ',' + (poolFIFO ? "pool FIFO" : "pool LIFO") : "")
+                + (ocsp ? ", ocsp" : "")
+                + (startTls ? ", startTls" : "")
+                + (trustCertCollectionFile != null ? "trustCertCollectionFile="+trustCertCollectionFile : "")
+                + ']';
     }
 }

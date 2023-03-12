@@ -1,206 +1,106 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
-import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.client.BindType;
-import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
-import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
-import com.github.alexishuf.fastersparql.operators.bind.NativeBind;
-import com.github.alexishuf.fastersparql.operators.bind.PlanBindingBIt;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
+import com.github.alexishuf.fastersparql.operators.bit.PlanBindingBIt;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
+import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
-import org.opentest4j.AssertionFailedError;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.github.alexishuf.fastersparql.operators.FSOps.*;
+import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.STRONG;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
-import static java.lang.String.format;
-import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
-import static java.util.Objects.requireNonNull;
-import static org.junit.jupiter.api.Assertions.*;
+import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.ALLOW_DEDUP;
+import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.EXACT;
+import static com.github.alexishuf.fastersparql.util.Results.results;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class NativeBindTest {
-    private static class MockClient extends DummySparqlClient<String[], String, byte[]> {
-        private static final AtomicInteger nextId = new AtomicInteger(1);
-        private final Map<SparqlQuery, List<List<String>>> results = new HashMap<>();
-        private final Map<SparqlQuery, List<List<String>>> qry2expectedBindings = new HashMap<>();
-        private final List<AssertionFailedError> errors = new ArrayList<>();
-        private final SparqlEndpoint endpoint;
+    private static final AtomicInteger nextClientId = new AtomicInteger(1);
 
-        public MockClient() {
-            super(ArrayRow.STRING, byte[].class);
-            endpoint = SparqlEndpoint.parse("http://"+nextId.getAndIncrement()+".example.org/sparql");
-        }
-
-        public MockClient expect(SparqlQuery sparql, List<List<String>> results,
-                                 List<List<String>> expectedBindings) {
-            this.results.put(sparql, results);
-            this.qry2expectedBindings.put(sparql, expectedBindings);
-            return this;
-        }
-
-        public void assertNoErrors() {
-            int size = errors.size();
-            if (size == 1) {
-                throw errors.get(0);
-            } else if (size > 1) {
-                AssertionFailedError oldest = errors.get(0);
-                String msg = size + " tests failed, oldest error: " + oldest.getMessage();
-                throw new AssertionFailedError(msg, oldest);
-            }
-        }
-
-        @Override public Class<String[]> rowClass()                 { return String[].class; }
-        @Override public Class<byte[]>   fragmentClass()            { return byte[].class; }
-        @Override public boolean         usesBindingAwareProtocol() { return true; }
-        @Override public SparqlEndpoint  endpoint()                 { return endpoint; }
-        @Override public String          toString()                 { return endpoint.uri(); }
-
-        @Override
-        public BIt<String[]> query(SparqlQuery sq,
-                                   @Nullable BIt<String[]> bindings,
-                                   @Nullable BindType bindType) {
-            List<List<String>> results = this.results.get(sq);
-            if (results == null)
-                throw error("unexpected query: %s", sq);
-            List<List<String>> exBindings = qry2expectedBindings.get(sq);
-            if (bindings == null) {
-                if (!exBindings.isEmpty())
-                    throw error("bindings == null");
-                var it = results.stream().map(l -> l.toArray(new String[0])).iterator();
-                return new IteratorBIt<>(it, String[].class, sq.publicVars());
-            }
-            // we must consume bindings from another thread as doing so durectly from query()
-            // would cause a deadlock: (NativeBind's scatter thread is blocked because
-            // second queue is not being consumed and consumption of that queue will not start
-            // because the scatter thread will not finish feeding the first queue.
-            //
-            // While this could be fixed in NativeBind, query() implementations really
-            // should'nt consume bindings fully before returning as that will only work on trivial
-            // scenarios.
-            var vars = requireNonNull(bindType).resultVars(bindings.vars(), sq.publicVars());
-            var cb = new CallbackBIt<>(String[].class, vars);
-            Thread.startVirtualThread(() -> {
-                var acBindings = bindings.stream().map(Arrays::asList).toList();
-                if (acBindings.size() != exBindings.size()) {
-                    cb.complete(error("Expected %d bindings, got %d",
-                                      exBindings.size(), acBindings.size()));
-                } else if (!new HashSet<>(acBindings).equals(new HashSet<>(exBindings))) {
-                    cb.complete(error("Bad bindings: %s\nExpected: %s",
-                                      acBindings, exBindings));
-                }
-                results.stream().map(l -> l.toArray(new String[0])).forEach(cb::feed);
-                cb.complete(null);
-            });
-            return cb;
-        }
-
-        private AssertionFailedError error(String msg, Object... args) {
-            AssertionFailedError error = new AssertionFailedError(format(msg, args));
-            errors.add(error);
-            return error;
-        }
+    private static ResultsSparqlClient client(SparqlQuery query, Results expected) {
+        String uri = "http://" + nextClientId.getAndIncrement() + ".example.org/sparql";
+        //noinspection resource
+        return new ResultsSparqlClient(true, uri).answerWith(query, expected);
     }
 
-    record D(int operands, boolean dedup, boolean crossDedup, BindType bindType,
-             List<List<String>> results,
-             List<List<String>> bindings) implements Runnable {
+    record D(int operands, boolean dedup, boolean crossDedup,
+             Results results) implements Runnable {
         @Override public void run() {
             var leftSparql = new OpaqueSparqlQuery("SELECT ?x WHERE { ?x a <http://example.org/L> }");
             if (dedup)
                 leftSparql = leftSparql.toDistinct(STRONG);
-            var leftClient = new MockClient().expect(leftSparql, bindings, List.of());
-            var left = query(leftClient, leftSparql);
+            try (var leftClient = client(leftSparql, results.bindingsAsResults());
+                 var clients = new AutoCloseableSet<ResultsSparqlClient>()) {
+                var left = FS.query(leftClient, leftSparql);
 
-            var rightSparqlTmp = new OpaqueSparqlQuery("SELECT ?y WHERE { ?x <http://example.org/p> ?y }");
-            var rightSparql = dedup ? rightSparqlTmp.toDistinct(WEAK) : rightSparqlTmp;
-            var clients = new ArrayList<MockClient>();
-            for (int i = 0; i < operands; i++) //noinspection resource
-                clients.add(new MockClient().expect(rightSparql, results, bindings));
-            var rightOperands = clients.stream().map(c -> query(c, rightSparql)).toList();
-            var right = crossDedup ? crossDedupUnion(rightOperands) : union(rightOperands);
+                var rightSparqlTmp = new OpaqueSparqlQuery("SELECT ?y WHERE { ?x <http://example.org/p> ?y }");
+                var rightSparql = dedup ? rightSparqlTmp.toDistinct(WEAK) : rightSparqlTmp;
+                for (int i = 0; i < operands; i++)
+                    clients.add(client(rightSparql, results));
+                var rightOperands = clients.stream().map(c -> FS.query(c, rightSparql)).toArray(Plan[]::new);
+                var right = crossDedup ? FS.crossDedupUnion(rightOperands) : FS.union(rightOperands);
 
-            var join = switch (bindType) {
-                case JOIN -> join(left, right);
-                case LEFT_JOIN -> leftJoin(left, right);
-                case EXISTS -> exists(left, false, right);
-                case NOT_EXISTS -> exists(left, true, right);
-                case MINUS -> minus(left, right);
-            };
+                var join = switch (results.bindType()) {
+                    case JOIN -> FS.join(left, right);
+                    case LEFT_JOIN -> FS.leftJoin(left, right);
+                    case EXISTS -> FS.exists(left, false, right);
+                    case NOT_EXISTS -> FS.exists(left, true, right);
+                    case MINUS -> FS.minus(left, right);
+                    case null -> throw new IllegalArgumentException("missing bindType");
+                };
 
-            try (BIt<String[]> it = NativeBind.preferNative(join, dedup)) {
-                List<List<String>> list = it.stream().map(Arrays::asList).toList();
-                Set<List<String>> set = new HashSet<>(list), expected = new HashSet<>(results);
-                assertFalse(it instanceof PlanBindingBIt, "not using native joins");
-                assertEquals(set, expected);
-                int maxRows = results.size() * operands;
-                if ((crossDedup || dedup) && operands > 1)
-                    assertTrue(list.size() <= maxRows, "bogus rows introduced");
-                else
-                    assertEquals(maxRows, list.size());
+                var finalRows = new ArrayList<>(results.expected());
+                for (int i = 0; i < operands - 1; i++)
+                    finalRows.addAll(results.expected());
+                var finalResults = Results.results(results.vars(), finalRows)
+                                          .duplicates(dedup || crossDedup ? ALLOW_DEDUP : EXACT);
+
+                try (var it = NativeBind.preferNative(RowType.LIST, join, null, dedup)) {
+                    assertFalse(it instanceof PlanBindingBIt, "not using native joins");
+                    finalResults.check(it);
+                }
+
+                for (var client : clients)
+                    client.assertNoErrors();
+                leftClient.assertNoErrors();
             }
-
-            for (MockClient client : clients)
-                client.assertNoErrors();
-            leftClient.assertNoErrors();
         }
     }
 
     static List<D> data() {
-        List<List<String>> joinResults = asList(
-                asList("<http://example.org/S1>", "<http://example.org/O1A>"),
-                asList("<http://example.org/S1>", "<http://example.org/O1B>"),
-                asList("<http://example.org/S3>", "<http://example.org/O3A>"));
-        List<List<String>> leftJoinResults = asList(asList("<http://example.org/S1>", "<http://example.org/O1A>"),
-                asList("<http://example.org/S1>", "<http://example.org/O1B>"),
-                asList("<http://example.org/S2>", null),
-                asList("<http://example.org/S3>", "<http://example.org/O3A>"));
-        List<List<String>> existsResults = asList(singletonList("<http://example.org/S1>"),
-                singletonList("<http://example.org/S3>"));
-        List<List<String>> notExistsResults = singletonList(singletonList("<http://example.org/S2>"));
+        Object[] bindingsSpec = {"?x", ":S1", ":S2", ":S3"};
+        var join = results("?x",  "?y",
+                           ":S1", ":O1A",
+                           ":S1", ":O1B",
+                           ":S3", ":O3A").bindings(bindingsSpec);
+        var leftJoin = results("?x",  "?y",
+                               ":S1", ":O1A",
+                               ":S1", ":O1B",
+                               ":S2", null,
+                               ":S3", ":O3A").bindType(LEFT_JOIN).bindings(bindingsSpec);
+        var exists = results("?x", ":S1", ":S3").bindType(EXISTS).bindings(bindingsSpec);
+        var notExists = results("?x", ":S2").bindType(NOT_EXISTS).bindings(bindingsSpec);
         List<D> list = new ArrayList<>();
         for (int operands : List.of(1, 2, 3, 96)) {
             for (boolean dedup : List.of(false, true)) {
                 for (Boolean crossDedup : List.of(false, true)) {
-                    list.add(new D(operands, dedup, crossDedup, BindType.JOIN,
-                            joinResults,
-                            List.of(singletonList("<http://example.org/S1>"),
-                                    singletonList("<http://example.org/S2>"),
-                                    singletonList("<http://example.org/S3>"))));
-
-                    list.add(new D(operands, dedup, crossDedup, BindType.LEFT_JOIN,
-                            leftJoinResults,
-                            List.of(singletonList("<http://example.org/S1>"),
-                                    singletonList("<http://example.org/S2>"),
-                                    singletonList("<http://example.org/S3>"))));
-
-                    list.add(new D(operands, dedup, crossDedup, BindType.EXISTS,
-                            existsResults,
-                            List.of(singletonList("<http://example.org/S1>"),
-                                    singletonList("<http://example.org/S2>"),
-                                    singletonList("<http://example.org/S3>"))));
-
-                    list.add(new D(operands, dedup, crossDedup, BindType.NOT_EXISTS,
-                            notExistsResults,
-                            List.of(singletonList("<http://example.org/S1>"),
-                                    singletonList("<http://example.org/S2>"),
-                                    singletonList("<http://example.org/S3>"))));
-
-                    list.add(new D(operands, dedup, crossDedup, BindType.MINUS,
-                            notExistsResults,
-                            List.of(singletonList("<http://example.org/S1>"),
-                                    singletonList("<http://example.org/S2>"),
-                                    singletonList("<http://example.org/S3>"))));
+                    list.add(new D(operands, dedup, crossDedup, join));
+                    list.add(new D(operands, dedup, crossDedup, leftJoin));
+                    list.add(new D(operands, dedup, crossDedup, exists));
+                    list.add(new D(operands, dedup, crossDedup, notExists));
+                    list.add(new D(operands, dedup, crossDedup, notExists.bindType(MINUS)));
                 }
             }
         }

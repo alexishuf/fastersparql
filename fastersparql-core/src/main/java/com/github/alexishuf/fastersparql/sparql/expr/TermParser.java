@@ -1,29 +1,57 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.sparql.RDFTypes;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.RopeWrapper;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.alphabet;
-import static com.github.alexishuf.fastersparql.client.util.Skip.skip;
-import static com.github.alexishuf.fastersparql.sparql.RDFTypes.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Lit.FALSE;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Lit.TRUE;
+import java.util.Arrays;
 
-@SuppressWarnings({"StringEquality", "BooleanMethodIsAlwaysInverted"})
+import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
+import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_string;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.Range;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.invert;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+@SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public final class TermParser {
-    private String in;
+    private static final byte[][][] QUOTE_BYTES = {
+            {null, {'\''}, null, {'\'', '\'', '\''}},
+            {null, {'"' }, null, {'"',  '"',  '"'}},
+    };
+    private static final byte[] NT_QUOTE = QUOTE_BYTES[1][1];
+    private static final int[] REL_IRI_ALLOWED = invert(alphabet("<>(){|", Rope.Range.WS));
+
+    private Rope in;
     private int begin, end;
-    private int termEnd, colon, qLen, lexEnd, dtBegin, langBegin;
+    private int stopped, colon, qLen, lexEnd, dtBegin, langBegin, dtId;
+    private Result result;
     private @Nullable Term term;
-    private @Nullable String dt;
 
     /**
      * Map from prefixes (e.g., @code rdf:) to IRI prefixes (e.g., {@code http://...}) used to
      * parse prefixed IRIs (e.g., {@code rdf:type}) and datatypes (e.g., {@code "1"^^xsd:int}).
      */
-    public PrefixMap prefixMap = PrefixMap.builtin();
+    public PrefixMap prefixMap = new PrefixMap().resetToBuiltin();
+
+    public enum Result {
+        /** An RDF term in valid N-Triples syntax. */
+        NT,
+        /** A SPARQL ?- or $-prefixed variable */
+        VAR,
+        /** Unquoted boolean/numeric literal, [], (), '-quoted, '''-quoted or """-quoted strings */
+        TTL,
+        /** Not a valid term (e.g., unexpected suffixes, unclosed quotes before EOF) */
+        MALFORMED,
+        /** Met EOF before the term was complete (i.e., unclosed <, '\'' or '"') */
+        EOF;
+
+        public boolean isValid() { return this.ordinal() < 3; }
+    }
 
     /**
      * Tries to parse the SPARQL RDF term or var that starts at index {@code begin} in
@@ -36,91 +64,106 @@ public final class TermParser {
      *         false, {@code in.substring(begins)} starts with an invalid term or something
      *         that is not a term (e.g., an SPARQL expression operator such as {@code <}.
      */
-    public boolean parse(String in, int begin, int end) {
+    public Result parse(Rope in, int begin, int end) {
         this.in = in;
-        termEnd = this.begin = begin;
+        stopped = this.begin = begin;
         this.end = end;
-        colon = qLen = lexEnd = dtBegin = langBegin = -1;
-        dt = null;
+        colon = qLen = lexEnd = dtBegin = langBegin = dtId = -1;
         term = null;
-        if (begin >= end)
-            return false;
-        char f = in.charAt(begin);
-        switch (f) {
-            case '<' -> {
-                int e = skip(in, begin+1, end, IRIREF);
-                termEnd = e == end || in.charAt(e) != '>' ? begin : e+1;
+        if (end <= begin)
+            return result = Result.EOF; //no term has less than 2 chars
+        byte f = in.get(begin);
+        return result = switch (f) {
+            default       -> parseTTL();
+            case '$', '?' -> {
+                stopped = in.skip(begin+1, end, VARNAME);
+                yield stopped-(begin) > 1 ? Result.VAR : Result.EOF;
             }
-            case '$', '?' -> termEnd = skip(in, begin+1, end, VARNAME);
+            case '<'      -> {
+                if (begin+1 >= end) yield Result.EOF;
+                stopped = in.requireThenSkipUntil(begin+1, end, LETTERS, '>');
+                if      (stopped == end)         yield Result.EOF;
+                else if (in.get(stopped) != '>') yield ambiguousIri(in, begin, end);
+                ++stopped;
+                yield Result.NT;
+            }
             case '"', '\'' -> {
+                if (begin+1 >= end) yield Result.EOF;
                 int p = begin+1;
-                qLen = p + 1 < end && in.charAt(p) == f && in.charAt(p+1) == f ? 3 : 1;
-                String quote = qLen == 3 ? (f == '"' ? "\"\"\"" : "'''") : (f == '"' ? "\"" : "'");
+                qLen = p + 1 < end && in.get(p) == f && in.get(p+1) == f ? 3 : 1;
+                byte[] quote = QUOTE_BYTES[f == '"' ? 1 : 0][qLen];
                 p = begin+qLen;
-                lexEnd = in.indexOf(quote, p);
-                while (lexEnd != -1) {
-                    while (lexEnd+qLen < end && in.charAt(lexEnd+qLen) == f) ++lexEnd;
-                    int escapes = 0;
-                    for (int i = lexEnd - 1, startLex = begin + qLen; i >= startLex; i--) {
-                        if (in.charAt(i) == '\\') ++escapes;
-                        else break;
-                    }
-                    if (escapes % 2 == 0) break;
-                    lexEnd = in.indexOf(quote, lexEnd + qLen);
-                }
-                if (lexEnd == -1) {
-                    termEnd = begin; //unclosed quote
+                if ((lexEnd = in.skipUntilUnescaped(p, end, quote)) >= end) {
+                    stopped = end;
+                    yield Result.EOF;  //unclosed quote
                 } else if (lexEnd+qLen == end) { // no datatype/language
-                    dt = string;
-                    termEnd = end;
+                    stopped = end;
                 } else { // may have @ or ^^
-                    switch (in.charAt(p = lexEnd+qLen)) {
-                        default  -> { // no @/^^
-                            dt = string;
-                            termEnd = p;
-                        }
+                    if (qLen > 1)
+                        checkAmbiguousLexEnd();
+                    switch (in.get(p = lexEnd+qLen)) {
+                        default  -> stopped = p; // no @/^^
                         case '@' -> {
-                            dt = langString;
-                            termEnd = skip(in, langBegin = ++p, end, LANGTAG);
-                            if (termEnd == langBegin)
-                                termEnd = begin; // empty lang tag
+                            if ((stopped = in.skip(langBegin = ++p, end, LANGTAG)) == langBegin)
+                                yield Result.MALFORMED; // empty lang tag
                         }
                         case '^' -> {
                             dtBegin = p+2;
-                            if (dtBegin >= end || in.charAt(++p) != '^') {
-                                termEnd = begin; // syntax error
-                            } else if (in.charAt(++p) == '<') { // may have long <datatype>
-                                int e = skip(in, p+1, end, IRIREF);
-                                if (e < end && in.charAt(e) == '>') { // has <datatype>
-                                    // http://www.w3.org/2001/XMLSchema#string
-                                    if (e-p-1 == 39 && in.regionMatches(p+31, "ma#string", 0, 9))
-                                        dt = string;
-                                    termEnd = e+1;
-                                } else {
-                                    termEnd = begin;
-                                }
-                            } else if (!parsePrefixed(p)) {
-                                termEnd = begin; // unknown prefix or syntax error
+                            if (dtBegin >= end || in.get(++p) != '^') {
+                                stopped = p;
+                                yield Result.MALFORMED;
+                            }
+                            if (in.get(++p) == '<') { // may have long <datatype>
+                                stopped = in.requireThenSkipUntil(++p, end, LETTERS, '>');
+                                if      (stopped == p && p < end) yield Result.MALFORMED;
+                                else if (stopped < end)           ++stopped;
+                                else                              yield Result.EOF;
+                            } else {
+                                Term dt = parsePrefixed(p); //validates and sets termEnd
+                                if (dt != null) dtId = dt.asKnownDatatypeId();
+                                else            yield stopped == end ? Result.EOF : Result.MALFORMED;
                             }
                         }
                     }
                 }
+                yield quote != NT_QUOTE || dtId != -1 ? Result.TTL : Result.NT;
             }
-            default -> {
-                if (!parsePrefixed(begin) && !parseRdfType()) {
-                    if ((NUMBER_FIRST[f>>6] & (1L << f)) != 0) {
-                        parseNumber();
-                    } else if (!parseBool(TRUE) && !parseBool(FALSE)) {
-                        termEnd = begin; // no term
-                    }
-                } // else: colon and termEnd set
-            }
-        }
-        return termEnd > begin;
+        };
+    }
+
+    private Result ambiguousIri(Rope in, int begin, int end) {
+        int close = in.skipUntil(begin, end, '>');
+        if (close == end)
+            return Result.EOF;
+        if (Rope.contains(BAD_IRI_START, in.get(begin+1)))
+            return Result.MALFORMED;
+        if (in.skip(begin+1, close, REL_IRI_ALLOWED) != close)
+            return Result.MALFORMED;
+        stopped = close+1;
+        return Result.NT;
+    }
+
+    private void checkAmbiguousLexEnd() {
+        byte quote = in.get(begin);
+        int max = Math.min(end, lexEnd+qLen+1);
+        for (int i = lexEnd+qLen; i < max && in.get(i) == quote; ++i)
+            ++lexEnd;
+    }
+
+    /** Call {@link TermParser#parse(Rope, int, int)} and return {@link TermParser#asTerm()}. */
+    public Term parseTerm(Rope in) {
+        parse(in, 0, in.len());
+        return asTerm();
+    }
+
+    /** Call {@link TermParser#parse(Rope, int, int)} and return {@link TermParser#asTerm()}. */
+    public Term parseTerm(Rope in, int begin, int end) {
+        parse(in, begin, end);
+        return asTerm();
     }
 
     /**
-     * Given a previous {@code true}-returning call to {@link TermParser#parse(String, int, int)},
+     * Given a previous {@code true}-returning call to {@link TermParser#parse(Rope, int, int)},
      * get a {@link Term} for the parsed RDF term/var.
      *
      * @return a {@link Term} instance
@@ -128,237 +171,207 @@ public final class TermParser {
      *                              not defined in {@code prefixMap}
      */
     public Term asTerm() {
-        if (termEnd == begin)
-            throw explain();
-        char f = in.charAt(begin);
-        return switch (in.charAt(begin)) {
-            case '?', '$' -> new Term.Var(in.substring(begin, termEnd));
-            case '<' -> new Term.IRI(in.substring(begin, termEnd));
-            case '"', '\'' -> {
-                String lex, dt = this.dt, lang = null;
-                if (f == '"' && qLen == 1) {
-                    lex = in.substring(begin+1, lexEnd);
-                } else {
-                    var sb = new StringBuilder(lexEnd - begin + 10);
-                    escapeForSingleDQuote(sb);
-                    lex = sb.toString();
+        if      (!result.isValid()) throw explain();
+        else if (term != null)      return term;
+        byte f = in.get(begin);
+        return switch (f) {
+            case '?', '$', '<' -> Term.valueOf(in, begin, stopped);
+            case '\'' -> singleQuotedAsTerm();
+            case '"' -> {
+                int id = dtId;
+                if (dtBegin >= 0) {
+                    if (id ==  0) yield handleExoticPrefixedDatatype();
+                    if (id == -1) id = RopeDict.internDatatype(in, lexEnd + qLen - 1, stopped);
                 }
-                if (langBegin != -1) {
-                    lang = in.substring(langBegin, termEnd);
-                    dt = langString;
-                } else if (dt == null) {
-                    if (colon == -1) {
-                        // <http://www.w3.org/2001/XMLSchema#>
-                        if (dtBegin+34 < termEnd && in.charAt(dtBegin+32) == 'a'
-                                                 && in.charAt(dtBegin+33) == '#') {
-                            dt = RDFTypes.fromXsdLocal(in, dtBegin+34, termEnd-1);
-                        } else {
-                            dt = in.substring(dtBegin+1, termEnd-1);
-                        }
-                    } else {
-                        dt = expandPrefixed(dtBegin, prefixMap);
-                    }
-                }
-                yield new Term.Lit(lex, dt, lang);
+                if (qLen > 1 || id == DT_string)
+                    yield coldDoubleQuotedAsTerm(id);
+                yield id > 0 ? typed(in, begin, lexEnd, id) : copy(in, begin, stopped);
             }
-            default -> {
-                if  (term != null)
-                    yield term;
-                else if (dt != null)
-                    yield new Term.Lit(in.substring(begin, termEnd), dt, null);
-                else if (f == '_' && colon == begin+1)
-                    yield new Term.BNode(in.substring(begin, termEnd));
-                else if (colon >= 0)
-                    yield new Term.IRI(expandPrefixed(begin, prefixMap));
-                throw new InvalidTermException(in, begin, "Not an RDF term/var");
-            }
+            default -> Term.typed(RopeWrapper.asOpenLitU8(in, begin, stopped), dtId);
         };
     }
 
+    private Term coldDoubleQuotedAsTerm(int id) {
+        if (id == DT_string)
+            return qLen > 1 ? wrap(escaped(lexEnd+1)) : copy(in, begin, lexEnd+1);
+        else if (qLen > 1)
+            return id > 0 ? typed(escaped(lexEnd), id) : wrap(escaped(stopped));
+        throw new IllegalStateException(); // precondition (id == DT_string || qLen > 1) violated
+    }
+
+    private Term singleQuotedAsTerm() {
+        int id = dtId;
+        if (dtBegin >= 0) {
+            if (id ==  0) return handleExoticPrefixedDatatype();
+            if (id == -1) {
+                int suffixBegin = lexEnd + qLen - 1;
+                var suffix = new ByteRope(stopped - suffixBegin)
+                        .append('"').append(in, suffixBegin+1, stopped);
+                id = RopeDict.internDatatype(suffix, 0, suffix.len);
+            }
+        }
+        int until = id == DT_string ? lexEnd+qLen : (id > 0 ? lexEnd : stopped);
+        byte[] lex = escaped(until);
+        return until == lexEnd ? typed(lex, id) : wrap(lex);
+    }
+
     /**
-     * If {@link TermParser#parse(String, int, int)} returned {@code true}, this is the
+     * If {@link TermParser#parse(Rope, int, int)} returned {@code true}, this is the
      * index of the first char in {@code in} that is not part of the RDF term/var
      * (can be {@code in.length()}).
      */
-    public int termEnd() { return termEnd; }
+    public int termEnd() { return result != null && result.isValid() ? stopped : begin; }
 
-    private static final long[] NT_FIRST = alphabet("?$<").get();
-    /**
-     * Whether the term parsed by the last {@link TermParser#parse(String, int, int)} call is
-     * in N-Triples syntax or is a var.
-     */
-    public boolean isNTOrVar() {
-        char f = begin < end ? in.charAt(begin) : '~';
-        return (NT_FIRST[f>>6] & (1L << f)) != 0
-                || (f == '_' && colon == begin+1)
-                || (f == '"' && qLen == 1 && colon == -1);
+    private Term handleExoticPrefixedDatatype() {
+        byte[] lex = escaped(lexEnd);
+        Term iri = prefixMap.expand(in, lexEnd + 3/*"^^*/, stopped);
+        if (iri == null)
+            throw new InvalidTermException(in, dtBegin, "Unresolved prefix");
+        ByteRope full = new ByteRope(lex.length + 3 + iri.len());
+        full.append(lex).append(ByteRope.DT_MID).append(iri);
+        return Term.valueOf(full);
     }
 
-    /**
-     * Get the term parsed by the previous {@link TermParser#parse(String, int, int)} call
-     * in N-Triples syntax. This will expand prefixes and convert long-quoted or
-     * {@code '}-quoted literals into literals quoted with a single {@code "}.
-     *
-     * @return the term in N-Triples syntax or the var in SPARQL syntax
-     * @throws InvalidTermException if the previous {@link TermParser#parse(String, int, int)}
-     *                              call returned false or if the term uses a prefix not
-     *                              defined in {@code prefixMap}
-     */
-    public String asNT() {
-        if (termEnd == begin) {
-            throw explain();
-        } else if (isNTOrVar()) {
-            if (begin == 0 && termEnd == in.length())
-                return in; // if the term spans the whole input, do not call substring
-            // substring() will not be a no-op. Do not waster space/time on ^^<...#string>
-            return in.substring(begin, dt == string ? lexEnd+1 : termEnd);
-        }
-        return buildNT();
-    }
+    private static final int[] UNTIL_EXPLAIN_STOP = invert(alphabet(",\t\r\n", Range.WS));
 
-    private String buildNT() {
-        char f = in.charAt(begin);
+    public InvalidTermException explain() {
+        if (result.isValid())
+            throw new IllegalStateException("Cannot explain() successful parse");
+        Rope sub = in.sub(begin, in.skip(stopped, end, UNTIL_EXPLAIN_STOP));
+        if (colon != -1)
+            return new InvalidTermException(sub, colon-begin, "Unknown prefix "+in.sub(begin, colon));
+        else if (end <= begin)
+            return new InvalidTermException(sub, 0, "EOF: end <= begin");
+        byte f = in.get(begin);
         return switch (f) {
+            case '<' -> {
+                if (result == Result.EOF)
+                    yield new InvalidTermException(sub, 0, "No matching > for <");
+                else if (begin+1 == end || !Rope.contains(LETTERS, in.get(begin+1)))
+                    yield new InvalidTermException(sub, 1, "< followed by non-letter: likely a comparison operator");
+                yield new InvalidTermException(sub, 0, "Malformed IRI");
+            }
             case '"', '\'' -> {
-                var sb = new StringBuilder(termEnd - begin + (colon == -1 ? 10 : 55));
-                sb.append('"');
-                if (f == '"' && qLen == 1)
-                    sb.append(in, begin + 1, lexEnd);
-                else
-                    escapeForSingleDQuote(sb);
-                sb.append('"');
-                if (langBegin != -1) {
-                    sb.append('@').append(in, langBegin, termEnd);
-                } else if (dtBegin != -1 && dt != string) {
-                    if (colon == -1)
-                        sb.append("^^").append(in, dtBegin, termEnd);
-                    else
-                        sb.append("^^<").append(expandPrefixed(dtBegin, prefixMap)).append('>');
+                if (lexEnd+qLen > end) {
+                    String quote = new String(QUOTE_BYTES[f == '"' ? 1 : 0][qLen]);
+                    yield new InvalidTermException(sub, 0, "No closing "+quote);
+                } else if (langBegin != -1) {
+                    yield new InvalidTermException(sub, langBegin-begin, "Empty lang tag");
+                } else if (dtBegin >= end || in.get(dtBegin-1) != '^') {
+                    yield new InvalidTermException(sub, dtBegin-1-begin, "Incomplete ^^< suffix");
+                } else if (in.get(dtBegin) == '<') {
+                    if (result == Result.MALFORMED)
+                        yield new InvalidTermException(sub, dtBegin-begin, "malformed datatype IRI "+in.sub(dtBegin, stopped));
+                    yield new InvalidTermException(sub, dtBegin-begin, "No matching > for datatype IRI");
+                } else {
+                    yield new InvalidTermException(sub, dtBegin-begin, "Could not parse prefixed datatype IRI");
                 }
-                yield sb.toString();
             }
             default -> {
-                if (term != null)
-                    yield term.nt();
-                if (dt != null)
-                    yield '"' + in.substring(begin, termEnd) + "\"^^<" + dt + '>';
-                if (colon >= 0)
-                    yield '<' + expandPrefixed(begin, prefixMap) + '>';
-                throw new InvalidTermException(in, begin, "Not an RDF term/var");
+                int colon = in.skip(begin, end, PN_PREFIX);
+                if (colon != end && in.get(colon) == ':')
+                    yield new InvalidTermException(sub, 0, "Could not resolve prefix "+in.sub(begin, colon+1));
+                if (Rope.contains(NUMBER_FIRST, f))
+                    yield new InvalidTermException(sub, 0, "Could not parse numeric value");
+                yield new InvalidTermException(sub, 0, "Unrecognized token (not a prefixed name)");
             }
         };
     }
 
-    private InvalidTermException explain() {
-        if (colon != -1)
-            return new InvalidTermException(in, colon, "Unknown prefix");
-        return new InvalidTermException(in, begin, "No RDF term/var");
+    private @Nullable Term parsePrefixed(int p) {
+        int colon = in.skip(p, end, PN_PREFIX);
+        if (colon == end || in.get(colon) != ':')
+            return null;
+        boolean bn = colon == p + 1 && in.get(p) == '_';
+        int e = in.skip(colon+1, end, bn ? BN_LABEL : PN_LOCAL);
+        while (in.get(e-1) == '.' && in.get(e-2) != '\\') --e; // remove trailing .
+        stopped = e;
+        return bn ? Term.valueOf(in, p, e) :  prefixMap.expand(in, p, colon, e);
     }
 
-    private String expandPrefixed(int pos, PrefixMap prefixMap) {
-        String iri = prefixMap.expandPrefixed(in, pos, colon, termEnd);
-        if (iri == null)
-            throw new InvalidTermException(in, pos, "Unknown prefix");
-        return iri;
-    }
+    private static final byte[]  TRUE_utf8 = "true".getBytes(UTF_8);
+    private static final byte[] FALSE_utf8 = "false".getBytes(UTF_8);
 
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    private boolean parsePrefixed(int p) {
-        int i = skip(in, p, end, PN_PREFIX);
-        if (i < end && in.charAt(i) == ':') {
-            colon = i;
-            boolean bNode = i == p+1 && in.charAt(p) == '_';
-            if (!bNode && prefixMap.uri(in, p, i) == null) {
-                termEnd = begin; // unmapped prefix
-                return true;
+    private Result parseTTL() {
+        assert begin != end;
+        if ((term = parsePrefixed(begin)) != null)
+            return Result.TTL;
+        byte first = in.get(begin);
+        if (first == 'a') {
+            if (Rope.contains(A_FOLLOW, begin+1 == end ? (byte)'.' : in.get(begin+1))) {
+                stopped = begin+1;
+                term = RDF_TYPE;
+                return Result.TTL;
             }
-            while (true) {
-                i = skip(in, i, end, PN_LOCAL);
-                if (i >= end || in.charAt(i) != '\\')
-                    break;
-                i += 2;
-            }
-            //un-parse unescaped trailing '.'
-            for (int b = colon+2; i > b && in.charAt(i-1) == '.' && in.charAt(i-2) != '\\';)
-                --i;
-            // remember that if we parsed a xsd:string datatype
-            if (p>begin && colon==p+3 && in.regionMatches(p, "xsd:string", 0, 10))
-                dt = string;
-            termEnd = i;
-            return true;
-        }
-        return false;
-    }
-
-    private boolean parseBool(Term.Lit b) {
-        String lex = b.lexical();
-        int len = lex.length();
-        if (in.regionMatches(begin, lex, 0, len)) {
-            int i = begin+len;
-            char f = i < end ? in.charAt(i) : ' ';
-            if ((BOOL_FOLLOW[f>>6] & (1L << f)) != 0) {
-                termEnd = i;
-                term = b;
-                return true;
-            }
-        }
-        return false;
-    }
-    private static final long[] A_FOLLOW = alphabet(",.;/(){}[]!=<>").whitespace().control().get();
-    private boolean parseRdfType() {
-        if (begin < end && in.charAt(begin) == 'a') {
-            char n = begin+1 >= end ? '.' : in.charAt(begin+1);
-            if ((A_FOLLOW[n>>6] & (1L << n)) != 0) {
-                term = Term.IRI.type;
-                termEnd = begin+1;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void parseNumber() {
-        byte dot = 0, exp = 0, expSig = 0;
-        int p = begin + switch (in.charAt(begin)) {
-            case '+', '-' -> 1;
-            default       -> 0;
-        };
-        for (; p < end; ++p) {
-            char c = in.charAt(p);
-            boolean quit = switch (c) {
-                case '.' -> exp == 1 || dot++ == 1;
-                case 'e', 'E' -> exp++ == 1;
-                case '+', '-' -> exp == 0 || expSig++ == 1;
-                default -> c < '0' || c > '9';
+            return Result.MALFORMED;
+        } else if (Rope.contains(NUMBER_FIRST, first)) {
+            byte dot = 0, exp = 0, expSig = 0;
+            int p = begin + switch (in.get(begin)) {
+                case '+', '-' -> 1;
+                default       -> 0;
             };
-            if (quit)
-                break;
+            for (; p < end; ++p) {
+                byte c = in.get(p);
+                boolean quit = switch (c) {
+                    case '.' -> exp == 1 || dot++ == 1;
+                    case 'e', 'E' -> exp++ == 1;
+                    case '+', '-' -> exp == 0 || expSig++ == 1;
+                    default -> c < '0' || c > '9';
+                };
+                if (quit)
+                    break;
+            }
+            if (p <= end && p > begin && in.get(p-1) == '.') {
+                --p;
+                --dot;
+            }
+            stopped = p;
+            dtId = 0;
+            if (exp == 1)
+                dtId = RopeDict.DT_DOUBLE;
+            else if (dot >= 1)
+                dtId = RopeDict.DT_decimal;
+            else if (exp == 0 && expSig == 0 && dot == 0)
+                dtId = RopeDict.DT_integer;
+            return dtId == 0 ? Result.MALFORMED : Result.TTL;
+        } else if (first == 't' && in.has(begin, TRUE_utf8) && (begin+4 == end || contains(BOOL_FOLLOW, in.get(begin+4)))) {
+            stopped = begin+4;
+            term = TRUE;
+            return Result.TTL;
+        } else if (first == 'f' && in.has(begin, FALSE_utf8) && (begin+5 == end || contains(BOOL_FOLLOW, in.get(begin+5)))) {
+            stopped = begin+5;
+            term = FALSE;
+            return Result.TTL;
+        } else {
+            return Result.MALFORMED;
         }
-        if (p <= end && p > begin && in.charAt(p-1) == '.') {
-            --p;
-            --dot;
-        }
-        termEnd = p;
-        if (exp == 1)
-            dt = DOUBLE;
-        else if (dot >= 1)
-            dt = decimal;
-        else if (exp == 0 && expSig == 0 && dot == 0)
-            dt = integer;
-        else
-            termEnd = begin;
     }
 
-    private void escapeForSingleDQuote(StringBuilder sb) {
-        for (int i = begin+qLen; i < lexEnd; i++) {
-            char c = in.charAt(i);
-            switch (c) {
-                case '\\' -> sb.append('\\').append(in.charAt(++i));
-                case  '"' -> sb.append('\\').append('"');
-                case '\r' -> sb.append('\\').append('r');
-                case '\n' -> sb.append('\\').append('n');
-                default   -> sb.append(c);
+    private byte[] escaped(int until) {
+        int[] escapeNames = in.get(begin) == '"' ? LIT_ESCAPE_NAME : LIT_ESCAPE_NAME_SINGLE;
+        var esc = new ByteRope(1 + lexEnd-(begin+qLen)
+                                         + (until > lexEnd ? 1 + until-(lexEnd+qLen) : 0));
+        esc.append('"');
+        for (int consumed = begin+qLen, i; consumed < lexEnd; consumed = i+1) {
+            i = in.skip(consumed, lexEnd, UNTIL_LIT_ESCAPED);
+            esc.append(in, consumed, i);
+            if (i < lexEnd) {
+                byte c = in.get(i);
+                esc.append('\\').append((byte)switch (c) {
+                    case '\\' -> i+1 < lexEnd && contains(escapeNames, in.get(i+1))
+                               ? in.get(++i) : '\\';
+                    case '\r' -> 'r';
+                    case '\n' -> 'n';
+                    default -> c;
+                });
             }
         }
+        if (until > lexEnd) {
+            esc.append('"');
+            int begin = lexEnd+qLen;
+            if (begin < until)
+                esc.append(in, lexEnd + qLen, until);
+        }
+        return esc.utf8.length == esc.len ? esc.utf8 : Arrays.copyOf(esc.utf8, esc.len);
     }
 }

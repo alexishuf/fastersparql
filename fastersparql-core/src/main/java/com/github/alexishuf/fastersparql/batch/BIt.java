@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.calledmethods.qual.CalledMethods;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -12,11 +13,53 @@ import java.util.stream.StreamSupport;
 
 import static java.util.Spliterator.IMMUTABLE;
 import static java.util.Spliterators.spliteratorUnknownSize;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public interface BIt<T> extends Iterator<T>, AutoCloseable {
-    /** {@link Class} of elements produced by this iterator. */
-    Class<T> elementClass();
+    /**
+     * Preferred value for {@link BIt#minWait(long, TimeUnit)}, in milliseconds.
+     *
+     * <p>The default is zero (any non-empty batch is ready for consumption, nullifying the
+     * semantics of {@link BIt#minBatch(int)}), to avoid introducing compounding unexpected
+     * latencies. This value is used</p>
+     */
+    int PREFERRED_MIN_WAIT_MS = 4;
+    int PREFERRED_MAX_WAIT_MS = 16;
+
+    /**
+     * Preferred {@link BIt#minBatch(int)} value if values above 1 (the default) are possible.
+     *
+     * <p>This default is based on two typical properties of x86 CPUs:</p>
+     *
+     * <ol>
+     *     <li>Cache lines have 64 bytes</li>
+     *     <li>Cache lines are fetched/evicted/invalidated in pairs</li>
+     * </ol>
+     *
+     * <p>ON the software side, the following is assumed:</p>
+     * <ol>
+     *     <li>Consumers of BIT will be bottlenecked by RAM (i.e., they are not doing expensive
+     *         processing on each {@link Batch} item</li>
+     *     <li>The JVM will be using compressed pointers</li>
+     *     <li>The JVM overhead for an array (including the {@code length}) is 24 bytes</li>
+     * </ol>
+     *
+     * Thus, seeking to keep {@link BIt#nextBatch()} latency low, this number tries to
+     * fill 4 cache lines with the {@link Batch#array}. Since we cannot guarantee the actual memory
+     * address is 128-aligned, we can at least expect that for at least 2 cache lines in the
+     * middle of the array there will be no false sharing (which requires implicit synchronization
+     * between CPU-level threads).
+     */
+    int PREFERRED_MIN_BATCH = (4*64-24)/4;
+
+    /**
+     * Preferred value for {@link BIt#maxBatch(int)}.
+     */
+    int DEF_MAX_BATCH = 1<<16;
+
+    /** Set of methods to manipulate elements produced by this iterator. */
+    RowType<T> rowType();
 
     /**
      * If {@code T} represents something akin to rows in a table, this returns the
@@ -122,13 +165,45 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      */
     @This BIt<T> tempEager();
 
+    /**
+     * Sets min/max batch size and batch wait to preferred values. This will introduce a
+     * delay per {@link BIt#nextBatch()} call of at least {@link BIt#PREFERRED_MIN_WAIT_MS} and
+     * at most {@link BIt#PREFERRED_MAX_WAIT_MS}.
+     *
+     * <p>Equivalent to:</p>
+     * <pre>
+     *     minBatch(Bit.PREFERRED_MIN_BATCH);
+     *     if (maxBatch() < Bit.DEF_MAX_BATCH)
+     *         maxBatch(Bit.DEF_MAX_BATCH);
+     *     minWait(Bit.PREFERRED_MIN_WAIT_MS, MILLISECONDS);
+     *     maxWait(Bit.PREFERRED_MAX_WAIT_MS, MILLISECONDS);
+     * </pre>
+     *
+     * @return {@code this}, for chaining.
+     */
+    default BIt<T> preferred() {
+        minBatch(PREFERRED_MIN_BATCH);
+        if (maxBatch() < DEF_MAX_BATCH)
+            maxBatch(DEF_MAX_BATCH);
+        minWait(PREFERRED_MIN_WAIT_MS, MILLISECONDS);
+        maxWait(PREFERRED_MAX_WAIT_MS, MILLISECONDS);
+        return this;
+    }
+
 
     /**
-     * EQuivalent to setting {@link BIt#minBatch(int)} to {@code 1} and both
-     * {@link BIt#minWait(long, TimeUnit)} and {@link BIt#maxWait(long, TimeUnit)} to {@code 0}.
-     * @return {@code this} {@link BIt}, for chaining.
+     * Sets min/max batch size and wait time so that {@link BIt#nextBatch()} delay is minimal.
+     *
+     * <p>Equivalent to:</p>
+     *
+     * <pre>
+     *     minBatch(1)
+     *     minWait(0, NANOSECONDS)
+     *     maxWait(0, NANOSECONDS)
+     * </pre>
+     * @return {@code this}, for chaining.
      */
-    default @This BIt<T> eager() {//noinspection resource
+    default @This BIt<T> eager() {
         return minBatch(1).minWait(0, NANOSECONDS).maxWait(0, NANOSECONDS);
     }
 
@@ -193,7 +268,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @param batch the batch whose ownership will be returned to this {@link BIt}
      * @return {@code true} iff ownership of {@code batch} has been taken by this {@link BIt}.
      */
-    boolean recycle(Batch<T> batch);
+    default boolean recycle(Batch<T> batch) { return false; }
 
     /** Drain all remaining items into {@code dest} */
     default <Coll extends Collection<? super T>> Coll drainTo(Coll dest) {
@@ -222,12 +297,12 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * well as resources (opn files and connections) may be safely closed.
      *
      * <p>Calling {@code nextBatch()} after this method will result in a
-     * {@link BItClosedException}.</p>
+     * {@link BItReadClosedException}.</p>
      *
      * <p>The cleanup performed by this method occurs implicitly if the {@link BIt} is
      * consumed until its end with {@code nextBatch()}/{@code next()} calls. However, if the
      * cleanup is implicit, subsequent {@code nextBatch()} calls will simply return empty batches
-     * instead of raising an {@link BItClosedException}.</p>
+     * instead of raising an {@link BItReadClosedException}.</p>
      */
     @Override void close();
 }

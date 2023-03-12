@@ -1,11 +1,11 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
+import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import static com.github.alexishuf.fastersparql.client.util.HeaderUtils.sanitizeHeaderName;
+import static com.github.alexishuf.fastersparql.util.HeaderUtils.sanitizeHeaderName;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -28,7 +28,7 @@ class HeaderUtilsTest {
             "X Rate ",
     })
     public void testSanitizeInvalidHeaderName(String input) {
-        assertThrows(SparqlClientInvalidArgument.class, () -> sanitizeHeaderName(input));
+        assertThrows(FSInvalidArgument.class, () -> sanitizeHeaderName(input));
     }
 
     @ParameterizedTest
@@ -47,12 +47,14 @@ class HeaderUtilsTest {
             " Accept | accept"
     })
     public void testSanitizeHeaderName(String dataString) {
-        String[] data = dataString.split(" *\\| *");
-        assertEquals(data[1], sanitizeHeaderName(data[0]));
+        String[] strings = dataString.split(" *\\| *");
+        var expected = strings[1];
+        var input    = strings[0];
+        assertEquals(expected, sanitizeHeaderName(input));
     }
 
     @Test
     public void testNullHeaderName() {
-        assertThrows(SparqlClientInvalidArgument.class, () -> sanitizeHeaderName(null));
+        assertThrows(FSInvalidArgument.class, () -> sanitizeHeaderName(null));
     }
 }

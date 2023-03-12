@@ -1,25 +1,25 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
-import com.github.alexishuf.fastersparql.operators.DummySparqlClient;
-import com.github.alexishuf.fastersparql.operators.FSOps;
-import com.github.alexishuf.fastersparql.operators.plan.Query;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.client.DummySparqlClient.DUMMY;
 import static java.util.Arrays.asList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class PlanBindTest {
-    private static final DummySparqlClient<String[], String, byte[]> client = new DummySparqlClient<>(ArrayRow.STRING, byte[].class);
-
     @SuppressWarnings("unused") static Stream<Arguments> testBind() {
         return Stream.of(
                 // use left[0] without changing right projection
@@ -40,17 +40,17 @@ class PlanBindTest {
         ).map(l -> arguments(
                 l.get(0), // rightSparql
                 Vars.of(l.get(1).split(",")), //leftVars
-                l.get(2).split(","), //leftRow
+                Term.termList(l.get(2).split(",")), //leftRow
                 l.get(3) //expectedSparql
         ));
     }
 
     @ParameterizedTest @MethodSource
-    void testBind(String rightSparql, Vars leftVars, String[] leftRow,
+    void testBind(String rightSparql, Vars leftVars, List<Term> leftRow,
                   String expectedSparql) {
-        var right = FSOps.query(client, rightSparql);
-        var binding = new RowBinding<>(ArrayRow.STRING, leftVars).row(leftRow);
-        var bound = (Query<String[], String>)right.bind(binding);
+        var right = FS.query(DUMMY, rightSparql);
+        var binding = new RowBinding<>(RowType.LIST, leftVars).row(leftRow);
+        var bound = (Query)right.bound(binding);
         assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
     }
 }

@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -17,36 +17,17 @@ public abstract class Binding {
     /** Get the number of vars in this binding */
     public final int size() { return vars.size(); }
 
-    /**
-     * Get the RDF term bound to the given var, in N-Triples syntax.
-     *
-     * @param var the var name, without leading '?'.
-     * @return {@code null} if {@code var} is not mapped in this {@link Binding}, else the mapped
-     *         N-Triples representation of an RDF term, which may also be {@code null}
-     */
-    public final @Nullable String get(String var) {
-        int i = vars.indexOf(var);
+    /** Get the {@link Term} bound to the given var or {@code null} if var is not bound. */
+    public final @Nullable Term get(Rope varOrVarName) {
+        int i = vars.indexOf(varOrVarName);
         return i < 0 ? null : get(i);
     }
 
-    /**
-     * Get the RDF term bound to the given var as an {@link Term} instance. If it is not
-     * already stored as a {@link Term} parse its N-Triples representation using the given
-     * {@link TermParser}.
-     *
-     * @param var the var name
-     * @return A {@link Term} or {@code null} if var is not mapped or mapped to null.
-     */
-    public @Nullable Term parse(String var) {
-        int i = vars.indexOf(var);
-        if (i < 0)
-            return null;
-        String nt = get(i);
-        if (nt == null)
-            return null;
-        TermParser termParser = new TermParser();
-        termParser.parse(nt, 0, nt.length());
-        return termParser.asTerm();
+    /** If {@code term} is var that is bound, get the value, else return {@code term} itself. */
+    public final Term getIf(Term term) {
+        int i = vars.indexOf(term);
+        Term bound = i < 0 ? null : get(i);
+        return bound == null ? term : bound;
     }
 
     /**
@@ -56,7 +37,16 @@ public abstract class Binding {
      * @return Mapped N-Triples representation of the value bound to the i-th var.
      * @throws IndexOutOfBoundsException if {@code i < 0 || i >= size()}
      */
-    public abstract @Nullable String get(int i);
+    public abstract @Nullable Term get(int i);
+
+    /** Whether no var in this binding has a value associated, i.e., {@code get(i)==null}
+     *  for every {@code i} in {@code [0, size())}. */
+    public final boolean isUnbound() {
+        for (int i = 0, n = size(); i < n; i++) {
+            if (get(i) != null) return false;
+        }
+        return true;
+    }
 
     /**
      * Maps the {@code i}-th variable to {@code null}
@@ -67,6 +57,13 @@ public abstract class Binding {
      */
     public final Binding clear(int i) { return set(i, null); }
 
+    /** Removes all mappings to values in this {@link Binding}, i.e., call {@code clear(i)}
+     *  for every {@code i} in {@code [0,size())}. */
+    public void clear() {
+        for (int i = 0; i < size(); i++)
+            clear(i);
+    }
+
     /**
      * Maps {@code var} to {@code null}
      *
@@ -74,7 +71,7 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IllegalArgumentException if {@code var} is unknown to this {@link Binding}
      */
-    public final Binding clear(String var) { return set(var, null); }
+    public final Binding clear(Rope var) { return set(var, null); }
 
     /**
      * Maps the {@code i}-th variable to {@code value}.
@@ -84,7 +81,7 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IndexOutOfBoundsException if {@code i < 0 || i > size()}.
      */
-    public abstract Binding set(int i, @Nullable String value);
+    public abstract Binding set(int i, @Nullable Term value);
 
     /**
      * Maps {@code var} to {@code value}.
@@ -94,7 +91,7 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IllegalArgumentException if {@code var} is not known to this {@link Binding}
      */
-    public final Binding set(String var, @Nullable String value) {
+    public final Binding set(Rope var, @Nullable Term value) {
         int i = vars.indexOf(var);
         if (i == -1)
             throw new IllegalArgumentException("var="+var+" is not present in "+this);
@@ -123,8 +120,8 @@ public abstract class Binding {
     @Override public final int hashCode() {
         int hash = vars.hashCode();
         for (int i = 0, size = size(); i < size; i++) {
-            String nt = get(i);
-            hash = 31*hash + (nt == null ? 0 : nt.hashCode());
+            var term = get(i);
+            hash = 31*hash + (term == null ? 0 : term.hashCode());
         }
         return hash;
     }

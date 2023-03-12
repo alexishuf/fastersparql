@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.time.Duration;
@@ -9,19 +10,19 @@ import java.util.concurrent.TimeUnit;
 
 public abstract class DelegatedControlBIt<T, S> implements BIt<T> {
     protected final BIt<S> delegate;
-    protected final Class<T> elementClass;
+    protected final RowType<T> rowType;
     protected final Vars vars;
 
-    public DelegatedControlBIt(BIt<S> delegate, Class<T> elementClass, Vars vars) {
+    public DelegatedControlBIt(BIt<S> delegate, RowType<T> rowType, Vars vars) {
         this.delegate = delegate;
-        this.elementClass = elementClass;
+        this.rowType = rowType;
         this.vars = vars;
     }
 
     public BIt<S> delegate() { return delegate; }
 
-    @Override public final Class<T>     elementClass() { return elementClass; }
-    @Override public final Vars vars()         { return vars; }
+    @Override public RowType<T> rowType() { return rowType; }
+    @Override public final Vars vars()    { return vars; }
 
     protected String toStringNoArgs() {
         String name = getClass().getSimpleName();

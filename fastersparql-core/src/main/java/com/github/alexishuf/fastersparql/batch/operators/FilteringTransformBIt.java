@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
-import com.github.alexishuf.fastersparql.batch.BItClosedException;
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.reflect.Array;
@@ -17,9 +17,9 @@ public abstract class FilteringTransformBIt<O, I> extends DelegatedControlBIt<O,
     private final boolean sameType;
     private @Nullable Batch<O> partial, recycled;
 
-    public FilteringTransformBIt(BIt<I> in, Class<O> elementClass, Vars vars) {
-        super(in, elementClass, vars);
-        sameType = in.elementClass().equals(elementClass);
+    public FilteringTransformBIt(BIt<I> in, RowType<O> rowType, Vars vars) {
+        super(in, rowType, vars);
+        sameType = in.rowType().equals(rowType);
     }
 
     /**
@@ -31,11 +31,11 @@ public abstract class FilteringTransformBIt<O, I> extends DelegatedControlBIt<O,
      */
     protected final Batch<O> recycleOrAlloc(int minCapacity) {
         if (recycled == null) {
-            return new Batch<>(elementClass, minCapacity);
+            return new Batch<>(rowType.rowClass, minCapacity);
         } else {
             Batch<O> b = recycled;
             if (b.array.length < minCapacity) //noinspection unchecked
-                b.array = (O[]) Array.newInstance(elementClass, minCapacity);
+                b.array = (O[]) Array.newInstance(rowType.rowClass, minCapacity);
             b.size = 0;
             recycled = null;
             return b;
@@ -78,8 +78,7 @@ public abstract class FilteringTransformBIt<O, I> extends DelegatedControlBIt<O,
      *              to complete iteration.
      */
     protected void cleanup(Throwable error) {
-        if (error != null && !BItClosedException.isClosedExceptionFor(error, delegate))
-            delegate.close();
+        delegate.close();
     }
 
     @Override public final Batch<O> nextBatch() {

@@ -1,9 +1,10 @@
 package com.github.alexishuf.fastersparql;
 
-import com.github.alexishuf.fastersparql.client.FS;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
-import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +26,11 @@ class FusekiContainerTest {
 
     @Test
     void test() {
-        try (var client = FS.clientFor(FUSEKI.asEndpoint(SparqlConfiguration.EMPTY), ListRow.STRING)) {
-            var sparql = new OpaqueSparqlQuery("SELECT * WHERE { ?x <http://xmlns.com/foaf/0.1/age> 23 }");
-            var actual = client.query(sparql).toSet();
-            var expected = Set.of(List.of("<http://example.org/Alice>"),
-                                  List.of("<http://example.org/Eric>"));
+        try (var client = FS.clientFor(FUSEKI.asEndpoint(SparqlConfiguration.EMPTY))) {
+            var sparql = new OpaqueSparqlQuery(new ByteRope("SELECT * WHERE { ?x <http://xmlns.com/foaf/0.1/age> 23 }"));
+            var actual = client.query(RowType.LIST, sparql).toSet();
+            var expected = Set.of(List.of(Term.valueOf("<http://example.org/Alice>")),
+                                  List.of(Term.valueOf("<http://example.org/Eric>")));
             assertEquals(expected, actual);
         }
     }

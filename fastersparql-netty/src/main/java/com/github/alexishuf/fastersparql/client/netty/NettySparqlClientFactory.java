@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
-import com.github.alexishuf.fastersparql.client.parser.fragment.FragmentParser;
 
 public class NettySparqlClientFactory implements SparqlClientFactory {
     @Override public String tag() {
@@ -20,11 +18,10 @@ public class NettySparqlClientFactory implements SparqlClientFactory {
         return endpoint.protocol() != Protocol.FILE;
     }
 
-    @Override
-    public <R, I, F> SparqlClient<R, I, F> createFor(SparqlEndpoint endpoint, RowType<R, I> rowType, FragmentParser<F> fragmentParser) {
+    @Override public SparqlClient createFor(SparqlEndpoint endpoint) {
         if (endpoint.protocol().isWebSocket())
-            return new NettyWebSocketSparqlClient<>(endpoint, rowType, fragmentParser);
-        return new NettySparqlClient<>(endpoint, rowType, fragmentParser);
+            return new NettyWsSparqlClient(endpoint);
+        return new NettySparqlClient(endpoint);
     }
 
     @Override public String toString() { return "NettySparqlClientFactory"; }

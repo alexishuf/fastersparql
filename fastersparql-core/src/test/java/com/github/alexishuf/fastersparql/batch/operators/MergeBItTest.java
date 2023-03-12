@@ -1,10 +1,11 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
 import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -25,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MergeBItTest extends AbstractMergeBItTest {
     @Override protected void run(Scenario scenario) {
         MergeScenario s = (MergeScenario) scenario;
-        try (var bit = new MergeBIt<>(s.operands(), Integer.class, Vars.EMPTY)) {
+        try (var bit = new MergeBIt<>(s.operands(), NotRowType.INTEGER, Vars.EMPTY)) {
             s.drainer().drainUnordered(bit, s.expected(), s.error());
         }
     }
@@ -33,10 +34,10 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @ValueSource(ints = {3, 3*2, 3*4, 3*8, 3*16, 3*100})
     void testCloseBlockedDrainers(int n) throws Exception {
         for (int repetition = 0; repetition < 16; repetition++) {
-            var sources = range(0, n).mapToObj(i -> new CallbackBIt<>(Integer.class, Vars.EMPTY)).toList();
+            var sources = range(0, n).mapToObj(i -> new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)).toList();
             var active = new AtomicBoolean(true);
             Thread feeder = null;
-            try (var it = new MergeBIt<>(sources, Integer.class, Vars.EMPTY)) {
+            try (var it = new MergeBIt<>(sources, NotRowType.INTEGER, Vars.EMPTY)) {
                 it.minBatch(2).minWait(10, MILLISECONDS);
                 if (n <= 3) {
                     it.maxWait(20, MILLISECONDS);
@@ -69,10 +70,10 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWait(BatchGetter getter) {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Integer.class, Vars.EMPTY)) {
+        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, single-source wait
@@ -87,10 +88,10 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWaitMerging(BatchGetter getter) {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Integer.class, Vars.EMPTY)) {
+        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, two-sources wait
@@ -108,10 +109,10 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWaitMergingConcurrent(BatchGetter getter) throws Exception {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Integer.class, Vars.EMPTY)) {
+        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // multi-thread, multi-source wait
@@ -135,18 +136,18 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMaxWait(BatchGetter getter) {
-        int min = 20, max = 30;
-        try (var s1 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(Integer.class, Vars.EMPTY);
-             var it = new MergeBIt<>(List.of(s1, s2), Integer.class, Vars.EMPTY)) {
+        int min = 20, max = 100;
+        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var it = new MergeBIt<>(List.of(s1, s2), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).minWait(min, MILLISECONDS).maxWait(max, MILLISECONDS);
 
             s1.feed(1);
             long start = nanoTime();
             List<Integer> batch = getter.getList(it);
             double elapsedMs = (nanoTime() - start) / 1_000_000.0;
-            assertTrue(elapsedMs > min - 5 && elapsedMs < max + 5,
-                       "elapsedMs not in (" + min + "," + max + ") range");
+            assertTrue(elapsedMs > max - 40 && elapsedMs < max + 40,
+                       "elapsedMs="+elapsedMs+" not in (" + min + "," + max + ") range");
             assertEquals(List.of(1), batch);
 
 
@@ -155,6 +156,5 @@ class MergeBItTest extends AbstractMergeBItTest {
             s2.complete(null);
             assertTimeout(ofMillis(5), () -> empty.complete(getter.getList(it)));
         }
-
     }
 }

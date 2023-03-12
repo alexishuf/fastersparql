@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.sparql;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 
 public interface SparqlQuery {
     /** Gets the SPARQL representation of this query. The representation may use prefixed IRIs. */
-    String sparql();
+    Rope sparql();
 
     /** Whether this is a {@code CONSTRUCT} or {@code DESCRIBE} query */
     boolean isGraph();
@@ -36,7 +37,7 @@ public interface SparqlQuery {
      *
      * @return a {@link SparqlQuery} for the bound query or {@code this} if no var is bound.
      */
-    SparqlQuery bind(Binding binding);
+    SparqlQuery bound(Binding binding);
 
     enum DistinctType {
         STRONG,

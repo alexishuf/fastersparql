@@ -80,7 +80,7 @@ public abstract class AbstractBItTest {
                 int min = batchSizes.min(), max = batchSizes.max();
                 if (max > 2 && max < Integer.MAX_VALUE && max > size)
                     continue; // skip since batch will never be filled
-                for (Exception error : Arrays.asList(null, new Exception("on purpose"))) {
+                for (Exception error : Arrays.asList(null, new RuntimeException("on purpose"))) {
                     for (var d : BItDrainer.all())
                         list.add(new Scenario(size, min, max, d, error));
                 }

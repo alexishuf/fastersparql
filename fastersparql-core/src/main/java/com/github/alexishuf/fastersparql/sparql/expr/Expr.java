@@ -1,10 +1,15 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.UriUtils;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -12,14 +17,20 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.*;
-import static com.github.alexishuf.fastersparql.sparql.RDFTypes.langString;
-import static com.github.alexishuf.fastersparql.sparql.RDFTypes.string;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Lit.*;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.of;
+import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
+import static com.github.alexishuf.fastersparql.model.row.RowType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
 
-public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
+@SuppressWarnings("SpellCheckingInspection")
+public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     int argCount();
     Expr arg(int i);
+
+    /** Get the set of vars mentioned anywhere in this expression */
+    Vars vars();
 
     /** Evaluate this expression assigning the given values to variables.
      *  If some variable is not bound at evaluation time, an {@link UnboundVarException}
@@ -30,23 +41,25 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     /** Get an {@link Expr} with all vars in {@code binding} replaced with their
      *  mapped non-var {@link Term}s. If no var in {@code binding} appears in this {@link Expr},
      *  returns {@code this}*/
-    Expr bind(Binding binding);
+    Expr bound(Binding binding);
+
+    /** Whether this is an RDF value (a non-variable {@link Term}). */
+    default boolean isGround() { return this instanceof Term t && !t.isVar(); }
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
-    void toSparql(StringBuilder out);
+    void toSparql(ByteRope out, PrefixAssigner prefixAssigner);
 
-    default <T extends Expr> T evalAs(Binding binding, Class<T> cls) {
-        Term value = eval(binding);
-        if (!cls.isInstance(value))
-            throw new InvalidExprTypeException(this, value, cls.getSimpleName());
-        //noinspection unchecked
-        return (T)value;
+    default Rope toSparql() {
+        ByteRope r = new ByteRope();
+        toSparql(r, PrefixAssigner.NOP);
+        return r;
     }
 
     /** Add all vars used in {@code e} to {@code out} and return the number of vars
      *  effectively added (i.e., not already present in {@code out}). */
     static int addVars(Vars out, Expr e) {
-        if (e instanceof Var v) return out.add(v.name()) ? 1 : 0;
+        if (e instanceof Term t)
+            return t.type() == Type.VAR && out.add(t) ? 1 : 0;
         int added = 0;
         for (int i = 0, n = e.argCount(); i < n; i++)
             added += addVars(out, e.arg(i));
@@ -59,44 +72,75 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
      * <p>This is not a {@link Function} since it has no {@link Expr} instances as arguments and
      * its semantics is not that of a {@link Supplier}.</p>
      */
-    record Exists<R, I>(Plan<R, I> filter, boolean negate) implements Expr {
+    record Exists(Plan filter, boolean negate) implements Expr {
         @Override public int argCount() { return 0; }
 
         @Override public Expr arg(int i) { throw new IndexOutOfBoundsException(i); }
 
+        @Override public Vars vars() {
+            return filter.allVars();
+        }
+
         @Override public Term eval(Binding binding) {
-            try (var it = filter.bind(binding).execute().eager()) {
+            try (var it = filter.bound(binding).execute(COMPRESSED).eager()) {
                 return it.hasNext() ^ negate ? TRUE : FALSE;
             }
         }
 
-        @Override public Expr bind(Binding binding) {
-            return new Exists<>(filter.bind(binding), negate);
+        @Override public Expr bound(Binding binding) {
+            Plan bound = filter.bound(binding);
+            return bound == filter ? this : new Exists(bound, negate);
         }
 
-        @Override public void toSparql(StringBuilder out) {
+        private static final byte[] NOT_EXISTS = "NOT EXISTS".getBytes(UTF_8);
+        private static final byte[] EXISTS = "EXISTS".getBytes(UTF_8);
+        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
             int indent;
-            if (out.isEmpty()) {
+            if (out.len() == 0) {
                 indent = 0;
             } else {
-                int lineBegin = reverseSkip(out, 0, out.length(), UNTIL_LF);
-                if (out.charAt(lineBegin) == '\n') lineBegin++;
-                indent = skip(out, lineBegin, out.length(), WS) - lineBegin;
+                int lineBegin = out.reverseSkip(0, out.len, Rope.UNTIL_LF);
+                if (out.get(lineBegin) == '\n') lineBegin++;
+                indent = out.skip(lineBegin, out.len(), Rope.WS) - lineBegin;
             }
-            out.append(negate ? "NOT EXISTS" : "EXISTS");
-            filter.groupGraphPattern(out, indent);
+            out.append(negate ? NOT_EXISTS : EXISTS);
+            filter.groupGraphPattern(out, indent, assigner);
         }
 
         @Override public String toString() {
-            var sb = new StringBuilder(256);
-            toSparql(sb);
+            var sb = new ByteRope(256);
+            toSparql(sb, PrefixAssigner.NOP);
             return sb.toString();
         }
     }
 
+    private static Term requireLiteral(Expr expr, Binding binding) {
+        Term term = expr.eval(binding);
+        if (term.type() != Type.LIT)
+            throw new InvalidExprTypeException(expr, term, "literal");
+        return term;
+    }
+
+    private static Rope requireLexical(Expr expr, Binding binding) {
+        Term term = expr.eval(binding);
+        Rope lex = term.escapedLexical();
+        if (lex == null)
+            throw new InvalidExprTypeException(expr, term, "literal");
+        return lex;
+    }
+
     sealed abstract class Function implements Expr permits BinaryFunction, NAryFunction, Supplier, UnaryFunction {
         private int hash;
+        private @MonotonicNonNull Vars vars;
+
         public String sparqlName() { return getClass().getSimpleName().toLowerCase(); }
+
+        @Override public Vars vars() {
+            if (vars != null) return vars;
+            Vars.Mutable set = new Vars.Mutable(10);
+            Expr.addVars(set, this);
+            return vars = set;
+        }
 
         @Override public boolean equals(Object obj) {
             if (obj == this) return true;
@@ -120,16 +164,20 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
             return hash;
         }
 
-        @Override public void toSparql(StringBuilder out) {
+        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
             out.append(sparqlName()).append('(');
-            for (int i = 0, n = argCount(); i < n; i++)
-                arg(i).toSparql(i == 0 ? out : out.append(", "));
+            int n = argCount();
+            for (int i = 0; i < n; i++) {
+                arg(i).toSparql(out, assigner);
+                out.append(',').append(' ');
+            }
+            if (n > 0) out.unAppend(2);
             out.append(')');
         }
 
-        @Override public String toString() {
-            StringBuilder sb = new StringBuilder(33);
-            toSparql(sb);
+        @Override public final String toString() {
+            var sb = new ByteRope(33);
+            toSparql(sb, PrefixAssigner.NOP);
             return sb.toString();
         }
     }
@@ -137,7 +185,7 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     non-sealed abstract class Supplier extends Function {
         @Override public int argCount() { return 0; }
         @Override public Expr arg(int i) { throw new IndexOutOfBoundsException(i); }
-        @Override public Expr bind(Binding binding) { return this; }
+        @Override public Expr bound(Binding binding) { return this; }
     }
     non-sealed abstract class UnaryFunction extends Function {
         protected final Expr in;
@@ -148,7 +196,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
 
     abstract class UnaryOperator extends UnaryFunction {
         public UnaryOperator(Expr in) { super(in); }
-        @Override public String toString() { return sparqlName()+arg(0); }
+
+        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
+            in.toSparql(out.append(sparqlName()), assigner);
+        }
     }
 
     non-sealed abstract class BinaryFunction extends Function {
@@ -161,21 +212,16 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
                 case 0 -> l; case 1 -> r; default -> throw new IndexOutOfBoundsException(i);
             };
         }
-
-        @Override public String toString() {
-            return sparqlName() + '(' + l + ", " + r + ')';
-        }
     }
 
     abstract class BinaryOperator extends BinaryFunction {
         public BinaryOperator(Expr l, Expr r) { super(l, r); }
-        @Override public String toString() { return "(" + l + ' ' + sparqlName() + ' ' + r + ')'; }
 
-        @Override public void toSparql(StringBuilder out) {
+        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
             out.append('(');
-            l.toSparql(out);
+            l.toSparql(out, assigner);
             out.append(' ').append(sparqlName()).append(' ');
-            r.toSparql(out);
+            r.toSparql(out, assigner);
             out.append(')');
         }
     }
@@ -191,18 +237,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
             Expr[] bound = new Expr[args.length];
             boolean change = false;
             for (int i = 0; i < args.length; i++)
-                change |= (bound[i] = args[i].bind(binding)) != args[i];
+                change |= (bound[i] = args[i].bound(binding)) != args[i];
             return change ? bound : args;
-        }
-
-        @Override public String toString() {
-            var sb = new StringBuilder();
-            sb.append(sparqlName()).append('(');
-            for (int i = 0, n = argCount(); i < n; i++)
-                sb.append(arg(i)).append(", ");
-            if (sb.charAt(sb.length()-1) == ' ')
-                sb.setLength(sb.length()-2);
-            return sb.append(')').toString();
         }
     }
 
@@ -212,8 +248,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         @Override public Term eval(Binding b) {
             return l.eval(b).asBool() || r.eval(b).asBool() ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Or(bl, br);
         }
     }
@@ -224,8 +260,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         @Override public Term eval(Binding b) {
             return l.eval(b).asBool() && r.eval(b).asBool() ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new And(bl, br);
         }
     }
@@ -234,8 +270,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Eq(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "="; }
         @Override public Term eval(Binding b) { return l.eval(b).equals(r.eval(b)) ? TRUE : FALSE; }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Eq(bl, br);
         }
     }
@@ -244,8 +280,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Neq(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "!="; }
         @Override public Term eval(Binding b) { return l.eval(b).equals(r.eval(b)) ? FALSE : TRUE; }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Neq(bl, br);
         }
     }
@@ -254,10 +290,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Lt(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "<"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).compareTo(r.evalAs(b, Lit.class)) < 0 ? TRUE : FALSE;
+            return l.eval(b).compareTo(r.eval(b)) < 0 ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Lt(bl, br);
         }
     }
@@ -266,10 +302,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Gt(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return ">"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).compareTo(r.evalAs(b, Lit.class)) > 0 ? TRUE : FALSE;
+            return l.eval(b).compareTo(r.eval(b)) > 0 ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Gt(bl, br);
         }
     }
@@ -278,10 +314,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Lte(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "<="; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).compareTo(r.evalAs(b, Lit.class)) <= 0 ? TRUE : FALSE;
+            return l.eval(b).compareTo(r.eval(b)) <= 0 ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Lte(bl, br);
         }
     }
@@ -290,10 +326,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Gte(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return ">="; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).compareTo(r.evalAs(b, Lit.class)) >= 0 ? TRUE : FALSE;
+            return l.eval(b).compareTo(r.eval(b)) >= 0 ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Gte(bl, br);
         }
     }
@@ -301,9 +337,9 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Neg extends UnaryOperator {
         public Neg(Expr in) { super(in); }
         @Override public String sparqlName() { return "!"; }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).negate(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).negate(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Neg(b);
         }
     }
@@ -311,9 +347,9 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Minus extends UnaryOperator {
         public Minus(Expr in) { super(in); }
         @Override public String sparqlName() { return "-"; }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).negate(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).negate(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Minus(b);
         }
     }
@@ -322,10 +358,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Add(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "+"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).add(r.evalAs(b, Lit.class));
+            return l.eval(b).add(r.eval(b));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Add(bl, br);
         }
     }
@@ -334,10 +370,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Subtract(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "-"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).subtract(r.evalAs(b, Lit.class));
+            return l.eval(b).subtract(r.eval(b));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Subtract(bl, br);
         }
     }
@@ -346,10 +382,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Multiply(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "*"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).multiply(r.evalAs(b, Lit.class));
+            return l.eval(b).multiply(r.eval(b));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Multiply(bl, br);
         }
     }
@@ -358,10 +394,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Divide(Expr l, Expr r) { super(l, r); }
         @Override public String sparqlName() { return "/"; }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).divide(r.evalAs(b, Lit.class));
+            return l.eval(b).divide(r.eval(b));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Divide(bl, br);
         }
     }
@@ -374,7 +410,7 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
                 if (key.equals(args[1].eval(b))) return TRUE;
             return FALSE;
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new In(b);
         }
@@ -389,7 +425,7 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
                 if (key.equals(args[1].eval(b))) return FALSE;
             return TRUE;
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new NotIn(b);
         }
@@ -397,9 +433,22 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
 
     class Str extends UnaryFunction {
         public Str(Expr in) { super(in); }
-        @Override public Term eval(Binding b) { return in.eval(b).str(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) {
+            Term term = in.eval(b);
+            return switch (term.type()) {
+                case LIT -> {
+                    if (term.datatypeId() == RopeDict.DT_string)
+                        yield term;
+                    Rope lexical = term.escapedLexical();
+                    assert lexical != null;
+                    yield Term.plainString(lexical);
+                }
+                case IRI -> Term.plainString(term.sub(1, term.len()-1));
+                default -> throw new InvalidExprTypeException(in, term, "literal/IRI");
+            };
+        }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Str(b);
         }
     }
@@ -407,11 +456,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Lang extends UnaryFunction {
         public Lang(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
-            String lang = in.evalAs(binding, Lit.class).lang();
-            return lang == null ? EMPTY : Lit.valueOf(lang);
+            Term term = Expr.requireLiteral(in, binding);
+            Rope lang = term.lang();
+            return lang == null ? EMPTY_STRING : Term.plainString(lang);
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Lang(b);
         }
     }
@@ -419,10 +469,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Datatype extends UnaryFunction {
         public Datatype(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return Lit.valueOf(in.evalAs(b, Lit.class).datatype());
+            return Expr.requireLiteral(in, b).datatypeTerm();
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Datatype(b);
         }
     }
@@ -433,10 +483,15 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
             if (args.length > 1)
                 throw new IllegalArgumentException("BNode can take at most one argument");
         }
+        private static final byte[] BN_PREFIX = "_:".getBytes(UTF_8);
         @Override public Term eval(Binding binding) {
-            return new Term.BNode(args[0].evalAs(binding, Lit.class).lexical());
+            Term term = args[0].eval(binding);
+            Rope lex = term.escapedLexical();
+            if (lex == null || !lex.has(0, BN_PREFIX))
+                throw new InvalidExprTypeException(args[0], term, "literal with _:-prefixed lexical form");
+            return valueOf(lex, 0, lex.len());
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new MakeBNode(b);
         }
@@ -445,10 +500,11 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Bound extends UnaryFunction {
         public Bound(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return in instanceof Var v && b.get(v.name()) == null ? FALSE : TRUE;
+            Term term = in instanceof Term t ? t : in.eval(b);
+            return term.type() != Type.VAR || b.get(term) != null ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Bound(b);
         }
     }
@@ -457,49 +513,54 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Iri(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
             Term value = in.eval(binding);
-            if (value instanceof IRI) return value;
-            else if (value instanceof Lit l) return new IRI("<"+l.lexical()+">");
-            throw new InvalidExprTypeException(in, value, "IRI or string literal");
+            return switch (value.type()) {
+                case IRI -> value;
+                case LIT -> Term.iri(value.escapedLexical());
+                default -> throw new InvalidExprTypeException(in, value, "IRI or string literal");
+            };
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Iri(b);
         }
     }
 
     class Rand extends Supplier {
-        @Override public Term eval(Binding ignored) { return Lit.valueOf(Math.random()); }
+        @Override public Term eval(Binding ignored) {
+            byte[] u8 = ("\"" + Math.random()).getBytes(UTF_8);
+            return typed(u8, 0, u8.length, RopeDict.DT_DOUBLE);
+        }
     }
 
     class Abs extends UnaryFunction {
         public Abs(Expr in) { super(in); }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).abs(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).abs(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Abs(b);
         }
     }
     class Floor extends UnaryFunction {
         public Floor(Expr in) { super(in); }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).floor(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).floor(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Floor(b);
         }
     }
     class Ceil extends UnaryFunction {
         public Ceil(Expr in) { super(in); }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).ceil(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).ceil(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Ceil(b);
         }
     }
     class Round extends UnaryFunction {
         public Round(Expr in) { super(in); }
-        @Override public Term eval(Binding b) { return in.evalAs(b, Lit.class).round(); }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Term eval(Binding b) { return in.eval(b).round(); }
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Round(b);
         }
     }
@@ -507,15 +568,24 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Concat extends NAryFunction {
         public Concat(Expr[] args) { super(args); }
         @Override public Term eval(Binding binding) {
-            var sb = new StringBuilder();
-            Lit first = args[0].evalAs(binding, Lit.class);
-            sb.append(first.lexical());
-            for (int i = 1; i < args.length; i++)
-                sb.append(args[i].evalAs(binding, Lit.class).lexical());
-            String lang = first.lang();
-            return new Lit(sb.toString(), lang == null ? string : langString, lang);
+            ByteRope result = new ByteRope().append('"');
+            Term first = null;
+            for (Expr arg : args) {
+                Term term = Expr.requireLiteral(arg, binding);
+                if (first == null)
+                    first = term;
+                result.append(requireNonNull(term.escapedLexical()));
+            }
+            if (first == null)
+                return EMPTY_STRING;
+            int dt = first.datatypeId();
+            if (dt == RopeDict.DT_langString) {
+                result.append('"').append('@').append(requireNonNull(first.lang()));
+                return Term.wrap(result);
+            }
+            return Term.typed(result, dt);
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new Concat(b);
         }
@@ -524,10 +594,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strlen extends UnaryFunction {
         public Strlen(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
-            return valueOf(in.evalAs(binding, Lit.class).lexical().length());
+            return Term.typed(Expr.requireLexical(in, binding), DT_integer);
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Strlen(b);
         }
     }
@@ -535,11 +605,13 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class UCase extends UnaryFunction {
         public UCase(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
-            Lit lit = in.evalAs(binding, Lit.class);
-            return new Lit(lit.lexical().toUpperCase(), lit.datatype(), lit.lang());
+            Term lit = Expr.requireLiteral(in, binding);
+            Rope lex = lit.escapedLexical();
+            assert lex != null;
+            return lit.withLexical(new ByteRope(lex.toString().toUpperCase()));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new UCase(b);
         }
     }
@@ -547,11 +619,13 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class LCase extends UnaryFunction {
         public LCase(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
-            Lit lit = in.evalAs(binding, Lit.class);
-            return new Lit(lit.lexical().toLowerCase(), lit.datatype(), lit.lang());
+            Term lit = Expr.requireLiteral(in, binding);
+            Rope lex = lit.escapedLexical();
+            assert lex != null;
+            return lit.withLexical(new ByteRope(lex.toString().toLowerCase()));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new LCase(b);
         }
     }
@@ -560,14 +634,13 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         public Encode_for_uri(Expr in) { super(in); }
 
         @Override public Term eval(Binding binding) {
-            Lit lit = in.evalAs(binding, Lit.class);
-            String lex = lit.lexical();
-            String escaped = UriUtils.escapeQueryParam(lex);
-            //noinspection StringEquality
-            return escaped == lex ? lit : new Lit(escaped, lit.datatype(), lit.lang());
+            Term lit = Expr.requireLiteral(in, binding);
+            Rope lex = lit.escapedLexical();
+            Rope escaped = UriUtils.escapeQueryParam(lex);
+            return escaped == lex ? lit : lit.withLexical(escaped);
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new Encode_for_uri(b);
         }
     }
@@ -575,10 +648,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Contains extends BinaryFunction {
         public Contains(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).lexical().contains(r.evalAs(b, Lit.class).lexical()) ? TRUE : FALSE;
+            Rope lLex = requireLexical(l, b);
+            Rope rLex = requireLexical(r, b);
+            return lLex.skipUntil(0, lLex.len(), rLex) < lLex.len() ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Contains(bl, br);
         }
     }
@@ -586,10 +661,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strstarts extends BinaryFunction {
         public Strstarts(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).lexical().startsWith(r.evalAs(b, Lit.class).lexical()) ? TRUE : FALSE;
+            Rope lLex = requireLexical(l, b);
+            Rope rLex = requireLexical(r, b);
+            return lLex.has(0, rLex) ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strstarts(bl, br);
         }
     }
@@ -597,10 +674,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strends extends BinaryFunction {
         public Strends(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            return l.evalAs(b, Lit.class).lexical().endsWith(r.evalAs(b, Lit.class).lexical()) ? TRUE : FALSE;
+            Rope lLex = requireLexical(l, b);
+            Rope rLex = requireLexical(r, b);
+            return lLex.has(lLex.len()-rLex.len(), rLex) ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strends(bl, br);
         }
     }
@@ -608,12 +687,14 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strbefore extends BinaryFunction {
         public Strbefore(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            Lit outer = l.evalAs(b, Lit.class);
-            int i = outer.lexical().indexOf(r.evalAs(b, Lit.class).lexical());
-            return new Lit(outer.lexical().substring(0, i), outer.datatype(), outer.lang());
+            Term outerLit = Expr.requireLiteral(l, b);
+            Rope outer = requireNonNull(outerLit.escapedLexical());
+            Rope inner = requireLexical(r, b);
+            int i = outer.skipUntil(0, outer.len(), inner);
+            return outerLit.withLexical(outer.sub(0, i));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strbefore(bl, br);
         }
     }
@@ -621,14 +702,14 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strafter extends BinaryFunction {
         public Strafter(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            Lit outer = l.evalAs(b, Lit.class);
-            String inner = r.evalAs(b, Lit.class).lexical();
-            int i = outer.lexical().indexOf(inner);
-            String substring = outer.lexical().substring(i + inner.length());
-            return new Lit(substring, outer.datatype(), outer.lang());
+            Term outerLit = Expr.requireLiteral(l, b);
+            Rope outer = requireNonNull(outerLit.escapedLexical());
+            Rope inner = requireLexical(r, b);
+            int i = outer.skipUntil(0, outer.len(), inner);
+            return outerLit.withLexical(outer.sub(i+inner.len(), outer.len()));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strafter(bl, br);
         }
     }
@@ -636,9 +717,9 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Regex extends NAryFunction {
         static Pattern compile(Binding binding, Expr regex, @Nullable Expr flags) {
             try {
-                String regexStr = regex.evalAs(binding, Lit.class).lexical();
+                String regexStr = requireLexical(regex, binding).toString();
                 if (flags != null) {
-                    String flagsStr = flags.evalAs(binding, Lit.class).lexical();
+                    String flagsStr = requireLexical(flags, binding).toString();
                     //noinspection StringBufferReplaceableByString
                     regexStr = new StringBuilder().append('(').append('?').append(flagsStr).append(')').append(regexStr).toString();
                 }
@@ -653,19 +734,18 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
             super(args);
             if (args.length < 2 || args.length > 3)
                 throw new IllegalArgumentException("REGEX takes 2 or 3 arguments, got "+args.length);
-            Pattern rx = null;
-            try {
+            if (args[1].isGround() && (args.length < 3 || args[2].isGround()))
                 rx = compile(ArrayBinding.EMPTY, args[1], args.length > 2 ? args[2] : null);
-            } catch (UnboundVarException ignored) {}
-            this.rx = rx;
+            else
+                rx = null;
         }
 
         @Override public Term eval(Binding binding) {
-            String text = args[0].evalAs(binding, Lit.class).lexical();
+            String text = requireLexical(args[0], binding).toString();
             var p = rx != null ? rx : compile(binding, args[1], args.length > 2 ? args[2] : null);
             return p.matcher(text).find() ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new Regex(b);
         }
@@ -685,12 +765,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         }
         @Override public Term eval(Binding b) {
             var p = rx != null ? rx : Regex.compile(b, args[1], args.length > 3 ? args[3] : null);
-            Lit text = args[0].evalAs(b, Lit.class);
-            String lex = text.lexical();
-            String replacement = args[2].evalAs(b, Lit.class).lexical();
-            return new Lit(p.matcher(lex).replaceAll(replacement), text.datatype(), text.lang());
+            Term text = Expr.requireLiteral(args[0], b);
+            String lex = requireNonNull(text.escapedLexical()).toString();
+            String replacement = requireLexical(args[2], b).toString();
+            return text.withLexical(new ByteRope(p.matcher(lex).replaceAll(replacement)));
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new Replace(b);
         }
@@ -704,15 +784,16 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         }
 
         @Override public Term eval(Binding b) {
-            Lit text = args[0].evalAs(b, Lit.class);
-            String lexical = text.lexical();
-            int start = args[1].evalAs(b, Lit.class).asInt();
-            int end = lexical.length();
+            Term text = Expr.requireLiteral(args[0], b);
+            int start = args[1].eval(b).asInt();
+            Rope lex = text.escapedLexical();
+            assert lex != null;
+            int end = lex.len();
             if (args.length > 2)
-                end = start + args[2].evalAs(b, Lit.class).asInt();
-            return new Lit(lexical.substring(start, end), text.datatype(), text.lang());
+                end = start + args[2].eval(b).asInt();
+            return text.withLexical(lex.sub(start, end));
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new Substr(b);
         }
@@ -720,13 +801,13 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
 
     class Uuid extends Supplier {
         @Override public Term eval(Binding binding) {
-            return new Lit("<urn:uuid:"+ UUID.randomUUID()+">", string, null);
+            return Term.wrap(("<urn:uuid:" + UUID.randomUUID() + ">").getBytes(UTF_8));
         }
     }
 
     class Struuid extends Supplier {
         @Override public Term eval(Binding binding) {
-            return new Lit(UUID.randomUUID().toString(), string, null);
+            return Term.wrap(("\"" + UUID.randomUUID() + '"').getBytes(UTF_8));
         }
     }
 
@@ -747,7 +828,7 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
                 throw first;
             throw new IllegalArgumentException("All arguments evaluated with unexpected exceptions");
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new Coalesce(b);
         }
@@ -760,12 +841,12 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
                 throw new IllegalArgumentException("IF requires 3 arguments, got "+ args.length);
         }
         @Override public Term eval(Binding b) {
-            if (args[0].evalAs(b, Lit.class).asBool())
+            if (args[0].eval(b).asBool())
                 return args[1].eval(b);
             else
                 return args[2].eval(b);
         }
-        @Override public Expr bind(Binding binding) {
+        @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
             return b == args ? this : new If(b);
         }
@@ -774,12 +855,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strlang extends BinaryFunction {
         public Strlang(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            String lex = l.evalAs(b, Lit.class).lexical();
-            String lang = r.evalAs(b, Lit.class).lexical();
-            return new Lit(lex, langString, lang);
+            return Term.lang(requireLexical(l, b), requireLexical(r, b));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strlang(bl, br);
         }
     }
@@ -787,12 +866,15 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class Strdt extends BinaryFunction {
         public Strdt(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            String lexical = l.evalAs(b, Lit.class).lexical();
-            String dt = l.evalAs(b, IRI.class).str().lexical();
-            return new Lit(lexical, dt, null);
+            Term dtTerm = l.eval(b);
+            boolean isIRI = dtTerm.type() == Type.IRI;
+            return Term.valueOf(of(ByteRope.DQ, requireLexical(l, b),
+                                isIRI ? ByteRope.DT_MID : ByteRope.DT_MID_LT,
+                                isIRI ? dtTerm : dtTerm.escapedLexical(),
+                                isIRI ? ByteRope.EMPTY : ByteRope.GT));
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new Strdt(bl, br);
         }
     }
@@ -802,8 +884,8 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
         @Override public Term eval(Binding b) {
             return l.eval(b).equals(r.eval(b)) ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr bl = l.bind(binding), br = r.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr bl = l.bound(binding), br = r.bound(binding);
             return bl == l && br == r ? this : new SameTerm(bl, br);
         }
     }
@@ -811,10 +893,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class IsIRI extends UnaryFunction {
         public IsIRI(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return in.eval(b) instanceof IRI ? TRUE : FALSE;
+            return in.eval(b).type() == Type.IRI ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new IsIRI(b);
         }
     }
@@ -822,10 +904,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class IsBlank extends UnaryFunction {
         public IsBlank(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return in.eval(b) instanceof BNode ? TRUE : FALSE;
+            return in.eval(b).type() == Type.BLANK ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new IsBlank(b);
         }
     }
@@ -833,10 +915,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class IsLit extends UnaryFunction {
         public IsLit(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return in.eval(b) instanceof Lit ? TRUE : FALSE;
+            return in.eval(b).type() == Type.LIT ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new IsLit(b);
         }
     }
@@ -844,10 +926,10 @@ public sealed interface Expr permits Term, Expr.Function, Expr.Exists {
     class IsNumeric extends UnaryFunction {
         public IsNumeric(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
-            return in.eval(b) instanceof Lit l && l.asNumber() != null ? TRUE : FALSE;
+            return in.eval(b).asNumber() != null ? TRUE : FALSE;
         }
-        @Override public Expr bind(Binding binding) {
-            Expr b = in.bind(binding);
+        @Override public Expr bound(Binding binding) {
+            Expr b = in.bound(binding);
             return b == in ? this : new IsNumeric(b);
         }
     }

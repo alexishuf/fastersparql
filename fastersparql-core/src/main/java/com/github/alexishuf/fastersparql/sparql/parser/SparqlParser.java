@@ -1,45 +1,40 @@
 package com.github.alexishuf.fastersparql.sparql.parser;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
-import com.github.alexishuf.fastersparql.client.util.Merger;
-import com.github.alexishuf.fastersparql.client.util.Skip;
-import com.github.alexishuf.fastersparql.operators.FSOps;
-import com.github.alexishuf.fastersparql.operators.FSOpsProperties;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.operators.plan.Values;
 import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
-import com.github.alexishuf.fastersparql.sparql.expr.*;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Expr;
+import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.*;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class SparqlParser<R, I> {
-    private static final String BASE = ":BASE";
-    private static final long[] GROUP_FOLLOW = alphabet("{").whitespace().get();
-    private static final long[] VALUES_FOLLOW = alphabet("({").whitespace().get();
-    private static final long[] FILTER_FOLLOW = alphabet("(").whitespace().get();
+public class SparqlParser {
 
-    private final RowType<R, I> rt;
-    private String in;
+    private Rope in;
     private int pos, end;
     private final ExprParser exprParser = new ExprParser();
     private final GroupParser groupParser = new GroupParser();
     private boolean distinct, reduce;
     private long limit;
     private @Nullable Vars projection;
-
-    public SparqlParser(RowType<R, I> rt) {
-        this.exprParser.rowType(this.rt = rt);
-        this.exprParser.termParser.prefixMap = new PrefixMap().resetToBuiltin();
-    }
 
     /**
      * Parse a {@code {...}} block (i.e., {@code GroupGraphPattern} in SPARQL grammar).
@@ -53,20 +48,23 @@ public class SparqlParser<R, I> {
      *                  given {@code prefixMap} may redefine them.
      * @return The {@link Plan} equivalent to the block.
      */
-    public Plan<R, I> parseGroup(String sparql, int start, PrefixMap prefixMap) {
-        this.end = (this.in = sparql).length();
+    public Plan parseGroup(Rope sparql, int start, PrefixMap prefixMap) {
+        this.end = (this.in = sparql).len();
         this.pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin().addAll(prefixMap);
         exprParser.input(sparql);
-        require("{");
-        Plan<R, I> plan = new GroupParser().read();
-        require("}");
+        require('{');
+        Plan plan = new GroupParser().read();
+        require('}');
         return plan;
 
     }
-    public Plan<R, I> parse(String query, int start) {
-        end = (in = query).length();
-        pos = start;
+    public Plan parse(SparqlQuery q) {
+        return q instanceof Plan p ? p : parse(q.sparql());
+    }
+    public Plan parse(Rope query) {
+        end = (in = query).len();
+        pos = 0;
         exprParser.termParser.prefixMap.resetToBuiltin();
         groupParser.reset();
         distinct = reduce = false;
@@ -75,89 +73,71 @@ public class SparqlParser<R, I> {
         exprParser.input(query);
         pPrologue();
         pVerb();
-        require("{");
-        Plan<R, I> where = groupParser.read();
-        require("}");
+        require('{');
+        Plan where = groupParser.read();
+        require('}');
         return pModifiers(where);
     }
 
     /** Get index of the first char not consumed by this parser from its input string. */
     public int pos() { return pos; }
 
-    private InvalidSparqlException ex(String expected, int where) {
-        int acBegin = skip(in, where, end, WS), acEnd = skip(in, acBegin, end, UNTIL_WS);
-        String actual = acBegin >= end ? "EOF" : "\""+in.substring(acBegin, acEnd)+"\"";
-        throw new InvalidSparqlException("Expected "+expected+" at position "+where+", got "+actual);
+    private InvalidSparqlException ex(Object expected, int where) {
+        int acBegin = in.skipWS(where, end), acEnd = in.skip(acBegin, end, UNTIL_WS);
+        String actual = acBegin >= end ? "EOF" : "\""+in.sub(acBegin, acEnd)+"\"";
+        String ex = (expected instanceof byte[] ? new ByteRope(expected) : expected).toString();
+        throw new InvalidSparqlException("Expected "+ex+" at position "+where+", got "+actual);
     }
 
-    private I pTerm() {
+    private Term pTerm() {
         skipWS();
         var termParser = exprParser.termParser;
-        if (!termParser.parse(in, pos, end))
+        if (!termParser.parse(in, pos, end).isValid())
             throw ex("RDF term/var", pos);
-        I term;
-        if (termParser.isNTOrVar()) {
-            term = rt.fromNT(in, pos, termParser.termEnd());
-        } else {
-            String nt = termParser.asNT();
-            term = rt.fromNT(nt, 0, nt.length());
-        }
         pos = termParser.termEnd();
-        return term;
+        return termParser.asTerm();
     }
 
-    private String pVar() {
-        int begin = pos;
-        if (isVar(in, pos, end))
-            return in.substring(begin+1, pos = skip(in, begin+1, end, VARNAME));
-        throw ex("var", begin);
+    private Rope pVarName() {
+        int begin = pos+1, e = in.skip(begin, end, VARNAME);
+        while (e > begin && in.get(e) == '.') --e;
+        if (e == begin)
+            throw ex("non-empty var name", pos);
+        Rope rope = in.sub(begin, e);
+        pos = e;
+        return rope;
     }
 
-    private String pIri() {
+    private Term pIri() {
         skipWS();
-        if (pos < end && in.charAt(pos) == '<') {
-            int e = skip(in, pos+1, end, IRIREF);
-            if (e < end && in.charAt(e) == '>') {
-                String iri = in.substring(pos + 1, e);
-                pos = e+1;
-                return iri;
-            }
+        int begin = pos;
+        if (begin < end && in.get(begin) == '<') {
+            pos = in.requireThenSkipUntil(begin+1, end, Rope.LETTERS, '>');
+            if (pos > begin+1 && pos < end) return Term.valueOf(in, begin, ++pos);
         }
-        throw ex("IRI", pos);
+        throw ex("IRI", pos = begin);
     }
 
     private long pLong() {
         int begin = pos;
-        String str = in.substring(begin, pos = skip(in, pos, end, DIGITS));
+        Rope str = in.sub(begin, pos = in.skip(pos, end, DIGITS));
         try {
-            return Long.parseLong(str);
+            return Long.parseLong(str.toString());
         } catch (NumberFormatException e) { throw  ex("integer", begin); }
     }
 
-    private char skipWS() {
-        while (true) {
-            pos = skip(in, pos, end, Skip.WS);
-            char c = pos == end ? '\0' : in.charAt(pos);
-            if (c != '#') return c;
-            pos = skipUntil(in, pos, end, '\n');
-        }
+    private byte skipWS() {
+        while ((pos = in.skipWS(pos, end)) != end && in.get(pos) == '#')
+            pos = in.skipUntil(pos, end, '\n');
+        return pos == end ? 0 : in.get(pos);
     }
 
-    /** Whether the next token (after WS and comments) is {@code token} (case insensitive). */
-    private boolean peek(String token) {
+    /** If the next token is {@code token} update {@code pos} to consume it and return true. */
+    private boolean poll(byte[] token, int [] follow) {
         skipWS();
-        return in.regionMatches(true, pos, token, 0, token.length());
-    }
-
-    /**
-     * If the next token is {@code token} update {@code pos} to consume it.
-     *
-     * @return true iff next token was {@code token}.
-     */
-    private boolean poll(String token, long [] follow) {
-        if (peek(token)) {
-            int next = pos + token.length();
-            if (contains(follow, next < end ? in.charAt(next) : '\0')) {
+        if (in.hasAnyCase(pos, token)) {
+            int next = pos + token.length;
+            if (Rope.contains(follow, next == end ? 0 : in.get(next))) {
                 pos = next;
                 skipWS();
                 return true;
@@ -166,46 +146,71 @@ public class SparqlParser<R, I> {
         return false;
     }
 
+    /** If the next token is {@code token} update {@code pos} to consume it and return true. */
+    private boolean poll(char token) {
+        byte c = skipWS();
+        if (c >= 'a' && c <= 'z') c -= 'a'-'A';
+        if (c == token) {
+            ++pos;
+            skipWS();
+            return true;
+        }
+        return false;
+    }
+
     /** Consume {@code token} or raise an exception if next token is not {@code token}. */
-    private char require(String token) {
-        if (!peek(token))
+    private byte require(byte[] token) {
+        skipWS();
+        if (!in.hasAnyCase(pos, token))
             throw ex(token, pos);
-        pos += token.length();
+        pos += token.length;
         return skipWS();
     }
+
+    /** Consume {@code token} or raise an exception if next token is not {@code token}. */
+    private void require(char uppercase) {
+        byte c = skipWS();
+        if (c >= 'a' && c <= 'z') c -= 'a'-'A';
+        if (c != uppercase)
+            throw ex(new byte[]{c}, pos);
+        ++pos;
+        skipWS();
+    }
+
+    private static final Rope BASE = new ByteRope(":BASE");
 
     private void pPrologue() {
         PrefixMap prefixMap = exprParser.termParser.prefixMap;
         while (true) {
             switch (skipWS()) {
                 case 'p', 'P' -> {
-                    require("PREFIX");
+                    require(PREFIX_u8);
                     prefixMap.add(pPNameNS(), pIri());
-                    poll(".", ANY); // tolerate TTL '.' that should not be here
+                    poll('.'); // tolerate TTL '.' that should not be here
                 }
                 case 'b', 'B' -> {
-                    require("BASE");
+                    require(BASE_u8);
                     prefixMap.add(BASE, pIri());
-                    poll(".", ANY); // tolerate TTL '.' that should not be here
+                    poll('.'); // tolerate TTL '.' that should not be here
                 }
                 default -> { return; }
             }
         }
     }
 
-    private String pPNameNS() {
+    private Rope pPNameNS() {
         if (skipWS() == '\0')
             throw ex("PNAME_NS", pos);
-        int nameBegin = pos;
-        String name = in.substring(nameBegin, pos = skip(in, pos, end, PN_PREFIX));
-        require(":");
+        int begin = pos;
+        Rope name = in.sub(begin, pos = in.skip(pos, end, PN_PREFIX));
+        require(':');
         return name;
     }
 
     private void pVerb() {
         switch (skipWS()) {
             case 'a', 'A' -> {
-                require("ASK");
+                require(ASK_u8);
                 limit = 1;
                 projection = Vars.EMPTY;
                 reduce = true;
@@ -213,64 +218,61 @@ public class SparqlParser<R, I> {
             case 's', 'S' -> pSelect();
             default -> throw ex("SELECT or ASK", pos);
         }
-        char c = skipWS();
-        if      (c == 'W' || c == 'w') require("WHERE");
+        byte c = skipWS();
+        if      (c == 'W' || c == 'w') require(WHERE_u8);
         else if (c != '{')             throw ex("WHERE or {", pos);
     }
 
     private void pSelect() {
-        char c = require("SELECT");
+        byte c = require(SELECT_u8);
         while (true) {
             switch (c) {
                 case '{', 'w', 'W', '\0' -> { return; }
-                case 'd', 'D'            -> { require("DISTINCT"); distinct = true; }
-                case 'r', 'R'            -> { require("REDUCED"); reduce = true; }
+                case 'd', 'D'            -> { require(DISTINCT_u8); distinct = true; }
+                case 'r', 'R'            -> { require(REDUCED_u8); reduce = true; }
                 case '*'                 -> { pos++; projection = null; }
                 case '('                 -> throw new InvalidSparqlException("binding vars to expressions '(expr AS ?var)' is not supported yet");
                 case 'f', 'F'            -> {
-                    require("FROM");
+                    require(FROM_u8);
                     throw new InvalidSparqlException("FROM clauses are not supported");
                 }
                 case '?', '$'           -> {
                     if (projection == null)
                         projection = new Vars.Mutable(10);
-                    projection.add(pVar());
+                    projection.add(pVarName());
                 }
             }
             c = skipWS();
         }
     }
 
-    private Plan<R, I> pModifiers(Plan<R, I> where) {
+    private Plan pModifiers(Plan where) {
         long offset = 0;
-        for (char c = skipWS(); c != '\0'; c = skipWS()) {
+        for (byte c = skipWS(); c != '\0'; c = skipWS()) {
             switch (c) {
                 case 'l', 'L' -> {
-                    require("LIMIT");
+                    require(LIMIT_u8);
                     limit = pLong();
                 }
                 case 'o', 'O' -> {
-                    require("OFFSET");
+                    require(OFFSET_u8);
                     offset = pLong();
                 }
-                default -> {
-                    String actual = in.substring(pos, skip(in, pos, end, UNTIL_WS));
-                    throw new InvalidSparqlException("Unsupported modifier: "+actual);
-                }
+                default -> throw ex("LIMIT/OFFSET", pos);
             }
         }
         if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinct || reduce) {
-            int distinctWindow = reduce ? FSOpsProperties.reducedCapacity()
+            int distinctWindow = reduce ? FSProperties.reducedCapacity()
                                : distinct ? Integer.MAX_VALUE : 0;
-            return FSOps.modifiers(where, projection, distinctWindow, offset, limit, List.of());
+            return FS.modifiers(where, projection, distinctWindow, offset, limit, List.of());
         }
         return where;
     }
 
     private class GroupParser {
-        private final List<Plan<R, I>> operands = new ArrayList<>();
-        private List<Plan<R, I>> optionals, minus;
-        private Values<R, I> values;
+        private final List<Plan> operands = new ArrayList<>();
+        private List<Plan> optionals, minus;
+        private Values values;
         private List<Expr> filters;
 
         void reset() {
@@ -284,19 +286,19 @@ public class SparqlParser<R, I> {
                 filters.clear();
         }
 
-        Plan<R, I> read() {
+        Plan read() {
             if (skipWS() == '{')
                 operands.add(readBlock());
 
-            I s = null, p = null, o;
-            char c = skipWS();
+            Term s = null, p = null, o;
+            byte c = skipWS();
             while (c != '}' && c != '\0') {
                 if (s != null || p != null || !readModifiers()) {
                     // preceded by ','/';' or no modifiers
                     if (s == null) s = pTerm(); // read subject   if not retained (','/';')
                     if (p == null) p = pTerm(); // read predicate if not retained (',')
                     o = pTerm();
-                    operands.add(new TriplePattern<>(rt, s, p, o));
+                    operands.add(new TriplePattern(s, p, o));
                 } // else: parsed one or more modifiers, check for and consume '.'
                 switch ((c = skipWS())) {
                     case ',' -> { ++pos; c = skipWS();               } // next TP shares s & p
@@ -306,47 +308,47 @@ public class SparqlParser<R, I> {
                 }
             }
 
-            Plan<R, I> plan = switch (operands.size()) {
+            Plan plan = switch (operands.size()) {
                 case 0  -> throw ex("Non-empty GroupGraphPattern", pos);
                 case 1  -> operands.get(0);
-                default -> new Join<>(new ArrayList<>(operands), null, null);
+                case 2  -> new Join(null, operands.get(0), operands.get(1));
+                default -> new Join(null, operands.toArray(Plan[]::new));
             };
             plan = optionals == null ? plan : withOptionals(plan);
             plan = minus     == null ? plan : withMinus(plan);
             plan = filters   == null ? plan : withFilters(plan);
-            plan = values    == null ? plan : FSOps.join(values, plan);
+            plan = values    == null ? plan : FS.join(values, plan);
             return plan;
         }
 
         @RequiresNonNull("optionals")
-        private Plan<R, I> withOptionals(Plan<R, I> left) {
-            for (Plan<R, I> right : optionals)
-                left = FSOps.leftJoin(left, right);
+        private Plan withOptionals(Plan left) {
+            for (Plan right : optionals)
+                left = FS.leftJoin(left, right);
             return left;
         }
 
         @RequiresNonNull("minus")
-        private Plan<R, I> withMinus(Plan<R, I> left) {
-            for (Plan<R, I> right : minus)
-                left = FSOps.minus(left, right);
+        private Plan withMinus(Plan left) {
+            for (Plan right : minus)
+                left = FS.minus(left, right);
             return left;
         }
 
         @RequiresNonNull("filters")
-        private Plan<R, I> withFilters(Plan<R, I> left) {
-            List<Expr.Exists<R, I>> existsList = null;
+        private Plan withFilters(Plan left) {
+            List<Expr.Exists> existsList = null;
             List<Expr> filtersList = null;
             for (int i = 0; i < filters.size(); i++) {
                 Expr e = filters.get(i);
-                if (e instanceof Expr.Exists<?, ?> exists) {
+                if (e instanceof Expr.Exists exists) {
                     if (existsList == null) {
                         existsList = new ArrayList<>(filters.size());
                         filtersList = new ArrayList<>(filters.size());
                         for (int j = 0; j < i; j++)
                             filtersList.add(filters.get(i));
                     }
-                    //noinspection unchecked
-                    existsList.add((Expr.Exists<R, I>) exists);
+                    existsList.add(exists);
                 } else if (filtersList != null) {
                     filtersList.add(e);
                 }
@@ -354,20 +356,27 @@ public class SparqlParser<R, I> {
             if (filtersList == null)
                 filtersList = filters;
             if (!filtersList.isEmpty())
-                left = FSOps.filter(left, filtersList);
+                left = FS.filter(left, filtersList);
             if (existsList != null) {
-                for (Expr.Exists<R, I> ex : existsList)
-                    left = FSOps.exists(left, ex.negate(), ex.filter());
+                for (Expr.Exists ex : existsList)
+                    left = FS.exists(left, ex.negate(), ex.filter());
             }
             return left;
         }
 
+        private static final byte[] OPTIONAL_u8 = "OPTIONAL".getBytes(UTF_8);
+        private static final byte[] FILTER_u8 = "FILTER".getBytes(UTF_8);
+        private static final byte[] MINUS_u8 = "MINUS".getBytes(UTF_8);
+        private static final byte[] VALUES_u8 = "VALUES".getBytes(UTF_8);
+        private static final int[] GROUP_FOLLOW = alphabet("{", WS);
+        private static final int[] VALUES_FOLLOW = alphabet("({", WS);
+        private static final int[] FILTER_FOLLOW = alphabet("(", WS);
         private boolean readModifiers() {
             int startPos = pos;
             for (boolean has = true; has; ) {
                 switch (skipWS()) {
                     case 'o', 'O' -> {
-                        has = poll("OPTIONAL", GROUP_FOLLOW);
+                        has = poll(OPTIONAL_u8, GROUP_FOLLOW);
                         if (has) {
                             if (optionals == null)
                                 optionals = new ArrayList<>();
@@ -375,7 +384,7 @@ public class SparqlParser<R, I> {
                         }
                     }
                     case 'f', 'F' -> {
-                        has = poll("FILTER", FILTER_FOLLOW);
+                        has = poll(FILTER_u8, FILTER_FOLLOW);
                         if (has) {
                             if (filters == null)
                                 filters = new ArrayList<>();
@@ -384,7 +393,7 @@ public class SparqlParser<R, I> {
                         }
                     }
                     case 'm', 'M' -> {
-                        has = poll("MINUS", GROUP_FOLLOW);
+                        has = poll(MINUS_u8, GROUP_FOLLOW);
                         if (has) {
                             if (minus == null)
                                 minus = new ArrayList<>();
@@ -392,7 +401,7 @@ public class SparqlParser<R, I> {
                         }
                     }
                     case 'v', 'V' -> {
-                        has = poll("VALUES", VALUES_FOLLOW);
+                        has = poll(VALUES_u8, VALUES_FOLLOW);
                         if (has)
                             mergeValues(readValues());
                     }
@@ -402,28 +411,27 @@ public class SparqlParser<R, I> {
             return pos != startPos;
         }
 
-        private Values<R, I> readValues() {
-            require("(");
+        private Values readValues() {
+            require('(');
             var vars = new Vars.Mutable(10);
-            while (pos < end && isVar(in, pos, end)) {
-                vars.add(pVar());
-                skipWS();
-            }
-            require(")");
+            for (byte c = 0; pos != end && (c = in.get(pos)) == '?' || c == '$'; c = skipWS())
+                vars.add(pVarName());
+            require(')');
             int n = vars.size();
-            require("{");
-            List<R> rows = new ArrayList<>();
-            while (poll("(", ANY)) {
-                R row = rt.createEmpty(vars);
+            require('{');
+            List<Term[]> rows = new ArrayList<>();
+            while (poll('(')) {
+                Term[] row = new Term[n];
                 for (int i = 0; i < n; i++)
-                    rt.set(row, i, pTerm());
-                require(")");
+                    row[i] = pTerm();
+                rows.add(row);
+                require(')');
             }
-            require("}");
-            return FSOps.values(rt, vars, rows);
+            require('}');
+            return new Values(vars, rows);
         }
 
-        private void mergeValues(Values<R, I> v) {
+        private void mergeValues(Values v) {
             if (this.values == null) {
                 this.values = v;
             } else {
@@ -431,25 +439,26 @@ public class SparqlParser<R, I> {
                 if (union == this.values.publicVars()) {
                     this.values.rows().addAll(v.rows());
                 } else {
-                    var rows = new ArrayList<R>();
-                    var projector = Merger.forProjection(rt, union, this.values.publicVars());
-                    for (R row : this.values.rows())
-                        rows.add(projector.merge(row, null));
-                    projector = Merger.forProjection(rt, union, v.publicVars());
-                    for (R row : v.rows())
-                        rows.add(projector.merge(row, null));
-                    this.values = FSOps.values(rt, union, rows);
+                    var rows = new ArrayList<Term[]>(this.values.rows().size() + v.rows().size());
+                    var projector = RowType.ARRAY.projector(union, values.publicVars());
+                    for (Term[] row : this.values.rows())
+                        rows.add(projector.projectInPlace(row));
+                    projector = RowType.ARRAY.projector(union, v.publicVars());
+                    for (Term[] row : v.rows())
+                        rows.add(projector.projectInPlace(row));
+                    this.values = new Values(union, rows);
                 }
             }
         }
 
-        private Plan<R, I> readBlock() {
-            Plan<R, I> plan = new GroupParser().read();
-            require("}");
-            if (poll("UNION", GROUP_FOLLOW))
-                return FSOps.union(List.of(plan, new GroupParser().read()));
-            else if (peek("{"))
-                return FSOps.union(List.of(plan, new GroupParser().read()));
+        private static final byte[] UNION_u8 = "UNION".getBytes(UTF_8);
+        private Plan readBlock() {
+            Plan plan = new GroupParser().read();
+            require('}');
+            if (poll(UNION_u8, GROUP_FOLLOW))
+                return FS.union(plan, new GroupParser().read());
+            else if (skipWS() == '{')
+                 return FS.join(plan, new GroupParser().read());
             return plan;
         }
     }

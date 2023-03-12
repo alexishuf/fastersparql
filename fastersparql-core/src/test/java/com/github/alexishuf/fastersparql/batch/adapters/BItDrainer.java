@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 
 import java.util.*;
 
@@ -51,6 +52,8 @@ public sealed abstract class BItDrainer {
         if (error != null) {
             if (expectedError == null) {
                 fail(error);
+            } else if (error instanceof BItReadFailedException e) {
+                assertEquals(expectedError, e.rootCause());
             } else if (!error.equals(expectedError) && error.getCause() != null) {
                 assertEquals(expectedError, error.getCause());
             }

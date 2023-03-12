@@ -1,19 +1,21 @@
 package com.github.alexishuf.fastersparql.sparql;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.util.Skip;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 
 import java.util.Arrays;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.VARNAME;
-import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.VAR_MARK;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static java.util.Arrays.copyOf;
 
 public class OpaqueSparqlQuery implements SparqlQuery {
-    public final String sparql;
+    public final Rope sparql;
     public final boolean isGraph;
     public final Vars publicVars;
     public final Vars allVars;
@@ -22,7 +24,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     private final int verbEnd;
     final int[] varPos; // visible for testing
 
-    private OpaqueSparqlQuery(String sparql, boolean isGraph, Vars publicVars, Vars allVars,
+    private OpaqueSparqlQuery(Rope sparql, boolean isGraph, Vars publicVars, Vars allVars,
                               Vars aliasVars, int[] varPos, int verbBegin, int verbEnd) {
         this.sparql = sparql;
         this.isGraph = isGraph;
@@ -34,9 +36,9 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         this.verbEnd = verbEnd;
     }
 
-    public OpaqueSparqlQuery(String sparql) {
-        this.sparql = sparql;
-        var s = new Scan(sparql);
+    public OpaqueSparqlQuery(CharSequence sparql) {
+        this.sparql = Rope.of(sparql);
+        var s = new Scan(this.sparql);
         this.isGraph = s.isGraph;
         this.publicVars = s.publicVars;
         this.allVars = s.allVars;
@@ -46,12 +48,12 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         this.aliasVars = s.aliasVars;
     }
 
-    @Override public String      sparql() { return sparql; }
+    @Override public Rope      sparql() { return sparql; }
     @Override public boolean    isGraph() { return isGraph; }
     @Override public Vars    publicVars() { return publicVars; }
     @Override public Vars       allVars() { return allVars; }
 
-    private static final long[] WS_WILDCARD = alphabet("*").whitespace().control().get();
+    private static final int[] WS_WILDCARD = alphabet("*", WS);
 
     @Override public OpaqueSparqlQuery toAsk() {
         if (publicVars.isEmpty()) return this; // no-op
@@ -59,7 +61,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         b.replaceWithAsk();
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
             int begin = varPos[b.posIdx], end = varPos[b.posIdx+1];
-            b.nAllVars.add(sparql.substring(begin+1, end));
+            b.nAllVars.add(sparql.sub(begin+1, end));
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
             b.nVarPos[b.nVarPosSize++] = end + b.growth;
         }
@@ -67,19 +69,21 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     @Override public OpaqueSparqlQuery toDistinct(DistinctType distinctType) {
-        int len = sparql.length();
+        int len = sparql.len();
         if (isGraph || verbBegin >= len) return this; // does not apply
-        char c = sparql.charAt(verbBegin);
+        byte c = sparql.get(verbBegin);
         if (c != 's' && c != 'S') return this; // not a select
-        int i = skip(sparql, skip(sparql, verbBegin, len, UNTIL_WS), len, WS);
-        if (sparql.regionMatches(true, i, "distinct", 0, 8)
-            || sparql.regionMatches(true, i, "reduced", 0, 7)) {
-            return this; // already distinct
-        }
+        int i = sparql.skip(sparql.skip(verbBegin, len, UNTIL_WS), len, Rope.WS);
+        var current = sparql.hasAnyCase(i, DISTINCT_u8) ? DistinctType.STRONG
+                    : sparql.hasAnyCase(i, REDUCED_u8) ? DistinctType.WEAK : null;
+        if (current == distinctType || current == DistinctType.STRONG)
+            return this; // distinctType already satisfied
         Binder b = new Binder(publicVars, aliasVars, allVars);
         b.b.append(sparql, 0, b.consumed = verbBegin+6);
+        if (current == DistinctType.WEAK)
+            b.consumed = sparql.skipWS(b.consumed, sparql.len())+7; // skip over REDUCED
         b.b.append(' ').append(distinctType.sparql());
-        b.growth = b.b.length()-b.consumed;
+        b.growth = b.b.len()-b.consumed;
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
             int begin = varPos[b.posIdx], end = varPos[b.posIdx+1];
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
@@ -88,7 +92,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         return b.build();
     }
 
-    @Override public OpaqueSparqlQuery bind(Binding binding) {
+    @Override public OpaqueSparqlQuery bound(Binding binding) {
         Binder b = new Binder(binding);
         if (b.nAllVars == allVars)
             return this; // no-op
@@ -97,19 +101,19 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
             int vBegin = varPos[b.posIdx], vEnd = varPos[b.posIdx + 1], gap = vEnd-vBegin;
             // if vBegin points to '(', gap spans the whole "( ... AS ?name)" segment
-            String name = sparql.charAt(vBegin) == '('
+            Rope name = sparql.get(vBegin) == '('
                     ? aliasVar(sparql, vEnd)
-                    : sparql.substring(vBegin+1, vEnd);
-            String nt = binding.get(name);
-            if (nt != null) {
+                    : sparql.sub(vBegin+1, vEnd);
+            Term term = binding.get(name);
+            if (term != null) {
                 b.b.append(sparql, b.consumed, vBegin);
                 b.consumed = vEnd;
                 if (vBegin < verbEnd && publicVars.contains(name)) { //erase ?name/(... AS ?name)
                     b.growth -= gap;
                     b.nVerbEnd -= gap;
-                } else { // replace ?name with nt
-                    b.b.append(nt);
-                    b.growth += nt.length() - gap;
+                } else { // replace ?name with term
+                    term.toSparql(b.b, PrefixAssigner.NOP);
+                    b.growth += term.len() - gap;
                 }
             } else { // adjust varPos for ?name in the bound sparql
                 int nBegin = vBegin+ b.growth;
@@ -124,21 +128,21 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         return obj == this || obj instanceof OpaqueSparqlQuery q && q.sparql.equals(sparql);
     }
     @Override public int    hashCode() { return sparql.hashCode(); }
-    @Override public String toString() { return sparql; }
+    @Override public String toString() { return sparql.toString(); }
 
     /* --- --- --- implementation details --- --- --- */
 
-    private static String aliasVar(String sparql, int end) {
-        int nameBegin = reverseSkip(sparql, 0, end, VAR_MARK)+1;
-        int nameEnd = skip(sparql, nameBegin, end, VARNAME);
-        return sparql.substring(nameBegin, nameEnd);
+    private static Rope aliasVar(Rope sparql, int end) {
+        int nameBegin = sparql.reverseSkip(0, end, VAR_MARK)+1;
+        int nameEnd = sparql.skip(nameBegin, end, VARNAME);
+        return sparql.sub(nameBegin, nameEnd);
     }
 
     private final class Binder {
         final Vars nAllVars;
         Vars nPublicVars;
         Vars nAliasVars;
-        StringBuilder b;
+        ByteRope b;
         int [] nVarPos;
         int consumed, posIdx, nVarPosSize, growth, nVerbEnd = verbEnd;
 
@@ -146,7 +150,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             nPublicVars = pub;
             nAliasVars = alias;
             nAllVars = all;
-            b = new StringBuilder(sparql.length());
+            b = new ByteRope(sparql.len());
             nVarPos = new int[varPos.length];
         }
 
@@ -156,7 +160,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 return; // no-op
             nPublicVars = publicVars.minus(binding.vars);
             nAliasVars =  aliasVars.minus(binding.vars);
-            b = new StringBuilder(sparql.length() + (binding.size() << 7));
+            b = new ByteRope(sparql.len() + (binding.size() << 7));
             nVarPos = new int[varPos.length];
         }
 
@@ -168,25 +172,25 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 consumed = varPos[posIdx+1];
             // if there was no varPos before {, this is a SELECT *
             if (consumed == verbBegin) {
-                consumed = skip(sparql, verbBegin + 6, verbEnd - 1, WS_WILDCARD);
+                consumed = sparql.skip(verbBegin + 6, verbEnd - 1, WS_WILDCARD);
                 b.append(' ');
             }
-            growth = b.length()-consumed;       // account for decrease in size
+            growth = b.len()-consumed;       // account for decrease in size
             nVerbEnd = verbEnd +growth;         // adjust verbEnd for replaced SELECT
         }
 
         OpaqueSparqlQuery build() {
             // copy last stretch of sparql that has no vars in it
-            var nQuery = b.append(sparql, consumed, sparql.length()).toString();
+            var nQuery = b.append(sparql, consumed, sparql.len());
             // nVarPosSize <= nVarsPos.length since a no-op bind would've returned earlier
             nVarPos = copyOf(nVarPos, nVarPosSize);
             return new OpaqueSparqlQuery(nQuery, isGraph, nPublicVars, nAllVars, nAliasVars,
-                    nVarPos, verbBegin, nVerbEnd);
+                                         nVarPos, verbBegin, nVerbEnd);
         }
     }
 
     private static final class Scan {
-        final String in;
+        final Rope in;
         int pos;
         final int len;
         boolean isGraph;
@@ -195,8 +199,8 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         int nVarPositions, verbBegin, verbEnd;
         TermParser termParser = new TermParser();
 
-        public Scan(String query) {
-            len = (in = query).length();
+        public Scan(Rope query) {
+            len = (in = query).len();
             findQueryVerb();
             if (isGraph) {
                 publicVars = allVars = Vars.EMPTY;
@@ -216,28 +220,28 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             }
         }
 
-        private static final long[] PROLOGUE = alphabet("PBpb#").get();
+        private static final int[] PROLOGUE = alphabet("PBpb#");
         private void findQueryVerb() {
             while (pos < len) {
-                pos = skip(in, pos, len, WS);
-                char c = in.charAt(pos);
+                pos = in.skip(pos, len, Rope.WS);
+                byte c = in.get(pos);
                 // on PREFIX, BASE and #, consume whole line
-                if (c < 128 && (PROLOGUE[(c>>6)&1] & (1L << c)) != 0)
-                    pos = skipUntil(in, pos, len, '\n');
+                if (c > 0 && (PROLOGUE[c>>5] & (1<<c)) != 0)
+                    pos = in.skipUntil(pos, len, '\n');
                 else break; // else we reached the query verb
             }
             if (pos >= len)
                 throw new InvalidSparqlException("No SELECT/ASK/CONSTRUCT/DESCRIBE. sparql="+in);
             verbBegin = pos;
-            String e = switch (in.charAt(pos)) {
-                case 's', 'S' -> { aliasVars = new Vars.Mutable(10); yield "SELECT"; }
-                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = pos; yield "ASK"; }
-                case 'c', 'C' -> { isGraph = true; yield "CONSTRUCT"; }
-                case 'd', 'D' -> { isGraph = true; yield "DESCRIBE"; }
+            byte[] ex = switch (in.get(pos)) {
+                case 's', 'S' -> { aliasVars = new Vars.Mutable(10); yield SELECT_u8; }
+                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = pos; yield ASK_u8; }
+                case 'c', 'C' -> { isGraph = true; yield CONSTRUCT_u8; }
+                case 'd', 'D' -> { isGraph = true; yield DESCRIBE_u8; }
                 default -> null;
             };
-            if (e == null || !in.regionMatches(true, pos, e, 0, e.length())) {
-                String actual = in.substring(pos, skip(in, pos, len, UNTIL_WS));
+            if (ex == null || !in.hasAnyCase(pos, ex)) {
+                Rope actual = in.sub(pos, in.skip(pos, len, UNTIL_WS));
                 throw new InvalidSparqlException("Expected SELECT/ASK/CONSTRUCT/DESCRIBE, found " + actual + " in sparql="+in);
             }
         }
@@ -252,38 +256,35 @@ public class OpaqueSparqlQuery implements SparqlQuery {
 
         private void readVar(int aliasStart) { //in.charAt(pos) is '?' or '$'
             int start = pos;
-            pos = skip(in, ++pos, len, VARNAME);
-            String name = in.substring(start+1, pos);
+            pos = in.skip(start+1, len, VARNAME);
+            Rope name = in.sub(start+1, pos);
             allVars.add(name);
             if (aliasStart != -1) {
-                aliasVars.add(name.intern());
-                pos = skipUntil(in, pos, len, ')')+1; // include ')' in varPositions
+                aliasVars.add(name);
+                pos = in.skipUntil(pos, len, ')')+1;  // include ')' in varPositions
             }
             addVarPosition(start, pos);
         }
 
-        private static final long[] QUOTED_FIRST = alphabet("<\"'").get();
         private void skipQuoted() {
-            char c = in.charAt(pos);
-            if ((QUOTED_FIRST[c>>6] & (1L << c)) != 0 && termParser.parse(in, pos, len))
+            byte c = in.get(pos);
+            if ((c == '<' || c == '"' || c == '\'') && termParser.parse(in, pos, len).isValid())
                 pos = termParser.termEnd();
             else
                 ++pos;
         }
 
-        private static final long[] STOP_PROJ = alphabet("?$#{*(<\"'").invert().get();
+        private static final int[] STOP_PROJ = invert(alphabet("?$#{*(<\"'"));
         private void readProjection() {// !graph && publicVars == null
-            pos = skip(in, pos, len, STOP_PROJ);
-            while (pos < len && verbEnd == 0) {
-                switch (in.charAt(pos)) {
+            while ((pos = in.skip(pos, len, STOP_PROJ)) < len && verbEnd == 0) {
+                switch (in.get(pos)) {
                     case '?', '$' -> readVar(-1);
-                    case '#'      -> pos = skipUntil(in, pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
                     case '*'      -> { ++pos; publicVars = allVars; }
                     case '{'      -> verbEnd = pos;
                     case '('      -> readAs();
                     default       -> skipQuoted();
                 }
-                pos = skip(in, pos, len, STOP_PROJ);
             }
             int n = allVars.size();
             if (n > 0) {
@@ -295,48 +296,47 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             }
         }
 
-        private static final long[] STOP_AS = alphabet("#aA?$<\"'").invert().get();
-        private static final long[] AFT_AS = alphabet("?$").whitespace().control().get();
+        private static final int[] STOP_AS = invert(alphabet("#aA?$<\"'"));
+        private static final int[] AFT_AS = alphabet("?$", WS);
         private void readAs() {
             boolean as = false;
             int aliasStart = pos;
-            pos = skip(in, ++pos, len, STOP_AS);
+            pos = in.skip(++pos, len, STOP_AS);
             while (pos < len) {
-                switch (in.charAt(pos)) {
+                switch (in.get(pos)) {
                     default       -> skipQuoted();
-                    case '#'      -> pos = skipUntil(in, pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
                     case '?', '$' -> {
                         if (as) {
                             readVar(aliasStart);
                             return;
                         } else {
                             int s = pos;
-                            addVarPosition(s, pos = skip(in, ++pos, len, VARNAME));
+                            addVarPosition(s, pos = in.skip(++pos, len, VARNAME));
                         }
                     }
                     case 'a','A'  -> {
                         if (pos+2 >= len)
                             pos = len;
-                        char bfr = in.charAt(pos-1), c1 = in.charAt(pos+1), c2 = in.charAt(pos+2);
-                        as |= ((bfr <= ' ' || bfr == ')') && (c1=='S' || c1=='s')
-                           && Skip.contains(AFT_AS, c2));
+                        byte bfr = in.get(pos-1), c1 = in.get(pos+1), c2 = in.get(pos+2);
+                        as |= (bfr <= ' ' || bfr == ')')
+                           && (c1=='S' || c1=='s')
+                           && Rope.contains(AFT_AS, c2);
                         pos += 2;
                     }
                 }
-                pos = skip(in, pos, len, STOP_AS);
+                pos = in.skip(pos, len, STOP_AS);
             }
         }
 
-        private static final long[] STOP_VAR = alphabet("$?#<\"'").invert().get();
+        private static final int[] STOP_VAR = invert(alphabet("$?#<\"'"));
         private void readAllVars() {
-            pos = skip(in, pos, len, STOP_VAR);
-            while (pos < len) {
-                switch (in.charAt(pos)) {
+            while ((pos = in.skip(pos, len, STOP_VAR)) < len) {
+                switch (in.get(pos)) {
                     case '?', '$' -> readVar(-1);
-                    case '#'      -> pos = skipUntil(in, pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
                     default       -> skipQuoted();
                 }
-                pos = skip(in, pos, len, STOP_VAR);
             }
         }
 

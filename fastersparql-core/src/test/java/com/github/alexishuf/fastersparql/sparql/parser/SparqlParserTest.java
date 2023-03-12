@@ -1,13 +1,13 @@
 package com.github.alexishuf.fastersparql.sparql.parser;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
-import com.github.alexishuf.fastersparql.operators.FSOps;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
-import com.github.alexishuf.fastersparql.sparql.RDF;
-import com.github.alexishuf.fastersparql.sparql.RDFTypes;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -17,10 +17,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SparqlParserTest {
 
-    record D(String in, Plan<List<String>, String> expected) {}
+    record D(String in, Plan expected) {}
 
-    static TriplePattern<List<String>, String> tp(String s, String p, String o) {
-        return new TriplePattern<>(ListRow.STRING, s, p, o);
+    static TriplePattern tp(Object s, Object p, Object o) {
+        Term st = s instanceof Term t ? t : Term.valueOf(s.toString());
+        Term pt = p instanceof Term t ? t : Term.valueOf(p.toString());
+        Term ot = o instanceof Term t ? t : Term.valueOf(o.toString());
+        return new TriplePattern(st, pt, ot);
     }
 
     static List<D> data() {
@@ -41,15 +44,15 @@ class SparqlParserTest {
         ));
 
         // simplest ASK query
-        var ask0 = FSOps.limit(FSOps.reduced(FSOps.project(tp("?s", "?p", "?o"), Vars.EMPTY)), 1);
-        var ask1 = FSOps.limit(FSOps.reduced(FSOps.project(tp("?s", "?p", "$o"), Vars.EMPTY)), 1);
-        var ask2 = FSOps.limit(FSOps.reduced(FSOps.project(tp("$s", "?p", "?o"), Vars.EMPTY)), 1);
+        var ask0 = FS.limit(FS.reduced(FS.project(tp("?s", "?p", "?o"), Vars.EMPTY)), 1);
+        var ask1 = FS.limit(FS.reduced(FS.project(tp("?s", "?p", "$o"), Vars.EMPTY)), 1);
+        var ask2 = FS.limit(FS.reduced(FS.project(tp("$s", "?p", "?o"), Vars.EMPTY)), 1);
         list.addAll(List.of(
                 new D("ASK WHERE { ?s ?p ?o }", ask0),
                 new D("ASK { ?s ?p ?o }", ask0),
                 new D("ASK { ?s ?p $o . }", ask1),
                 new D("ASK\nWHERE{ $s ?p ?o. }", ask2),
-                new D("ASK{?s ?p $o}", ask0),
+                new D("ASK{?s ?p $o}", ask1),
                 new D("ASK{?s ?p $o.}", ask1)
         ));
 
@@ -72,8 +75,8 @@ class SparqlParserTest {
         ));
 
         //projection
-        var proj0 = FSOps.project(tp("?x", "?p", "?o"), Vars.of("x"));
-        var proj1 = FSOps.project(tp("$x", "$p", "$o"), Vars.of("o", "p", "x"));
+        var proj0 = FS.project(tp("?x", "?p", "?o"), Vars.of("x"));
+        var proj1 = FS.project(tp("$x", "$p", "$o"), Vars.of("o", "p", "x"));
         list.addAll(List.of(
                 new D("SELECT ?x WHERE { ?x ?p ?o }", proj0),
                 new D("SELECT ?x { ?x ?p ?o }", proj0),
@@ -87,7 +90,7 @@ class SparqlParserTest {
         ));
 
         //limit
-        var lim0 = FSOps.limit(tp("?s", "?p", "?o"), 23);
+        var lim0 = FS.limit(tp("?s", "?p", "?o"), 23);
         list.addAll(List.of(
                 new D("SELECT * WHERE { ?s ?p ?o } LIMIT 23", lim0),
                 new D("SELECT * WHERE { ?s ?p ?o } LIMIT\n23", lim0),
@@ -97,7 +100,7 @@ class SparqlParserTest {
         ));
 
         //offset
-        var off0 = FSOps.offset(tp("?s", "?p", "?o"), 5);
+        var off0 = FS.offset(tp("?s", "?p", "?o"), 5);
         list.addAll(List.of(
                 new D("SELECT * WHERE { ?s ?p ?o } OFFSET 5", off0),
                 new D("SELECT * WHERE {?s ?p ?o}\nOFFSET 5", off0),
@@ -105,7 +108,7 @@ class SparqlParserTest {
         ));
 
         //limit + offset
-        var lo0 = FSOps.modifiers(tp("?s", "?p", "?o"), null, 0, 2, 3, List.of());
+        var lo0 = FS.modifiers(tp("?s", "?p", "?o"), null, 0, 2, 3, List.of());
         list.addAll(List.of(
                 new D("SELECT * WHERE { ?s ?p ?o } LIMIT 3 OFFSET 2", lo0),
                 new D("SELECT * WHERE { ?s ?p ?o } OFFSET 2 LIMIT 3 ", lo0),
@@ -121,12 +124,12 @@ class SparqlParserTest {
                 PREFIX :<http://example.org/>
                 SELECT * { <s> a :Class. :o-1 rdf:value "23", '''27''', 33.0. } OFFSET 23
                 """,
-                FSOps.offset(new Join<>(List.of(
-                        tp("<s>", '<'+RDF.type+'>', "<http://example.org/Class>"),
-                        tp("<http://example.org/o-1>", '<'+RDF.value+'>', "\"23\""),
-                        tp("<http://example.org/o-1>", '<'+RDF.value+'>', "\"27\""),
-                        tp("<http://example.org/o-1>", '<'+RDF.value+'>', "\"33.0\"^^<"+RDFTypes.decimal+">")
-                ), null, null), 23)));
+                FS.offset(new Join(
+                        tp("<s>", Term.RDF_TYPE, "<http://example.org/Class>"),
+                        tp("<http://example.org/o-1>", Term.RDF_VALUE, "\"23\""),
+                        tp("<http://example.org/o-1>", Term.RDF_VALUE, "\"27\""),
+                        tp("<http://example.org/o-1>", Term.RDF_VALUE, "\"33.0\"^^"+Term.XSD_DECIMAL)
+                ), 23)));
         list.add(new D("""
                         PREFIX : <http://example.org/>
                         SELECT ?x WHERE {
@@ -134,67 +137,57 @@ class SparqlParserTest {
                             ?y <q> <a> ;
                                :r  :Bob
                         }""",
-                        FSOps.project(new Join<>(List.of(
+                        FS.project(new Join(
                                 tp("?x", "<http://example.org/p>", "<o>"),
-                                tp("?x", "<http://example.org/p>", "\"23\"^^<"+RDFTypes.integer+">"),
+                                tp("?x", "<http://example.org/p>", "\"23\"^^"+Term.XSD_INTEGER),
                                 tp("?x", "<http://example.org/p>", "\"bob\""),
-                                tp("?y", "<http://example.org/q>", "<a>"),
+                                tp("?y", "<q>", "<a>"),
                                 tp("?y", "<http://example.org/r>", "<http://example.org/Bob>")
-                        ), null, null), Vars.of("x"))));
+                        ), Vars.of("x"))));
 
         //FILTER EXISTS/NOT EXISTS
         list.add(new D("""
-                PREFIX : <http://example.org>
+                PREFIX : <http://example.org/>
                 SELECT * WHERE { ?s :p ?o FILTER EXISTS { ?o :p ?s, $x } }
                 """,
-                FSOps.exists(
+                FS.exists(
                         tp("?s", "<http://example.org/p>", "?o"),
                         false,
-                        new Join<>(List.of(tp("?o", "<http://example.org/p>", "?s"),
-                                           tp("?o", "<http://example.org/p>", "?x")),
-                                  null, null))));
+                        new Join(tp("?o", "<http://example.org/p>", "?s"),
+                                 tp("?o", "<http://example.org/p>", "$x")))));
         list.add(new D("""
-                PREFIX : <http://example.org>
+                PREFIX : <http://example.org/>
                 SELECT * WHERE { ?s :p ?o. FILTER NOT EXISTS {?o :p ?s, $x} }
                 """,
-                FSOps.exists(
+                FS.exists(
                         tp("?s", "<http://example.org/p>", "?o"),
                         true,
-                        new Join<>(List.of(tp("?o", "<http://example.org/p>", "?s"),
-                                tp("?o", "<http://example.org/p>", "?x")),
-                                null, null))));
+                        new Join(tp("?o", "<http://example.org/p>", "?s"),
+                                 tp("?o", "<http://example.org/p>", "$x")))));
 
         return list;
     }
 
     @Test
     void test() {
-        var p = new SparqlParser<>(ListRow.STRING);
+        var p = new SparqlParser();
         List<D> data = data();
         for (int i = 0; i < data.size(); i++) {
             D d = data.get(i);
             var baseCtx = "at data()["+i+"]="+d;
             for (String prefix : List.of("", "#ASK {?x $p \"?s\"}\n#\t\n#\n \t")) {
                 for (String suffix : List.of("", "\r\n", "#LIMIT 23", "#OFFSET 5\n")) {
-                    var ctx = baseCtx + ", prefix=" + prefix + ", suffix=" + suffix;
-                    var in = prefix+d.in+suffix;
-                    if (d.expected == null)
-                        assertThrows(InvalidSparqlException.class, () -> p.parse(in, 0));
-                    else {
+                    var ctx = baseCtx + ", prefix=\"" + prefix + "\", suffix=\"" + suffix+'"';
+                    var in = Rope.of(prefix, d.in, suffix);
+                    if (d.expected == null) {
+                        assertThrows(InvalidSparqlException.class, () -> p.parse(in));
+                    } else {
                         try {
-                            assertEquals(d.expected, p.parse(in, 0), ctx);
+                            assertEquals(d.expected, p.parse(in), ctx);
                         } catch (InvalidSparqlException e) { fail(ctx, e); }
                     }
                 }
 
-            }
-            for (String prefix : List.of("ASK {?s $p <?o>}", "SELECT * WHERE {}")) {
-                String ctx = baseCtx + ", prefix=" + prefix;
-                String in = prefix+d.in;
-                if (d.expected == null)
-                    assertThrows(InvalidSparqlException.class, () -> p.parse(in, prefix.length()));
-                else
-                    assertEquals(d.expected, p.parse(in, prefix.length()), ctx);
             }
         }
 

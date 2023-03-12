@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.BoundedBufferedBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
@@ -12,10 +14,10 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 
-import static com.github.alexishuf.fastersparql.batch.BItClosedException.isClosedExceptionFor;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.Thread.ofVirtual;
 
@@ -26,11 +28,11 @@ public class MergeBIt<T> extends BoundedBufferedBIt<T> {
     protected final List<? extends BIt<T>> sources;
     private int activeSources;
     private boolean started;
-    protected long recycling = 0L;
+    private long recycling = 0L;
 
-    public MergeBIt(Collection<? extends BIt<T>> sources, Class<? super T> elementClass,
+    public MergeBIt(Collection<? extends BIt<T>> sources, RowType<T> rowType,
                     Vars vars) {
-        super(elementClass, vars);
+        super(rowType, vars);
         //noinspection unchecked
         this.sources = sources instanceof List<?> list
                      ? (List<? extends BIt<T>>) list : new ArrayList<>(sources);
@@ -54,10 +56,18 @@ public class MergeBIt<T> extends BoundedBufferedBIt<T> {
         else if (error instanceof Error             e) throw e;
     }
 
-    protected void drain(BIt<T> source, int i) {
+    protected void process(Batch<T> batch, int sourceIdx,
+                           RowType<T>.@Nullable Merger projector) {
+        if (projector != null) projector.projectInPlace(batch);
+        feed(batch);
+    }
+
+    private void drain(BIt<T> source, int i) {
+        var projector = vars.equals(source.vars()) ? null
+                      : Objects.requireNonNull(rowType).projector(vars, source.vars());
         long recyclingBit = 1L << i;
         for (var b = source.nextBatch(); b.size > 0; b = source.nextBatch()) {
-            feed(b);
+            process(b, i, projector);
             recycling |= recyclingBit; // see recycle() for rationale
         }
     }
@@ -68,7 +78,7 @@ public class MergeBIt<T> extends BoundedBufferedBIt<T> {
         } catch (Throwable t) {
             lock.lock();
             try {
-                if (!isClosedExceptionFor(t, sources.get(i)) || this.error == null)
+                if (this.error == null || (t instanceof BItReadClosedException))
                     complete(t); // ignore BItClosedException caused by closeSources().
             } finally { lock.unlock(); }
         } finally {
@@ -165,8 +175,8 @@ public class MergeBIt<T> extends BoundedBufferedBIt<T> {
         return i < n;
     }
 
-    @Override protected void cleanup(boolean interrupted) {
-        super.cleanup(interrupted); // calls lock()/unlock(), which makes stopping = true visible to workers
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause); // calls lock()/unlock(), which makes stopping = true visible to workers
         try {
             closeSources();
         } finally {

@@ -1,50 +1,46 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Objects;
 
-public class Empty<R, I> extends Plan<R, I> {
-    private final Vars allVars, publicVars;
+public final class Empty extends Plan {
+    public static final Empty EMPTY = new Empty(null, null);
 
-    public Empty(RowType<R, I> rowType, @Nullable Vars publicVars,
-                 @Nullable Vars allVars, @Nullable Plan<R, I> unbound,
-                 @Nullable String name) {
-        super(rowType, List.of(), unbound, name);
+    public Empty(Plan other) {
+        super(Operator.EMPTY);
+        this.allVars = other.allVars();
+        this.publicVars = other.publicVars();
+    }
+
+    public Empty(@Nullable Vars publicVars, @Nullable Vars allVars) {
+        super(Operator.EMPTY);
         this.allVars    = allVars    == null ? Vars.EMPTY : allVars;
         this.publicVars = publicVars == null ? Vars.EMPTY : publicVars;
     }
 
+    @Override public Plan copy(@Nullable Plan[] ops) { return new Empty(publicVars, allVars); }
+
     @Override
-    public Plan<R, I> with(List<? extends Plan<R, I>> replacement, @Nullable Plan<R, I> unbound,
-                        @Nullable String name) {
-        if (replacement.size() > 0)
-            throw new IllegalArgumentException("Expected no operands, got "+replacement.size());
-        unbound = unbound == null ? this.unbound : unbound;
-        name = name == null ? this.name : name;
-        return new Empty<>(rowType, publicVars, allVars, unbound, name);
+    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+        Vars vars = publicVars;
+        if (binding != null && vars.intersects(binding.vars))
+            vars = vars.minus(binding.vars);
+        return new EmptyBIt<>(rt, vars);
     }
 
-    @Override public BIt<R> execute(boolean ignored) {
-        return new EmptyBIt<>(rowOperations().rowClass(), publicVars);
+    @Override public boolean equals(Object obj) {
+        return obj instanceof Empty r
+                && Objects.equals(publicVars, r.publicVars)
+                && Objects.equals(allVars   , r.allVars   );
     }
 
-    @Override public Plan<R, I> bind(Binding binding) {
-        var pub = publicVars.minus(binding.vars());
-        var all = allVars.minus(binding.vars());
-        if (pub.size() == publicVars.size() && all.size() == allVars.size())
-            return this;
-        return new Empty<>(rowType, pub, all, this, name);
+    @Override public int hashCode() {
+        return Objects.hash(type, publicVars, allVars);
     }
-
-    @Override protected Vars computeVars(boolean all) {
-        return all ? allVars : publicVars;
-    }
-
-    @Override public void groupGraphPatternInner(StringBuilder out, int indent) { }
 }

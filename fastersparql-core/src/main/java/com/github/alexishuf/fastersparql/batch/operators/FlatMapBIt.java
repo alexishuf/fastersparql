@@ -4,9 +4,12 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -21,16 +24,16 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
  * {@link FlatMapBIt}.
  */
 public abstract class FlatMapBIt<I, O> extends AbstractBIt<O> {
-    private final BIt<I> original;
+    protected final BIt<I> original;
     private final BIt<O> empty;
     private BIt<O> mapped;
     private boolean pendingEager;
 
-    public FlatMapBIt(Class<? super O> elementClass, BIt<I> original, Vars vars) {
-        super(elementClass, vars);
+    public FlatMapBIt(RowType<O> rowType, BIt<I> original, Vars vars) {
+        super(rowType, vars);
         (this.original = original).minBatch(1).minWait(0, NANOSECONDS)
                                   .maxWait(0, NANOSECONDS);
-        this.mapped = this.empty = new EmptyBIt<>(elementClass(), vars);
+        this.mapped = this.empty = new EmptyBIt<>(rowType, vars);
     }
 
     protected abstract BIt<O> map(I input);
@@ -73,8 +76,8 @@ public abstract class FlatMapBIt<I, O> extends AbstractBIt<O> {
 
     /* --- --- --- state management --- --- --- */
 
-        @Override protected void cleanup(boolean interrupted) {
-        if (interrupted) {
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        if (cause != null) {
             original.close();
             if (mapped != empty) { mapped.close(); mapped = empty; }
         }
@@ -128,6 +131,6 @@ public abstract class FlatMapBIt<I, O> extends AbstractBIt<O> {
     }
 
     @Override public String toString() {
-        return "FlatMap@"+id()+'('+original+')';
+        return toStringWithOperands(List.of(original));
     }
 }

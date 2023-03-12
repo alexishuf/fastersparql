@@ -4,7 +4,9 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -16,12 +18,12 @@ import java.util.stream.Stream;
 
 class FlatMapBItTest {
     private abstract static class ItFac {
-        abstract <T> BIt<T> create(List<T> list, Class<T> cls);
+        abstract <T> BIt<T> create(List<T> list, RowType<T> rowType);
         @Override public String toString() { return getClass().getSimpleName(); }
     }
     private static final class IteratorFac extends ItFac {
-        @Override public <T> BIt<T> create(List<T> list, Class<T> cls) {
-            return new IteratorBIt<>(list, cls, Vars.EMPTY) {
+        @Override public <T> BIt<T> create(List<T> list, RowType<T> rowType) {
+            return new IteratorBIt<>(list, rowType, Vars.EMPTY) {
                 @Override public String toString() {
                     return "IteratorBIt(" + list + ")";
                 }
@@ -29,8 +31,8 @@ class FlatMapBItTest {
         }
     }
     private static final class CallbackFac extends ItFac {
-        @Override public <T> BIt<T> create(List<T> list, Class<T> cls) {
-            CallbackBIt<T> cb = new CallbackBIt<>(cls, Vars.EMPTY) {
+        @Override public <T> BIt<T> create(List<T> list, RowType<T> rowType) {
+            CallbackBIt<T> cb = new CallbackBIt<>(rowType, Vars.EMPTY) {
                 @Override public String toString() { return "CallbackBIt("+list+")"; }
             };
             Thread.ofVirtual().start(() -> {
@@ -70,11 +72,10 @@ class FlatMapBItTest {
     void test() {
         for (D d : testData()) {
             List<Integer> expected = d.in.stream().flatMap(List::stream).toList();
-            //noinspection unchecked
-            var src = d.itFac.create(d.in, (Class<List<Integer>>) (Class<?>) List.class);
-            var fm = new FlatMapBIt<>(Integer.class, src, Vars.EMPTY) {
+            var src = d.itFac.create(d.in, NotRowType.INTEGER_LIST);
+            var fm = new FlatMapBIt<>(NotRowType.INTEGER, src, Vars.EMPTY) {
                 @Override protected BIt<Integer> map(List<Integer> input) {
-                    return d.itFac.create(input, Integer.class);
+                    return d.itFac.create(input, NotRowType.INTEGER);
                 }
             };
             d.drainer.drainOrdered(fm, expected, null);
@@ -87,9 +88,9 @@ class FlatMapBItTest {
 
     @ParameterizedTest @MethodSource
     void testThrowFromMap(BItDrainer drainer) {
-        var source = new IteratorBIt<>(List.of(1), Integer.class, Vars.EMPTY);
+        var source = new IteratorBIt<>(List.of(1), NotRowType.INTEGER, Vars.EMPTY);
         RuntimeException ex = new RuntimeException("test");
-        var fm = new FlatMapBIt<>(Integer.class, source, Vars.EMPTY) {
+        var fm = new FlatMapBIt<>(NotRowType.INTEGER, source, Vars.EMPTY) {
             @Override protected BIt<Integer> map(Integer input) {
                 throw ex;
             }

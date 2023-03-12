@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.FSProperties;
+
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 

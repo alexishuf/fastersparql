@@ -3,7 +3,8 @@ package com.github.alexishuf.fastersparql.batch.adapters;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.base.BoundedBufferedBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
@@ -16,7 +17,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * batches/elements that when reached will cause the feeding thread to block.
  */
 public class CallbackBIt<T> extends BoundedBufferedBIt<T> {
-    public CallbackBIt(Class<T> elementClass, Vars vars) { super(elementClass, vars); }
+    public CallbackBIt(RowType<T> rowType, Vars vars) { super(rowType, vars); }
 
     /**
      * Queue an {@code item} for delivery in a future batch.

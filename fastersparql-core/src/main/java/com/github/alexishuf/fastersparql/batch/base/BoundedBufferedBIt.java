@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
-import com.github.alexishuf.fastersparql.batch.BoundedBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.BoundedBIt;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -17,8 +18,8 @@ public abstract class BoundedBufferedBIt<T> extends BufferedBIt<T> implements Bo
     protected int maxReadyBatches = Integer.MAX_VALUE;
     protected long readyItems = 0, maxReadyItems = Long.MAX_VALUE;
 
-    public BoundedBufferedBIt(Class<? super T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public BoundedBufferedBIt(RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
     }
 
     /* --- --- --- methods --- --- --- */
@@ -103,17 +104,13 @@ public abstract class BoundedBufferedBIt<T> extends BufferedBIt<T> implements Bo
         } finally { lock.unlock(); }
     }
 
-    @Override protected void cleanup(boolean interrupted) {
-        if (interrupted) {
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        if (cause != null) {
             lock.lock();
             try {
-                super.cleanup(true);
                 empty.signalAll();
-            } finally {
-                lock.unlock();
-            }
-        } else {
-            super.cleanup(false);
+            } finally { lock.unlock(); }
         }
     }
 }

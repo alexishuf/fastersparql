@@ -1,35 +1,48 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.sparql.parser.TriplePattern;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
+import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
+import java.util.Objects;
 
-public class Join<R, I> extends Plan<R, I>{
-    public Join(List<? extends Plan<R, I>> operands, @Nullable Plan<R, I> unbound,
-                @Nullable String name) {
-        super(operands.get(0).rowType, operands, unbound, name);
+public final class Join extends Plan {
+    public @Nullable Vars projection;
+
+    public Join(Plan left, Plan right) { this(null, left, right); }
+
+    public Join(@Nullable Vars projection, Plan left, Plan right) {
+        super(Operator.JOIN);
+        this.projection = projection;
+        this.left = left;
+        this.right = right;
     }
 
-
-    @Override public void groupGraphPatternInner(StringBuilder out, int indent) {
-        for (Plan<R, I> o : flatOperands()) {
-            if (o instanceof TriplePattern<R,I> || o instanceof Values<R,I>)
-                o.groupGraphPatternInner(out, indent);
-            else
-                o.groupGraphPattern(out, indent);
-        }
+    public Join(Plan... operands) { this(null, operands); }
+    public Join(@Nullable Vars projection,  Plan... operands) {
+        super(Operator.JOIN);
+        this.projection = projection;
+        replace(operands);
     }
 
-    @Override public BIt<R> execute(boolean canDedup) {
-        throw new UnsupportedOperationException();
+    @Override public Join copy(@Nullable Plan[] ops) {
+        if (ops == null) ops = operandsArray;
+        return ops == null ? new Join(projection, left, right) : new Join(projection, ops);
     }
 
     @Override
-    public Plan<R, I> with(List<? extends Plan<R, I>> replacement, @Nullable Plan<R, I> unbound, @Nullable String name) {
-        unbound = unbound == null ? this.unbound : unbound;
-        name = name == null ? this.name : name;
-        return new Join<>(replacement, unbound, name);
+    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+        return NativeBind.preferNative(rt, this, binding, canDedup);
+    }
+
+    @Override public boolean equals(Object o) {
+        return o instanceof Join r && Objects.equals(projection, r.projection) && super.equals(r);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(super.hashCode(), projection);
     }
 }

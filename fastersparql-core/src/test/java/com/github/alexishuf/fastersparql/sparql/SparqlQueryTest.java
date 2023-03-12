@@ -1,8 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.types.ArrayRow;
-import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -13,12 +12,10 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.STRONG;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
-import static com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding.copy;
 import static java.util.Comparator.naturalOrder;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -43,10 +40,10 @@ class SparqlQueryTest {
 
     private static final Pattern GRAPH_RX = Pattern.compile("(?mi)^\\s*(?:CONSTRUCT|DESCRIBE)");
 
-    private static <R, I> SparqlQuery
-    parseFull(SparqlParser<R, I> parser, String sparql) throws SilentSkip {
+    private static SparqlQuery
+    parseFull(SparqlParser parser, String sparql) throws SilentSkip {
         try {
-            return parser.parse(sparql, 0);
+            return parser.parse(Rope.of(sparql));
         } catch (InvalidSparqlException e) {
             if (e.getMessage().startsWith("binding vars to expressions"))
                 throw new SilentSkip();
@@ -58,12 +55,12 @@ class SparqlQueryTest {
         }
     }
 
-    private static final Parser FULL_LIST = new Parser() {
-        private final SparqlParser<List<String>, String> parser = new SparqlParser<>(ListRow.STRING);
+    private static final Parser FULL = new Parser() {
+        private final SparqlParser parser = new SparqlParser();
         @Override public SparqlQuery parse(String sparql) throws SilentSkip {
             return parseFull(parser, sparql);
         }
-        @Override public String toString() { return "FULL_LIST"; }
+        @Override public String toString() { return "FULL"; }
         @Override public @Nullable String preprocess(String sparql) {
             if (GRAPH_RX.matcher(sparql).find()) return null;
             if (sparql.indexOf(':') == -1)
@@ -76,17 +73,7 @@ class SparqlQueryTest {
         @Override public boolean isFull() { return true; }
     };
 
-    private static final Parser FULL_ARRAY = new Parser() {
-        private final SparqlParser<String[], String> parser = new SparqlParser<>(ArrayRow.STRING);
-        @Override public SparqlQuery parse(String sparql) throws SilentSkip {
-            return parseFull(parser, sparql);
-        }
-        @Override public String toString() { return "FULL_ARRAY"; }
-        @Override public @Nullable String preprocess(String sparql) { return FULL_LIST.preprocess(sparql); }
-        @Override public boolean isFull() { return true; }
-    };
-
-    private static final List<Parser> PARSERS = List.of(OPAQUE, FULL_LIST, FULL_ARRAY);
+    private static final List<Parser> PARSERS = List.of(OPAQUE, FULL);
 
     record D(String sparql, boolean graph, Vars pub, Vars all, Vars strictPub) {
         public D(String sparql, Vars pub, Vars all) {
@@ -140,14 +127,14 @@ class SparqlQueryTest {
                 new D("SELECT * WHERE {?23_x :p <o>}", "23_x"),
                 // parse var inside filters
                 new D("ASK { <a> :p ?age FILTER (?age < ?max)}", "", "age,max"),
-                new D("SELECT * WHERE { <a> :p ?age FILTER(?age<?max)}", "age,max"),
+                new D("SELECT * WHERE { <a> :p ?age FILTER(?age<?max)}", "age,max", "age,max", "age"),
                 new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x }}", "", "y,x"),
                 new D("SELECT * WHERE { <a> :p ?y FILTER NOT EXISTS { ?y :q $x }}", "y,x", "y,x", "y"),
                 new D("ASK { <a> :p ?y FILTER EXISTS { ?y :q $x FILTER (?x != ?max) }}", "", "y,x,max")
         ));
         base.addAll(List.of(//ignore vars inside <>
-                new D("SELECT * WHERE { <a> :p <?x>, ?v}", "v"),
-                new D("SELECT * WHERE { <a> :p <$x>, ?v}", "v"),
+                new D("SELECT * WHERE { <a> :p <rel?x>, ?v}", "v"),
+                new D("SELECT * WHERE { <a> :p <r$x>, ?v}", "v"),
                 new D("SELECT * WHERE { <a> :p <http://example.org/?x=1>, ?v}", "v")
         ));
         base.addAll(List.of(//ignore vars inside quoted literals
@@ -240,8 +227,8 @@ class SparqlQueryTest {
                 new D("SELECT DISTINCT * WHERE { <s> ex:p \"?x\", $y. }", "y"),
                 new D("SELECT DISTINCT * WHERE { <s> ex:p \"\"\"?x\"\"\", ?y. }", "y"),
                 new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > 23) }", "x"),
-                new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > ?y) }", "x,y"),
-                new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > $y) }", "x,y"),
+                new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > ?y) }", "x,y", "x,y", "x"),
+                new D("SELECT DISTINCT * WHERE { <s> ex:p ?x FILTER(?x > $y) }", "x,y", "x,y", "x"),
                 new D("SELECT DISTINCT * WHERE { ?x ex:p ?y }", "x,y"),
                 new D("SELECT DISTINCT * WHERE { $x ex:p $y }", "x,y"),
 
@@ -294,12 +281,12 @@ class SparqlQueryTest {
                 else
                     assertEquals(d.pub, q.publicVars(), "bad publicVars()" + msg);
                 assertEquals(d.all, q.allVars(), "bad allVars()" + msg);
-                assertSame(q, q.bind(ArrayBinding.EMPTY), "bind() failed to detect no-op" + msg);
+                assertSame(q, q.bound(ArrayBinding.EMPTY), "bind() failed to detect no-op" + msg);
 
                 if (q instanceof OpaqueSparqlQuery oq) {
-                    assertSame(sparql, oq.sparql(), "bad sparql" + msg);
+                    assertEquals(sparql, oq.sparql().toString(), "bad sparql" + msg);
                     List<Integer> posList = new ArrayList<>();
-                    for (String name : d.all) {
+                    for (Rope name : d.all) {
                         for (String marker : List.of("?", "$")) {
                             int i = -1;
                             while (true) {
@@ -330,89 +317,89 @@ class SparqlQueryTest {
         base.addAll(List.of( // no-op
                 new B("CONSTRUCT { ?x ?p true } WHERE { ?x ?p ?o }",
                       "CONSTRUCT { ?x ?p true } WHERE { ?x ?p ?o }",
-                      copy(Map.of("y", "<a>"))),
+                      ArrayBinding.of("y", "<a>")),
                 new B("SELECT ?x WHERE { ?x <p> '?o'}",
                       "SELECT ?x WHERE { ?x <p> '?o'}",
-                      copy(Map.of("o", "<a>"))),
+                      ArrayBinding.of("o", "<a>")),
                 new B("SELECT * WHERE { ?x <p> '?o'}",
                       "SELECT * WHERE { ?x <p> '?o'}",
-                      copy(Map.of("o", "<a>"))),
+                      ArrayBinding.of("o", "<a>")),
                 new B("ASK { ?x <p> '?o'}",
                       "ASK { ?x <p> '?o'}",
-                      copy(Map.of("o", "<a>")))
+                      ArrayBinding.of("o", "<a>"))
         ));
         base.addAll(List.of(//only affect body
                 new B("SELECT * WHERE { ?s :p ?o }",
-                      "SELECT * WHERE { ?s :p <23> }",
-                      copy(Map.of("o", "<23>", "a", "<a>"))),
+                      "SELECT * WHERE { ?s :p <rel> }",
+                      ArrayBinding.of("o", "<rel>", "a", "<a>")),
                 new B("ASK { ?s :p ?2 }", // replace  with long value
                       "ASK { ?s :p \"23\"^^<http://www.w3.org/2001/XMLSchema#int> }",
-                      copy(Map.of("2", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"))),
+                      ArrayBinding.of("2", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>")),
                 new B("ASK { ?s :p ?2 }",
                       "ASK { \"23\"^^<http://www.w3.org/2001/XMLSchema#int> :p ?2 }",
-                      copy(Map.of("s", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"))),
+                      ArrayBinding.of("s", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>")),
                 new B("SELECT * WHERE { ?s :p ?o. ?o :q ?s }",
                       "SELECT * WHERE { <http://example.org/a> :p ?o. ?o :q <http://example.org/a> }",
-                      copy(Map.of("s", "<http://example.org/a>"))),
+                      ArrayBinding.of("s", "<http://example.org/a>")),
                 new B("SELECT ?x WHERE { ?x :p ?y FILTER(?y < ?max) }",
                       "SELECT ?x WHERE { ?x :p ?y FILTER(?y < 23) }",
-                      copy(Map.of("max", "23"))),
+                      ArrayBinding.of("max", "23")),
                 new B("SELECT ?y WHERE { ?x :p ?y FILTER(?y < ?max)}",
                       "SELECT ?y WHERE { <test> :p ?y FILTER(?y < 23)}",
-                      copy(Map.of("max", "23", "x", "<test>")))
+                      ArrayBinding.of("max", "23", "x", "<test>"))
         ));
 
         base.addAll(List.of(// remove from projection clause
                 new B("SELECT ?x ?y WHERE { ?x :p $y}",
                       "SELECT ?x  WHERE { ?x :p <a>}",
-                      copy(Map.of("y", "<a>"))),
+                      ArrayBinding.of("y", "<a>")),
                 new B("SELECT ?y ?x WHERE { ?x :p $y }",
                       "SELECT ?y  WHERE { <a> :p $y }",
-                      copy(Map.of("x", "<a>")))
+                      ArrayBinding.of("x", "<a>"))
         ));
         base.addAll(List.of(// remove from AS in projection clause
                 new B("SELECT ?s (year(?birth) AS ?yr) WHERE { ?s :p ?birth }",
                       "SELECT  (year(?birth) AS ?yr) WHERE { <a> :p ?birth }",
-                      copy(Map.of("s", "<a>"))),
+                      ArrayBinding.of("s", "<a>")),
                 new B("SELECT ?s (year(?birth) AS ?yr) WHERE { $s :p ?birth }",
                       "SELECT ?s (year(\"1990-01-13\"^^<http://www.w3.org/2001/XMLSchema#date>) AS ?yr) WHERE { $s :p \"1990-01-13\"^^<http://www.w3.org/2001/XMLSchema#date> }",
-                      copy(Map.of("birth", "\"1990-01-13\"^^<http://www.w3.org/2001/XMLSchema#date>")))
+                      ArrayBinding.of("birth", "\"1990-01-13\"^^<http://www.w3.org/2001/XMLSchema#date>"))
         ));
         base.addAll(List.of(//ported from SparqlUtilTest
                 new B("ASK {?s :p :o}", "ASK {<a> :p :o}",
-                      copy(Map.of("s", "<a>"))),
+                      ArrayBinding.of("s", "<a>")),
                 new B("ASK {:s ?p :o}", "ASK {:s <http://example.org/knows> :o}",
-                      copy(Map.of("p", "<http://example.org/knows>"))),
+                      ArrayBinding.of("p", "<http://example.org/knows>")),
                 new B("ASK {:s :p ?o}", "ASK {:s :p \"bob\"}",
-                      copy(Map.of("o", "\"bob\""))),
+                      ArrayBinding.of("o", "\"bob\"")),
                 new B("SELECT * WHERE {?s ?p :o}", "SELECT * WHERE {<b> ?p :o}",
-                      copy(Map.of("s", "<b>"))),
+                      ArrayBinding.of("s", "<b>")),
                 new B("SELECT * WHERE {?s ?p ?o}", "SELECT * WHERE {<b> ?p <c>}",
-                      copy(Map.of("s", "<b>", "o", "<c>"))),
+                      ArrayBinding.of("s", "<b>", "o", "<c>")),
                 new B("SELECT * WHERE {?en :p \"?en\"@en; :q ?en.}",
                       "ASK WHERE {<a> :p \"?en\"@en; :q <a>.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?en WHERE {?en :p \"?en\"@en; :q ?en.}",
                       "ASK WHERE {<a> :p \"?en\"@en; :q <a>.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?s {?en :p \"?en\"@en; :q ?en.}",
                       "SELECT ?s {<a> :p \"?en\"@en; :q <a>.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?s{?en :p \"?en\"@en; :q ?en.}",
                       "SELECT ?s{<a> :p \"?en\"@en; :q <a>.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?en ?s WHERE {?en :p \"?en\"@en; :q ?en; :r ?s.}",
                       "SELECT  ?s WHERE {<a> :p \"?en\"@en; :q <a>; :r ?s.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?s ?en WHERE {?en :p \"?en\"@en; :q ?en; :r ?s.}",
                       "SELECT ?s  WHERE {<a> :p \"?en\"@en; :q <a>; :r ?s.}",
-                      copy(Map.of("en", "<a>"))),
+                      ArrayBinding.of("en", "<a>")),
                 new B("SELECT ?s WHERE {?s :p ?o}", "ASK WHERE {<a> :p ?o}",
-                      copy(Map.of("s", "<a>"))),
+                      ArrayBinding.of("s", "<a>")),
                 new B("SELECT ?s ?o WHERE {?s :p ?o}", "ASK WHERE {<a> :p <b>}",
-                      copy(Map.of("s", "<a>", "o", "<b>"))),
+                      ArrayBinding.of("s", "<a>", "o", "<b>")),
                 new B("SELECT * WHERE {?s :p ?o}", "ASK WHERE {<a> :p <b>}",
-                      copy(Map.of("s", "<a>", "o", "<b>")))
+                      ArrayBinding.of("s", "<a>", "o", "<b>"))
         ));
         List<B> list = new ArrayList<>();
         for (String prefix : List.of("", "PREFIX : <http://example.org/ex?x=1>\n#c\n#?s\n")) {
@@ -438,14 +425,17 @@ class SparqlQueryTest {
                     ex = parser.parse(expectedSparql);
                 } catch (SilentSkip e) {
                     continue;
+                } catch (Throwable t) {
+                    fail(t.getClass().getSimpleName()+ctx, t);
+                    throw t;
                 }
-                var b = q.bind(d.binding);
+                var b = q.bound(d.binding);
 
                 assertEquals(ex.publicVars(), b.publicVars(), "bad publicVars" + ctx);
                 assertEquals(ex.allVars(), b.allVars(), "bad allVars" + ctx);
                 assertEquals(ex.isGraph(), b.isGraph(), "bad isGraph" + ctx);
                 if (b instanceof OpaqueSparqlQuery ob) {
-                    assertEquals(d.expected, ob.sparql, "bad sparql" + ctx);
+                    assertEquals(d.expected, ob.sparql.toString(), "bad sparql" + ctx);
                     assertArrayEquals(((OpaqueSparqlQuery) ex).varPos, ob.varPos,
                             "bad varPositions" + ctx);
                 }
@@ -507,14 +497,22 @@ class SparqlQueryTest {
     @Test
     void testToAsk() {
         for (Parser parser : PARSERS) {
-            for (A d : askData()) {
-                var ctx = " for d=" + d;
+            List<A> askData = askData();
+            for (int row = 0; row < askData.size(); row++) {
+                A d = askData.get(row);
+                var ctx = " for askData()["+row+"]=" + d;
                 SparqlQuery q, b, e;
                 try {
                     q = parser.parse(d.in);
                     b = parser.parse(d.in);
                     e = parser.parse(d.expected);
-                } catch (SilentSkip ignored) { continue; }
+                } catch (SilentSkip t) {
+                    continue;
+                } catch (Throwable t) {
+                    fail(t.getClass().getSimpleName() + ctx, t);
+                    throw t;
+                }
+
                 var a = q.toAsk();
 
                 assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
@@ -522,7 +520,7 @@ class SparqlQueryTest {
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
                 if (a instanceof OpaqueSparqlQuery oa) {
                     var oe = (OpaqueSparqlQuery) e;
-                    assertEquals(d.expected, oa.sparql(), "bad sparql" + ctx);
+                    assertEquals(d.expected, oa.sparql().toString(), "bad sparql" + ctx);
                     assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
                     assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
                 }
@@ -551,9 +549,9 @@ class SparqlQueryTest {
                 new T("CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}", STRONG,
                       "CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}"),
                 new T("SELECT REDUCED * WHERE {?s ?p ?o}", STRONG,
-                      "SELECT REDUCED * WHERE {?s ?p ?o}"),
+                      "SELECT DISTINCT * WHERE {?s ?p ?o}"),
                 new T("SELECT\n\treduced * WHERE {?s ?p ?o}", STRONG,
-                      "SELECT\n\treduced * WHERE {?s ?p ?o}"),
+                      "SELECT DISTINCT * WHERE {?s ?p ?o}"),
                 new T("SELECT DISTINCT * WHERE {?s ?p ?o}", STRONG,
                       "SELECT DISTINCT * WHERE {?s ?p ?o}"),
                 new T("SELECT \tdistinct * WHERE {?s ?p ?o}", STRONG,
@@ -611,7 +609,7 @@ class SparqlQueryTest {
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
                 if (a instanceof OpaqueSparqlQuery oa) {
                     var oe = (OpaqueSparqlQuery) e;
-                    assertEquals(t.expected, oa.sparql(), "bad sparql" + ctx);
+                    assertEquals(t.expected, oa.sparql().toString(), "bad sparql" + ctx);
                     assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
                     assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
                 }

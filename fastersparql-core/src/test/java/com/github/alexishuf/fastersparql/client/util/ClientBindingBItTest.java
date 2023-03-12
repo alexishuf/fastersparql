@@ -1,124 +1,79 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.client.BindType;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.model.Graph;
-import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
-import com.github.alexishuf.fastersparql.client.model.row.types.ListRow;
-import com.github.alexishuf.fastersparql.client.util.bind.ClientBindingBIt;
+import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
+import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.client.BindType.*;
-import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static com.github.alexishuf.fastersparql.model.BindType.*;
+import static com.github.alexishuf.fastersparql.util.Results.results;
 
 class ClientBindingBItTest {
-
     private final OpaqueSparqlQuery SPARQL = new OpaqueSparqlQuery("SELECT * WHERE { ?x a ?y } ");
 
-    private static class MockClient implements SparqlClient<List<String>, String, Object> {
-        final OpaqueSparqlQuery sparql;
-        SparqlQuery expectedSparql;
-        final Vars boundVars;
-        List<List<String>> results;
-
-        public MockClient(OpaqueSparqlQuery sparql, Vars boundVars, List<List<String>> results) {
-            this.expectedSparql = this.sparql = sparql;
-            this.boundVars      = boundVars;
-            this.results        = results;
-        }
-
-        public ClientBindingBIt<List<String>, String> bind(List<String> left, BindType type) {
-            var binding = new RowBinding<>(ListRow.STRING, boundVars).row(left);
-            this.expectedSparql = sparql.bind(binding);
-            var leftIt = new IteratorBIt<>(List.of(left), List.class, boundVars);
-            return new ClientBindingBIt<>(leftIt, type, ListRow.STRING,
-                                          this, sparql);
-        }
-
-        @Override public RowType<List<String>, String> rowType() { return ListRow.STRING; }
-        @Override public Class<Object> fragmentClass() { return Object.class; }
-        @Override public SparqlEndpoint endpoint() {
-            return SparqlEndpoint.parse("http://example.org/sparql");
-        }
-        @Override
-        public BIt<List<String>> query(SparqlQuery sparql,
-                                       @Nullable BIt<List<String>> bindings,
-                                       @Nullable BindType bindType) {
-            assert bindings == null;
-            assert bindType == null;
-            assertEquals(expectedSparql, sparql);
-            return new IteratorBIt<>(results, List.class, sparql.publicVars());
-        }
-        @Override
-        public Graph<Object> queryGraph(SparqlQuery ignored) {
-            throw new UnsupportedOperationException();
-        }
-        @Override public void close() { }
+    private ResultsSparqlClient.BoundAnswersStage1 client(Results expected) {
+        //noinspection resource
+        return new ResultsSparqlClient(false)
+                .answerWith(SPARQL, expected)
+                .forBindings(SPARQL, Vars.of("x"), Vars.of("y"));
     }
 
     @Test
     void testJoin() {
-        try (var client = new MockClient(SPARQL, Vars.of("x"), List.of(List.of("<yValue>")))) {
-            var actual = client.bind(List.of("<xValue>"), BindType.JOIN).toList();
-            assertEquals(List.of(List.of("<xValue>", "<yValue>")), actual);
+        Results expected = results("?x", "?y",
+                "1", "11",
+                "3", "31",
+                "3", "32"
+        ).query(SPARQL).bindings("?x", "1", "2", "3");
+        try (var client = client(expected)
+                .answer("1").with("11")
+                .answer("2").with()
+                .answer("3").with("31", "32").end()) {
+            expected.check(client);
         }
     }
 
     @Test
-    void testLeftJoinMatching() {
-        try (var client = new MockClient(SPARQL, Vars.of("x"), List.of(List.of("<yValue>")))) {
-            var it = client.bind(List.of("<xValue>"), LEFT_JOIN);
-            assertEquals(Vars.of("x", "y"), it.vars());
-            var actual = it.toList();
-            assertEquals(List.of(List.of("<xValue>", "<yValue>")), actual);
+    void testLeftJoin() {
+        var expected = results("?x", "?y",
+                "1", null,
+                "2", "21",
+                "2", "22",
+                "3", "31"
+        ).query(SPARQL).bindType(LEFT_JOIN);
+        try (var client = client(expected)
+                .answer("1").with()
+                .answer("2").with("21", "22")
+                .answer("3").with("31").end()) {
+            expected.check(client);
         }
     }
 
     @Test
-    void testLeftJoinNotMatching() {
-        try (var client = new MockClient(SPARQL, Vars.of("x"), emptyList())) {
-            var it = client.bind(List.of("<xValue>"), LEFT_JOIN);
-            assertEquals(Vars.of("x", "y"), it.vars());
-            var actual = it.toList();
-            assertEquals(List.of(asList("<xValue>", null)), actual);
+    void testExists() {
+        var expected = results("?x", "1", "3").query(SPARQL).bindType(EXISTS);
+        try (var client = client(expected)
+                .answer("1").with("11")
+                .answer("2").with()
+                .answer("3").with("31", "32").end()) {
+            expected.check(client);
         }
     }
 
     @Test
-    void testExistsMatches() {
-        try (var client = new MockClient(SPARQL, Vars.of("x"), List.of(List.of("<yValue>")))) {
-            var it = client.bind(List.of("<xValue>"), EXISTS);
-            assertEquals(Vars.of("x"), it.vars());
-            assertEquals(List.of(List.of("<xValue>")), it.toList());
-
-            client.results = List.of();
-            assertEquals(List.of(), client.bind(List.of("<xValue>"), EXISTS).toList());
+    void testNotExistsAndMinus() {
+        for (BindType type : List.of(NOT_EXISTS, MINUS)) {
+            var expected = results("?x", "2").query(SPARQL).bindType(type);
+            try (var client = client(expected)
+                    .answer("1").with("11")
+                    .answer("2").with()
+                    .answer("3").with("31", "32").end()) {
+                expected.check(client);
+            }
         }
     }
-
-    @Test
-    void testNotExists() {
-        try (var client = new MockClient(SPARQL, Vars.of("x"), List.of(List.of("<yValue>")))) {
-            var it = client.bind(List.of("<xValue>"), NOT_EXISTS);
-            assertEquals(Vars.of("x"), it.vars());
-            assertEquals(List.of(), it.toList());
-
-            client.results = List.of();
-            var actual = client.bind(List.of("<xValue>"), NOT_EXISTS).toList();
-            assertEquals(List.of(List.of("<xValue>")), actual);
-        }
-    }
-
 }

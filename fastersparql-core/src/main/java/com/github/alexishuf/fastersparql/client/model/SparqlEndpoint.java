@@ -1,19 +1,21 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
-import com.github.alexishuf.fastersparql.client.util.Skip;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.io.File;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.*;
 
 public final class SparqlEndpoint {
 
@@ -22,6 +24,7 @@ public final class SparqlEndpoint {
     private final boolean hasQuery;
     private final Protocol protocol;
     private final String rawPathWithQuery;
+    private final Rope rawPathWithQueryRope;
     private final int port;
     private @MonotonicNonNull URI toURI;
 
@@ -36,9 +39,7 @@ public final class SparqlEndpoint {
      */
     public String uri() { return uri; }
 
-    /**
-     * Whether the URI scheme is HTTP. If false, the URI is HTTP.
-     */
+    /** {@link Protocol#fromURI(String)} of {@link SparqlEndpoint#uri()} */
     public Protocol protocol() { return protocol; }
 
     /**
@@ -52,6 +53,18 @@ public final class SparqlEndpoint {
      * <p>The path segment will always start with a single {@code /}.</p>
      */
     public String rawPathWithQuery() { return rawPathWithQuery; }
+
+    /** {@link SparqlEndpoint#rawPathWithQuery()} as a {@link Rope} */
+    public Rope rawPathWithQueryRope() { return rawPathWithQueryRope; }
+
+    /** Get the {@link File} corresponding to this endpoint's file:// URI. */
+    public File asFile() {
+        String uri = UriUtils.unescape(this.uri), path;
+        if      (uri.startsWith("file://")) path = uri.substring(7);
+        else if (uri.startsWith("file:")  ) path = uri.substring(5);
+        else throw new IllegalArgumentException("Not a file: URI");
+        return new File(path);
+    }
 
     /**
      * Whether the URI includes a non-empty
@@ -77,7 +90,6 @@ public final class SparqlEndpoint {
     private static final Map<String, MediaType> RDF_FORMATS;
     private static final Map<String, SparqlResultFormat> RESULTS_FORMATS;
     private static final Map<String, SparqlMethod> METHODS;
-    private static final long[] SLASH = alphabet("/").get();
     static {
         Map<String, MediaType> rdfFormats = new HashMap<>();
         rdfFormats.put("ttl", new MediaType("text", "turtle"));
@@ -126,7 +138,7 @@ public final class SparqlEndpoint {
      *                      {@link SparqlConfiguration#EMPTY} instead. If {@code uri} is
      *                      augmented, {@code configuration} will be overlaid above
      *                      the augmented URI configuration.
-     * @throws SparqlClientInvalidArgument if any of the following happens:
+     * @throws FSInvalidArgument if any of the following happens:
      *  <ul>
      *      <li>Null or empty URI</li>
      *      <li>Invalid URI</li>
@@ -139,9 +151,9 @@ public final class SparqlEndpoint {
      */
     public SparqlEndpoint(String augUri, @Nullable SparqlConfiguration configuration) {
         if (augUri == null)
-            throw new SparqlClientInvalidArgument("Null URI");
+            throw new FSInvalidArgument("Null URI");
         if (augUri.isEmpty())
-            throw new SparqlClientInvalidArgument("Empty URI");
+            throw new FSInvalidArgument("Empty URI");
         if (configuration == null)
             configuration = SparqlConfiguration.EMPTY;
         var builder = SparqlConfiguration.builder();
@@ -152,20 +164,34 @@ public final class SparqlEndpoint {
 
         this.uri = plainUri;
         this.protocol = Protocol.fromURI(plainUri);
-        int schema = plainUri.indexOf("://"), len = plainUri.length();
-        if (schema == -1)
-            throw new SparqlClientInvalidArgument("No scheme:// in "+augUri);
-        int path = skipUntil(plainUri, schema+3, len, '/');
-        this.rawPathWithQuery = path == len ? "/"
-                              : plainUri.substring(skip(plainUri, path, len, SLASH)-1);
-        this.hasQuery = this.rawPathWithQuery.indexOf('?') >= 0;
-        int colon = reverseSkip(plainUri, 0, path, DIGITS);
-        if (plainUri.charAt(colon) == ':') {
-            this.port = Integer.parseInt(plainUri.substring(colon+1, path));
-            if (this.port >= 65_536)
-                throw new SparqlClientInvalidArgument("Port number "+this.port+" is too large in "+uri);
+        int path, schemaSepLen, schema = plainUri.indexOf(":"), len = plainUri.length();
+        schemaSepLen = plainUri.regionMatches(schema, "://", 0, 3) ? 3 : 1;
+        if (protocol == Protocol.FILE)
+            path = schema+schemaSepLen;
+        else if (schema == -1)
+            throw new FSInvalidArgument("No scheme:// in "+augUri);
+        else
+            path = plainUri.indexOf('/', schema+schemaSepLen);
+        if (path == -1) {
+            this.rawPathWithQueryRope = new ByteRope(this.rawPathWithQuery = "/");
         } else {
-            this.port = this.protocol.port();
+            int e = path;
+            while (e+1 < len && plainUri.charAt(e+1) == '/') ++e;
+            this.rawPathWithQueryRope = new ByteRope(this.rawPathWithQuery = plainUri.substring(e));
+        }
+        this.hasQuery = this.rawPathWithQuery.indexOf('?') >= 0;
+        if (protocol == Protocol.FILE) {
+            this.port = 0;
+        } else {
+            int colon = path - 1;
+            for (char c; colon > 0 && (c = plainUri.charAt(colon)) >= '0' && c <= '9'; ) --colon;
+            if (colon > 0 && plainUri.charAt(colon) == ':') {
+                this.port = Integer.parseInt(plainUri.substring(colon + 1, path));
+                if (this.port >= 65_536)
+                    throw new FSInvalidArgument("Port number " + this.port + " is too large in " + uri);
+            } else {
+                this.port = this.protocol.port();
+            }
         }
         this.configuration = configuration;
     }
@@ -272,7 +298,10 @@ public final class SparqlEndpoint {
      *
      * @return non-null string with decoded escapes or {@code null} if there is no {@code userinfo}.
      */
-    public @Nullable String user() { return UriUtils.unescape(rawUser()); }
+    public @Nullable String user() {
+        String raw = rawUser();
+        return raw == null ? null : UriUtils.unescape(new ByteRope(raw)).toString();
+    }
 
     /**
      * Get the {@code password} in the {@code user:password} if the URI has a {@code userinfo}
@@ -297,7 +326,10 @@ public final class SparqlEndpoint {
      *
      * @return non-null decoded password if there is an {@code userinfo} in the URI, else null
      */
-    public @Nullable String password() { return UriUtils.unescape(rawPassword()); }
+    public @Nullable String password() {
+        String raw = rawPassword();
+        return raw == null ? null : UriUtils.unescape(new ByteRope(raw)).toString();
+    }
 
     /* --- --- --- java.lang.Object methods --- --- --- */
 
@@ -321,11 +353,12 @@ public final class SparqlEndpoint {
 
     /* --- --- --- implementation details --- --- --- */
 
-    private static final long[] AUGMENTED_CHAR = Skip.alphabet(", ").letters().get();
+    private static final int[] AUGMENTED_CHAR = Rope.alphabet(", ", Rope.Range.LETTER);
     private static String removeConfiguration(String augmentedUri,
                                               SparqlConfiguration.Builder builder) {
-        int len = augmentedUri.length();
-        int at = skip(augmentedUri, 0, len, AUGMENTED_CHAR);
+        int len = augmentedUri.length(), at = 0;
+        for (char c; at < len && (c=augmentedUri.charAt(at)) < 128 && Rope.contains(AUGMENTED_CHAR, (byte)c); )
+            ++at;
         if (at == len || augmentedUri.charAt(at) != '@')
             return augmentedUri;
         for (int consumed = 0; consumed < at; ) {
@@ -345,7 +378,7 @@ public final class SparqlEndpoint {
                     if (mt != null) {
                         builder.rdfAccept(mt);
                     } else {
-                        throw new SparqlClientInvalidArgument("Unknown "+tag+" in augmented  (tag0,tag1,...@scheme://) section of "+augmentedUri);
+                        throw new FSInvalidArgument("Unknown "+tag+" in augmented  (tag0,tag1,...@scheme://) section of "+augmentedUri);
                     }
                 }
             }

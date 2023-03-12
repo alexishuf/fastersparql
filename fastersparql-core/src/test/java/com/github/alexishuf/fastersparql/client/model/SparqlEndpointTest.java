@@ -1,11 +1,14 @@
 package com.github.alexishuf.fastersparql.client.model;
 
+import com.github.alexishuf.fastersparql.model.RDFMediaTypes;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.File;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -192,5 +195,20 @@ class SparqlEndpointTest {
     })
     void testToStringFromAugmented(String augmented) {
         assertEquals(augmented, SparqlEndpoint.parse(augmented).toString());
+    }
+
+    static Stream<Arguments> testAsFile() {
+        return Stream.of(
+                arguments("file:local.hdt", new File("local.hdt")),
+                arguments("file:/tmp/abs.hdt", new File("/tmp/abs.hdt")),
+                arguments("file:///tmp/abs.hdt", new File("/tmp/abs.hdt")),
+                arguments("file:/tmp/with%20space.hdt", new File("/tmp/with space.hdt")),
+                arguments("file:///tmp/with%20space.hdt", new File("/tmp/with space.hdt"))
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testAsFile(String uri, File file) {
+        assertEquals(file, SparqlEndpoint.parse(uri).asFile());
     }
 }

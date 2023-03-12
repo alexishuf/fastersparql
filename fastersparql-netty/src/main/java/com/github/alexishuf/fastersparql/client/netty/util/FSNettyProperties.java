@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlClient;
-import com.github.alexishuf.fastersparql.client.util.FSProperties;
 import io.netty.channel.EventLoopGroup;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.checkerframework.checker.nullness.qual.Nullable;

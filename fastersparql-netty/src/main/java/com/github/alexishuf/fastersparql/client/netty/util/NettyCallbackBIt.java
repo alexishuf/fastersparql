@@ -1,13 +1,13 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
-import com.github.alexishuf.fastersparql.client.model.Vars;
-import com.github.alexishuf.fastersparql.batch.BItClosedException;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.adapters.LazyCallbackBIt;
+import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.util.ClientRetry;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -24,11 +24,11 @@ public abstract class NettyCallbackBIt<T> extends LazyCallbackBIt<T> {
     protected @MonotonicNonNull Channel channel;
     private boolean backPressured;
 
-    public NettyCallbackBIt(Class<T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public NettyCallbackBIt(RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
     }
 
-    public abstract SparqlClient<?, ?, ?> client();
+    public abstract SparqlClient client();
     protected abstract void request();
     protected void afterNormalComplete() {}
 
@@ -37,12 +37,11 @@ public abstract class NettyCallbackBIt<T> extends LazyCallbackBIt<T> {
     @Override public void complete(@Nullable Throwable error) {
         lock.lock();
         try {
-            assert BItClosedException.isClosedExceptionFor(error, this)
-                    || channel == null || channel.eventLoop().inEventLoop()
-                        : "non-cancel() complete() from outside channel event loop";
+            assert channel == null || channel.eventLoop().inEventLoop()
+                   : "non-cancel() complete() from outside channel event loop";
             //noinspection resource
-            error = SparqlClientException.wrap(client().endpoint(), error);
-            if (!ended && error instanceof SparqlClientServerException se && se.shouldRetry()) {
+            error = FSException.wrap(client().endpoint(), error);
+            if (!ended && error instanceof FSServerException se && se.shouldRetry()) {
                 if (ClientRetry.retry(++retries, error, this::request, this::complete))
                     log.debug("{}: retry {} after {}", this, retries, error.toString());
             } else {

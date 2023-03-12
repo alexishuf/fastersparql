@@ -1,10 +1,8 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
-import java.io.File;
 import java.net.URI;
 
 /**
@@ -63,15 +61,6 @@ public enum Protocol {
             return WS;
         else if (uri.startsWith("file:"))
             return FILE;
-        throw new SparqlClientInvalidArgument("The URI "+uri+" does not use a supported scheme: http, https, ws or wss");
-    }
-
-    public static File parseFile(String uri) {
-        String path;
-        String unescaped = UriUtils.unescape(uri);
-        if      (unescaped.startsWith("file://")) path = unescaped.substring(7);
-        else if (unescaped.startsWith("file:")  ) path = unescaped.substring(5);
-        else throw new IllegalArgumentException("Not a file: URI");
-        return new File(path);
+        throw new FSInvalidArgument("The URI "+uri+" does not use a supported scheme: http, https, ws or wss");
     }
 }

@@ -1,11 +1,19 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
+import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -15,50 +23,99 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class AbstractBIt<T> implements BIt<T> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
+    private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
     /** A value smaller than any {@link System#nanoTime()} call without overflow risks. */
     protected static final long ORIGIN_TIMESTAMP = System.nanoTime();
 
     protected long minWaitNs = 0;
     protected long maxWaitNs = 0;
-    protected int minBatch = 1, maxBatch = 65_536, id = 0;
-    protected boolean needsStartTime = false, closed = false, exhausted = false, clean = false;
-    protected final Class<T> elementClass;
+    protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
+    protected boolean needsStartTime = false, closed = false, clean = false;
+    protected @MonotonicNonNull Throwable error;
+    protected final RowType<T> rowType;
     protected final Vars vars;
 
-    public AbstractBIt(Class<? super T> elementClass, Vars vars) {
-        //noinspection unchecked
-        this.elementClass = (Class<T>) elementClass;
+    public AbstractBIt(RowType<T> rowType, Vars vars) {
+        this.rowType = rowType;
         this.vars = vars;
     }
 
     /* --- --- --- abstract methods --- --- --- */
 
     /**
-     * Releases any resources held by this iterator. Must only be called once per {@code BIt}.
+     * Releases any resources held by this iterator. This will only be called once per {@link BIt}.
      *
-     * <p>This will be called in one of the following situations:</p>
+     * <p>Implementors of {@link AbstractBIt} MUST not call this, they should call
+     * {@link AbstractBIt#onTermination(Throwable)} instead, which is idempotent and will invoke this
+     * on its first call.</p>
+     *
+     * <p>This method will be called once one of three things happens:</p>
+     *
      * <ul>
-     *     <li>{@link BIt#close()} was called</li>
-     *     <li>The last item/batch/Throwable from the {@link BIt} is being delivered</li>
+     *     <li>Normal completion: all values of the iterator have been delivered downstream</li>
+     *     <li>Error: iteration was stopped due to an error upstream on within this iterator</li>
+     *     <li>Cancellation: {@link BIt#close()} was called before a normal or error completion</li>
      * </ul>
      *
-     * @param interrupted {@code true} iff called from {@link BIt#close()}.
+     * @param cause {@code null} in case of <i>normal completion</i>, the error in case of
+     *              <i>error completion</i>, or a {@link BItClosedAtException} for {@code this}
+     *              in case of <i>cancellation</i>
      */
-    protected abstract void cleanup(boolean interrupted);
+    protected void cleanup(@Nullable Throwable cause) { /* do nothing by default */ }
 
-    /** Calls {@code cleanup()} only once after the iterator is fully consumed */
-    protected void onExhausted() {
-        if (exhausted) return;
-        exhausted = true;
-        try {
-            if (!clean) {
-                clean = true;
-                cleanup(false);
+    protected final void checkError() {
+        if (error == null) return;
+        if (error instanceof BItClosedAtException e)
+            throw new BItReadClosedException(this, e.asFor(this));
+        throw new BItReadFailedException(this, error);
+    }
+
+    /**
+     * Delegates to {@link AbstractBIt#cleanup(Throwable)}, but only on the first call.
+     *
+     * <p>This method should be called when one of the following happens:</p>
+     * <ul>
+     *     <li>The source that feeds this {@link BIt} has been exhausted (e.g., a thread calling
+     *         {@link BufferedBIt#feed(Object)} has completed or threw {@code cause})</li>
+     *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#hasNext()} {@code == false} and
+     *         empty {@link BIt#nextBatch()}</li>
+     *     <li>{@link BIt#close()} was called ({@code cause} will be
+     *         a {@link BItClosedAtException})</li>
+     * </ul>
+     *
+     * @param cause if non-null, this is the exception that caused the termination.
+     */
+    protected final void onTermination(@Nullable Throwable cause) {
+        var msg = cause == null ? "null" : cause.getClass().getSimpleName() + ": " + cause.getMessage();
+        if (clean) {
+            if (cause != null && !(cause instanceof BItClosedAtException)) {
+                if (error == null)
+                    log.info(ON_TERM_TPL_PREV, this, msg, "null");
+                else
+                    log.debug(ON_TERM_TPL_PREV, this, msg, Objects.toString(this.error));
+            } else {
+                log.trace(ON_TERM_TPL_PREV, this, msg, Objects.toString(this.error));
             }
+        }
+        clean = true;
+        error = cause;
+        if (cause == null || cause instanceof BItClosedAtException) {
+            log.trace(ON_TERM_TPL, this, msg);
+        } else if (cause instanceof FSCancelledException) {
+            log.debug(ON_TERM_TPL, this, msg);
+        } else if (IS_DEBUG_ENABLED) {
+            log.debug(ON_TERM_TPL, this, msg, cause);
+        } else {
+            log.info(ON_TERM_TPL, this, msg);
+        }
+        try {
+            cleanup(cause);
         } catch (Throwable t) {
             log.error("{}.cleanup() on exhaustion failed", this, t);
         }
     }
+    private static final String ON_TERM_TPL_PREV = "{}.onTermination({}) ignored: previous onTermination({})";
+    private static final String ON_TERM_TPL = "{}.onTermination({})";
 
     /* --- --- --- helpers --- --- --- */
 
@@ -96,7 +153,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
 
     /* --- --- --- implementations --- --- --- */
 
-    @Override public Class<T> elementClass() { return elementClass; }
+    @Override public RowType<T> rowType() { return rowType; }
 
     @Override public Vars vars() { return vars; }
 
@@ -159,25 +216,24 @@ public abstract class AbstractBIt<T> implements BIt<T> {
     }
 
     @Override public void close() {
-        if (!closed) {
-            closed = true;
-            if (!clean)
-                cleanup(true);
-        }
+        if (closed) return;
+        closed = true;
+        if (!clean) // close() before onExhausted()
+            onTermination(new BItClosedAtException(this));
     }
 
     protected String toStringNoArgs() {
         String name = getClass().getSimpleName();
         int suffixStart = name.length() - 3;
         if (name.regionMatches(suffixStart, "BIt", 0, 3))
-            return name.substring(0, suffixStart);
+            name = name.substring(0, suffixStart);
         return name+'@'+id();
     }
 
     @Override public String toString() { return toStringNoArgs(); }
 
     protected String toStringWithOperands(Collection<?> operands) {
-        var sb = new StringBuilder(200).append(toStringNoArgs());
+        var sb = new StringBuilder(200).append(toStringNoArgs()).append('[');
         int taken = 0, n = operands.size();
         for (var i = operands.iterator(); sb.length() < 160 && i.hasNext(); ++taken)
             sb.append(i.next()).append(", ");
@@ -185,6 +241,6 @@ public abstract class AbstractBIt<T> implements BIt<T> {
             sb.append("...");
         else
             sb.setLength(sb.length()-2);
-        return sb.toString();
+        return sb.append(']').toString();
     }
 }

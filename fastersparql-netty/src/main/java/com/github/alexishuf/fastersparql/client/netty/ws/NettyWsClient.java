@@ -1,9 +1,10 @@
 package com.github.alexishuf.fastersparql.client.netty.ws;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientServerException;
 import com.github.alexishuf.fastersparql.client.netty.http.ActiveChannelSet;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
+import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
@@ -32,7 +33,7 @@ public class NettyWsClient implements AutoCloseable {
         this.elgHolder = elgHolder;
         this.activeChs = new ActiveChannelSet(uri.toString());
         int maxHttp = FSNettyProperties.wsMaxHttpResponse();
-        WsRecycler recycler = pool ? this::recycle : WsRecycler.CLOSE;
+        ChannelRecycler recycler = pool ? this::recycle : ChannelRecycler.CLOSE;
         var initializer = new ChannelInitializer<>() {
             @Override protected void initChannel(Channel ch) {
                 ChannelPipeline pipe = ch.pipeline();
@@ -41,7 +42,7 @@ public class NettyWsClient implements AutoCloseable {
                 pipe.addLast("http", new HttpClientCodec());
                 pipe.addLast("aggregator", new HttpObjectAggregator(maxHttp));
                 pipe.addLast("comp", WebSocketClientCompressionHandler.INSTANCE);
-                pipe.addLast("ws", new WsClientNettyHandler(uri, headers, recycler));
+                pipe.addLast("ws", new NettWsClientPipelineHandler(uri, headers, recycler));
                 activeChs.add(ch);
             }
         };
@@ -73,10 +74,11 @@ public class NettyWsClient implements AutoCloseable {
      *
      * <p>Eventually one of the following methods will be called:</p>
      * <ul>
-     *     <li>{@link WsClientHandler#attach(ChannelHandlerContext, WsRecycler)}
+     *     <li>{@link NettyWsClientHandler#attach(ChannelHandlerContext, ChannelRecycler)}
      *         once a WebSocket session has been established</li>
-     *     <li>{@link WsClientHandler#onError(Throwable)} with the reason for not establishing
-     *         a WebSocket session (e.g., could not connect, WebSocket handshake failed, etc.).</li>
+     *     <li>{@link NettyWsClientHandler#detach(Throwable)} with the reason for not establishing
+     *         a WebSocket session (e.g., could not connect, WebSocket handshake failed, etc.).
+     *         There will be no subsequent {@link NettyWsClientHandler#attach(ChannelHandlerContext, ChannelRecycler) call</li>
      * </ul>
      *
      * <p>Note that after {@code handler.attach(ctx, recycler)}, {@code onError} will still be called
@@ -84,23 +86,23 @@ public class NettyWsClient implements AutoCloseable {
      *
      * @param handler listener for WebSocket session events.
      */
-    public void open(WsClientHandler handler) {
+    public void open(NettyWsClientHandler handler) {
         (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
             try {
                 Channel ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
-                var nettyHandler = (WsClientNettyHandler) ch.pipeline().get("ws");
+                var nettyHandler = (NettWsClientPipelineHandler) ch.pipeline().get("ws");
                 if (nettyHandler == null) {
                     String msg = ch.isOpen()
                             ? "\"ws\" handler missing from pipeline in ch=" + ch
                             : "Server closed the connection prematurely for ch=" + ch;
-                    handler.onError(new SparqlClientServerException(msg));
+                    handler.detach(new FSServerException(msg));
                 } else {
                     nettyHandler.delegate(handler);
                 }
             } catch (ExecutionException e) {
-                handler.onError(e.getCause());
+                handler.detach(e.getCause());
             } catch (Throwable t) {
-                handler.onError(t);
+                handler.detach(t);
             }
         });
     }

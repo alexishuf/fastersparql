@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -19,7 +20,7 @@ class FailedBItTest {
     @ParameterizedTest @MethodSource("getters")
     void test(BatchGetter getter) {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(Integer.class, ex)) {
+        try (var it = new FailedBIt<>(NotRowType.INTEGER, ex)) {
             it.minBatch(2);
             try {
                 getter.getBatch(it);
@@ -33,7 +34,7 @@ class FailedBItTest {
     @ParameterizedTest @MethodSource("getters")
     void testWait(BatchGetter getter) {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(Integer.class, ex)) {
+        try (var it = new FailedBIt<>(NotRowType.INTEGER, ex)) {
             it.minWait(1, TimeUnit.MINUTES).maxWait(2, TimeUnit.MINUTES);
             try {
                 getter.getBatch(it);

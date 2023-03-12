@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
+import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -56,7 +57,7 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testInvalidNonEmptyNonNullDistinct(List<String> input) {
-        assertThrows(SparqlClientInvalidArgument.class,
+        assertThrows(FSInvalidArgument.class,
                 () -> SparqlConfiguration.nonEmptyNonNullDistinct(input, emptyList(), "itemName"));
     }
 
@@ -110,7 +111,7 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testSanitizeInvalidHeaders(Map<@Nullable String, @Nullable String> in) {
-        assertThrows(SparqlClientInvalidArgument.class,
+        assertThrows(FSInvalidArgument.class,
                 () -> SparqlConfiguration.sanitizeHeaders(in));
     }
 
@@ -164,8 +165,8 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testSanitizeAppendHeaders(Map<@Nullable String, @Nullable List<@Nullable String>> in,
-                                   Map<String, List<String>> ex) {
-        assertEquals(ex, SparqlConfiguration.sanitizeAppendHeaders(in));
+                                   Map<String, List<String>> exStr) {
+        assertEquals(exStr, SparqlConfiguration.sanitizeAppendHeaders(in));
     }
 
     static Stream<Arguments> testSanitizeInvalidAppendHeaders() {
@@ -187,7 +188,7 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testSanitizeInvalidAppendHeaders(Map<@Nullable String, @Nullable List<@Nullable String>> in) {
-        assertThrows(SparqlClientInvalidArgument.class,
+        assertThrows(FSInvalidArgument.class,
                 () -> SparqlConfiguration.sanitizeAppendHeaders(in));
     }
 
@@ -238,8 +239,8 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testSanitizeParams(@Nullable Map<@Nullable String, @Nullable List<@Nullable String>> in,
-                            Map<String, List<String>> expected) {
-        assertEquals(expected, SparqlConfiguration.sanitizeParams(in));
+                            Map<String, List<String>> expectedStr) {
+        assertEquals(expectedStr, SparqlConfiguration.sanitizeParams(in));
     }
 
     static Stream<Arguments> testSanitizeInvalidParams() {
@@ -253,7 +254,7 @@ class SparqlConfigurationTest {
 
     @ParameterizedTest @MethodSource
     void testSanitizeInvalidParams(Map<@Nullable String, @Nullable List<@Nullable String>> in) {
-        assertThrows(SparqlClientInvalidArgument.class,
+        assertThrows(FSInvalidArgument.class,
                 () -> SparqlConfiguration.sanitizeParams(in));
     }
 

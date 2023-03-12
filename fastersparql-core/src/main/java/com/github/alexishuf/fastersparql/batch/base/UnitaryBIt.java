@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -16,8 +17,8 @@ public abstract class UnitaryBIt<T> extends AbstractBIt<T> {
     private boolean eager = false;
     private int capacity = 10;
 
-    public UnitaryBIt(Class<? super T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public UnitaryBIt(RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
     }
 
     /* --- --- --- helpers --- --- --- */
@@ -41,6 +42,7 @@ public abstract class UnitaryBIt<T> extends AbstractBIt<T> {
     private void throwPending() {
         RuntimeException e = pendingError instanceof RuntimeException r
                            ? r : new RuntimeException(pendingError);
+        onTermination(e);
         pendingError = null;
         throw e;
     }
@@ -80,7 +82,7 @@ public abstract class UnitaryBIt<T> extends AbstractBIt<T> {
             throwPending();
         Batch<T> batch;
         if (recycled == null) {
-            batch = new Batch<>(elementClass, capacity);
+            batch = new Batch<>(rowType.rowClass, capacity);
         } else {
             batch = recycled;
             batch.clear();
@@ -90,7 +92,7 @@ public abstract class UnitaryBIt<T> extends AbstractBIt<T> {
         while (shouldFetch(batch.size, start))
             batch.add(next());
         if (batch.size == 0)
-            onExhausted();
+            onTermination(null);
         return batch;
     }
 
@@ -104,7 +106,7 @@ public abstract class UnitaryBIt<T> extends AbstractBIt<T> {
             ++size;
         }
         if (size == 0)
-            onExhausted();
+            onTermination(null);
         return size;
     }
 

@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientException;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 
-public class InvalidSparqlException extends SparqlClientException {
+public class InvalidSparqlException extends FSException {
     public InvalidSparqlException(String message) {
         super(message);
     }

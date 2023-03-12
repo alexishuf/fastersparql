@@ -1,21 +1,28 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.client.parser.results.ResultsParserRegistry;
+import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.value.qual.MinLen;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
-import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
-import static com.github.alexishuf.fastersparql.client.util.FSProperties.maxQueryByGet;
-import static com.github.alexishuf.fastersparql.client.util.UriUtils.escapeQueryParam;
-import static com.github.alexishuf.fastersparql.client.util.UriUtils.needsEscape;
+import static com.github.alexishuf.fastersparql.FSProperties.maxQueryByGet;
+import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.GET;
+import static com.github.alexishuf.fastersparql.util.UriUtils.escapeQueryParam;
+import static com.github.alexishuf.fastersparql.util.UriUtils.needsEscape;
 import static java.util.stream.Collectors.toList;
 
 /**
@@ -86,95 +93,71 @@ public class SparqlClientHelpers {
      * Get the string that follows the HTTP method name on the first line of an HTTP request.
      *
      * @param endpoint the target endpoint
-     * @param effective the effective {@link SparqlConfiguration} (will use the method and params)
+     * @param eff the eff {@link SparqlConfiguration} (will use the method and params)
      * @param sparql the SPARQL query to send (not url-encoded)
      * @return a non-null, non-empty string
      */
-    public static CharSequence firstLine(SparqlEndpoint endpoint, SparqlConfiguration effective,
-                                         CharSequence sparql) {
-        char firstSep = endpoint.hasQuery() ? '&' : '?';
-        String prefix = endpoint.rawPathWithQuery();
-        if (effective.methods().get(0) == GET) {
-            return writeParams(prefix, firstSep, sparql, effective.params());
-        } else if (effective.methods().get(0) == POST) {
-            return writeParams(prefix, firstSep, null, effective.params());
-        } else {
-            assert effective.methods().get(0) == FORM;
-            return prefix;
-        }
+    public static String firstLine(SparqlEndpoint endpoint, SparqlConfiguration eff, Rope sparql) {
+        char sep = endpoint.hasQuery() ? '&' : '?';
+        Rope prefix = endpoint.rawPathWithQueryRope();
+        return switch (eff.methods().get(0)) {
+            case GET     -> writeParams(prefix, sep, sparql, eff.params()).toString();
+            case POST,WS -> writeParams(prefix, sep, null, eff.params()).toString();
+            case FORM    -> endpoint.rawPathWithQuery();
+            case FILE    -> throw new UnsupportedOperationException();
+        };
     }
 
     /**
      * Build a form string for use as the body of a {@link SparqlMethod#FORM} request.
      *
      * @param sparql the sparql query, not yet url-encoded
-     * @param otherParams additional params to set
+     * @param params additional params to set
      * @return a non-null and non-empty string to be used as a request body for
      *         {@code application/x-www-form-urlencoded}
      */
-    public static CharSequence
-    formString(CharSequence sparql,
-               @Nullable Map<? extends CharSequence,
-                             ? extends Collection<? extends CharSequence>> otherParams) {
-        return writeParams("", '\0', sparql, otherParams);
+    public static Rope formString(Rope sparql, Map<?, ? extends Collection<?>> params) {
+        return writeParams(ByteRope.EMPTY, '\0', sparql, params);
     }
 
-    private static CharSequence
-    writeParams(CharSequence prefix, char firstSeparator, @Nullable CharSequence sparql,
-                @Nullable Map<? extends CharSequence,
-                              ? extends Collection<? extends CharSequence>> params) {
-        params = params == null ? Collections.emptyMap() : params;
-        int capacity = prefix.length() + (sparql == null ? 0 : 7 + sparql.length()*2);
-        for (Map.Entry<? extends CharSequence, ? extends Collection<? extends CharSequence>> e
-                : params.entrySet()) {
-            capacity += e.getKey().length() + 1;
-            for (CharSequence v : e.getValue())
-                capacity += v.length()*2;
-        }
+    private static final ByteRope QUERY_PARAM = new ByteRope("query=");
+    private static ByteRope writeParams(Rope prefix, char firstSeparator, @Nullable Rope sparql,
+                                 Map<?, ? extends Collection<?>> params) {
+        int capacity = prefix.len() + (sparql == null ? 0 : 7 + sparql.len()) + params.size()*32;
         if (capacity == 0)
-            return "";
-        boolean first = true;
-        StringBuilder output = new StringBuilder(capacity);
-        output.append(prefix);
+            return ByteRope.EMPTY;
+        ByteRope b = new ByteRope(capacity).append(prefix);
+        char sep = firstSeparator;
         if (sparql != null) {
-            if (firstSeparator != '\0') output.append(firstSeparator);
-            first = false;
-            escapeQueryParam(output.append("query="), sparql);
+            escapeQueryParam((sep == 0 ? b : b.append(sep)).append(QUERY_PARAM), sparql);
+            sep = '&';
         }
-        for (Map.Entry<? extends CharSequence, ? extends Collection<? extends CharSequence>> e
-                : params.entrySet()) {
-            for (CharSequence v : e.getValue()) {
-                if (first) {
-                    if (firstSeparator != '\0') output.append(firstSeparator);
-                    first = false;
-                } else {
-                    output.append('&');
-                }
-                assert !needsEscape(e.getKey());
-                assert !needsEscape(v);
-                output.append(e.getKey()).append('=').append(v);
+        for (var e : params.entrySet()) {
+            for (var v : e.getValue()) {
+                if (sep != 0) b.append(sep);
+                if (sep == firstSeparator) sep = '&';
+                assert !needsEscape(new ByteRope(e.getKey()));
+                assert !needsEscape(new ByteRope(v));
+                b.append(e.getKey()).append('=').append(v);
             }
         }
-        return output;
+        return b;
     }
 
     /**
      * Creates a copy of {@code endpoint} only with result formats supported by {@code reg}.
      *
      * @param endpoint the {@link SparqlEndpoint}
-     * @param reg where to test which {@link SparqlConfiguration#resultsAccepts()} are supported.
-     * @return a copy of {@code endpoint} where {@link ResultsParserRegistry#canParse(MediaType)}
-     *         is {@code true} for all {@link SparqlConfiguration#resultsAccepts()}
      * @throws UnacceptableSparqlConfiguration {@link SparqlConfiguration#resultsAccepts()}
      *         would be empty on the returned endpoint (no requested results format is supported).
      */
-    public static SparqlEndpoint withSupported(SparqlEndpoint endpoint, ResultsParserRegistry reg,
+    public static SparqlEndpoint withSupported(SparqlEndpoint endpoint,
                                                Collection<SparqlMethod> allowedMethods) {
         List<SparqlResultFormat> supportedFormats = new ArrayList<>();
         boolean changed = false;
         SparqlConfiguration request = endpoint.configuration();
         for (SparqlResultFormat fmt : request.resultsAccepts()) {
-            if (reg.canParse(fmt.asMediaType()))
+            if (ResultsParserBIt.supports(fmt))
                 supportedFormats.add(fmt);
             else
                 changed = true;
@@ -182,7 +165,7 @@ public class SparqlClientHelpers {
         if (supportedFormats.isEmpty()) {
             SparqlConfiguration offer = request.toBuilder().clearResultsAccepts()
                     .resultsAccepts(SparqlResultFormat.VALUES.stream()
-                            .filter(f -> reg.canParse(f.asMediaType())).collect(toList()))
+                            .filter(ResultsParserBIt::supports).collect(toList()))
                     .build();
             String msg = "None of the given SparqlResultFormats " + request.resultsAccepts() +
                          " has a ResultsParser in ResultsParserRegistry.get()";

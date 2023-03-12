@@ -1,17 +1,13 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedException;
-import com.github.alexishuf.fastersparql.batch.BItIllegalStateException;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Array;
 import java.util.NoSuchElementException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -32,17 +28,14 @@ import static java.lang.System.arraycopy;
  * @param <T> the item type
  */
 public final class ShortQueueBIt<T> extends AbstractBIt<T> {
-    private static final Logger log = LoggerFactory.getLogger(ShortQueueBIt.class);
-
     private final Lock lock = new ReentrantLock();
     private final Condition hasReady = lock.newCondition();
-    private @Nullable Batch<T> ready, recycled0, recycled1;
+    private @Nullable Batch<T> ready, recycled;
     private int readyConsumed = 0;
-    private boolean ended, errorRethrown;
-    private @Nullable Throwable error;
+    private boolean ended;
 
-    public ShortQueueBIt(Class<? super T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public ShortQueueBIt(RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
     }
 
     /* --- --- --- consumer methods --- --- --- */
@@ -64,15 +57,6 @@ public final class ShortQueueBIt<T> extends AbstractBIt<T> {
     }
 
 
-    private void checkError() {
-        if (error != null && !errorRethrown) {
-            errorRethrown = true;
-            if (error instanceof RuntimeException re) throw re;
-            else if (error instanceof Error e) throw e;
-            else throw new RuntimeException(error);
-        }
-    }
-
     private Batch<T> infrequentNextBatch() {
         if (readyConsumed > 0 && ready != null) {
             T[] a = ready.array;
@@ -92,21 +76,17 @@ public final class ShortQueueBIt<T> extends AbstractBIt<T> {
     @Override public boolean recycle(Batch<T> batch) {
         lock.lock();
         try {
-            if (recycled0 == null) {
-                recycled0 = batch;
-            } else if (recycled1 == null) {
-                recycled1 = batch;
+            if (recycled == null) {
+                recycled = batch;
+                return true;
+            } else if (recycled.array.length < batch.array.length) {
+                recycled = batch;
+                return true;
             } else {
-                int offer = batch.array.length;
-                if (recycled0.array.length < offer) recycled0 = batch;
-                else if (recycled1.array.length < offer) recycled1 = batch;
-                else return false;
+                return false; //our recycled is larger than offered batch
             }
-            return true;
         } finally { lock.unlock(); }
     }
-
-    @Override protected void cleanup(boolean interrupted) { }
 
     @Override public boolean hasNext() {
         lock.lock();
@@ -140,26 +120,17 @@ public final class ShortQueueBIt<T> extends AbstractBIt<T> {
     public void complete(@Nullable Throwable error) {
         lock.lock();
         try {
-            if (ended) {
-                boolean bad = this.error == null && error != null
-                           && !(error instanceof BItIllegalStateException);
-                if (bad) {
-                    log.info("{}.complete({}) ignored: previous complete(null)",
-                             this, error.getClass().getSimpleName(), error);
-                }
-            } else {
-                ended = true;
-                this.error = error;
-                hasReady.signal();
-            }
+            onTermination(error);
+            if (ended) return;
+            ended = true;
+            hasReady.signalAll();
         } finally { lock.unlock(); }
     }
 
     public void put(Batch<T> batch) {
         lock.lock();
         try {
-            if (closed)
-                throw new BItClosedException(this);
+            if (error != null) checkError();
             while (ready != null)
                 hasReady.awaitUninterruptibly();
             ready = batch;
@@ -170,23 +141,16 @@ public final class ShortQueueBIt<T> extends AbstractBIt<T> {
     public void copy(Batch<T> batch) {
         lock.lock();
         try {
-            if (closed)
-                throw new BItClosedException(this);
+            if (error != null)
+                checkError();
             while (ready != null)
                  hasReady.awaitUninterruptibly();
-            if (recycled0 != null) {
-                ready = recycled0;
-                recycled0 = null;
-            } else if (recycled1 != null) {
-                ready = recycled1;
-                recycled1 = null;
-            }
-            if (ready == null) {
-                ready = new Batch<>(batch);
-            } else {
-                if (ready.array.length < batch.size)  //noinspection unchecked
-                    ready.array = (T[]) Array.newInstance(elementClass, batch.size);
+            if (recycled != null && recycled.array.length >= batch.size) {
+                ready = recycled;
                 arraycopy(batch.array, 0, ready.array, 0, ready.size = batch.size);
+                recycled = null;
+            } else {
+                ready = new Batch<>(batch);
             }
             hasReady.signal();
         } finally { lock.unlock(); }

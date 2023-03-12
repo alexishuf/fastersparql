@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 
 import java.time.Duration;
 import java.util.List;
@@ -18,7 +19,7 @@ class LazyCallbackBItTest extends AbstractBItTest {
 
     @Override protected void run(Scenario s) {
         CompletableFuture<Thread> workerThread = new CompletableFuture<>();
-        var it = new LazyCallbackBIt<>(Integer.class, Vars.EMPTY) {
+        var it = new LazyCallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
             @Override protected void run() {
                 workerThread.complete(Thread.ofVirtual().start(() -> {
                     for (int i = 0; i < s.size; i++)

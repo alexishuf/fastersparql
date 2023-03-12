@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -13,24 +14,19 @@ public class SingletonBIt<T> extends AbstractBIt<T> {
     private final @Nullable T value;
     private boolean ended;
 
-    public SingletonBIt(T value, Vars vars) {
-        //noinspection unchecked
-        this(value, (Class<T>) value.getClass(), vars);
-    }
-
-    public SingletonBIt(@Nullable T value, Class<T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public SingletonBIt(@Nullable T value, RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
         this.value = value;
     }
 
     @Override public @This BIt<T> tempEager() { return this; }
 
     @Override public Batch<T> nextBatch() {
-        Batch<T> batch = ended ? Batch.terminal() : new Batch<>(elementClass, 1);
+        Batch<T> batch = ended ? Batch.terminal() : new Batch<>(rowType.rowClass, 1);
         if (!ended) {
             batch.add(value);
             ended = true;
-            onExhausted();
+            onTermination(null);
         }
         return batch;
     }
@@ -41,13 +37,11 @@ public class SingletonBIt<T> extends AbstractBIt<T> {
         } else {
             destination.add(value);
             ended = true;
-            onExhausted();
+            onTermination(null);
             return 1;
         }
     }
 
-    @Override public    boolean recycle(Batch<T> batch)      { return false; }
-    @Override protected void    cleanup(boolean interrupted) { }
     @Override public    boolean hasNext()                    { return !ended; }
     @Override public    String  toString()                   { return Objects.toString(value); }
 
@@ -55,7 +49,7 @@ public class SingletonBIt<T> extends AbstractBIt<T> {
         if (ended)
             throw new NoSuchElementException();
         ended = true;
-        onExhausted();
+        onTermination(null);
         return value;
     }
 }

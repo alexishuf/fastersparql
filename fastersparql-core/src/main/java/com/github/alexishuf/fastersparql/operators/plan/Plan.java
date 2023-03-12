@@ -1,71 +1,184 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.client.model.row.RowType;
-import com.github.alexishuf.fastersparql.client.util.Skip;
-import com.github.alexishuf.fastersparql.operators.FSOps;
-import com.github.alexishuf.fastersparql.operators.FSOpsProperties;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
+import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.sparql.parser.TriplePattern;
+import com.github.alexishuf.fastersparql.sparql.expr.Expr;
+import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Represents a tree of operators applied to their arguments
- * @param <R>
- */
-public abstract class Plan<R, I> implements SparqlQuery {
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
+
+/** Represents a tree of operators applied to their arguments */
+public abstract sealed class Plan implements SparqlQuery
+        permits Join, Union, LeftJoin, Minus, Exists, Modifier, Empty, Query, TriplePattern, Values {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
-    public final RowType<R, I> rowType;
-    public final List<? extends Plan<R, I>> operands;
-    public final @Nullable Plan<R, I> unbound;
-    protected @Nullable String name; // used by subclasses and FSOps
-    private @Nullable Vars publicVars, allVars;
+    public final Operator type;
+    protected @MonotonicNonNull Vars publicVars, allVars;
+    public @Nullable Plan left, right;
+    public Plan @Nullable [] operandsArray;
+    private List<MetricsListener> listeners = List.of();
+    private int id = 0;
 
-    protected Plan(RowType<R, I> rowType, List<? extends Plan<R, I>> operands,
-                   @Nullable Plan<R, I> unbound, @Nullable String name) {
-        this.rowType = rowType;
-        this.operands = operands;
-        this.unbound = unbound;
-        this.name = name;
+    public Plan(Operator type) {
+        this.type = type;
     }
 
-    /** A name for this plan. */
-    public final String name() {
-        if (name == null)
-            name = getClass().getSimpleName()+"-"+nextId.getAndIncrement();
-        return name;
-    }
+    public int id() { return id == 0 ? id = nextId.getAndIncrement() : id; }
 
+    private static final ByteRope EMPTY_NM = new ByteRope("Empty");
+    private static final ByteRope EXISTS_NM = new ByteRope("Exists");
+    private static final ByteRope NOT_EXISTS_NM = new ByteRope("NotExists");
+    private static final ByteRope JOIN_NM = new ByteRope("Join");
+    private static final ByteRope LEFT_JOIN_NM = new ByteRope("LeftJoin");
+    private static final ByteRope MINUS_NM = new ByteRope("Minus");
+    private static final ByteRope UNION_NM = new ByteRope("Union");
+    private static final ByteRope UNION_NM_PARAM = new ByteRope("Union[crossDedup=");
+    private static final ByteRope VALUES_NM = new ByteRope("Values");
+    private static final byte[] QUERY_LBRAC = "Query[".getBytes(UTF_8);
     /** Operator name to be used in {@link Plan#toString()} */
-    public String algebraName() { return getClass().getSimpleName(); }
+    public Rope algebraName() {
+        return switch (type) {
+            case JOIN       -> JOIN_NM;
+            case LEFT_JOIN  -> LEFT_JOIN_NM;
+            case MINUS      -> MINUS_NM;
+            case EMPTY      -> EMPTY_NM;
+            case EXISTS     -> EXISTS_NM;
+            case NOT_EXISTS -> NOT_EXISTS_NM;
+            case VALUES     -> new ByteRope().append(VALUES_NM).append(allVars());
+            case UNION -> {
+                int cdc = ((Union) this).crossDedupCapacity;
+                yield cdc == 0 ? UNION_NM
+                        : new ByteRope().append(UNION_NM_PARAM).append(cdc).append(']');
+            }
+            case QUERY -> {
+                Query q = (Query) this;
+                ByteRope rb = new ByteRope(256);
+                rb.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
+                Rope sparql = sparql();
+                yield  sparql.len() < 80
+                        ? rb.escapingLF(sparql).append(')')
+                        : rb.append('\n').indented(2, sparql).append('\n').append(')');
+            }
+            case TRIPLE -> {
+                TriplePattern t = (TriplePattern) this;
+                ByteRope r = new ByteRope();
+                t.s.toSparql(r,             PrefixAssigner.NOP);
+                t.p.toSparql(r.append(' '), PrefixAssigner.NOP);
+                t.o.toSparql(r.append(' '), PrefixAssigner.NOP);
+                r.append(' ');
+                yield r;
+            }
+            default -> throw new UnsupportedOperationException();
+        };
+    }
 
-    /**
-     * Get {@code parent} in the {@code parent.bind()} call which created this plan, if this
-     * was created by a bind operation.
-     *
-     * @return the original unbound {@link Plan}, or null if this was not create by a bind.
-     */
-    public final @Nullable Plan<R, I> unbound() { return unbound; }
+    private static final ByteRope UNION_SP = new ByteRope(" UNION");
+    private static final ByteRope MINUS_SP = new ByteRope("MINUS");
+    private static final ByteRope LEFT_JOIN_SP = new ByteRope("OPTIONAL");
+    private static final ByteRope EXISTS_SP = new ByteRope("FILTER EXISTS");
+    private static final ByteRope NOT_EXISTS_SP = new ByteRope("FILTER NOT EXISTS");
+    private static final ByteRope FILTER_SP = new ByteRope("FILTER");
+    public Rope sparqlName() {
+        return switch (type) {
+            case UNION -> UNION_SP;
+            case MINUS -> MINUS_SP;
+            case EXISTS -> EXISTS_SP;
+            case NOT_EXISTS -> NOT_EXISTS_SP;
+            case LEFT_JOIN -> LEFT_JOIN_SP;
+            default -> ByteRope.EMPTY;
+        };
+    }
 
-    /** Set of functions to manipulate rows produced by {@link Plan#execute(boolean)} */
-    public final RowType<R, I> rowOperations() { return rowType; }
+    /** How many operands this {@link Plan} has directly */
+    public final int opCount() {
+        return operandsArray == null ? right == null ? left == null ? 0 : 1 : 2 : operandsArray.length;
+    }
 
-    /** {@link BIt#elementClass()} of {@link Plan#execute(boolean)}; */
-    public final Class<R> rowClass() { return rowType.rowClass(); }
+    /** Get the {@code i}-th direct operand of this Plan. See {@link Plan#opCount()}. */
+    public final Plan op(int i) {
+        if      (operandsArray != null) return operandsArray[i];
+        else if (i             ==    0) return left;
+        else if (i             ==    1) return right;
+        throw new IndexOutOfBoundsException();
+    }
 
-    @Override public String sparql() {
-        StringBuilder sb = new StringBuilder(256).append("SELECT *");
-        groupGraphPattern(sb, 0);
-        return sb.toString();
+    public final Plan  left() { return  left; }
+    public final Plan right() { return right; }
+
+    /** Replace the {@code i}-th operand of this {@link Plan} with {@code replacement}. */
+    public final void replace(int i, Plan replacement) {
+        if (operandsArray != null)
+            operandsArray[i] = replacement;
+        if      (i == 0) left = replacement;
+        else if (i == 1) right = replacement;
+    }
+
+    public final void replace(int begin, int end, Plan replacement) {
+        Plan[] currentArray = operandsArray;
+        if (currentArray != null) {
+            Plan[] replacementArray = new Plan[currentArray.length - (end - begin) + 1];
+            int dst = 0;
+            for (int i = 0; i < begin; i++)
+                replacementArray[dst++] = currentArray[i];
+            replacementArray[dst++] = replacement;
+            for (int i = end; i < currentArray.length; i++)
+                replacementArray[dst++] = currentArray[i];
+            operandsArray = replacementArray;
+            left = replacementArray[0];
+            if (replacementArray.length > 1)
+                right = replacementArray[0];
+        } else {
+            if (begin == 0) {
+                if (end > 0) left = replacement;
+                if (end > 1) right = null;
+            } else if (begin == 1 && end > 1) {
+                right = replacement;
+            }
+        }
+    }
+
+    /** Replace all operands of this {@link Plan} with the given {@code operands}. */
+    public final void replace(Plan[] operands) {
+        if (operands.length < 3) {
+            operandsArray = null;
+            switch (2-operands.length) {
+                case 0: right = operands[1];
+                case 1: left  = operands[0];
+                default: break;
+            }
+        } else {
+            left  = operands[0];
+            right = operands[1];
+            operandsArray = operands;
+        }
+    }
+
+    @Override public Rope sparql() {
+        if (this instanceof Query q)
+            return q.sparql.sparql();
+        ByteRope rb = new ByteRope(256);
+        rb.append(SparqlSkip.SELECT_u8).append(' ').append('*');
+        groupGraphPattern(rb, 0, PrefixAssigner.NOP);
+        return rb;
     }
 
     /**
@@ -73,157 +186,343 @@ public abstract class Plan<R, I> implements SparqlQuery {
      *
      * @param out where to write the SPARQL to.
      */
-    public final void groupGraphPattern(StringBuilder out, int indent) {
-        newline(out, indent++).append('{');
-        groupGraphPatternInner(out, indent);
-        newline(out, --indent).append('}');
+    public final void groupGraphPattern(ByteRope out, int indent, PrefixAssigner assigner) {
+        out.newline(indent++).append('{');
+        groupGraphPatternInner(out, indent, assigner);
+        out.newline(--indent).append('}');
+    }
+
+    protected final void groupGraphPatternInnerOp(ByteRope out, int indent, PrefixAssigner assigner) {
+        switch (type) {
+            case JOIN,TRIPLE,VALUES -> groupGraphPatternInner(out, indent, assigner);
+            default                 -> groupGraphPattern(out, indent, assigner);
+        }
     }
 
     /**
      * Equivalent to {@code groupGraphPattern(out, indent)} without the surrounding
      * {@code '{'} and {@code'}'}.
      */
-    public void groupGraphPatternInner(StringBuilder out, int indent) {
-        if (isBGPSuffix()) {
-            ArrayDeque<Plan<R, I>> stack = new ArrayDeque<>();
-            var o = this;
-            for (; o.isBGPSuffix(); o = o.operands.get(0))
-                stack.push(o);
-            if (o instanceof Join<R, I> j)
-                j.groupGraphPatternInner(out, indent);
-            else if (o instanceof TriplePattern<R,I> tp)
-                tp.groupGraphPatternInner(out, indent);
-            else
-                o.groupGraphPattern(out, indent);
-            while (!stack.isEmpty()) {
-                Plan<R, I> m = stack.pop();
-                m.bgpSuffix(out, indent);
+    public void groupGraphPatternInner(ByteRope out, int indent, PrefixAssigner assigner) {
+        switch (type) {
+            case JOIN -> {
+                for (int i = 0, n = opCount(); i < n; i++)
+                    op(i).groupGraphPatternInnerOp(out, indent, assigner);
             }
-        } else {
-            throw new UnsupportedOperationException();
+            case UNION -> {
+                for (int i = 0, n = opCount(); i < n; i++)
+                    op(i).groupGraphPattern(i>0 ? out.append(UNION_SP) : out, indent, assigner);
+            }
+            case QUERY -> {
+                SparqlQuery q = ((Query) this).sparql;
+                if (q instanceof Plan p) p.groupGraphPatternInner(out, indent, assigner);
+                else                     out.indented(indent, q.sparql());
+            }
+            case TRIPLE -> {
+                var p = (TriplePattern) this;
+                p.s.toSparql(out.newline(indent), assigner);
+                p.p.toSparql(out.append(' '), assigner);
+                p.o.toSparql(out.append(' '), assigner);
+                out.ensureFreeCapacity(2);
+                out.utf8[out.len++] = ' ';
+                out.utf8[out.len++] = '.';
+            }
+            case EMPTY -> {}
+            default -> {
+                ArrayDeque<Plan> stack = new ArrayDeque<>();
+                for (Plan p = this; p != null; ) {
+                    stack.push(p);
+                    p = switch (p.type) {
+                        case LEFT_JOIN, MINUS, EXISTS, NOT_EXISTS, MODIFIER -> p.left;
+                        default -> {p.groupGraphPatternInnerOp(out, indent, assigner); yield null;}
+                    };
+                }
+                for (Plan o; (o = stack.pollFirst()) != null; ) {
+                    switch (o.type) {
+                        case EXISTS,NOT_EXISTS,MINUS,LEFT_JOIN -> {
+                            out.newline(indent).append(o.sparqlName());
+                            requireNonNull(o.right).groupGraphPattern(out, indent, assigner);
+                        }
+                        case MODIFIER -> {
+                            for (Expr e : ((Modifier)o).filters) {
+                                out.newline(indent);
+                                if (e instanceof Expr.Exists ex) {
+                                    out.append(ex.negate() ? NOT_EXISTS_SP : EXISTS_SP);
+                                    ex.filter().groupGraphPattern(out, indent, assigner);
+                                } else {
+                                    e.toSparql(out.append(FILTER_SP), assigner);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
+
 
     /** This algebra does not support graph queries */
     @Override public boolean isGraph() { return false; }
 
     /**
-     * The would-be value of {@link BIt#vars()} upon {@link Plan#execute(boolean)}.
+     * The would-be value of {@link BIt#vars()} upon {@link Plan#execute(RowType, boolean)}.
      *
      * @return a non-null (but possibly empty) list of non-null and non-empty variable names
      *         (i.e., no leading {@code ?} or {@code $}).
      */
     @Override public final Vars publicVars() {
-        if (publicVars == null) publicVars = computeVars(false);
+        if (publicVars == null) publicVars = computePublicVars();
         return publicVars;
+    }
+    private Vars computePublicVars() {
+        return switch (type) {
+            case MODIFIER -> {
+                Vars projection = ((Modifier) this).projection;
+                yield projection == null ? requireNonNull(left).publicVars() : projection;
+            }
+            case JOIN -> {
+                Vars projection = ((Join) this).projection;
+                yield projection == null ? publicVarsUnion() : projection;
+            }
+            case QUERY -> ((Query)this).sparql.publicVars();
+            case TRIPLE -> allVars();
+            case EXISTS,NOT_EXISTS,MINUS -> requireNonNull(left).publicVars();
+            default -> publicVarsUnion();
+        };
+    }
+
+    private Vars publicVarsUnion() {
+        if (operandsArray != null)
+            return publicVars(operandsArray);
+        if (right == null)
+            return left == null ? Vars.EMPTY : left.publicVars();
+        return requireNonNull(left).publicVars().union(right.publicVars());
+    }
+
+    public static Vars publicVars(Plan... operands) {
+        Vars union = new Vars.Mutable(10);
+        for (Plan o : operands) union.addAll(o.publicVars());
+        return union;
     }
 
     /**
      * All vars used within this plan, not only those exposed in results.
      *
-     * <p>This is the list of variables that should be used with {@link Plan#bind(Binding)} and related
+     * <p>This is the list of variables that should be used with {@link Plan#bound(Binding)} and related
      * methods.</p>
      *
      * @return a non-null (possibly empty) list of non-null and non-empty variable names
      *         (i.e., no preceding {@code ?} or {@code $}).
      */
     @Override public final Vars allVars() {
-        if (allVars == null) allVars = computeVars(true);
+        if (allVars == null) allVars = computeAllVars();
         return allVars;
     }
-
-    /**
-     * Child operands of this plan.
-     *
-     * @return a non-null immutable and possibly empty list of non-null plans.
-     */
-    public final List<? extends Plan<R, I>> operands() { return operands; }
-
-    /** Get a copy of this plan replacing the operands. */
-    public final Plan<R, I> with(List<? extends Plan<R, I>> replacement) {
-        return replacement == operands ? this : with(replacement, null, null);
-    }
-    /** Get a copy of this plan replacing the operands and {@link Plan#unbound()} */
-    public final Plan<R, I> with(List<? extends Plan<R, I>> replacement, Plan<R, I> unbound) {
-        if (replacement == operands && (unbound == null || unbound == this.unbound))
-            return this;
-        return with(replacement, unbound, null);
-    }
-    /** Get a copy of this plan replacing {@link Plan#unbound()} */
-    public final Plan<R, I> with(Plan<R, I> unbound) {
-        boolean noOp = unbound == null || unbound == this.unbound;
-        return noOp ? this : with(operands, unbound, null);
-    }
-    /** Get a copy of this plan replacing {@link Plan#name()} */
-    public final Plan<R, I> with(String name) {
-        //noinspection StringEquality
-        boolean noOp = name == null || name == this.name;
-        return noOp ? this : with(operands, unbound, name);
-    }
-
-    @Override public Plan<R, I> toDistinct(DistinctType distinctType) {
-        if (this instanceof Modifier<R,I> m) {
-            int capacity = switch (distinctType) {
-                case WEAK -> FSOpsProperties.reducedCapacity();
-                case STRONG -> Integer.MAX_VALUE;
-            };
-            if (m.distinctCapacity == capacity)
-                return this;
-        }
-        return switch (distinctType) {
-            case WEAK -> FSOps.reduced(this);
-            case STRONG -> FSOps.distinct(this);
+    private Vars computeAllVars() {
+        return switch (type) {
+            case TRIPLE -> {
+                TriplePattern p = (TriplePattern) this;
+                Vars.Mutable set = new Vars.Mutable(3);
+                if (p.s.isVar()) set.add(p.s);
+                if (p.p.isVar()) set.add(p.p);
+                if (p.o.isVar()) set.add(p.o);
+                yield set.isEmpty() ? Vars.EMPTY : set;
+            }
+            case QUERY -> ((Query)this).sparql.allVars();
+            case MODIFIER -> {
+                //noinspection DataFlowIssue
+                Vars leftAllVars = left.allVars(), vars = leftAllVars;
+                Modifier m = (Modifier) this;
+                if (m.projection != null)
+                    vars = m.projection.union(leftAllVars);
+                if (!m.filters.isEmpty()) {
+                    if (vars == leftAllVars)
+                        vars = Vars.fromSet(vars);
+                    for (Expr e : m.filters)
+                        vars.addAll(e.vars());
+                }
+                yield vars;
+            }
+            default -> {
+                Vars union = new Vars.Mutable(10);
+                for (int i = 0, n = opCount(); i < n; i++) union.addAll(op(i).allVars());
+                yield union;
+            }
         };
     }
 
-    @Override public Plan<R, I> toAsk() {
-        if (this instanceof Modifier<R,I> m && m.limit == 1 && m.projection == Vars.EMPTY)
-            return this;
-        return FSOps.modifiers(this, Vars.EMPTY, 0, 0, 1, List.of());
+    /** Get read-only access to the list of listeners */
+    public List<MetricsListener> listeners() { return listeners; }
+
+    /** Add {@code listener} to be notified when {@link Plan#execute(RowType, boolean)} executions complete. */
+    @SuppressWarnings("unused")
+    public void attach(MetricsListener listener) {
+        (listeners.isEmpty() ? listeners = new ArrayList<>() : listeners).add(listener);
+    }
+
+    /** Equivalent to {@code collection.forEach(this::attach)} */
+    @SuppressWarnings("unused")
+    public @This Plan attach(Collection<? extends MetricsListener> collection) {
+        (listeners.isEmpty() ? listeners = new ArrayList<>() : listeners).addAll(collection);
+        return this;
+    }
+
+    @Override public Plan toDistinct(DistinctType distinctType) {
+        int capacity = switch (distinctType) {
+            case WEAK -> FSProperties.reducedCapacity();
+            case STRONG -> Integer.MAX_VALUE;
+        };
+        if (this instanceof Modifier m) {
+            if (m.distinctCapacity == capacity) return m;
+            return new Modifier(m.left, m.projection, capacity, m.offset, m.limit, m.filters);
+        }
+        return new Modifier(this, null, capacity, 0, Long.MAX_VALUE, null);
+    }
+
+    @Override public Plan toAsk() {
+        if (this instanceof Modifier m) {
+            if (m.limit == 1 && m.projection == Vars.EMPTY)
+                return this;
+            return new Modifier(m.left, Vars.EMPTY, 0, m.offset, 1, m.filters);
+        }
+        return new Modifier(this, Vars.EMPTY, 0, 0, 1, null);
     }
 
     /**
-     * Create a copy of this {@link Plan} replacing the variables with the values they map to.
-     *
-     * @param binding a mapping from variable names to RDF terms in N-Triples syntax.
-     * @return a non-null Plan, being a copy of this with replaced variables or {@code this}
-     *         if there is no variable to replace.
+     * Create a shallow copy of this {@link Plan}, i.e., @{code this} and the copy will point
+     * to the same operand {@link Plan}s, but {@link Plan#replace(int, Plan)} in one will not be
+     * seen on the other.
      */
-    @Override public Plan<R, I> bind(Binding binding) {
-        int size = operands.size();
-        if (size == 1) {
-            Plan<R, I> input = operands.get(0);
-            Plan<R, I> bound = input.bind(binding);
-            return bound == input ? this : with(List.of(bound), this);
-        } else {
-            List<Plan<R, I>> boundList = new ArrayList<>(size);
-            boolean change = false;
-            for (Plan<R, I> plan : operands) {
-                Plan<R, I> bound = plan.bind(binding);
-                change |= bound != plan;
-                boundList.add(bound);
-            }
-            return change ? with(boundList, this) : this;
+    public abstract Plan copy(@Nullable Plan[] operands);
+    public final Plan copy() { return copy(null); }
+
+    public interface Transformer<C> {
+        default Plan before(Plan parent, C context) { return parent; }
+        default Plan after(Plan transformedParent, C context, boolean copied) {
+            return transformedParent;
         }
+    }
+
+    public final <C> Plan transform(Transformer<C> transformer, C context) {
+        Plan transformed = transformer.before(this, context);
+        if (transformed != this)
+            return transformed;
+        for (int i = 0, n = opCount(); i < n; i++) {
+            Plan o = op(i), t = o.transform(transformer, context);
+            if (t == o) continue;
+            if (transformed == this) transformed = copy();
+            transformed.replace(i, t);
+        }
+        return transformer.after(transformed, context, transformed != this);
+    }
+
+    /** Performs {@code this.copy()} and the recursively {@link Plan#copy()} all operands. */
+    public final Plan deepCopy() {
+        Plan copy = copy();
+        if (this instanceof Modifier m) {
+            Modifier cm = (Modifier) copy;
+            if (m.filters    instanceof ArrayList<Expr> al) cm.filters    = new ArrayList<>(al);
+            if (m.projection instanceof Vars.Mutable     v) cm.projection =    Vars.fromSet(v);
+        } else if (this instanceof Join j && j.projection instanceof Vars.Mutable v) {
+            ((Join)copy).projection = Vars.fromSet(v);
+        }
+        for (int i = 0, n = copy.opCount(); i < n; i++)
+            copy.replace(i, copy.op(i).deepCopy());
+        return copy;
+    }
+
+    private static final Transformer<Binding> boundTransformer = new Transformer<>() {
+        @Override public Plan before(Plan parent, Binding binding) {
+            return switch (parent.type) {
+                case QUERY -> {
+                    Query q = (Query) parent;
+                    SparqlQuery sq = q.sparql, bsq = sq.bound(binding);
+                    yield bsq == sq ? q : new Query(bsq, q.client);
+                }
+                case EMPTY -> parent.boundEmpty(binding);
+                case TRIPLE -> {
+                    var t = (TriplePattern) parent;
+                    Term s = binding.getIf(t.s), p = binding.getIf(t.p), o = binding.getIf(t.o);
+                    yield s == t.s && p == t.p && o == t.o ? parent : new TriplePattern(s, p, o);
+                }
+                default -> parent;
+            };
+        }
+
+        @Override public Plan after(Plan parent, Binding binding, boolean copied) {
+            return switch (parent.type) {
+                case MODIFIER -> {
+                    Modifier m = (Modifier) parent;
+                    Vars projection = m.projection;
+                    if (projection != null && binding.vars.intersects(projection)) {
+                        if (!copied) {
+                            m = m.copy(null);
+                            copied = true;
+                        }
+                        m.projection = projection.minus(binding.vars);
+                    }
+                    List<Expr> filters = m.filters, boundFilters = null;
+                    for (int i = 0, n = filters.size(); i < n; i++) {
+                        Expr e = filters.get(i), b = e.bound(binding);
+                        if (e == b) continue;
+                        if (boundFilters == null) boundFilters = new ArrayList<>(m.filters);
+                        boundFilters.set(i, b);
+                    }
+                    if (boundFilters != null) {
+                        if (!copied) m = m.copy(null);
+                        m.filters = boundFilters;
+                    }
+                    yield m;
+                }
+                case JOIN -> {
+                    Join j = (Join) parent;
+                    Vars projection = j.projection;
+                    if (projection != null && binding.vars.intersects(projection)) {
+                        if (!copied) j = j.copy(null);
+                        j.projection = projection.minus(binding.vars);
+                    }
+                    yield j;
+                }
+                default -> parent;
+            };
+        }
+    };
+
+    private Empty boundEmpty(Binding binding) {
+        Empty e = (Empty) this;
+        Vars bp = e.publicVars.minus(binding.vars), ba = e.allVars.minus(binding.vars);
+        return bp == e.publicVars && ba == e.allVars ? e : new Empty(bp, ba);
+    }
+
+    @Override public final Plan bound(Binding bindings) {
+        return transform(boundTransformer, bindings);
     }
 
     /* --- --- --- java.lang.Object methods --- --- --- */
 
-    @Override public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof Plan<?, ?> p) || !rowType.equals(p.rowType)) return false;
-        if (name != null && p.name != null && !name.equals(p.name)) return false;
-        return Objects.equals(unbound, p.unbound) && operands.equals(p.operands);
+    @Override public boolean equals(Object obj) {
+        if (!(obj instanceof Plan r) || type != r.type) return false;
+        int n = opCount();
+        if (n != r.opCount()) return false;
+        for (int i = 0; i < n; i++) {
+            if (!op(i).equals(r.op(i))) return false;
+        }
+        return true;
     }
 
-    @Override public int hashCode() { return Objects.hash(rowType, unbound, operands); }
+    @Override public int hashCode() {
+        int h = type.ordinal();
+        for (int i = 0, n = opCount(); i < n; i++)
+            h = 31*h + op(i).hashCode();
+        return h;
+    }
 
     @Override public String toString() {
-        if (operands.isEmpty())
-            return algebraName();
+        if (left == null)
+            return algebraName().toString();
         StringBuilder sb = new StringBuilder().append(algebraName()).append("(\n");
-        for (Plan<R, I> op : operands)
-            indent(sb, op.toString()).append(",\n");
+        for (int i = 0, n = opCount(); i < n; i++)
+            indent(sb, op(i).toString()).append(",\n");
         sb.setLength(sb.length()-2);
         return sb.append("\n)").toString();
     }
@@ -231,89 +530,18 @@ public abstract class Plan<R, I> implements SparqlQuery {
     /* --- --- --- pure abstract methods --- --- --- */
 
     /** Create a {@link BIt} over the results from this plan execution. */
-    public abstract BIt<R> execute(boolean canDedup);
+    public abstract <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup);
 
-    public final BIt<R> execute() { return execute(false); }
-
-    /** Create a copy of this plan replacing the operands, {@link Plan#unbound()}
-     *  and {@link Plan#name()} */
-    public abstract Plan<R, I> with(List<? extends Plan<R, I>> replacement,
-                                 @Nullable Plan<R, I> unbound, @Nullable String name);
-
-    /* --- --- --- overridable protected methods --- --- --- */
-
-    /** Compute {@link Plan#allVars()} (if {@code all==true}), else {@link Plan#publicVars()} */
-    protected Vars computeVars(boolean all) {
-        int n = operands.size();
-        return switch (n) {
-            case 0 -> Vars.EMPTY;
-            case 1 -> all ? operands.get(0).allVars() : operands.get(0).publicVars();
-            default -> {
-                var first = all ? operands.get(0).allVars() : operands.get(0).publicVars();
-                Vars.Mutable union = Vars.fromSet(first, Math.max(10, first.size() + 4));
-                for (int i = 1; i < n; i++)
-                    union.addAll(all ? operands.get(i).allVars() : operands.get(i).publicVars());
-                yield union;
-            }
-        };
-    }
+    public final  <R> BIt<R> execute(RowType<R> rt, boolean canDedup) { return execute(rt, null, canDedup); }
+    public final <R> BIt<R> execute(RowType<R> rt) { return execute(rt, false); }
+    public final <R> BIt<R> execute(RowType<R> rt, Binding binding) { return execute(rt, binding, false); }
 
     /* --- --- --- helpers --- --- --- */
 
-    private static final String[] LINE_BREAKS = {
-            "\n", "\n ", "\n  ", "\n   ", "\n    ", "\n     ", "\n      ", "\n       ",
-            "\n        ", "\n         ", "\n          ", "\n           ", "\n            ",
-            "\n             ", "\n              ", "               ", "                ",
-    };
-
-    /** Writes {@code '\n'} followed by {@code indent} {@code ' '}s to {@code out}*/
-    protected final StringBuilder newline(StringBuilder b, int indent) {
-        if (indent < LINE_BREAKS.length)
-            return b.append(LINE_BREAKS[indent]);
-        else
-            return b.append('\n').append(" ".repeat(indent));
-    }
-
-    /** If this is a {@link Join} or {@link Union}, return a list of operands replacing children
-     *  of the same type with their children */
-    protected final List<? extends Plan<R, I>> flatOperands() {
-        List<Plan<R, I>> flat = null;
-        Class<?> cls;
-        if (this instanceof Join<R,I>)
-            cls = Join.class;
-        else if (this instanceof Union<R,I>)
-            cls = Union.class;
-        else
-            return operands;
-        for (int i = 0, n = operands.size(); i < n; i++) {
-            Plan<R, I> o = operands.get(i);
-            if (cls.isInstance(o)) {
-                if (flat == null) {
-                    flat = new ArrayList<>();
-                    for (int j = 0; j < i; j++)
-                        flat.add(operands.get(j));
-                }
-                flat.addAll(o.flatOperands());
-            } else if (flat != null) {
-                flat.add(o);
-            }
-        }
-        return flat == null ? operands : flat;
-    }
-
-    /** Whether this operator forgoes nesting in SPARQL syntax. */
-    private boolean isBGPSuffix() {
-        return this instanceof Exists || this instanceof LeftJoin ||
-               this instanceof Minus  || this instanceof Modifier;
-    }
-
-    protected void bgpSuffix(StringBuilder out, int indent) {
-        throw new UnsupportedOperationException();
-    }
-
     private StringBuilder indent(StringBuilder sb, String string) {
         for (int start = 0, i, len = string.length(); start < len; start = i+1) {
-            i = Skip.skipUntil(string, start, len, '\n');
+            i = string.indexOf('\n', start);
+            if (i == -1) i = string.length();
             sb.append("  ");
             sb.append(string, start, i);
             sb.append('\n');

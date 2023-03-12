@@ -1,20 +1,22 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.client.FS;
-import com.github.alexishuf.fastersparql.client.util.FSProperties;
+import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.FSProperties;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
-import io.netty.util.concurrent.Future;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class EventLoopGroupHolder {
     private static final Logger log = LoggerFactory.getLogger(EventLoopGroupHolder.class);
@@ -25,12 +27,17 @@ public class EventLoopGroupHolder {
     @SuppressWarnings("unused") public NettyTransport transport() { return transport; }
     private final NettyTransport transport;
 
+    private final Lock lock = new ReentrantLock();
 
-    /**
-     * How many {@link EventLoopGroupHolder#acquire()}s are active
-     * (i.e., no {@link EventLoopGroupHolder#release()} yet).
-     */
-    private int references;
+    /** Number of {@code acquire()}s without corresponding {@code release()}. */
+    private int references = 0;
+
+    /** {@link System#nanoTime()} timestamp when {@code this.group.shutdownGracefully()}
+     *  shall be called. {@code -1} means "never". */
+    private long shutdownDeadline = -1;
+
+    /** Whether {@link FS#addShutdownHook(Runnable)} was called for {@code this}. */
+    private boolean shutdownHookAdded = false;
 
     /**
      * Amount of time to wait before shutting down the {@link EventLoopGroup}
@@ -48,17 +55,12 @@ public class EventLoopGroupHolder {
     private final TimeUnit keepAliveTimeUnit;
 
     /**
-     * If present, is a scheduled task to shut down the {@link EventLoopGroupHolder#group}
-     * after {@link EventLoopGroupHolder#keepAlive()}
-     * {@link EventLoopGroupHolder#keepAliveTimeUnit()}s if it still has no references.
-     */
-    private @Nullable Thread shutdownThread = null;
-
-    /**
      * The current alvie {@link EventLoopGroup}. This field must be set to null before
      * shutting the {@link EventLoopGroup} down.
      */
     private @Nullable EventLoopGroup group;
+
+    private @Nullable CompletableFuture<Void> shutdown;
 
     private static NettyTransport chooseTransport() {
         NettyTransport selected = NettyTransport.NIO;
@@ -102,25 +104,33 @@ public class EventLoopGroupHolder {
      * @return a non-null usable {@link EventLoopGroup}.
      */
     @MustCall("this.release")
-    public synchronized EventLoopGroup acquire() {
-        if (references < 0) {
-            log.error("Negative references={} on {}", references, this);
-            assert false : "negative references";
-        }
-        ++references;
-        if (group == null) {
-            if (references != 1) {
-                log.error("Null {}.group with references={}", this, references);
-                assert false : "group==null with references != 1";
+    public EventLoopGroup acquire() {
+        lock.lock();
+        try {
+            if (references < 0) {
+                log.error("Negative references={} on {}", references, this);
+                assert false : "negative references";
             }
-            group = transport.createGroup();
-            FS.addShutdownHook(() -> immediateShutdown("FasterSparql.shutdown()"));
-        } else if (shutdownThread != null) {
-            // if interrupted too late, it will see references > 0 and will do nothing
-            shutdownThread.interrupt();
+            ++references;
+            if (group == null) {
+                if (references != 1) {
+                    log.error("Null {}.group with references={}", this, references);
+                    assert false : "group==null with references != 1";
+                }
+                group = transport.createGroup();
+                if (!shutdownHookAdded) {
+                    shutdownHookAdded = true;
+                    FS.addShutdownHook(() -> {
+                        var dummy = new CompletableFuture<>();
+                        immediateShutdown(dummy, "FasterSparql.shutdown()");
+                    });
+                }
+            }
+            shutdownDeadline = -1; // stops already launched virtual thread from shutting down
+            return group;
+        } finally {
+            lock.unlock();
         }
-        assert group != null : "null group";
-        return group;
     }
 
     /**
@@ -158,8 +168,30 @@ public class EventLoopGroupHolder {
     /**
      * Equivalent to {@link EventLoopGroupHolder#release(long, TimeUnit)} with zero MILLISECONDS.
      */
-    public void release() {
-        release(0, MILLISECONDS);
+    public Future<?> release() {
+        lock.lock();
+        try {
+            var future = shutdown == null ? shutdown = new CompletableFuture<>() : shutdown;
+            if (references == 0 || group == null) {
+                log.error("{}.release() with {} references to {}!", this, references, group);
+                future.complete(null);
+                return this.shutdown;
+            }
+            if (--references == 0) {
+                if (keepAlive > 0 && shutdownDeadline == -1) {
+                    shutdownDeadline = System.nanoTime()+keepAliveTimeUnit.toNanos(keepAlive);
+                    Thread.startVirtualThread(() -> {
+                        try {
+                            Thread.sleep(keepAliveTimeUnit.toMillis(keepAlive));
+                            immediateShutdown( future, "keepAlive timeout");
+                        } catch (InterruptedException ignored) {}
+                    });
+                } else {
+                    immediateShutdown(future, "last release(), no keepAlive");
+                }
+            }
+            return future;
+        } finally { lock.unlock(); }
     }
 
     /**
@@ -179,49 +211,42 @@ public class EventLoopGroupHolder {
      * @param waitTimeUnit unit of {@code wait}
      */
     public void release(long wait, TimeUnit waitTimeUnit) {
-        Future<?> future = null;
-        EventLoopGroup shuttingDown = null;
-        synchronized (this) {
-            if (references == 0) {
-                log.error("release() on zero-references {}!", this);
-                return;
-            } else if (group == null) {
-                log.error("null group with references={} at {}", references, this);
-                assert false : "null group";
-                return;
-            }
-            --references;
-            if (references == 0) {
-                if (keepAlive > 0 && shutdownThread == null) {
-                    shutdownThread = Thread.startVirtualThread(() -> {
-                        try {
-                            Thread.sleep(keepAliveTimeUnit.toMillis(keepAlive));
-                            immediateShutdown("keepAlive timeout");
-                        } catch (InterruptedException ignored) {}
-                    });
-                } else {
-                    future = (shuttingDown = group).shutdownGracefully();
-                    group = null;
-                }
+        Future<?> future = release();
+        boolean interrupted = false;
+        for (long blocked, nanos = waitTimeUnit.toNanos(wait); nanos > 0; ) {
+            blocked = System.nanoTime();
+            try {
+                future.get(nanos, NANOSECONDS);
+                break;
+            } catch (InterruptedException e) {
+                interrupted  = true;
+                nanos -= System.nanoTime() - blocked;
+            } catch (ExecutionException e) {
+                log.error("{}: shutdown failed", this, e.getCause());
+                break;
+            } catch (TimeoutException e) {
+                log.debug("{}: shutdown nto complete after {} {}", this, wait, waitTimeUnit);
             }
         }
-        if (future != null && wait > 0) {
-            if (!future.awaitUninterruptibly(wait, waitTimeUnit))
-                log.debug("{} not terminated after {} {}.", shuttingDown, wait, waitTimeUnit);
-        }
+        if (interrupted)
+            Thread.currentThread().interrupt();
     }
 
-    private void immediateShutdown(String reason) {
-        synchronized (EventLoopGroupHolder.this) {
+    private void immediateShutdown(CompletableFuture<?> shutdownFuture, String reason) {
+        lock.lock();
+        try {
             if (group != null && references == 0) {
                 log.debug("{}.shutdownGracefully() reason: {}", group, reason);
-                group.shutdownGracefully();
+                group.shutdownGracefully().addListener(f -> {
+                    if (f.isSuccess())
+                        shutdownFuture.complete(null);
+                    else
+                        shutdownFuture.completeExceptionally(f.cause());
+                });
                 group = null;
-                if (shutdownThread != null && Thread.currentThread() != shutdownThread)
-                    shutdownThread.interrupt();
-                shutdownThread = null;
+                shutdownDeadline = -1;
             }
-        }
+        } finally { lock.unlock(); }
     }
 
     @Override public String toString() {

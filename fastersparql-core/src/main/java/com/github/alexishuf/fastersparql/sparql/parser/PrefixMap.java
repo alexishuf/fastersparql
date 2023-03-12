@@ -1,127 +1,127 @@
 package com.github.alexishuf.fastersparql.sparql.parser;
 
-import com.github.alexishuf.fastersparql.sparql.RDF;
-import com.github.alexishuf.fastersparql.sparql.RDFTypes;
+import com.github.alexishuf.fastersparql.model.RopeArrayMap;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeWrapper;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Arrays;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.RDF;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.XSD;
 
 public final class PrefixMap {
-    private static final PrefixMap BUILTIN = new PrefixMap().resetToBuiltin();
+    public static final ByteRope XSD_NAME = new ByteRope("xsd");
+    public static final ByteRope RDF_NAME = new ByteRope("rdf");
 
-    private String[] data = new String[10];
-    private int prefixes;
+    /**
+     * Given a {@code PREFIX name: <iri>} SPARQL fragment, {@code data[i] stores {@code name}
+     * and {@code data[i + (data.length>>1)]} stores {@code <iri>}.
+     */
+    private final RopeArrayMap map = new RopeArrayMap();
 
-    public static PrefixMap builtin() {
-        if (BUILTIN.prefixes != 2)
-            BUILTIN.resetToBuiltin();
-        return BUILTIN;
-    }
 
     /** Remove all prefix -> uri mappings from this {@link PrefixMap} */
-    public void clear() {
-        prefixes = 0;
-    }
+    public void clear() { map.clear(); }
 
     /** Get the number of prefix -> URI mappings in this {@link PrefixMap} */
-    public int size() { return prefixes; }
+    public int size() { return map.size(); }
 
     /** Removes all mappings and add mappings for {@code xsd} and {@code rdf}.  */
     public PrefixMap resetToBuiltin() {
-        prefixes = 2;
-        data[0] = "xsd";
-        data[1] = "rdf";
-        data[5] = RDFTypes.XSD;
-        data[6] = RDF.NS;
+        map.clear();
+        map.put(XSD_NAME, XSD);
+        map.put(RDF_NAME, RDF);
         return this;
     }
 
-    /** Maps {@code prefix} to {@code uri} so that {@code prefix:} expands to {@code uri}. */
-    public void add(String prefix, String uri) {
-        int i = findPrefix(prefix);
-        if (i >= 0) {
-            data[i + (data.length>>1)] = uri;
+    @SuppressWarnings("unused")
+    public Rope key(int i) { return map.key(i); }
+    public Rope value(int i) { return map.value(i); }
+
+    /** Tests whether {@code name} is mapped to some IRI in this {@link PrefixMap}. */
+    public boolean contains(Rope name) { return map.get(name) != null; }
+
+    /**
+     * Maps {@code name} to {@code iri} so that {@code name:} expands to {@code iri}.
+     *
+     * @param name the prefix name (not including the trailing ':'
+     * @param iri Preferably a {@link Term} instance. If this is not a {@link Term}, the
+     *            surrounding angled brackets are optional, and it will be converted into a
+     *            {@link Term} IRI. If this is a {@link Term}, {@link Term#type()} must be
+     *            {@link Term.Type#IRI}, else an {@link IllegalArgumentException} will be thrown.
+     */
+    public void add(Rope name, Rope iri) {
+        //sanitize iri
+        if (iri instanceof Term t) {
+            if (t.type() != Term.Type.IRI)
+                throw new IllegalArgumentException("iri is a non-IRI Term");
         } else {
-            if (prefixes<<1 >= data.length) {
-                int mid = data.length >> 1;
-                data = Arrays.copyOf(data, data.length<<1);
-                System.arraycopy(data, mid, data, data.length>>1, mid);
-            }
-            data[prefixes] = prefix;
-            data[prefixes + (data.length>>1)] = uri;
-            ++prefixes;
+            iri = Term.valueOf(RopeWrapper.forIri(iri).toRope(iri));
         }
+        map.put(new ByteRope(name), iri);
     }
 
-    /**
-     * Add all prefixes in other to {@code this}, overwriting existing mappings.
-     * @param other source of new mappings.
-     */
-    public void addAll(PrefixMap other) {
-        int prefixes = other.prefixes, mid = other.data.length>>1;
-        String[] oData = other.data;
-        for (int i = 0; i < prefixes; i++)
-            add(oData[i], oData[mid+i]);
-    }
+
+    /** Add all prefixes in other to {@code this}, overwriting existing mappings. */
+    public void addAll(PrefixMap other) { map.putAll(other.map); }
 
     /**
-     * Given {@code str.substring(start, localNameEnd).equals("prefix:localName")}, returns
-     * that substring with {@code prefix:} replaced with the uri to which {@code prefix} maps to
-     * in this {@link PrefixMap}.
+     * Given a previous {@code add("name", "<...#>"} call and {@code "name:local"} in
+     * {@code str.sub(begin, localNameEnd)}, return an IRI {@link Term} for
+     * {@code <...#local>}.
      *
-     * @param str a {@link String} containing a {@code prefix:localName} substring
-     * @param start where {@code prefix:localName} starts within {@code str}
-     * @param colonIdx index of the {@code :} in {@code str}
-     * @param localNameEnd index of the first char after {@code prefix:localName} in {@code str}
-     *                     (can be @code str.length()}).
+     * <p>If {@code str.sub(begin, colonIdx)} was not a name previously given in an
+     * {@link PrefixMap#add(Rope, Rope)} call, return {@code null}. Note that both
+     * the prefix name and the local part may be empty.</p>
      *
-     * @return {@code uri("prefix")+"localName"} or {@code null} if {@code prefix} is not mapped.
+     * @param str a Rope containing something akin to {@code name:local}
+     * @param begin where a prefixed IRI reference starts in {@code str}
+     * @param colonIdx index in {@code str} of the ':' splitting the prefix name from the
+     *                 local name.
+     * @param localNameEnd {@code str.len()} or index of the first byte after the local name
+     *                     of the prefixed IRI reference to be expanded.
+     * @return a {@link Term} or {@code null} if the prefix name was not previously
+     *         {@link PrefixMap#add(Rope, Rope)}ed to this {@link PrefixMap}.
      */
-    @SuppressWarnings("StringEquality")
-    public @Nullable String expandPrefixed(String str, int start, int colonIdx, int localNameEnd) {
-        String uri = uri(str, start, colonIdx);
-        if (uri == null)
-            return null;
-        int localBegin = colonIdx+1;
-        if (uri == RDFTypes.XSD)
-            return RDFTypes.fromXsdLocal(str, localBegin, localNameEnd);
-        else if (uri == RDF.NS)
-            return RDF.fromRdfLocal(str, localBegin, localNameEnd);
-        return uri + str.substring(localBegin, localNameEnd);
+    public @Nullable Term expand(Rope str, int begin, int colonIdx, int localNameEnd) {
+        Term prefix = (Term) map.get(str, begin, colonIdx);
+        if (prefix == null || localNameEnd == colonIdx+1) return prefix;
+
+        int id = prefix.flaggedDictId;
+        if (id == 0)
+            return expandNoId(prefix, str,  colonIdx, localNameEnd);
+        return Term.prefixed(id, str, colonIdx+1, localNameEnd);
     }
 
-    /** Equivalent to {@link PrefixMap#expandPrefixed(String, int, int, int)} {@code  colon}
-     *  set to the index of the first {@code :} after start and before {@code end}. */
-    public @Nullable String expandPrefixed(String str, int start, int end) {
-        int colon = str.indexOf(':', start);
-        return colon == -1 || colon > end ? null : expandPrefixed(str, start, colon, end);
+    private Term expandNoId(Term prefix, Rope str, int colonIdx, int localNameEnd) {
+        int prefixEnd = prefix.len() - 1, localOff = colonIdx + 1;
+        return Term.wrap(new ByteRope(prefixEnd + localNameEnd - localOff + 1)
+                .append(prefix, 0, prefixEnd)
+                .append(str, localOff, localNameEnd)
+                .append('>'));
     }
 
     /**
-     * Get the {@code uri} in the last {@code add(prefixName, uri)} call,
-     * if {@code prefix} was mapped.
+     * Equivalent to {@link PrefixMap#expand(Rope, int, int, int)} but computes
+     * {@code colonIdx}.
      */
-    public @Nullable String uri(String prefixName) {
-        int i = findPrefix(prefixName);
-        return i < 0 ? null : data[i + (data.length>>1)];
+    public @Nullable Term expand(Rope str, int begin, int localNameEnd) {
+        int colon = str.skipUntil(begin, localNameEnd, ':');
+        return colon == localNameEnd ? null : expand(str, begin, colon, localNameEnd);
     }
 
-    /** Equivalent to {@code uri(str.substring(begin, colonIdx))}. */
-    public @Nullable String uri(String str, int begin, int colonIdx) {
-        int len = colonIdx-begin, urisStart = data.length>>1;
-        for (int i = 0; i < prefixes; i++) {
-            String nm = data[i];
-            if (nm.length() == len && nm.regionMatches(0, str, begin, len))
-                return data[i + urisStart];
-        }
-        return null;
+    /** Equivalent to {@code expandTerm(str, 0, str.len())}. */
+    public @Nullable Term expand(Rope str) {
+        int end = str.len(), colon = str.skipUntil(0, end, ':');
+        return colon == end ? null : expand(str, 0, colon, end);
     }
 
-    private int findPrefix(String prefix) {
-        for (int i = 0; i < prefixes; i++) {
-            if (data[i].equals(prefix))
-                return i;
-        }
-        return -1;
-    }
+    /* --- --- --- test helpers --- --- --- */
+
+    void add(String name, String iri) { add(new ByteRope(name), new ByteRope(iri)); }
+
+    @Nullable Term expand(String str) { return expand(new ByteRope(str)); }
+    @Nullable Term expand(String str, int begin, int end) { return expand(new ByteRope(str), begin, end); }
+    @Nullable Term expand(String str, int begin, int colonIdx, int end) { return expand(new ByteRope(str), begin, colonIdx, end); }
 }

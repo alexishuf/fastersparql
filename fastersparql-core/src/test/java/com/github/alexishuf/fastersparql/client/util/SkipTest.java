@@ -1,35 +1,48 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.model.rope.BufferRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.client.util.Skip.alphabet;
-import static org.junit.jupiter.api.Assertions.*;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.alphabet;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class SkipTest {
+    private List<Rope> inputs(String string) {
+        byte[] u8 = string.getBytes(UTF_8);
+        return List.of(new ByteRope(string),
+                       new ByteRope("."+string).sub(1, u8.length+1),
+                       new BufferRope(ByteBuffer.wrap(u8)));
+    }
+
     @Test
     public void testMask() {
         for (int i = 0; i < 127; i++) {
             var msg = "i="+i;
-            long[] alphabet = alphabet().add((char)i).get();
-            long[] untilMask = alphabet(alphabet).invert().get();
-            String in = "" + ((char) i);
-            assertEquals(1, Skip.skip(in, 0, 1, alphabet), msg);
-            assertEquals(0, Skip.skip(in, 0, 1, untilMask), msg);
-            assertEquals(0, Skip.reverseSkip(in,0, 1, alphabet), msg);
+            int[] alphabet = Rope.alphabet(""+(char)i);
+            int[] untilMask = Rope.invert(alphabet);
+            for (Rope in : inputs("" + ((char) i))) {
+                assertEquals(1, in.skip(0, 1, alphabet), msg);
+                assertEquals(0, in.skip(0, 1, untilMask), msg);
+                assertEquals(0, in.reverseSkip(0, 1, alphabet), msg);
+            }
         }
     }
 
     static Stream<Arguments> testSkip() {
-        long[] letters = alphabet().letters().get();
-        long[] digits = alphabet().digits().get();
-        long[] varName = alphabet().letters().digits().add('_', '-', '.').get();
+        int[] letters = Rope.LETTERS;
+        int[] digits = Rope.DIGITS;
+        int[] varName = alphabet("_-.", Rope.Range.ALPHANUMERIC);
         return Stream.of(
                 arguments("abc,def", letters, 3),
                 arguments("Xa,cd", letters, 2),
@@ -62,21 +75,23 @@ class SkipTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testSkip(String in, long[] alphabet, int expected) {
+    void testSkip(String midString, int[] alphabet, int expected) {
         List<String> caps = List.of("", "a0,.+[@/:_>");
         for (String prefix : caps) {
             for (String suffix : caps) {
-                String string = prefix + in + suffix;
-                int begin = prefix.length(), end = begin+in.length();
-                assertEquals(expected+begin, Skip.skip(string, begin, end, alphabet));
+                String string = prefix + midString + suffix;
+                for (Rope r : inputs(string)) {
+                    int begin = prefix.length(), end = r.len()-suffix.length();
+                    assertEquals(expected+begin, r.skip(begin, end, alphabet));
+                }
             }
         }
     }
 
     static Stream<Arguments> testSkipUntil() {
-        long[] letters = alphabet().letters().get();
-        long[] digits = alphabet().digits().get();
-        long[] varName = alphabet().letters().digits().add('_', '-', '.').get();
+        int[] letters = Rope.LETTERS;
+        int[] digits = Rope.DIGITS;
+        int[] varName = alphabet("_-.", Rope.Range.ALPHANUMERIC);
         return Stream.of(
                 arguments("0, \n", letters, 4),
                 arguments("|/[a\n", letters, 3),
@@ -85,13 +100,13 @@ class SkipTest {
                 arguments("Z", letters, 0),
                 arguments("z", letters, 0),
                 arguments("A", letters, 0),
-                arguments("ça", letters, 1),
+                arguments("ça", letters, 2),
 
                 arguments("", digits, 0),
                 arguments("0", digits, 0),
                 arguments("9", digits, 0),
                 arguments("aAzZ/[^|5", digits, 8),
-                arguments("ç0", digits, 1),
+                arguments("ç0", digits, 2),
 
                 arguments("?a-.", varName, 1),
                 arguments("?.0", varName, 1),
@@ -102,21 +117,23 @@ class SkipTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testSkipUntil(String in, long[] alphabet, int expected) {
-        long[] untilMask = alphabet(alphabet).invert().get();
+    void testSkipUntil(String mid, int[] alphabet, int expected) {
+        int[] untilMask = Rope.invert(alphabet);
         List<String> caps = List.of("", "a0,.+[@/:_>");
         for (String prefix : caps) {
             for (String suffix : caps) {
-                String string = prefix + in + suffix;
-                int begin = prefix.length(), end = begin+in.length();
-                assertEquals(expected+begin, Skip.skip(string, begin, end, untilMask));
+                int begin = prefix.length(), end = begin+mid.getBytes(UTF_8).length;
+                String ctx = "prefix=" + prefix + ", suffix=" + suffix + ", mid=" + mid;
+                for (Rope r : inputs(prefix + mid + suffix)) {
+                    assertEquals(expected+begin, r.skip(begin, end, untilMask), ctx);
+                }
             }
         }
     }
 
     static Stream<Arguments> testReverseSkip() {
-        long[] ws = alphabet().whitespace().get();
-        long[] dot = alphabet().whitespace().control().add('.').get();
+        int[] ws = Rope.WS;
+        int[] dot = alphabet(".", Rope.Range.WS);
         return Stream.of(
                 arguments("nm (", ws, 3),
                 arguments("nm ", ws, 1),
@@ -128,13 +145,13 @@ class SkipTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testReverseSkip(String in, long[] alphabet, int expected) {
+    void testReverseSkip(String mid, int[] alphabet, int expected) {
         List<String> caps = List.of("", "a0,.+[@/:_>");
         for (String prefix : caps) {
             for (String suffix : caps) {
-                String string = prefix + in + suffix;
-                int begin = prefix.length(), end = begin+in.length();
-                assertEquals(expected+begin, Skip.reverseSkip(string, begin, end, alphabet));
+                int begin = prefix.length(), end = begin+mid.getBytes(UTF_8).length;
+                for (Rope r : inputs(prefix + mid + suffix))
+                    assertEquals(expected+begin, r.reverseSkip(begin, end, alphabet));
             }
         }
     }

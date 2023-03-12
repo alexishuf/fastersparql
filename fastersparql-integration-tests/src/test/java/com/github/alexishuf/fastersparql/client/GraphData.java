@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.client;
 
-import com.github.alexishuf.fastersparql.client.model.*;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
+import com.github.alexishuf.fastersparql.client.model.Graph;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.RDFMediaTypes;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
@@ -31,8 +32,8 @@ public class GraphData {
         return new GraphData(sparql, expectedTTL);
     }
 
-    public void assertExpected(SparqlClient<?,?,?> client) {
-        Graph<?> graph = client.queryGraph(sparql);
+    public void assertExpected(SparqlClient client) {
+        Graph graph = client.queryGraph(sparql);
         var expectedMediaType = client.endpoint().configuration().rdfAccepts().get(0);
         var actualMediaType = graph.mediaType();
         Charset charset = actualMediaType.charset(UTF_8);

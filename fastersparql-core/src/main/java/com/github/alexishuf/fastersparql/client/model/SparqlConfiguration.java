@@ -1,10 +1,13 @@
 package com.github.alexishuf.fastersparql.client.model;
 
-import com.github.alexishuf.fastersparql.client.exceptions.SparqlClientInvalidArgument;
-import com.github.alexishuf.fastersparql.client.exceptions.UnacceptableSparqlConfiguration;
-import com.github.alexishuf.fastersparql.client.util.HeaderUtils;
-import com.github.alexishuf.fastersparql.client.util.MediaType;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
+import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.RDFMediaTypes;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.util.HeaderUtils;
+import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -85,25 +88,37 @@ public final class SparqlConfiguration {
             (rdfAccepts == null ? rdfAccepts = new ArrayList<>() : rdfAccepts).add(value);
             return this;
         }
-        @SuppressWarnings("UnusedReturnValue") public Builder params(Map<String, List<String>> source) {
+        @SuppressWarnings("UnusedReturnValue") public Builder params(Map<String, ? extends List<String>> source) {
             (params == null ? params = new LinkedHashMap<>() : params).putAll(source);
             return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder param(Rope name, List<Rope> values) {
+            return param(name.toString(), values.stream().map(Rope::toString).toList());
         }
         @SuppressWarnings("UnusedReturnValue") public Builder param(String name, List<String> values) {
             (params == null ? params = new LinkedHashMap<>() : params).put(name, values);
             return this;
         }
-        @SuppressWarnings("UnusedReturnValue") public Builder headers(Map<String, String> source) {
-            (headers == null ? headers = new LinkedHashMap<>() : headers).putAll(source);
+        @SuppressWarnings("UnusedReturnValue") public Builder headers(Map<?, ?> source) {
+            if (headers == null) headers = new LinkedHashMap<>();
+            for (var e : source.entrySet())
+                headers.put(e.getKey().toString(), e.getValue().toString());
             return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder header(Rope name, Rope value) {
+            return header(name.toString(), value.toString());
         }
         @SuppressWarnings("UnusedReturnValue") public Builder header(String name, String value) {
             (headers == null ? headers = new LinkedHashMap<>() : headers).put(name, value);
             return this;
         }
-        @SuppressWarnings("UnusedReturnValue") public Builder appendHeaders(Map<String, List<String>> source) {
-            (appendHeaders == null ? appendHeaders = new LinkedHashMap<>() : appendHeaders).putAll(source);
+        @SuppressWarnings("UnusedReturnValue") public Builder appendHeaders(Map<String, ? extends List<String>> source) {
+            if (appendHeaders == null) appendHeaders = new LinkedHashMap<>();
+            appendHeaders.putAll(source);
             return this;
+        }
+        @SuppressWarnings("UnusedReturnValue") public Builder appendHeader(Rope name, List<Rope> values) {
+            return appendHeader(name.toString(), values.stream().map(Rope::toString).toList());
         }
         @SuppressWarnings("UnusedReturnValue") public Builder appendHeader(String name, List<String> values) {
             (appendHeaders == null ? appendHeaders = new LinkedHashMap<>() : appendHeaders).put(name, values);
@@ -169,7 +184,7 @@ public final class SparqlConfiguration {
         }
         if (bad != null) {
             String msg = "These headers appear both in headers and appendHeaders: " + bad;
-            throw new SparqlClientInvalidArgument(msg);
+            throw new FSInvalidArgument(msg);
         }
     }
 
@@ -611,73 +626,66 @@ public final class SparqlConfiguration {
         if (sanitized.isEmpty()) {
             String msg = itemName.substring(0, 1).toUpperCase() + itemName.substring(1)+
                     " list became empty after removing "+nullCount+" items";
-            throw new SparqlClientInvalidArgument(msg);
+            throw new FSInvalidArgument(msg);
         }
         return Collections.unmodifiableList(sanitized);
     }
 
-    @SuppressWarnings("StringEquality") static Map<String, String>
+    static Map<String, String>
     sanitizeHeaders(@Nullable Map<@Nullable String, @Nullable String> headers) {
         if (headers == null || headers.isEmpty())
             return Collections.emptyMap();
-        Map<String, String> sanitized = new HashMap<>(headers);
-        for (String name : headers.keySet()) {
-            String value = headers.get(name);
-            if (name == null || name.trim().isEmpty()) {
+        Map<String, String> sanitized = new HashMap<>(Math.min(4, (int)(headers.size()/0.75f+1)));
+        for (var name : headers.keySet()) {
+            var value = headers.get(name);
+            if (name == null || name.isEmpty()) {
                 if (value != null && !value.trim().isEmpty()) {
                     String msg = "Non-null and non-empty value " + value + " for " +
                                  (name == null ? "null" : "empty") + " header";
-                    throw new SparqlClientInvalidArgument(msg);
+                    throw new FSInvalidArgument(msg);
                 }
-                sanitized.remove(name);
             } else {
                 String sanitizedName = HeaderUtils.sanitizeHeaderName(name);
                 if ("accept".equals(sanitizedName)) {
                     String msg = "Accept header cannot be set via headers/appendHeaders, " +
                                  "use resultsAccepts or rdfAccepts";
-                    throw new SparqlClientInvalidArgument(msg);
+                    throw new FSInvalidArgument(msg);
                 }
                 String sanitizedValue = value == null ? "" : value.trim();
-                if (sanitizedName != name) {
-                    sanitized.remove(name);
-                    sanitized.put(sanitizedName, sanitizedValue);
-                } else if (sanitizedValue != value) {
-                    sanitized.put(name, sanitizedValue);
-                }
+                sanitized.put(sanitizedName, sanitizedValue);
             }
         }
         return Collections.unmodifiableMap(sanitized);
     }
 
     static Map<String, List<String>>
-    sanitizeAppendHeaders(@Nullable Map<@Nullable String, @Nullable List<@Nullable String>> headers) {
+    sanitizeAppendHeaders(@Nullable Map<@Nullable String, @Nullable ? extends List<@Nullable String>> headers) {
         if (headers == null || headers.isEmpty())
             return Collections.emptyMap();
-        Map<String, List<String>> result = new HashMap<>(headers);
-        for (String name : headers.keySet()) {
+        Map<String, List<String>> result = new HashMap<>(Math.min(4, (int)(headers.size()/0.75f+1)));
+        for (var name : headers.keySet()) {
             @Nullable List<@Nullable String> list = headers.get(name);
             if (name == null || name.trim().isEmpty()) {
                 if (list != null && !list.isEmpty() && list.stream().anyMatch(Objects::nonNull)) {
                     String msg = (name == null ? "null" : "empty")
                                + " key maps to non-empty list with non-null values";
-                    throw new SparqlClientInvalidArgument(msg);
+                    throw new FSInvalidArgument(msg);
                 }
-                result.remove(name);
             } else {
-                String sanitizedName = HeaderUtils.sanitizeHeaderName(name);
+                var sanitizedName = HeaderUtils.sanitizeHeaderName(name);
                 if ("accept".equals(sanitizedName)) {
                     String msg = "Accept header cannot be set in headers/appendHeaders, " +
                             "use resultsAccepts/rdfAccepts instead";
-                    throw new SparqlClientInvalidArgument(msg);
+                    throw new FSInvalidArgument(msg);
                 }
 
                 List<String> saneList;
                 if (list == null || list.isEmpty()) {
-                    saneList = Collections.emptyList();
+                    saneList = List.of();
                 } else {
                     saneList = new ArrayList<>(list.size());
                     int nullCount = 0, emptyCount = 0, wsCount = 0;
-                    for (String value : list) {
+                    for (var value : list) {
                         if (value == null) {
                             ++nullCount;
                         } else if (value.isEmpty()) {
@@ -692,12 +700,9 @@ public final class SparqlConfiguration {
                         String msg = format("Empty value list for header \"%s\". " +
                                             "Removed %d nulls, %d empty and %d whitespace items",
                                             name, nullCount, emptyCount, wsCount);
-                        throw new SparqlClientInvalidArgument(msg);
+                        throw new FSInvalidArgument(msg);
                     }
                 }
-                //noinspection StringEquality
-                if (sanitizedName != name)
-                    result.remove(name);
                 result.put(sanitizedName, saneList);
             }
         }
@@ -705,33 +710,29 @@ public final class SparqlConfiguration {
     }
 
     static Map<String, List<String>>
-    sanitizeParams(@Nullable Map<@Nullable String, @Nullable List<@Nullable String>> params) {
+    sanitizeParams(@Nullable Map<@Nullable String, @Nullable ? extends List<@Nullable String>> params) {
         if (params == null || params.isEmpty())
             return Collections.emptyMap();
-        Map<String, List<String>> sanitizedMap = new HashMap<>(params);
-        for (String name : params.keySet()) {
-            List<@Nullable String> list = params.get(name);
+        Map<String, List<String>> sanitizedMap = new HashMap<>(Math.min(4, (int)(params.size()/0.75f+1)));
+        for (var name : params.keySet()) {
+            var list = params.get(name);
             if (name == null) {
                 if (list != null && list.stream().anyMatch(Objects::nonNull)) {
                     String msg = "null param name maps to non-empty list with non-null values";
-                    throw new SparqlClientInvalidArgument(msg);
+                    throw new FSInvalidArgument(msg);
                 }
-                sanitizedMap.remove(null);
             } else {
-                String sanitizedName = UriUtils.escapeQueryParam(name);
-                //noinspection StringEquality
-                if (sanitizedName != name)
-                    sanitizedMap.remove(name);
+                var sanitizedName = UriUtils.escapeQueryParam(name).toString();
                 if (list != null && !list.isEmpty()) {
                     List<@NonNull String> values = new ArrayList<>(list.size());
-                    for (String value : list) {
-                        if (value != null) values.add(UriUtils.escapeQueryParam(value));
+                    for (var value : list) {
+                        if (value != null) values.add(UriUtils.escapeQueryParam(value).toString());
                     }
                     if (values.isEmpty()) {
                         String msg = format("Empty values list for param %s after " +
                                             "removing %d nulls from the input list",
                                             name, list.size());
-                        throw new SparqlClientInvalidArgument(msg);
+                        throw new FSInvalidArgument(msg);
                     }
                     sanitizedMap.put(sanitizedName, values);
                 } else {
@@ -741,6 +742,4 @@ public final class SparqlConfiguration {
         }
         return Collections.unmodifiableMap(sanitizedMap);
     }
-
-
 }

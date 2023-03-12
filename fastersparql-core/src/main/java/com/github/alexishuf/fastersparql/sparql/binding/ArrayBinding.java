@@ -1,73 +1,71 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Map;
+import java.util.Arrays;
+import java.util.Collection;
 
 public class ArrayBinding extends Binding {
-    public static final ArrayBinding EMPTY = new ArrayBinding(Vars.EMPTY, new String[0]);
+    public static final ArrayBinding EMPTY = new ArrayBinding(Vars.EMPTY, new Term[0]);
 
-    private @Nullable String[] values;
-    private @Nullable String[] owned;
+    private final @Nullable Term[] values;
 
     public ArrayBinding(Vars vars) {
         super(vars);
-        this.values = this.owned = new String[vars.size()];
+        this.values = new Term[vars.size()];
     }
 
-    private ArrayBinding(Vars vars, String[] values) {
+    public ArrayBinding(Vars vars, @Nullable Binding parent) {
+        super(vars);
+        this.values = new Term[vars.size()];
+        if (parent != null) {
+            for (int i = 0; i < this.values.length; i++) {
+                Rope name = vars.get(i);
+                values[i] = parent.get(name);
+            }
+        }
+    }
+
+    public ArrayBinding(Vars vars, Term[] values) {
         super(vars);
         this.values = values;
-        this.owned = null;
     }
 
-    public static ArrayBinding wrap(Vars vars, String @Nullable[] values) {
-        return new ArrayBinding(vars, values == null ? new String[vars.size()] : values);
+    public ArrayBinding(Vars vars, Collection<Term> values) {
+        super(vars);
+        this.values = values.toArray(Term[]::new);
     }
 
-    public static ArrayBinding wrap(Vars vars, CharSequence @Nullable[] values) {
-        ArrayBinding binding = new ArrayBinding(vars);
-        return values == null ? binding : binding.values(values);
+    public static ArrayBinding of(CharSequence... varAndValues) {
+        if ((varAndValues.length & 1) == 1)
+            throw new IllegalArgumentException("Expected even length for varAndValues");
+        var vars = new Vars.Mutable(varAndValues.length >> 1);
+        var terms = new Term[varAndValues.length>>1];
+        TermParser parser = new TermParser();
+        for (int i = 0; i < varAndValues.length; i += 2) {
+            Rope name = Rope.of(varAndValues[i]);
+            if (name.len() > 0 && (name.get(0) == '?' || name.get(0) == '$'))
+                name = name.sub(1, name.len());
+            if (name.len() == 0)
+                throw new IllegalArgumentException("Empty string is not a valid var name");
+            vars.add(name);
+            terms[i>>1] = parser.parseTerm(Rope.of(varAndValues[i+1]));
+        }
+        return new ArrayBinding(vars, terms);
     }
 
-    public static ArrayBinding copy(Map<String, @Nullable String> var2value) {
-        int size = var2value.size();
-        Vars vars = Vars.fromSet(var2value.keySet());
-        String[] values = new String[size];
-        int i = 0;
-        for (String value : var2value.values())
-            values[i++] = value;
-        ArrayBinding binding = new ArrayBinding(vars, values);
-        binding.owned = values;
-        return binding;
-    }
-
-    public ArrayBinding values(@Nullable String[] values) {
-        if (values.length != size())
-            throw new IllegalArgumentException("Expected "+size()+" values, got "+values.length);
-        this.values = values;
-        return this;
-    }
-
-    public ArrayBinding values(@Nullable CharSequence[] values) {
-        if (values.length != size())
-            throw new IllegalArgumentException("Expected "+size()+" values, got "+values.length);
-        if (this.owned == null)
-            this.owned = new String[size()];
-        this.values = this.owned;
-        int i = 0;
-        for (CharSequence cs : values)
-            this.values[i++] = cs == null ? null : cs.toString();
-        return this;
-    }
-
-    @Override public @Nullable String get(int i) {
+    @Override public @Nullable Term get(int i) {
         return values[i];
     }
 
-    @Override public Binding set(int i, @Nullable String value) {
+    @Override public Binding set(int i, @Nullable Term value) {
         values[i] = value;
         return this;
     }
+
+    @Override public void clear() { Arrays.fill(values, null); }
 }

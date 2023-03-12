@@ -3,68 +3,70 @@ package com.github.alexishuf.fastersparql.operators.bit;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
-import com.github.alexishuf.fastersparql.client.util.Merger;
-import com.github.alexishuf.fastersparql.operators.metrics.PlanMetrics;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
 
-import static com.github.alexishuf.fastersparql.client.util.Merger.forProjection;
+import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
+
 
 public class MeteredConcatBIt<R> extends ConcatBIt<R> {
-    protected final Plan<R, ?> plan;
-    private final long startNanos = System.nanoTime();
-    protected long rows = 0;
-    protected @Nullable Throwable error;
-    protected int sourceIdx = -1;
-    protected @Nullable Merger<R, ?> projector;
+    protected final @Nullable Metrics metrics;
+    protected final Plan plan;
+    protected @Nullable RowType<R>.Merger projector;
+    protected int sourceIdx;
 
-    public MeteredConcatBIt(Collection<? extends BIt<R>> sources, Plan<R, ?> plan) {
-        super(sources, plan.rowType.rowClass, plan.publicVars());
+    public MeteredConcatBIt(Collection<? extends BIt<R>> sources, Plan plan) {
+        super(sources, sources.iterator().next().rowType(), plan.publicVars());
         this.plan = plan;
+        this.metrics = Metrics.createIf(plan);
     }
 
-
-    @Override protected void cleanup(boolean interrupted) {
-        PlanMetrics.buildAndSend(plan, rows, startNanos, error, interrupted);
-        super.cleanup(interrupted);
-    }
-
-    @Override public Batch<R> nextBatch() {
-        try {
-            Batch<R> b = super.nextBatch();
-            if (projector != null) {
-                R[] a = b.array;
-                for (int i = 0, n = b.size; i < n; i++)
-                    a[i] = projector.merge(a[i], null);
-            }
-            rows += b.size;
-            return b;
-        } catch (Throwable t) { error = error == null ? t : error; throw t; }
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        if (metrics != null)
+            metrics.complete(cause, isClosedFor(cause, this)).deliver();
     }
 
     @Override protected boolean nextSource() {
         boolean has = super.nextSource();
-        sourceIdx++;
-        if (plan != null) {
-            projector = source.vars().equals(plan.publicVars())
-                      ? null : forProjection(plan.rowType, plan.publicVars(), source.vars());
+        if (has) {
+            ++sourceIdx;
+            projector = vars.equals(source.vars()) ? null
+                      : rowType.projector(vars, source.vars());
         }
         return has;
     }
 
-    @Override public R next() {
+    @Override public Batch<R> nextBatch() {
+        Batch<R> b = super.nextBatch();
         try {
-            R r = super.next();
-            if (projector != null)
-                r = projector.merge(r, null);
-            ++rows;
-            return r;
-        } catch (Throwable t) { error = error == null ? t : error; throw t; }
+            if (b.size > 0 && projector != null)
+                projector.projectInPlace(b);
+            if (metrics != null) metrics.rowsEmitted(b.size);
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
+        return b;
     }
 
     @Override protected String toStringNoArgs() {
-        return plan.name();
+        return plan.algebraName()+"-"+plan.id()+"-"+id();
+    }
+
+    @Override public R next() {
+        R r = super.next();
+        try {
+            if (projector != null) r = projector.projectInPlace(r);
+            if (metrics != null) metrics.rowsEmitted(1);
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
+        return r;
     }
 }

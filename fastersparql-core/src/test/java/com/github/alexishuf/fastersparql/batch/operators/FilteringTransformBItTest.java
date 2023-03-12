@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 
 import static java.util.stream.IntStream.range;
 
@@ -9,7 +10,7 @@ class FilteringTransformBItTest extends TransformBItTest {
 
     private static final class OddWithOffset extends FilteringTransformBIt<Integer, Integer> {
         public OddWithOffset(BIt<Integer> delegate) {
-            super(delegate, Integer.class, delegate.vars());
+            super(delegate, NotRowType.INTEGER, delegate.vars());
         }
         @Override protected Batch<Integer> process(Batch<Integer> b) {
             int o = 0;

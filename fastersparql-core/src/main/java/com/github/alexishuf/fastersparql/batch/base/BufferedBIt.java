@@ -1,33 +1,24 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedException;
 import com.github.alexishuf.fastersparql.batch.BItIllegalStateException;
 import com.github.alexishuf.fastersparql.batch.Batch;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.index.qual.NonNegative;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.NoSuchElementException;
-import java.util.Objects;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-
-import static java.lang.System.arraycopy;
-import static java.lang.System.nanoTime;
 
 /**
  * A {@link BIt} that can be asynchronously fed with batches or items, which are then
  * buffered into a ring of {@link Batch}es to be delivered to consumers of this {@link BIt}.
  */
 public abstract class BufferedBIt<T> extends AbstractBIt<T> {
-    private final Logger log = LoggerFactory.getLogger(BufferedBIt.class);
-
     protected final ReentrantLock lock = new ReentrantLock();
     protected final Condition hasReady = lock.newCondition();
     protected final ArrayDeque<Batch<T>> ready = new ArrayDeque<>();
@@ -39,12 +30,11 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     private @NonNegative int readyOffset;
     protected boolean ended;
     private boolean hasNextThrew;
-    protected @MonotonicNonNull Throwable error;
 
     /* --- --- --- constructors --- --- --- */
 
-    public BufferedBIt(Class<? super T> elementClass, Vars vars) {
-        super(elementClass, vars);
+    public BufferedBIt(RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
     }
 
     /* --- --- --- helper methods --- --- --- */
@@ -71,7 +61,7 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
      */
     private void initFilling() {
         if (recycled == null) {
-            filling = new Batch<>(elementClass, batchCapacity);
+            filling = new Batch<>(rowType.rowClass, batchCapacity);
         } else { // by recycling we avoid 2 allocations (Batch and T[])
             filling = recycled;
             recycled = null;
@@ -108,9 +98,10 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     private void waitReadyTimed() {
         boolean interrupted = false;
         long delta = -1;
+
         while (ready.isEmpty() && !ended) {
             if (delta < 64) {
-                long now = nanoTime();
+                long now = System.nanoTime();
                 if (fillingStart == ORIGIN_TIMESTAMP)
                     fillingStart = now;
                 delta = (fillingStart + minWaitNs) - now;
@@ -140,23 +131,18 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
      *                          {@link RuntimeException}.
      */
     protected @Nullable Batch<T> fetch() {
-        if (closed)
-            throw new BItClosedException(this);
         lock.lock();
         try {
             waitReady();
             if (!ready.isEmpty()) {
                 var batch = ready.remove();
                 if (readyOffset > 0) { // physically delete items consumed by next()
-                    batch.size -= readyOffset;
-                    arraycopy(batch.array, readyOffset, batch.array, 0, batch.size);
+                    batch.remove(0, readyOffset);
                     readyOffset = 0;
                 }
                 return batch;
-            } else
-                onExhausted();
-            if (error != null)
-                throw error instanceof RuntimeException re ? re : new RuntimeException(error);
+            }
+            checkError();
             return null;
         } finally { lock.unlock(); }
     }
@@ -164,24 +150,41 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     protected void complete(@Nullable Throwable error) {
         lock.lock();
         try {
-            if (ended) {
-                if (error != null && this.error == null
-                        && !(error instanceof BItIllegalStateException)) {
-                    log.info("{}.complete({}) ignored: previous complete(null)",
-                             this, error.getClass().getSimpleName(), error);
-                } else {
-                    log.trace("{}.end({}) ignored: previous end({})",
-                              this, error, Objects.toString(this.error));
-                }
-            } else {
-                log.trace("{}.complete({})", this, Objects.toString(error));
+            if (!ended) {
                 if (filling != null && filling.size > 0)  // add incomplete batch
                     completeBatch();
-                this.error = error;
                 ended = true;
                 hasReady.signal();
             }
+            onTermination(error);
         } finally { lock.unlock(); }
+    }
+
+    /**
+     * Poll if this {@link BufferedBIt#complete(Throwable)} has been previously called.
+     *
+     * <p> Using this method is not thread-safe. It should be used only if the caller is the
+     * single thread responsible for calling {@link BufferedBIt#complete(Throwable)} or for
+     * debugging reasons.</p>
+     *
+     * @return {@code true} if {@code this.complete(cause)} was previously called.
+     */
+    public boolean isComplete() {
+        return ended;
+    }
+
+    /**
+     * Whether {@code this} was {@link BufferedBIt#complete(Throwable)}ed with a non-null
+     * {@code cause}.
+     *
+     * <p>Like {@link BufferedBIt#complete(Throwable)}, this should be called by the only
+     * thread that calls {@link BufferedBIt#complete(Throwable)} otr for debugging reasons.</p>
+     *
+     * @return {@code true} if {@link BufferedBIt#isComplete()} and the
+     *         {@link BufferedBIt#complete(Throwable)} in effect call used a non-null {@code cause}.
+     */
+    public boolean isFailed() {
+        return ended && error != null;
     }
 
     protected void feed(T item) throws BItCompletedException {
@@ -226,7 +229,7 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
                 if (last != null) { // there is a ready batch
                     int lSize = last.size, n = Math.min(last.array.length-lSize, maxBatch-lSize);
                     if (n > 0) { // >= 1 item fits in 'last'
-                        arraycopy(batch.array, 0, last.array, lSize, n);
+                        System.arraycopy(batch.array, 0, last.array, lSize, n);
                         start += n;
                     }
                 }
@@ -303,18 +306,15 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     }
 
     @Override public boolean hasNext() {
-        if (closed)
-            throw new BItClosedException(this);
         lock.lock();
         try {
             waitReady();
             if (ready.isEmpty()) {
-                onExhausted();
                 if (error != null && !hasNextThrew) {
                     // on error, throw ONLY on first hasNext() that would return false
                     // else, a loop that retries after hasNext() threw would keep retrying
                     hasNextThrew = true;
-                    throw error instanceof RuntimeException re ? re : new RuntimeException(error);
+                    checkError();
                 }
                 return false;
             } else {
@@ -341,8 +341,15 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
         } finally { lock.unlock(); }
     }
 
-    @Override protected void cleanup(boolean interrupted) {
-        if (interrupted && !ended)
-            complete(new BItClosedException(this));
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        lock.lock();
+        try {
+            if (!ended && cause == null)
+                throw new BItIllegalStateException("cleanup(null) before complete()", this);
+            ended = true;
+            hasReady.signalAll();
+        } finally {
+            lock.unlock();
+        }
     }
 }

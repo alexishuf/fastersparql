@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.util.UriUtils;
+import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +23,7 @@ import static java.lang.String.format;
 public final class HdtssContainer extends GenericContainer<HdtssContainer> {
     private static final Logger log = LoggerFactory.getLogger(HdtssContainer.class);
     private static final String TEST_QUERY = "SELECT * WHERE { ?s a <http://example.org/Dummy>}";
-    private static final String ENC_TEST_QUERY = UriUtils.escapeQueryParam(TEST_QUERY);
+    private static final String ENC_TEST_QUERY = UriUtils.escapeQueryParam(TEST_QUERY).toString();
 
     private final @Nullable File deleteOnClose;
 

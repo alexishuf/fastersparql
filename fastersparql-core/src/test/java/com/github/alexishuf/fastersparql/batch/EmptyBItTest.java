@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
+import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -21,14 +22,14 @@ class EmptyBItTest {
 
     @ParameterizedTest @MethodSource
     void test(BatchGetter getter, int min) {
-        try (var it = new EmptyBIt<>(Integer.class)) {
+        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
             assertEquals(List.of(), getter.getList(it.minBatch(min)));
         }
     }
 
     @ParameterizedTest() @MethodSource("test")
     void testMinWait(BatchGetter getter, int minBatch) {
-        try (var it = new EmptyBIt<>(Integer.class)) {
+        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
             it.minBatch(minBatch).minWait(2, MINUTES);
             assertEquals(List.of(), getter.getList(it));
         }
@@ -36,7 +37,7 @@ class EmptyBItTest {
 
     @ParameterizedTest() @MethodSource("test")
     void testMaxWait(BatchGetter getter, int minBatch) {
-        try (var it = new EmptyBIt<>(Integer.class)) {
+        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
             it.minBatch(minBatch).minWait(1, MINUTES).maxWait(2, MINUTES);
             assertEquals(List.of(), getter.getList(it));
         }

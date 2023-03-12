@@ -1,20 +1,20 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.sparql.RDF;
-import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.sparql.RDFTypes.*;
+import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_string;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 public class TermParserTest {
-    private static final Term ERROR = new Term.IRI("<throw%20error>");
+    private static final Term ERROR = Term.iri("<throw%20error>");
 
     static Stream<Arguments> testParse() {
         return Stream.of(
@@ -24,122 +24,129 @@ public class TermParserTest {
                 arguments(ERROR, "(<a>)"),
                 arguments(ERROR, "http://example.org"),
 
-                arguments(new Term.IRI("<a>"), "<a>"),
+                arguments(Term.iri("<a>"), "<a>"),
                 arguments(ERROR, "<a"),
 
-                arguments(new Term.BNode("_:a"), "_:a"),
+                arguments(Term.valueOf("_:a"), "_:a"),
                 arguments(ERROR, "_2"),
                 arguments(ERROR, "_"),
                 arguments(ERROR, "["),
                 arguments(ERROR, "[ :prop 2]"),
 
-                arguments(new Term.Lit("a", string, null), "\"a\""),
-                arguments(new Term.Lit("a", string, null), "\"\"\"a\"\"\""),
-                arguments(new Term.Lit("a", string, null), "'a'"),
-                arguments(new Term.Lit("a", string, null), "'''a'''"),
+                arguments(Term.plainString("a"), "\"a\""),
+                arguments(Term.plainString("a"), "\"\"\"a\"\"\""),
+                arguments(Term.plainString("a"), "'a'"),
+                arguments(Term.plainString("a"), "'''a'''"),
 
-                arguments(new Term.Lit("a\\nb", string, null), "\"a\\nb\""),
-                arguments(new Term.Lit("a\\nb", string, null), "\"\"\"a\\nb\"\"\""),
-                arguments(new Term.Lit("a\\nb", string, null), "'a\\nb'"),
-                arguments(new Term.Lit("a\\nb", string, null), "'''a\\nb'''"),
+                arguments(Term.plainString("a\\nb"), "\"a\\nb\""),
+                arguments(Term.plainString("a\\nb"), "\"\"\"a\\nb\"\"\""),
+                arguments(Term.plainString("a\\nb"), "'a\\nb'"),
+                arguments(Term.plainString("a\\nb"), "'''a\\nb'''"),
 
-                arguments(new Term.Lit("a\\\"b", string, null), "\"a\\\"b\""),
-                arguments(new Term.Lit("a\\\"b", string, null), "\"\"\"a\"b\"\"\""),
-                arguments(new Term.Lit("a'b", string, null), "\"a'b\""),
-                arguments(new Term.Lit("a'b", string, null), "\"\"\"a'b\"\"\""),
-                arguments(new Term.Lit("a\\\"b", string, null), "'a\"b'"),
-                arguments(new Term.Lit("a\\\"b", string, null), "'''a\"b'''"),
-                arguments(new Term.Lit("a\\'b", string, null), "'a\\'b'"),
-                arguments(new Term.Lit("a'b", string, null), "'''a'b'''"),
+                arguments(Term.plainString("a\\\"b"), "\"a\\\"b\""),
+                arguments(Term.plainString("a\\\"b"), "\"\"\"a\"b\"\"\""),
+                arguments(Term.plainString("a'b"), "\"a'b\""),
+                arguments(Term.plainString("a'b"), "\"\"\"a'b\"\"\""),
+                arguments(Term.plainString("a\\\"b"), "'a\"b'"),
+                arguments(Term.plainString("a\\\"b"), "'''a\"b'''"),
+                arguments(Term.plainString("a\\'b"), "'a\\'b'"),
+                arguments(Term.plainString("a'b"), "'''a'b'''"),
 
-                arguments(new Term.Lit("a", string, null), "\"a\"^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("a", string, null), "\"\"\"a\"\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("a", string, null), "'a'^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("a", string, null), "'''a'''^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.plainString("a"), "\"a\"^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.plainString("a"), "\"\"\"a\"\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.plainString("a"), "'a'^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.plainString("a"), "'''a'''^^<http://www.w3.org/2001/XMLSchema#string>"),
 
-                arguments(new Term.Lit("a", string, null), "\"a\"^^xsd:string"),
-                arguments(new Term.Lit("a", string, null), "\"\"\"a\"\"\"^^xsd:string"),
-                arguments(new Term.Lit("a", string, null), "'a'^^xsd:string"),
-                arguments(new Term.Lit("a", string, null), "'''a'''^^xsd:string"),
+                arguments(Term.plainString("a"), "\"a\"^^xsd:string"),
+                arguments(Term.plainString("a"), "\"\"\"a\"\"\"^^xsd:string"),
+                arguments(Term.plainString("a"), "'a'^^xsd:string"),
+                arguments(Term.plainString("a"), "'''a'''^^xsd:string"),
 
-                arguments(new Term.Lit("a", langString, "en"), "\"a\"@en"),
-                arguments(new Term.Lit("a", langString, "en"), "\"\"\"a\"\"\"@en"),
-                arguments(new Term.Lit("a", langString, "en"), "'a'@en"),
-                arguments(new Term.Lit("a", langString, "en"), "'''a'''@en"),
+                arguments(Term.lang("a","en"), "\"a\"@en"),
+                arguments(Term.lang("a","en"), "\"\"\"a\"\"\"@en"),
+                arguments(Term.lang("a","en"), "'a'@en"),
+                arguments(Term.lang("a","en"), "'''a'''@en"),
 
                 //parse empty strings
-                arguments(new Term.Lit("", string, null), "\"\""),
-                arguments(new Term.Lit("", string, null), "\"\"\"\"\"\""),
-                arguments(new Term.Lit("", string, null), "''"),
-                arguments(new Term.Lit("", string, null), "''''''"),
+                arguments(Term.EMPTY_STRING, "\"\""),
+                arguments(Term.EMPTY_STRING, "\"\"\"\"\"\""),
+                arguments(Term.EMPTY_STRING, "''"),
+                arguments(Term.EMPTY_STRING, "''''''"),
 
                 //parse empty typed strings
-                arguments(new Term.Lit("", string, null), "\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("", string, null), "\"\"\"\"\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("", string, null), "''^^<http://www.w3.org/2001/XMLSchema#string>"),
-                arguments(new Term.Lit("", string, null), "''''''^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.EMPTY_STRING, "\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.EMPTY_STRING, "\"\"\"\"\"\"^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.EMPTY_STRING, "''^^<http://www.w3.org/2001/XMLSchema#string>"),
+                arguments(Term.EMPTY_STRING, "''''''^^<http://www.w3.org/2001/XMLSchema#string>"),
 
                 //parse empty xsd-typed strings
-                arguments(new Term.Lit("", string, null), "\"\"^^xsd:string"),
-                arguments(new Term.Lit("", string, null), "\"\"\"\"\"\"^^xsd:string"),
-                arguments(new Term.Lit("", string, null), "''^^xsd:string"),
-                arguments(new Term.Lit("", string, null), "''''''^^xsd:string"),
+                arguments(Term.EMPTY_STRING, "\"\"^^xsd:string"),
+                arguments(Term.EMPTY_STRING, "\"\"\"\"\"\"^^xsd:string"),
+                arguments(Term.EMPTY_STRING, "''^^xsd:string"),
+                arguments(Term.EMPTY_STRING, "''''''^^xsd:string"),
 
                 //parse empty lang-tagged strings
-                arguments(new Term.Lit("", langString, "en-US"), "\"\"@en-US"),
-                arguments(new Term.Lit("", langString, "en"), "\"\"\"\"\"\"@en"),
-                arguments(new Term.Lit("", langString, "en"), "''@en"),
-                arguments(new Term.Lit("", langString, "en-US"), "''''''@en-US"),
+                arguments(Term.lang("", "en-US"), "\"\"@en-US"),
+                arguments(Term.lang("", "en"), "\"\"\"\"\"\"@en"),
+                arguments(Term.lang("", "en"), "''@en"),
+                arguments(Term.lang("", "en-US"), "''''''@en-US"),
 
                 //parse quote strings
-                arguments(new Term.Lit("\\\"", langString, "en-US"), "\"\\\"\"@en-US"),
-                arguments(new Term.Lit("\\\"", langString, "en"), "\"\"\"\\\"\"\"\"@en"),
-                arguments(new Term.Lit("\\'", langString, "en"), "'\\''@en"),
-                arguments(new Term.Lit("\\'", langString, "en-US"), "'''\\''''@en-US"),
-                arguments(new Term.Lit("'", langString, "en-US"), "'''''''@en-US"),
+                arguments(Term.lang("\\\"", "en-US"), "\"\\\"\"@en-US"),
+                arguments(Term.lang("\\\"", "en"), "\"\"\"\\\"\"\"\"@en"),
+                arguments(Term.lang("\\'", "en"), "'\\''@en"),
+                arguments(Term.lang("\\'", "en-US"), "'''\\''''@en-US"),
+                arguments(Term.lang("'", "en-US"), "'''''''@en-US"),
 
-                arguments(new Term.Lit("23", INT, null), "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(new Term.Lit("23", INT, null), "\"\"\"23\"\"\"^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(new Term.Lit("23", INT, null), "'23'^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(new Term.Lit("23", INT, null), "'''23'''^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "\"\"\"23\"\"\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "'23'^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "'''23'''^^<http://www.w3.org/2001/XMLSchema#int>"),
 
-                arguments(new Term.Lit("23", INT, null), "\"23\"^^xsd:int"),
-                arguments(new Term.Lit("23", INT, null), "\"\"\"23\"\"\"^^xsd:int"),
-                arguments(new Term.Lit("23", INT, null), "'23'^^xsd:int"),
-                arguments(new Term.Lit("23", INT, null), "'''23'''^^xsd:int"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^xsd:int"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "\"\"\"23\"\"\"^^xsd:int"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "'23'^^xsd:int"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "'''23'''^^xsd:int"),
 
                 //boolean literals (Turtle)
-                arguments(Term.Lit.TRUE, "true"),
-                arguments(Term.Lit.FALSE, "false"),
+                arguments(Term.TRUE, "true"),
+                arguments(Term.FALSE, "false"),
 
                 //number literals (Turtle)
-                arguments(new Term.Lit("23", integer, null), "23"),
-                arguments(new Term.Lit("-23", integer, null), "-23"),
-                arguments(new Term.Lit("23.5", decimal, null), "23.5"),
-                arguments(new Term.Lit("-23.5", decimal, null), "-23.5"),
-                arguments(new Term.Lit("23e+2", DOUBLE, null), "23e+2"),
-                arguments(new Term.Lit("23E-2", DOUBLE, null), "23E-2"),
+                arguments(Term.typed("23", RopeDict.DT_integer), "23"),
+                arguments(Term.typed("-23", RopeDict.DT_integer), "-23"),
+                arguments(Term.typed("23.5", RopeDict.DT_decimal), "23.5"),
+                arguments(Term.typed("-23.5", RopeDict.DT_decimal), "-23.5"),
+                arguments(Term.typed("23e+2", RopeDict.DT_DOUBLE), "23e+2"),
+                arguments(Term.typed("23E-2", RopeDict.DT_DOUBLE), "23E-2"),
 
                 // vars
-                arguments(new Term.Var("?x"), "?x"),
-                arguments(new Term.Var("?xX"), "?xX"),
-                arguments(new Term.Var("?1"), "?1"),
-                arguments(new Term.Var("$1_2"), "$1_2"),
-                arguments(new Term.Var("$x"), "$x"),
+                arguments(Term.valueOf("?x"), "?x"),
+                arguments(Term.valueOf("?xX"), "?xX"),
+                arguments(Term.valueOf("?1"), "?1"),
+                arguments(Term.valueOf("$1_2"), "$1_2"),
+                arguments(Term.valueOf("$x"), "$x"),
+
+                //NT IRIs
+                arguments(Term.iri("http://ex.org/"), "<http://ex.org/>"),
+                arguments(Term.iri("http://www.example.org/filler/Bob#me"), "<http://www.example.org/filler/Bob#me>"),
+                arguments(Term.iri("23"), "<23>"),
+                arguments(Term.iri("-23"), "<-23>"),
+                arguments(Term.iri("1"), "<1>"),
 
                 //prefixed IRIs
-                arguments(new Term.IRI(string), "xsd:string"),
-                arguments(new Term.IRI(RDF.NS+"type"), "rdf:type"),
-                arguments(new Term.IRI(RDF.type), "a"),
-                arguments(new Term.IRI("http://example.org/ns#predicate"), "ex:predicate"),
-                arguments(new Term.IRI("http://example.org/ns#predicate-1"), "ex:predicate-1"),
-                arguments(new Term.IRI("http://example.org/ns#p"), "ex:p"),
-                arguments(new Term.IRI("http://example.org/p"), ":p"),
+                arguments(Term.XSD_STRING, "xsd:string"),
+                arguments(Term.RDF_TYPE, "rdf:type"),
+                arguments(Term.RDF_TYPE, "a"),
+                arguments(Term.iri("http://example.org/ns#predicate"), "ex:predicate"),
+                arguments(Term.iri("http://example.org/ns#predicate-1"), "ex:predicate-1"),
+                arguments(Term.iri("http://example.org/ns#p"), "ex:p"),
+                arguments(Term.iri("http://example.org/p"), ":p"),
 
                 //prefixed datatypes
-                arguments(new Term.Lit("5", string, null), "\"5\"^^xsd:string"),
-                arguments(new Term.Lit("23", INT, null), "\"23\"^^xsd:int"),
-                arguments(new Term.Lit("<p>", HTML, null), "\"<p>\"^^rdf:HTML"),
+                arguments(Term.typed("5", DT_string), "\"5\"^^xsd:string"),
+                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^xsd:int"),
+                arguments(Term.typed("<p>", RopeDict.DT_HTML), "\"<p>\"^^rdf:HTML"),
 
                 //errors
                 arguments(ERROR, "\"\"\"a\""),
@@ -155,33 +162,21 @@ public class TermParserTest {
         );
     }
 
-    private void assertParse(Term expected, String in, int start, int termEnd) {
+    private void assertParse(Term expected, String in, int start, int expectedTermEnd) {
         int len = in.length();
         TermParser parser = new TermParser();
-        parser.prefixMap = new PrefixMap().resetToBuiltin();
-        parser.prefixMap.add("ex", "http://example.org/ns#");
-        parser.prefixMap.add("", "http://example.org/");
-        assertEquals(expected != ERROR, parser.parse(in, start, len));
+        parser.prefixMap.add(Rope.of("ex"), Term.iri("http://example.org/ns#"));
+        parser.prefixMap.add(Rope.of(""), Term.iri("http://example.org/"));
+        TermParser.Result result = parser.parse(Rope.of(in), start, len);
+        assertEquals(expected != ERROR, result.isValid());
 
         if (expected == ERROR) {
             assertThrows(InvalidTermException.class, parser::asTerm);
-            assertThrows(InvalidTermException.class, parser::asNT);
         } else {
-            assertEquals(termEnd, parser.termEnd());
+            assertEquals(expectedTermEnd, parser.termEnd());
             assertEquals(expected, parser.asTerm());
-            if (start == 0 && termEnd == in.length() && parser.isNTOrVar()) {
-                // avoid string copy even with ^^<....#string> suffix
-                assertEquals(in, parser.asNT());
-            } else if (in.substring(start, termEnd).endsWith("^^<"+string+">")) {
-                // do not copy ^^<...#string> into substring
-                String string = '"' + ((Term.Lit) expected).lexical() + '"';
-                assertEquals(string, parser.asNT());
-            } else {
-                // general case: behave as Term does
-                assertEquals(expected.nt(), parser.asNT());
-            }
-            assertEquals(expected.nt(), parser.asTerm().nt());
-            assertEquals(termEnd, parser.termEnd(), "termEnd changed by as*() methods");
+            assertEquals(expected.toString(), parser.asTerm().toString());
+            assertEquals(expectedTermEnd, parser.termEnd(), "termEnd changed by as*() methods");
         }
     }
 

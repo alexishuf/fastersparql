@@ -2,9 +2,12 @@ package com.github.alexishuf.fastersparql.batch.adapters;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
-import com.github.alexishuf.fastersparql.client.model.Vars;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.row.RowType;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /** Wrap a plain {@link Iterator} as a {@link BIt}. */
 public class IteratorBIt<T> extends UnitaryBIt<T> {
@@ -17,19 +20,19 @@ public class IteratorBIt<T> extends UnitaryBIt<T> {
      * this {@link IteratorBIt} finishes or is {@link IteratorBIt#close()}d.</p>
      *
      * @param it the iterator to wrap.
-     * @param elementCls the class of elements produced by {@code it.next()}.
+     * @param rowType methods for manipulating rows of type {@code R}
      */
-    public IteratorBIt(Iterator<T> it, Class<? super T> elementCls, Vars vars) {
-        super(elementCls, vars);
+    public IteratorBIt(Iterator<T> it, RowType<T> rowType, Vars vars) {
+        super(rowType, vars);
         this.it = it;
     }
 
-    /** Equivalent to {@code IteratorBIt(iterable.iterator(), elementCls)}. */
-    public IteratorBIt(Iterable<T> iterable, Class<? super T> elementCls, Vars vars) {
-        this(iterable.iterator(), elementCls, vars);
+    /** Equivalent to {@code IteratorBIt(iterable.iterator(), rowType)}. */
+    public IteratorBIt(Iterable<T> iterable, RowType<T> rowType, Vars vars) {
+        this(iterable.iterator(), rowType, vars);
     }
 
-    @Override protected void cleanup(boolean interrupted) {
+    @Override protected void cleanup(@Nullable Throwable cause) {
         if (it instanceof AutoCloseable c) {
             try {
                 c.close();
@@ -40,10 +43,18 @@ public class IteratorBIt<T> extends UnitaryBIt<T> {
     @Override public boolean hasNext() {
         boolean has = it.hasNext();
         if (!has)
-            onExhausted();
+            onTermination(null);
         return has;
     }
 
-    @Override public T      next()     { return it.next(); }
+    @Override public T next() {
+        try {
+            return it.next();
+        } catch (Throwable t) {
+            if (!(t instanceof NoSuchElementException)) onTermination(t);
+            throw t;
+        }
+
+    }
     @Override public String toString() { return it.toString(); }
 }

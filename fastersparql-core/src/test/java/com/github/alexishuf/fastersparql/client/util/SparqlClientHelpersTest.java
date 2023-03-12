@@ -2,7 +2,11 @@ package com.github.alexishuf.fastersparql.client.util;
 
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.client.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -13,13 +17,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.client.model.RDFMediaTypes.*;
+import static com.github.alexishuf.fastersparql.FSProperties.CLIENT_MAX_QUERY_GET;
 import static com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.builder;
 import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
-import static com.github.alexishuf.fastersparql.client.model.SparqlResultFormat.*;
-import static com.github.alexishuf.fastersparql.client.util.FSProperties.CLIENT_MAX_QUERY_GET;
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.firstLine;
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.formString;
+import static com.github.alexishuf.fastersparql.model.RDFMediaTypes.*;
+import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.*;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
@@ -77,24 +81,24 @@ class SparqlClientHelpersTest {
         SparqlConfiguration form = builder().method(FORM).method(GET).build();
 
         SparqlConfiguration getSingleParamConfig = builder().method(GET)
-                .param("x", singletonList("23")).build();
+                .param(Rope.of("x"), Rope.ropeList("23")).build();
         SparqlConfiguration postSingleParamConfig = builder().method(POST)
-                .param("x", singletonList("23")).build();
+                .param(Rope.of("x"), Rope.ropeList("23")).build();
         SparqlConfiguration formSingleParamConfig = builder().method(FORM)
-                .param("x", singletonList("23")).build();
+                .param(Rope.of("x"), Rope.ropeList("23")).build();
 
         SparqlConfiguration getMultiParamConfig = builder().method(GET)
-                .param("x", asList("2", "3"))
-                .param("par", singletonList("test")).build();
+                .param(Rope.of("x"), Rope.ropeList("2", "3"))
+                .param(Rope.of("par"), Rope.ropeList("test")).build();
         SparqlConfiguration postMultiParamConfig = builder().method(POST)
-                .param("x", asList("2", "3"))
-                .param("par", singletonList("test")).build();
+                .param(Rope.of("x"), Rope.ropeList("2", "3"))
+                .param(Rope.of("par"), Rope.ropeList("test")).build();
         SparqlConfiguration formMultiParamConfig = builder().method(FORM)
-                .param("x", asList("2", "3"))
-                .param("par", singletonList("test")).build();
+                .param(Rope.of("x"), Rope.ropeList("2", "3"))
+                .param(Rope.of("par"), Rope.ropeList("test")).build();
 
         String sparql = "SELECT ?x WHERE { ?x a <http://schema.org/Person>}";
-        String escaped = UriUtils.escapeQueryParam(sparql);
+        String escaped = UriUtils.escapeQueryParam(sparql).toString();
         return Stream.of(
                 arguments(ex+"/sparql", form, sparql, "/sparql"),
                 arguments(ex+"/sparql", post, sparql, "/sparql"),
@@ -122,19 +126,19 @@ class SparqlClientHelpersTest {
     void testFirstLine(String endpoint, SparqlConfiguration config, String sparql,
                        String expected) {
         SparqlEndpoint parsed = SparqlEndpoint.parse(endpoint);
-        assertEquals(expected, firstLine(parsed, config, sparql).toString());
+        assertEquals(expected, firstLine(parsed, config, new ByteRope(sparql)));
     }
 
     static Stream<Arguments> testFormString() {
         String sparql = "SELECT ?x WHERE { ?x a <http://schema.org/Person>}";
-        String escaped = UriUtils.escapeQueryParam(sparql);
+        String escaped = UriUtils.escapeQueryParam(sparql).toString();
         Map<String, List<String>> singleParam = new HashMap<>();
-        singleParam.put("x", singletonList("1"));
+        singleParam.put("x", List.of("1"));
         Map<String, List<String>> singleList = new HashMap<>();
-        singleList.put("x", asList("11", "test"));
+        singleList.put("x", List.of("11", "test"));
         Map<String, List<String>> multiParams = new HashMap<>();
-        multiParams.put("x", asList("11", "test"));
-        multiParams.put("y", singletonList("23"));
+        multiParams.put("x", List.of("11", "test"));
+        multiParams.put("y", List.of("23"));
         return Stream.of(
                 arguments(sparql, emptyMap(), "query="+escaped),
                 arguments(sparql, singleParam, "query="+escaped+"&x=1"),
@@ -144,7 +148,12 @@ class SparqlClientHelpersTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testFormString(String sparql, Map<String, List<String>> params, String expected) {
-        assertEquals(expected, formString(sparql, params).toString());
+    void testFormString(String sparqlStr, Map<String, List<String>> paramsStr, String expectedStr) {
+        Rope sparql = Rope.of(sparqlStr);
+        Map<Rope, List<Rope>> params = new HashMap<>();
+        for (var e : paramsStr.entrySet())
+            params.put(Rope.of(e.getKey()), Rope.ropeList(e.getValue()));
+        Rope expected = Rope.of(expectedStr);
+        assertEquals(expected, formString(sparql, params));
     }
 }

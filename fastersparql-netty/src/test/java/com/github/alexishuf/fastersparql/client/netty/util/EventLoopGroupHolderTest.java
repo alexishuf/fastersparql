@@ -93,7 +93,8 @@ class EventLoopGroupHolderTest {
                 for (int i = 0; i < tasks; i++) {
                     int id = i;
                     futures.add(executor.submit(() -> {
-                        try (var elg = holder.acquire()) {
+                        try { //noinspection resource
+                            var elg = holder.acquire();
                             assertFalse(elg.isShutdown());
                             assertFalse(elg.isShuttingDown());
                             assertFalse(elg.isTerminated());

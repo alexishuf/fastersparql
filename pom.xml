@@ -63,6 +63,7 @@
   <modules>
     <module>fastersparql-core</module>
     <module>fastersparql-netty</module>
+    <module>fastersparql-hdt</module>
 <!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-bom</module>
@@ -168,6 +169,8 @@
           <target>${maven.compiler.target}</target>
           <compilerArgs>
             <arg>--enable-preview</arg>
+            <arg>--add-modules</arg>
+            <arg>jdk.incubator.vector</arg>
           </compilerArgs>
         </configuration>
       </plugin>
@@ -175,7 +178,7 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>--enable-preview</argLine>
+          <argLine>--enable-preview --add-modules jdk.incubator.vector</argLine>
         </configuration>
       </plugin>
       <!-- Generate javadoc  -->
