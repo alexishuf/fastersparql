@@ -53,7 +53,7 @@ class ShortQueueBItTest extends AbstractBItTest {
                         copiedValues.add(Arrays.asList(b.array).subList(0, b.size));
                         q.copy(b);
                     } else {
-                        q.put(b);
+                        q.feed(b);
                     }
                 }
                 q.complete(s.error());

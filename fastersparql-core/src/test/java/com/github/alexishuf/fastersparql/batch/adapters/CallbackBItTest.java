@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.adapters;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -31,13 +33,17 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class CallbackBItTest extends AbstractBItTest {
+    private final AtomicInteger nextId = new AtomicInteger(1);
+
     @Override protected void run(Scenario genericScenario) {
         if (!(genericScenario instanceof BoundedScenario s))
             throw new IllegalArgumentException("Expected BoundedScenario");
-        var cb = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+        var cb = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
         cb.maxReadyBatches(s.maxReadyBatches()).maxReadyItems(s.maxReadyItems());
         cb.minBatch(s.minBatch()).maxBatch(s.maxBatch());
-        Thread feeder = Thread.ofVirtual().name("feeder-"+s).start(() -> {
+        int id = nextId.getAndIncrement();
+        Thread.currentThread().setName("CallbackBItTest.run-"+id);
+        Thread feeder = Thread.ofVirtual().name("feeder-"+id).start(() -> {
             for (int i = 0; i < s.size(); i++) cb.feed(i);
             cb.complete(s.error());
         });
@@ -94,7 +100,7 @@ class CallbackBItTest extends AbstractBItTest {
 
     @Test @Timeout(5)
     void testMergeBatches() throws Exception {
-        try (var bit = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
+        try (var bit = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             assertEquals(1, bit.minBatch());
             bit.maxBatch(3);
             bit.feed(0);
@@ -121,7 +127,7 @@ class CallbackBItTest extends AbstractBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWait(BatchGetter getter) {
         int delay = 20;
-        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
+        try (var it = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).minWait(delay, TimeUnit.MILLISECONDS);
 
             long start = nanoTime();
@@ -140,21 +146,21 @@ class CallbackBItTest extends AbstractBItTest {
             batch = getter.getList(it);
             ms = (nanoTime()-start)/1_000_000.0;
             assertEquals(List.of(4), batch);
-            assertTrue(ms < 10, "too slow");
+            assertTrue(ms < 10, "too slow, ms="+ms);
 
             // do not wait after end
             start = nanoTime();
             batch = getter.getList(it);
             ms = (nanoTime()-start)/1_000_000.0;
             assertEquals(List.of(), batch);
-            assertTrue(ms < 10, "too slow");
+            assertTrue(ms < 10, "too slow, ms="+ms);
         }
     }
 
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMaxWait(BatchGetter getter) throws Exception {
         int delay = 20, tolerance = 5;
-        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
+        try (var it = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).maxWait(delay, TimeUnit.MILLISECONDS);
             List<List<Integer>> batches = new ArrayList<>();
             it.feed(1);
@@ -178,7 +184,7 @@ class CallbackBItTest extends AbstractBItTest {
         var stop = new AtomicBoolean();
         var prematureExhaust = new AtomicBoolean(false);
         var suffix = format("{round=%d, min=%d, wait=%d}", round, minBatch, waitBatches);
-        try (var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
+        try (var it = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY)) {
             it.maxReadyItems(Math.max(65_536, 2*minBatch)).minBatch(minBatch);
             var batchDrained = new Semaphore(0);
             Thread.ofVirtual().name("Feeder"+suffix).start(() -> {
@@ -188,7 +194,9 @@ class CallbackBItTest extends AbstractBItTest {
                     feed.complete(null);
                 } catch (BItCompletedException ignored) {
                     feed.complete(null);
-                } catch (Throwable t) { feed.completeExceptionally(t); }
+                } catch (Throwable t) {
+                    feed.completeExceptionally(t);
+                }
             });
             Thread.ofVirtual().name("Drainer"+suffix).start(() -> {
                 try {
@@ -212,7 +220,9 @@ class CallbackBItTest extends AbstractBItTest {
         try {
             feed.get();
             drain.get();
-        } catch (ExecutionException|InterruptedException e) { throw new RuntimeException(e); }
+        } catch (ExecutionException|InterruptedException e) {
+            throw new RuntimeException(e);
+        }
         assertFalse(prematureExhaust.get());
     }
 

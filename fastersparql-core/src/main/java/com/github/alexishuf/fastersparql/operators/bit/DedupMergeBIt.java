@@ -29,7 +29,12 @@ public final class DedupMergeBIt<R> extends MeteredMergeBIt<R> {
 
     @Override protected void process(Batch<R> batch, int sourceIdx, RowType<R>.Merger projector) {
         dedup.filter(batch, sourceIdx, projector);
-        if (metrics != null) metrics.rowsEmitted(batch.size);
-        feed(batch);
+        if (batch.size > 0) {
+            if (metrics != null) metrics.rowsEmitted(batch.size);
+            feedLock.lock();
+            try {
+                feed(batch);
+            } finally { feedLock.unlock(); }
+        }
     }
 }

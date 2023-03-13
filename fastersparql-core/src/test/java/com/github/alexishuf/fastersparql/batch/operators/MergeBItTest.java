@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -34,7 +34,7 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @ValueSource(ints = {3, 3*2, 3*4, 3*8, 3*16, 3*100})
     void testCloseBlockedDrainers(int n) throws Exception {
         for (int repetition = 0; repetition < 16; repetition++) {
-            var sources = range(0, n).mapToObj(i -> new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY)).toList();
+            var sources = range(0, n).mapToObj(i -> new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY)).toList();
             var active = new AtomicBoolean(true);
             Thread feeder = null;
             try (var it = new MergeBIt<>(sources, NotRowType.INTEGER, Vars.EMPTY)) {
@@ -70,9 +70,9 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWait(BatchGetter getter) {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+        try (var s1 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
              var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -88,9 +88,9 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWaitMerging(BatchGetter getter) {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+        try (var s1 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
              var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -109,9 +109,9 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMinWaitMergingConcurrent(BatchGetter getter) throws Exception {
         int wait = 50, tol = wait/2;
-        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s3 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+        try (var s1 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s3 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
              var it = new MergeBIt<>(List.of(s1, s2, s3), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -137,8 +137,8 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @MethodSource("timingReliableBatchGetters")
     void testMaxWait(BatchGetter getter) {
         int min = 20, max = 100;
-        try (var s1 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
-             var s2 = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+        try (var s1 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+             var s2 = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
              var it = new MergeBIt<>(List.of(s1, s2), NotRowType.INTEGER, Vars.EMPTY)) {
             it.minBatch(2).minWait(min, MILLISECONDS).maxWait(max, MILLISECONDS);
 
@@ -149,7 +149,6 @@ class MergeBItTest extends AbstractMergeBItTest {
             assertTrue(elapsedMs > max - 40 && elapsedMs < max + 40,
                        "elapsedMs="+elapsedMs+" not in (" + min + "," + max + ") range");
             assertEquals(List.of(1), batch);
-
 
             CompletableFuture<List<Integer>> empty = new CompletableFuture<>();
             s1.complete(null);

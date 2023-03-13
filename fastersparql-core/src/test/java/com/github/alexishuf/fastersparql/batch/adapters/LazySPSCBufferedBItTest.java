@@ -11,7 +11,7 @@ import java.util.concurrent.ExecutionException;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-class LazyCallbackBItTest extends AbstractBItTest {
+class LazySPSCBufferedBItTest extends AbstractBItTest {
 
     @Override protected List<? extends Scenario> scenarios() {
         return baseScenarios();
@@ -19,7 +19,7 @@ class LazyCallbackBItTest extends AbstractBItTest {
 
     @Override protected void run(Scenario s) {
         CompletableFuture<Thread> workerThread = new CompletableFuture<>();
-        var it = new LazyCallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
+        var it = new LazySPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
             @Override protected void run() {
                 workerThread.complete(Thread.ofVirtual().start(() -> {
                     for (int i = 0; i < s.size; i++)

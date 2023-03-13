@@ -8,8 +8,8 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackBIt;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
+import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -128,7 +128,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     /* --- --- --- BIt implementations --- --- --- */
 
-    private class WsBIt<R> extends NettyCallbackBIt<R> implements NettyWsClientHandler, WsFrameSender {
+    private class WsBIt<R> extends NettySPSCBufferedBIt<R> implements NettyWsClientHandler, WsFrameSender {
         private final Rope requestMessage;
         private final WsClientParserBIt<R> parser;
         private boolean gotFrames = false;
@@ -153,20 +153,20 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void sendFrame(Rope content) {
             Channel ch;
-            lock.lock();
+            lock();
             try {
                 ch = channel;
                 if (channel == null)
                     throw new IllegalStateException("sendFrame() before attach()");
-                if (ended) {
+                if (terminated) {
                     log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, error);
                     return;
                 }
-            } finally { lock.unlock(); }
+            } finally { unlock(); }
             ch.writeAndFlush(NettyRopeUtils.wrap(content, UTF_8));
         }
 
-        /* --- --- --- NettyCallbackBIt methods --- --- --- */
+        /* --- --- --- NettySPSCBIt methods --- --- --- */
 
         @Override public    SparqlClient      client() { return NettyWsSparqlClient.this; }
         @Override protected void             request() { netty.open(this); }
@@ -176,24 +176,24 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert channel == null : "previous attach()";
-            lock.lock();
+            lock();
             try {
                 this.recycler = recycler;
-                if (ended) {
+                if (terminated) {
                     this.recycler.recycle(ctx.channel());
                     return;
                 }
                 this.channel = ctx.channel();
-            } finally { lock.unlock(); }
+            } finally { unlock(); }
             ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
         }
 
         @Override public void detach(Throwable cause) {
-            if (!ended) // flush parser, which may call end() or onError(String)
+            if (!terminated) // flush parser, which may call end() or onError(String)
                 parser.complete(null);
-            lock.lock();
+            lock();
             try {
-                if (!ended) {
+                if (!terminated) {
                     if (cause == null) {
                         var suffix = gotFrames ? "!end but after " : "" + "starting a response";
                         var ex = new FSServerException("Connection closed before " + suffix);
@@ -201,7 +201,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     }
                     complete(cause);
                 }
-            } finally { lock.unlock(); }
+            } finally { unlock(); }
         }
 
         @Override public void frame(WebSocketFrame frame) {
@@ -209,7 +209,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (frame instanceof TextWebSocketFrame t) {
                 bufferRope.buffer = t.content().nioBuffer();
                 parser.feedShared(bufferRope);
-            } else if (!ended && !(frame instanceof CloseWebSocketFrame)) {
+            } else if (!terminated && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();
                 complete(new FSServerException("Unexpected "+suffix));
             }

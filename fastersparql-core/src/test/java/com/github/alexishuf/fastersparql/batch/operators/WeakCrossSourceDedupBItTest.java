@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -47,7 +47,7 @@ class WeakCrossSourceDedupBItTest {
 
     private static final ItGenerator cbGenerator = new ItGenerator() {
         @Override public BIt<List<Term>> create(List<List<Term>> list) {
-            CallbackBIt<List<Term>> it = new CallbackBIt<>(RowType.LIST, Vars.of("x")) {
+            SPSCBufferedBIt<List<Term>> it = new SPSCBufferedBIt<>(RowType.LIST, Vars.of("x")) {
                 @Override public String toString() { return "Callback("+list+")"; }
             };
             Thread.startVirtualThread(() -> {

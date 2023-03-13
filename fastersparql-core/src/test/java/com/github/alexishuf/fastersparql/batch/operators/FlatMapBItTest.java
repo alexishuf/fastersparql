@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import com.github.alexishuf.fastersparql.model.row.RowType;
@@ -32,8 +32,8 @@ class FlatMapBItTest {
     }
     private static final class CallbackFac extends ItFac {
         @Override public <T> BIt<T> create(List<T> list, RowType<T> rowType) {
-            CallbackBIt<T> cb = new CallbackBIt<>(rowType, Vars.EMPTY) {
-                @Override public String toString() { return "CallbackBIt("+list+")"; }
+            SPSCBufferedBIt<T> cb = new SPSCBufferedBIt<>(rowType, Vars.EMPTY) {
+                @Override public String toString() { return "SPSCBIt("+list+")"; }
             };
             Thread.ofVirtual().start(() -> {
                 for (T value : list)

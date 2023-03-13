@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -158,8 +158,8 @@ public class WsBindingParsersTest {
         Mailbox serverMB = new Mailbox("server"), clientMB = new Mailbox("client");
         Thread serverFeeder = null, clientFeeder = null, server = null;
         try (var stuff = new AutoCloseableSet<>();
-             var clientCb = stuff.put(new CallbackBIt<>(LIST, ex.vars()));
-             var serverCb = stuff.put(new CallbackBIt<>(LIST, ex.bindingsVars()));
+             var clientCb = stuff.put(new SPSCBufferedBIt<>(LIST, ex.vars()));
+             var serverCb = stuff.put(new SPSCBufferedBIt<>(LIST, ex.bindingsVars()));
              var clientParser = new WsClientParserBIt<>(serverMB::send, LIST,
                                                         clientCb, ex.bindType(),
                                                         ex.bindingsBIt(), null, null);

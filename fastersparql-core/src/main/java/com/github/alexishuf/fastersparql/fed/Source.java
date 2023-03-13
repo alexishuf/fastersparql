@@ -50,7 +50,7 @@ public final class Source implements AutoCloseable {
     }
 
     @Override public void close() {
-        closeAll(RuntimeException.class, RuntimeException::new, List.of(client, selector));
+        closeAll(List.of(client, selector));
     }
 
     /* --- --- --- accessors --- --- --- */

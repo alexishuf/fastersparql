@@ -3,9 +3,9 @@ package com.github.alexishuf.fastersparql.batch.operators;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.adapters.AbstractBItTest;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.ThrowingIterator;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.NotRowType;
 
@@ -35,7 +35,7 @@ class TransformBItTest extends AbstractBItTest {
     static class CallbackTransformScenario extends TransformScenario {
         public CallbackTransformScenario(Scenario s) { super(s); }
         @Override public BIt<Integer> it() {
-            var it = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY);
+            var it = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY);
             Thread.ofVirtual().name("feed-"+this).start(() -> {
                 for (int i = 0; i < size; i++)
                     it.feed(i);

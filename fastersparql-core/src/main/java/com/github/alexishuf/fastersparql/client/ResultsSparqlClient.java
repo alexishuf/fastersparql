@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -126,7 +126,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var cb = new CallbackBIt<>(rowType, expected.vars());
+            var cb = new SPSCBufferedBIt<>(rowType, expected.vars());
             Thread.startVirtualThread(() -> {
                 try {
                     exBindings.check(bindings);

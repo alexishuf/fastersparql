@@ -39,7 +39,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      *
      * <p>ON the software side, the following is assumed:</p>
      * <ol>
-     *     <li>Consumers of BIT will be bottlenecked by RAM (i.e., they are not doing expensive
+     *     <li>Consumers of BIt will be bottlenecked by RAM (i.e., they are not doing expensive
      *         processing on each {@link Batch} item</li>
      *     <li>The JVM will be using compressed pointers</li>
      *     <li>The JVM overhead for an array (including the {@code length}) is 24 bytes</li>
@@ -49,7 +49,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * fill 4 cache lines with the {@link Batch#array}. Since we cannot guarantee the actual memory
      * address is 128-aligned, we can at least expect that for at least 2 cache lines in the
      * middle of the array there will be no false sharing (which requires implicit synchronization
-     * between CPU-level threads).
+     * between CPU cores).
      */
     int PREFERRED_MIN_BATCH = (4*64-24)/4;
 
@@ -227,8 +227,10 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @return the next {@link Batch}, as returned by {@link BIt#nextBatch()}
      */
     default Batch<T> nextBatch(Batch<T> offer) {
-        recycle(offer);
-        return nextBatch();
+        boolean accepted = recycle(offer);
+        Batch<T> b = nextBatch();
+        if (!accepted) recycle(offer);
+        return b;
     }
 
     /**

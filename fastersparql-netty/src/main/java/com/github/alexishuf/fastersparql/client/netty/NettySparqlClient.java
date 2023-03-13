@@ -8,7 +8,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackBIt;
+import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
@@ -115,7 +115,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
      *  while {@link NettyHandler}'s lifecycle is attached to the Netty channel which may be
      *  reused for multiple SPARQL queries.</p>
      */
-    private abstract class ClientBIt<T> extends NettyCallbackBIt<T> {
+    private abstract class ClientBIt<T> extends NettySPSCBufferedBIt<T> {
         private final HttpRequest request;
 
         public ClientBIt(RowType<T> rowType, Vars vars, HttpRequest request) {
@@ -127,11 +127,11 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override protected void request() { netty.request(request, this::connected, this::complete); }
 
         private void connected(Channel ch, NettyHandler handler) {
-            lock.lock();
+            lock();
             try {
                 this.channel = ch;
                 handler.setup(this);
-            } finally { lock.unlock(); }
+            } finally { unlock(); }
         }
 
         /** Called once for the {@link FullHttpResponse} or the first {@link HttpContent}. */
@@ -153,8 +153,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
         /* --- --- --- BIt methods --- --- --- */
 
         @Override public void complete(@Nullable Throwable error) {
-            if (!ended && parser != null) parser.complete(error);
-            if (!ended)                   super.complete(error);
+            if (!terminated && parser != null) parser.complete(error);
+            if (!terminated)                   super.complete(error);
         }
 
         /* --- --- --- ClientBIt message-parsing methods --- --- --- */

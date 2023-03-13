@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItIllegalStateException;
 import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.BoundedBIt;
+import com.github.alexishuf.fastersparql.batch.BoundedCallbackBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -11,16 +12,12 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.ArrayDeque;
 import java.util.NoSuchElementException;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A {@link BIt} that can be asynchronously fed with batches or items, which are then
  * buffered into a ring of {@link Batch}es to be delivered to consumers of this {@link BIt}.
  */
-public abstract class BufferedBIt<T> extends AbstractBIt<T> {
-    protected final ReentrantLock lock = new ReentrantLock();
-    protected final Condition hasReady = lock.newCondition();
+public class SPSCBufferedBIt<T> extends SPSCBIt<T> implements BoundedCallbackBIt<T> {
     protected final ArrayDeque<Batch<T>> ready = new ArrayDeque<>();
     private boolean eager = false;
     private Batch<T> filling = null;
@@ -28,12 +25,13 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     private long fillingStart = ORIGIN_TIMESTAMP;
     private int batchCapacity = 10;
     private @NonNegative int readyOffset;
-    protected boolean ended;
     private boolean hasNextThrew;
+    protected int maxReadyBatches = Integer.MAX_VALUE;
+    protected long readyItems = 0, maxReadyItems = Long.MAX_VALUE;
 
     /* --- --- --- constructors --- --- --- */
 
-    public BufferedBIt(RowType<T> rowType, Vars vars) {
+    public SPSCBufferedBIt(RowType<T> rowType, Vars vars) {
         super(rowType, vars);
     }
 
@@ -52,7 +50,7 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
         ready.add(filling);
         filling = null;
         fillingStart = ORIGIN_TIMESTAMP;
-        hasReady.signal();
+        signal();
     }
 
     /**
@@ -72,14 +70,12 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     }
 
     /**
-     * Recomputes {@code batchCapacity} when batch size setters are called.
-     * Caller thread MUST hold {@code lock}.
+     * Wait until constraints imposed by {@link BoundedBIt#maxReadyItems(long)} and
+     * {@link BoundedBIt#maxReadyBatches(int)} are satisfied.
      */
-    protected void updateBatchCapacity() {
-        int tgt = (maxBatch>>6 == 0) ? maxBatch : minBatch;
-        int capacity = 10;
-        while (capacity < tgt) capacity += capacity>>1;
-        batchCapacity = capacity;
+    protected void waitForCapacity() {
+        while (!terminated && (readyItems >= maxReadyItems || ready.size() >= maxReadyBatches))
+           await();
     }
 
     /**
@@ -87,38 +83,34 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
      * The caller thread MUST hold {@code lock}.
      */
     protected void waitReady() {
-        if (needsStartTime) {
-            waitReadyTimed();
-        } else {
-            while (!ended && ready.isEmpty())
-                hasReady.awaitUninterruptibly();
+        while (!terminated && ready.isEmpty()) {
+            if (needsStartTime) waitReadyTimed();
+            else                await();
         }
     }
 
     private void waitReadyTimed() {
-        boolean interrupted = false;
-        long delta = -1;
-
-        while (ready.isEmpty() && !ended) {
-            if (delta < 64) {
-                long now = System.nanoTime();
-                if (fillingStart == ORIGIN_TIMESTAMP)
-                    fillingStart = now;
-                delta = (fillingStart + minWaitNs) - now;
-                if (delta < 0) { // minWait deadline is in the past
-                    delta = (fillingStart + maxWaitNs) - now;
-                    if (delta < 0) // maxWait deadline is in the past
-                        delta = Long.MAX_VALUE; // wait forever until we get an item
-                }
-            }
-            try {
-                delta = hasReady.awaitNanos(delta);
-            } catch (InterruptedException e) { interrupted = true; }
-            if (ready.isEmpty() && filling != null && ready(filling.size, fillingStart))
-                completeBatch(); //will add to ready and exit this loop
+        // wait until minWaitNs
+        long ns = System.nanoTime();
+        if (fillingStart == ORIGIN_TIMESTAMP) {
+            fillingStart = ns;
+            ns = minWaitNs;
+        } else {
+            ns = fillingStart+minWaitNs-ns;
         }
-        if (interrupted)
-            Thread.currentThread().interrupt();
+        while (ns > 0 && !terminated && ready.isEmpty()) ns = awaitNanos(ns);
+
+        // wait until maxWaitNs is elapsed, if already elapsed, this will be negative
+        ns = fillingStart + maxWaitNs - System.nanoTime();
+
+        while (!terminated && ready.isEmpty()) {
+            if (ns <= 0) // once we reached maxWaitNs, wait until filling becomes ready
+                ns = Long.MAX_VALUE;
+            if (filling != null && ready(filling.size, fillingStart))
+                completeBatch(); // filling became ready due to elapsed maxWaitNs
+            else
+                ns = awaitNanos(ns);
+        }
     }
 
     /**
@@ -131,67 +123,32 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
      *                          {@link RuntimeException}.
      */
     protected @Nullable Batch<T> fetch() {
-        lock.lock();
+        lock();
         try {
             waitReady();
-            if (!ready.isEmpty()) {
-                var batch = ready.remove();
+            boolean atCapacity = readyItems >= maxReadyItems || ready.size() >= maxReadyBatches;
+            var batch = ready.poll();
+            if (batch != null) {
                 if (readyOffset > 0) { // physically delete items consumed by next()
                     batch.remove(0, readyOffset);
                     readyOffset = 0;
                 }
+                readyItems -= batch.size;
+                if (atCapacity) signal(); // wake waitForCapacity
                 return batch;
             }
             checkError();
             return null;
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
     }
 
-    protected void complete(@Nullable Throwable error) {
-        lock.lock();
+    @Override public void feed(T item) throws BItCompletedException {
+        lock();
         try {
-            if (!ended) {
-                if (filling != null && filling.size > 0)  // add incomplete batch
-                    completeBatch();
-                ended = true;
-                hasReady.signal();
-            }
-            onTermination(error);
-        } finally { lock.unlock(); }
-    }
-
-    /**
-     * Poll if this {@link BufferedBIt#complete(Throwable)} has been previously called.
-     *
-     * <p> Using this method is not thread-safe. It should be used only if the caller is the
-     * single thread responsible for calling {@link BufferedBIt#complete(Throwable)} or for
-     * debugging reasons.</p>
-     *
-     * @return {@code true} if {@code this.complete(cause)} was previously called.
-     */
-    public boolean isComplete() {
-        return ended;
-    }
-
-    /**
-     * Whether {@code this} was {@link BufferedBIt#complete(Throwable)}ed with a non-null
-     * {@code cause}.
-     *
-     * <p>Like {@link BufferedBIt#complete(Throwable)}, this should be called by the only
-     * thread that calls {@link BufferedBIt#complete(Throwable)} otr for debugging reasons.</p>
-     *
-     * @return {@code true} if {@link BufferedBIt#isComplete()} and the
-     *         {@link BufferedBIt#complete(Throwable)} in effect call used a non-null {@code cause}.
-     */
-    public boolean isFailed() {
-        return ended && error != null;
-    }
-
-    protected void feed(T item) throws BItCompletedException {
-        lock.lock();
-        try {
-            if (ended)
-                throw new BItCompletedException("Previous complete("+error+") on "+this, this);
+            //block if above buffer limits
+            if (readyItems >= maxReadyItems || ready.size() >= maxReadyBatches)
+                waitForCapacity();
+            if (terminated) throw mkCompleted();
             if (filling == null) { // get/reset/create current filling Batch
                 Batch<T> last = ready.peekLast(); // try adding to last ready batch
                 if (last != null) {
@@ -210,27 +167,34 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
                 eager = false;
                 completeBatch();
             }
-        } finally { lock.unlock(); }
+        } finally {
+            try {
+                readyItems++;
+            } finally { unlock(); }
+        }
     }
 
-    protected void feed(Batch<T> batch) throws BItCompletedException {
-        if (batch.size == 0)
+    @Override public void feed(Batch<T> batch) throws BItCompletedException {
+        int size = batch.size, start = 0;
+        if (size == 0)
             return;
-        lock.lock();
+        lock();
         try {
-            if (ended)
-                throw new BItCompletedException("Previous complete("+error+") on "+this, this);
-            int start = 0, size = batch.size;
-            if (size >= minBatch) {
+            //block if above buffer limits
+            if (readyItems >= maxReadyItems || ready.size() >= maxReadyBatches)
+                waitForCapacity();
+            if (terminated) throw mkCompleted();
+            if (size >= minBatch) { // batch qualifies, just add it
                 ready.add(batch);
-                hasReady.signal();
-            } else {
+                signal();
+            } else { // batch below minBatch, try appending to last or filling
                 Batch<T> last = ready.peekLast();
                 if (last != null) { // there is a ready batch
-                    int lSize = last.size, n = Math.min(last.array.length-lSize, maxBatch-lSize);
-                    if (n > 0) { // >= 1 item fits in 'last'
-                        System.arraycopy(batch.array, 0, last.array, lSize, n);
-                        start += n;
+                    int lSize = last.size;
+                    start = Math.min(last.array.length-lSize, maxBatch-lSize);
+                    if (start > 0) { // >= 1 item fits in 'last'
+                        System.arraycopy(batch.array, 0, last.array, lSize, start);
+                        last.size += start;
                     }
                 }
                 int length = size - start;
@@ -244,51 +208,67 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
                     }
                 }
             }
-        } finally { lock.unlock(); }
+        } finally {
+            try {
+                if (!terminated) readyItems += size;
+            } finally { unlock(); }
+        }
     }
 
     /* --- --- --- overrides --- --- --- */
 
-    @Override public BIt<T> minBatch(int size) {
-        lock.lock();
+    @Override protected void updatedBatchConstraints() {
+        int capacity = 10, tgt = Math.min(maxBatch, Math.max(minBatch, BIt.PREFERRED_MIN_BATCH));
+        while (capacity < tgt) capacity += capacity>>1;
+        lock();
         try {
-            super.minBatch(size);
-            updateBatchCapacity();
-        } finally { lock.unlock(); }
-        return this;
-    }
-
-    @Override public BIt<T> maxBatch(int size) {
-        lock.lock();
-        try {
-            super.maxBatch(size);
-            updateBatchCapacity();
-        } finally { lock.unlock(); }
-        return this;
+            if (batchCapacity < capacity || batchCapacity > maxBatch)
+                batchCapacity = capacity;
+            if (signalWaiter != null && filling != null && ready.isEmpty() && ready(filling.size, fillingStart))
+                    completeBatch();
+        } finally {
+            unlock();
+        }
     }
 
     /* --- --- --- implementations --- --- --- */
 
+    @Override public @This SPSCBufferedBIt<T> maxReadyBatches(int max) {
+        lock();
+        try {
+            this.maxReadyBatches = max;
+            signal();
+        } finally { unlock(); }
+        return this;
+    }
+
+    @Override public int maxReadyBatches() { return maxReadyBatches; }
+
+    @Override public @This SPSCBufferedBIt<T> maxReadyItems(long max) {
+        lock();
+        try {
+            this.maxReadyItems = max;
+            signal();
+        } finally {
+            unlock();
+        }
+        return this;
+    }
+
+    @Override public long maxReadyItems() { return maxReadyItems; }
+
     @Override public @This BIt<T> tempEager() {
-        lock.lock();
+        lock();
         try {
             if (ready.isEmpty()) {
-                if (filling != null && filling.size > 0)
-                    completeBatch();
-                else
-                    eager = true;
+                if (filling != null && filling.size > 0) completeBatch();
+                else                                     eager = true;
             }
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
         return this;
     }
 
     @Override public final Batch<T> nextBatch() {
-        var batch = fetch();
-        return batch == null ? Batch.terminal() : batch;
-    }
-
-    @Override public final Batch<T> nextBatch(Batch<T> offer) {
-        recycle(offer);
         var batch = fetch();
         return batch == null ? Batch.terminal() : batch;
     }
@@ -306,7 +286,7 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
     }
 
     @Override public boolean hasNext() {
-        lock.lock();
+        lock();
         try {
             waitReady();
             if (ready.isEmpty()) {
@@ -320,15 +300,21 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
             } else {
                 return true;
             }
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
     }
 
     @Override public T next() {
-        lock.lock();
+        lock();
         try {
-            Batch<T> batch = ready.isEmpty() ? fetch() : ready.pollFirst();
+            boolean atCapacity = readyItems >= maxReadyItems || ready.size() >= maxReadyBatches;
+            var batch = ready.pollFirst();
+            if (batch == null) {
+                batch = fetch();
+                if (batch != null) readyItems += batch.size;
+            }
             if (batch == null || batch.size == 0)
                 throw new NoSuchElementException();
+            --readyItems;
             T item = batch.array[readyOffset++];
             if (readyOffset < batch.size) { // there are remaining items in batch
                 ready.addFirst(batch);
@@ -337,19 +323,16 @@ public abstract class BufferedBIt<T> extends AbstractBIt<T> {
                 if (recycled == null && batch.array.length >= batchCapacity)
                     recycled = batch;
             }
+            if (atCapacity) signal(); // wake waitForCapacity()
             return item;
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
-        lock.lock();
+        lock();
         try {
-            if (!ended && cause == null)
-                throw new BItIllegalStateException("cleanup(null) before complete()", this);
-            ended = true;
-            hasReady.signalAll();
-        } finally {
-            lock.unlock();
-        }
+            if (filling != null && filling.size > 0) completeBatch();
+        } finally { unlock(); }
+        super.cleanup(cause);
     }
 }

@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -316,7 +316,7 @@ public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
                         case '0' -> onBool(p, false);
                         case '1' -> onBool(p, true);
                         default  -> throw ex(this, r, b, e);
-                    };
+                    }
                 }
                 case IGNORE -> {}
                 default -> throw ex(this, r, b, e);

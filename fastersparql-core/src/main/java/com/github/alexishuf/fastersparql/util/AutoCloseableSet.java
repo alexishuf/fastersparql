@@ -20,6 +20,6 @@ public class AutoCloseableSet<T extends AutoCloseable> extends ArrayList<T> impl
     }
 
     @Override public void close() {
-        ExceptionCondenser.closeAll(RuntimeException.class, RuntimeException::new, this);
+        ExceptionCondenser.closeAll(this);
     }
 }

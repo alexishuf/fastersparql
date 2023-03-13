@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.*;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.NotRowType;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -47,7 +48,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
     protected static final ItGenerator threadedGenerator = new ItGenerator() {
         @Override public String toString() { return "ThreadedGenerator"; }
         @Override public BIt<Integer> get(int begin, int end, @Nullable Throwable error) {
-            var cb = new CallbackBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
+            var cb = new SPSCBufferedBIt<>(NotRowType.INTEGER, Vars.EMPTY) {
                 @Override public String toString() { return "threadedGenerator:"+name(begin, end, error); }
             };
             Thread.ofVirtual().start(() -> {

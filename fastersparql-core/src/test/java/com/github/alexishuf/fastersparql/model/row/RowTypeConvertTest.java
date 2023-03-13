@@ -2,9 +2,9 @@ package com.github.alexishuf.fastersparql.model.row;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.adapters.AbstractBItTest;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.ThrowingIterator;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -54,9 +54,9 @@ class RowTypeConvertTest extends AbstractBItTest {
 
     private static final ItGenerator callbackGenerator = new ItGenerator() {
         @Override public BIt<Term[]> generate(int size, @Nullable Throwable error) {
-            var it = new CallbackBIt<>(RowType.ARRAY, Vars.of("x", "y")) {
+            var it = new SPSCBufferedBIt<>(RowType.ARRAY, Vars.of("x", "y")) {
                 @Override public String toString() {
-                    return "CallbackBIt{size="+size+", error="+error+"}";
+                    return "SPSCBIt{size="+size+", error="+error+"}";
                 }
             };
             ofVirtual().name("RowTypeConvertTest{size="+size+", error="+error+"}").start(() -> {

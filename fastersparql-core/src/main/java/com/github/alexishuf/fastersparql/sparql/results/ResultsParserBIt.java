@@ -1,8 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.*;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
-import com.github.alexishuf.fastersparql.batch.base.BoundedBufferedBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -20,12 +19,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  *
  * <p>This is designed for concurrent use where one thread feeds bytes and
  * another consumes the rows. A slow consumer can cause the producer thread
- * to block on {@link ResultsParserBIt#feedShared(Rope)}. See the {@link BoundedBIt}
+ * to block on {@link ResultsParserBIt#feedShared(Rope)}. See the {@link CallbackBIt}
  * methods for configuring the queue size.</p>
  *
  * @param <R> the row type
  */
-public abstract class ResultsParserBIt<R> extends BoundedBufferedBIt<R> {
+public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
     /** The {@link RowType} for rows produced by this {@link BIt}. */
     public final RowType<R> rowType;
 
@@ -166,12 +165,12 @@ public abstract class ResultsParserBIt<R> extends BoundedBufferedBIt<R> {
      */
     protected abstract void doFeedShared(Rope rope);
 
-    @Override protected final void feed(Batch<R> batch) {
+    @Override public final void feed(Batch<R> batch) {
         if (destination != null) destination.feed(batch);
         super.feed(batch);
     }
 
-    @Override protected void feed(R item) {
+    @Override public void feed(R item) {
         if (destination != null) destination.feed(item);
         super.feed(item);
     }
@@ -190,7 +189,7 @@ public abstract class ResultsParserBIt<R> extends BoundedBufferedBIt<R> {
      * @param error the error (if parsing failed) or {@code null} if parsing completed normally.
      */
     @Override public void complete(@Nullable Throwable error) {
-        boolean first = !ended;
+        boolean first = !terminated;
         if (error != null && !(error instanceof BItIllegalStateException)
                           && !(error instanceof FSCancelledException)
                           && !(error instanceof FSServerException)) {

@@ -45,6 +45,10 @@ public final class ExceptionCondenser<T extends Throwable> {
         return acc == null ? future.complete(value) : future.completeExceptionally(acc);
     }
 
+    public static void closeAll(Collection<? extends AutoCloseable> list) {
+        closeAll(RuntimeException.class, RuntimeException::new, list);
+    }
+
     public static <T extends Throwable>
     void closeAll(Class<T> tClass, Function<Throwable, T> factory,
                   Collection<? extends AutoCloseable> list) throws T {

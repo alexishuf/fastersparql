@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -12,7 +12,6 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayDeque;
-import java.util.concurrent.locks.Condition;
 
 public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
     /* --- --- --- dummies used to avoid null checks --- --- --- */
@@ -31,7 +30,6 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
     private final int[] bindingCol2outputCol;
     private final BindType bindType;
     private final ArrayDeque<R> bindingsSent;
-    private final Condition hasBindingsRequested = lock.newCondition();
     private final @Nullable JoinMetrics metrics;
     private long bindingsRequested = 0, bindingsReceived = 0;
     private boolean activeBindingEmpty = true;
@@ -46,7 +44,7 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
      *
      * @param frameSender object to be used when sending WebSocket frames
      * @param rowType set of operations on {@code R} instances
-     * @param destination See {@link ResultsParserBIt#ResultsParserBIt(RowType, CallbackBIt)}
+     * @param destination See {@link ResultsParserBIt#ResultsParserBIt(RowType, com.github.alexishuf.fastersparql.batch.CallbackBIt)}
      */
     public WsClientParserBIt(WsFrameSender frameSender, RowType<R> rowType, CallbackBIt<R> destination) {
         super(frameSender, rowType, destination);
@@ -234,7 +232,7 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
         if (index == lastIndex) return; // no-op !active-binding
 
         boolean makeEager;
-        lock.lock();
+        lock();
         try {
             emitOnBindingsEnd(index - bindingsReceived);
             activeBinding = bindingsSent.pollFirst();
@@ -243,7 +241,7 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
                 throw activeBindingOverflow(index);
             bindingsReceived = index+1;
             makeEager = bindingsSent.isEmpty() && bindingsRequested > 0;
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
         if (makeEager)
             bindings.tempEager();
     }
@@ -251,11 +249,11 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
     private void handleBindRequest(Rope rope, int begin, int end) {
         if (bindings == null) throw noBindings(BIND_REQUEST);
         long n = rope.parseLong(rope.skipWS(begin + BIND_REQUEST.length, end));
-        lock.lock();
+        lock();
         try {
             bindingsRequested += n;
-            hasBindingsRequested.signalAll();
-        } finally { lock.unlock(); }
+            signal();
+        } finally { unlock(); }
     }
 
     /* --- --- --- exception factories --- --- --- */
@@ -288,15 +286,15 @@ public class WsClientParserBIt<R> extends AbstractWsParserBIt<R> {
         try {
             for (var b = bindings.nextBatch(); b.size > 0; b = bindings.nextBatch(b)) {
                 for (int offset = 0, taken; offset < b.size; offset += taken) {
-                    lock.lock();
+                    lock();
                     try {
-                        while (bindingsRequested == 0) hasBindingsRequested.awaitUninterruptibly();
+                        while (bindingsRequested == 0) await();
                         taken = (int) Math.min(bindingsRequested, b.size);
                         bindingsRequested -= taken;
                         R[] a = b.array;
                         for (int i = offset, e = offset+taken; i < e; i++)
                             bindingsSent.add(a[i]);
-                    } finally { lock.unlock(); }
+                    } finally { unlock(); }
                     frameSender.sendFrame(serializer.serialize(b, offset, taken));
                 }
             }

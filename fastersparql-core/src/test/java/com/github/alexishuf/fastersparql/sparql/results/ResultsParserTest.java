@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.adapters.CallbackBIt;
+
+import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
 import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.BufferRope;
@@ -116,7 +117,7 @@ class ResultsParserTest {
     }
 
     private void singleFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new CallbackBIt<>(RowType.LIST, ex.vars());
+        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
              var parser = factory.create(RowType.LIST, dst)) {
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
@@ -132,7 +133,7 @@ class ResultsParserTest {
     }
 
     private void byteFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new CallbackBIt<>(RowType.LIST, ex.vars());
+        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
              var parser = factory.create(RowType.LIST, dst)) {
             Thread.startVirtualThread(() -> {
                 try {
@@ -174,7 +175,7 @@ class ResultsParserTest {
 
     private void lineFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
-        try (var dst = new CallbackBIt<>(RowType.LIST, ex.vars());
+        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
              var parser = factory.create(RowType.LIST, dst)) {
             Thread.startVirtualThread(() -> {
                 try {

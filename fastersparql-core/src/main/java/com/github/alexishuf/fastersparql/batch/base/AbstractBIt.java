@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
+import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.row.RowType;
@@ -30,7 +31,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
     protected long minWaitNs = 0;
     protected long maxWaitNs = 0;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
-    protected boolean needsStartTime = false, closed = false, clean = false;
+    protected boolean needsStartTime = false, closed = false, terminated = false;
     protected @MonotonicNonNull Throwable error;
     protected final RowType<T> rowType;
     protected final Vars vars;
@@ -63,6 +64,10 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      */
     protected void cleanup(@Nullable Throwable cause) { /* do nothing by default */ }
 
+    protected BItCompletedException mkCompleted() {
+        return new BItCompletedException("Previous complete("+error+") on "+this, this);
+    }
+
     protected final void checkError() {
         if (error == null) return;
         if (error instanceof BItClosedAtException e)
@@ -76,7 +81,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      * <p>This method should be called when one of the following happens:</p>
      * <ul>
      *     <li>The source that feeds this {@link BIt} has been exhausted (e.g., a thread calling
-     *         {@link BufferedBIt#feed(Object)} has completed or threw {@code cause})</li>
+     *         {@link CallbackBIt#feed(Object)} has completed or threw {@code cause})</li>
      *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#hasNext()} {@code == false} and
      *         empty {@link BIt#nextBatch()}</li>
      *     <li>{@link BIt#close()} was called ({@code cause} will be
@@ -87,7 +92,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      */
     protected final void onTermination(@Nullable Throwable cause) {
         var msg = cause == null ? "null" : cause.getClass().getSimpleName() + ": " + cause.getMessage();
-        if (clean) {
+        if (terminated) {
             if (cause != null && !(cause instanceof BItClosedAtException)) {
                 if (error == null)
                     log.info(ON_TERM_TPL_PREV, this, msg, "null");
@@ -97,7 +102,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
                 log.trace(ON_TERM_TPL_PREV, this, msg, Objects.toString(this.error));
             }
         }
-        clean = true;
+        terminated = true;
         error = cause;
         if (cause == null || cause instanceof BItClosedAtException) {
             log.trace(ON_TERM_TPL, this, msg);
@@ -157,6 +162,16 @@ public abstract class AbstractBIt<T> implements BIt<T> {
 
     @Override public Vars vars() { return vars; }
 
+    /**
+     * This will be called after {@link BIt#minBatch(int)}, {@link BIt#maxBatch(int)},
+     * {@link BIt#minWait(long, TimeUnit)} or {@link BIt#maxWait(long, TimeUnit)} (and related
+     * setter overrides) are called.
+     *
+     * <p>Implementations should use this to updated derived fields or to complete
+     * filling but not yet ready batches.</p>
+     */
+    protected void updatedBatchConstraints() {  }
+
     @Override public BIt<T> minWait(long time, TimeUnit unit) {
         if (time < 0) {
             assert false : "negative time";
@@ -168,6 +183,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         if (time > 0 && maxWaitNs == 0)
             maxWaitNs = Long.MAX_VALUE;
         minWaitNs = unit.toNanos(time);
+        updatedBatchConstraints();
         return this;
     }
 
@@ -184,6 +200,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         needsStartTime = (minWaitNs > 0 && minWaitNs != Long.MAX_VALUE)
                       || (time      > 0 && time      != Long.MAX_VALUE);
         maxWaitNs = unit.toNanos(time);
+        updatedBatchConstraints();
         return this;
     }
 
@@ -197,6 +214,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
             size = 0;
         }
         minBatch = size;
+        updatedBatchConstraints();
         return this;
     }
 
@@ -208,6 +226,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         if (size < 1)
             throw new IllegalArgumentException(this+".maxBatch("+size+"): expected > 0");
         maxBatch = size;
+        updatedBatchConstraints();
         return this;
     }
 
@@ -218,7 +237,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
     @Override public void close() {
         if (closed) return;
         closed = true;
-        if (!clean) // close() before onExhausted()
+        if (!terminated) // close() before onExhausted()
             onTermination(new BItClosedAtException(this));
     }
 
@@ -239,7 +258,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
             sb.append(i.next()).append(", ");
         if (taken < n)
             sb.append("...");
-        else
+        else if (taken > 0)
             sb.setLength(sb.length()-2);
         return sb.append(']').toString();
     }

@@ -41,7 +41,10 @@ public class MeteredMergeBIt<R> extends MergeBIt<R> {
                                      RowType<R>.@Nullable Merger projector) {
         if (metrics   != null) metrics.rowsEmitted(batch.size);
         if (projector != null) projector.projectInPlace(batch);
-        feed(batch);
+        feedLock.lock();
+        try {
+            feed(batch);
+        } finally { feedLock.unlock(); }
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

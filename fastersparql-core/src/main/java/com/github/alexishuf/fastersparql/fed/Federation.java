@@ -233,7 +233,7 @@ public class Federation extends AbstractSparqlClient {
         } finally {
             lock.unlock();
         }
-        closeAll(RuntimeException.class, RuntimeException::new, sources);
+        closeAll(sources);
     }
 
     /* --- --- --- querying --- --- --- */
