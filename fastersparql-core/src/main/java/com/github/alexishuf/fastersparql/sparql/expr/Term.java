@@ -10,13 +10,13 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.DT_MID;
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
 import static java.lang.System.arraycopy;
@@ -381,6 +381,7 @@ public final class Term extends Rope implements Expr {
     private int hash;
 
     private Term(int flaggedDictId, byte[] local) {
+        super(local.length + RopeDict.getTolerant(flaggedDictId).len);
         this.flaggedDictId = flaggedDictId;
         this.local = local;
         assert isValidTermConstruction(flaggedDictId, local) : "invalid term";
@@ -403,7 +404,7 @@ public final class Term extends Rope implements Expr {
             return false; // too short for an RDF term
         if ("<\"?$_".indexOf((char) get(0)) < 0)
             return false; // bad first char
-        ByteRope suffix = flaggedId == 0 ? EMPTY : RopeDict.get(flaggedId&0x7fffffff);
+        ByteRope suffix = RopeDict.getTolerant(flaggedId);
         if (suffix.offset != 0)
             return false; // RopeDict ByteRopes MUST have offset==0
         if (flaggedId > 0 && suffix.get(0) != '<')
@@ -750,6 +751,12 @@ public final class Term extends Rope implements Expr {
         return internPlain(u8, 0, u8.length);
     }
 
+    /* --- --- --- Rope implementation --- --- --- */
+
+    @Override public @Nullable MemorySegment segment() {
+        return flaggedDictId == 0 ? MemorySegment.ofArray(local) : null;
+    }
+
     /* --- --- --- Expr implementation --- --- --- */
 
     @Override public int argCount() { return 0; }
@@ -776,7 +783,7 @@ public final class Term extends Rope implements Expr {
 
     public static void toSparql(ByteRope dest, PrefixAssigner assigner,
                                 int flaggedDictId, byte[] local, int localOff, int localLen) {
-        ByteRope shared = flaggedDictId == 0 ? EMPTY : RopeDict.get(flaggedDictId&0x7fffffff);
+        ByteRope shared = RopeDict.getTolerant(flaggedDictId);
         if (flaggedDictId < 0) {
             int id = flaggedDictId & 0x7fffffff;
             if (id == DT_integer || id == DT_decimal || id == DT_DOUBLE || id == DT_BOOLEAN) {

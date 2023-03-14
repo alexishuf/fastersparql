@@ -3,7 +3,12 @@ package com.github.alexishuf.fastersparql.model.rope;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 
+import java.lang.foreign.MemorySegment;
+
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static jdk.incubator.vector.ByteVector.fromArray;
+import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
 public class RopeSupport {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
@@ -24,6 +29,18 @@ public class RopeSupport {
             if (!fromArray(B_SP, l, lOff).eq(fromArray(B_SP, r, rOff)).allTrue()) return false;
         }
         for (; lOff < lEnd && l[lOff] == r[rOff]; ++lOff) rOff++;
+        return lOff == lEnd;
+    }
+
+    public static boolean rangesEqual(MemorySegment left, int lOff, MemorySegment right, int rOff, int len) {
+        int step = B_SP.length(), lEnd = lOff+len;
+        if (lEnd > left.byteSize() || rOff+len > right.byteSize())
+            return false;
+        for (int e = lOff+B_SP.loopBound(len); lOff < e; lOff += step, rOff += step) {
+            ByteVector lv = fromMemorySegment(B_SP, left, lOff, LITTLE_ENDIAN);
+            if (!lv.eq(fromMemorySegment(B_SP, right, rOff, LITTLE_ENDIAN)).allTrue()) return false;
+        }
+        while (lOff < lEnd && left.get(JAVA_BYTE, lOff) == right.get(JAVA_BYTE, rOff++)) lOff++;
         return lOff == lEnd;
     }
 

@@ -10,12 +10,13 @@ import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.RopeSupport.rangesEqual;
 import static java.lang.System.arraycopy;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
-import static jdk.incubator.vector.IntVector.fromByteArray;
+import static jdk.incubator.vector.IntVector.fromMemorySegment;
 import static jdk.incubator.vector.VectorOperators.XOR;
 
 /**
@@ -110,23 +111,24 @@ public class CompressedRow extends RowType<byte[]> {
 
     @Override public int hash(byte[] r) {
         if (r == null) return 0;
-        int hash =  (r[HASH_BEGIN  ]&0xff)        | ((r[HASH_BEGIN+1]&0xff) <<  8)
+        int h =  (r[HASH_BEGIN  ]&0xff)        | ((r[HASH_BEGIN+1]&0xff) <<  8)
                  | ((r[HASH_BEGIN+2]&0xff) << 16) | ((r[HASH_BEGIN+3]&0xff) << 24);
-        if (hash == 0) {
+        if (h == 0) {
             int cols = columns(r), i = 0, len = readOffset(r, cols), base = idsBegin(cols);
+            MemorySegment ms = MemorySegment.ofArray(r);
             for (int e = I_SP.loopBound((len-base)>>2); i < e ; i += I_SP.length())
-                hash ^= fromByteArray(I_SP, r, base+4*i, LITTLE_ENDIAN).reduceLanes(XOR);
+                h ^= fromMemorySegment(I_SP, ms, base+4L*i, LITTLE_ENDIAN).reduceLanes(XOR);
             if (i == 0) {
-                hash = (cols << 8) | len;
+                h = (cols << 8) | len;
                 for (int bit = 0, b = base+ID_BYTES*cols; b < len;  ++b, bit = (bit + 8)&31)
-                    hash ^= r[b] << bit;
+                    h ^= r[b] << bit;
             }
-            r[HASH_BEGIN  ] = (byte)  hash       ;
-            r[HASH_BEGIN+1] = (byte) (hash >>  8);
-            r[HASH_BEGIN+2] = (byte) (hash >> 16);
-            r[HASH_BEGIN+3] = (byte) (hash >> 24);
+            r[HASH_BEGIN  ] = (byte)  h       ;
+            r[HASH_BEGIN+1] = (byte) (h >>  8);
+            r[HASH_BEGIN+2] = (byte) (h >> 16);
+            r[HASH_BEGIN+3] = (byte) (h >> 24);
         }
-        return hash;
+        return h;
     }
 
     @Override public String toString() { return "COMPRESSED"; }
@@ -378,8 +380,8 @@ public class CompressedRow extends RowType<byte[]> {
         if (readOffset(row, 0) != stringsBegin(cols))
             return false; // there is gap between metadata and first string
         for (int i = 0; i < cols; i++) {
-            int fId = readId(row, cols, i), id = fId&0x7fffffff;
-            ByteRope rope = id == 0 ? ByteRope.EMPTY : RopeDict.get(id);
+            int fId = readId(row, cols, i);
+            var rope = RopeDict.getTolerant(fId);
             if (fId < 0)
                 return rope.has(0, ByteRope.DT_MID_LT); // suffixes must start with "^^<
             else if (fId > 0)

@@ -3,12 +3,14 @@ package com.github.alexishuf.fastersparql.model.rope;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -31,21 +33,38 @@ public final class ByteRope extends Rope {
     public static final ByteRope DT_MID = new ByteRope(new byte[]{'"', '^', '^'});
     public static final ByteRope DT_MID_LT = new ByteRope(new byte[]{'"', '^', '^', '<'});
 
+    private static final MemorySegment EMPTY_SEGMENT = MemorySegment.ofArray(EMPTY.utf8);
+
     public byte[] utf8;
     public final int offset;
-    public int len;
+    private @Nullable MemorySegment segment, slice;
 
     /** Create an empty {@link ByteRope} */
-    public ByteRope() { utf8 = EMPTY.utf8; offset = 0; }
+    public ByteRope() {
+        super(0);
+        segment = slice = EMPTY_SEGMENT;
+        utf8 = EMPTY.utf8;
+        offset = 0;
+    }
 
     /** Create an empty {@link ByteRope} backed by an array of the given capacity */
-    public ByteRope(int capacity) { utf8 = new byte[capacity]; offset = 0; }
+    public ByteRope(int capacity) {
+        super(0);
+        utf8 = new byte[capacity];
+        slice = EMPTY_SEGMENT;
+        offset = 0;
+    }
 
     /** Copy the UTF-8 of {@code r}. */
-    public ByteRope(Rope r) { len = (utf8 = r.toArray(0, r.len())).length; offset = 0; }
+    public ByteRope(Rope r) {
+        super(r.len);
+        utf8 = r.toArray(0, r.len());
+        offset = 0;
+    }
 
     /** Copy the UTF-8 of {@code o}. */
     public ByteRope(Object o) {
+        super(0);
         utf8 = switch (o) {
             case null     ->  EMPTY.utf8;
             case Rope r   ->  r.toArray(0, r.len());
@@ -57,7 +76,11 @@ public final class ByteRope extends Rope {
     }
 
     /** Equivalent to {@code ByteRope(utf8, 0, utf8.length)} */
-    public ByteRope(byte[] utf8) { this.len = (this.utf8 = utf8).length; this.offset = 0; }
+    public ByteRope(byte[] utf8) {
+        super(utf8.length);
+        this.utf8 = utf8;
+        this.offset = 0;
+    }
 
     /**
      * Create a ByteRope backed by {@code len} bytes starting at {@code utf8[offset]}.
@@ -71,11 +94,28 @@ public final class ByteRope extends Rope {
      * @param len length (in bytes) of the UTF-8 string in {@code utf8}.
      */
     public ByteRope(byte[] utf8, int offset, int len) {
+        super(len);
         if (offset < 0 || offset+len > utf8.length)
             throw new IndexOutOfBoundsException(offset < 0 ? offset : offset+len);
         this.utf8 = utf8;
         this.offset = offset;
-        this.len = len;
+    }
+
+    @Override public MemorySegment segment() {
+        var s = slice;
+        if (s == null) {
+            if ((s = segment) == null)
+                segment = s = MemorySegment.ofArray(utf8);
+            if (offset != 0 || len != utf8.length)
+                s = s.asSlice(offset, len);
+            slice = s;
+        }
+        return s;
+    }
+
+    @Override public byte get(int i) {
+        if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
+        return utf8[offset+i];
     }
 
     private void raiseImmutable() {
@@ -85,17 +125,24 @@ public final class ByteRope extends Rope {
     private int postIncLen(int increment) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int len = this.len, required = len+increment;
-        if (required > utf8.length)
+        if (required > utf8.length) {
             utf8 = copyOf(utf8, max(utf8.length+32, required));
+            segment = null;
+        }
         this.len += increment;
+        slice = null;
         return len;
     }
 
     public @This ByteRope ensureFreeCapacity(int increment) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int len = this.len, required = len+increment;
-        if (required > utf8.length)
-            utf8 = copyOf(utf8, max(utf8.length+32, required));
+        if (required > utf8.length) {
+            utf8 = copyOf(utf8, max(utf8.length + 32, required));
+            segment = null;
+            slice = null;
+
+        }
         return this;
     }
 
@@ -112,6 +159,7 @@ public final class ByteRope extends Rope {
     public @This ByteRope clear() {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         len = 0;
+        slice = null;
         return this;
     }
 
@@ -133,6 +181,7 @@ public final class ByteRope extends Rope {
         if (end < len)
             arraycopy(utf8, end, utf8, begin, len-end);
         len -= Math.min(len, end-begin);
+        slice = null;
         return this;
     }
 
@@ -182,6 +231,7 @@ public final class ByteRope extends Rope {
                 if (free-- == 0) {
                     int newLength = utf8.length + max(32, utf8.length >> 1);
                     free = (utf8 = copyOf(utf8, newLength)).length - len;
+                    segment = null;
                 }
                 utf8[len++] = (byte) c;
             }
@@ -189,6 +239,7 @@ public final class ByteRope extends Rope {
                 --len; // unget() '\r'
             got = sum > 0 || c == '\n';
         }
+        slice = null;
         return got;
     }
 
@@ -222,11 +273,13 @@ public final class ByteRope extends Rope {
     public @This ByteRope append(char c) {
         ensureFreeCapacity(1);
         utf8[len++] = (byte)c;
+        slice = null;
         return this;
     }
     public @This ByteRope append(byte c) {
         ensureFreeCapacity(1);
         utf8[len++] = c;
+        slice = null;
         return this; }
 
     public @This ByteRope append(CharSequence o) {
@@ -318,6 +371,7 @@ public final class ByteRope extends Rope {
     public @This ByteRope unAppend(int n) {
         if (n > len) throw new IllegalArgumentException("n ("+n+") > size ("+ len +")");
         len -= n;
+        slice = null;
         return this;
     }
 

@@ -223,9 +223,7 @@ public abstract sealed class Plan implements SparqlQuery
                 p.s.toSparql(out.newline(indent), assigner);
                 p.p.toSparql(out.append(' '), assigner);
                 p.o.toSparql(out.append(' '), assigner);
-                out.ensureFreeCapacity(2);
-                out.utf8[out.len++] = ' ';
-                out.utf8[out.len++] = '.';
+                out.append(' ').append('.');
             }
             case EMPTY -> {}
             default -> {

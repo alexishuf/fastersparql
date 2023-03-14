@@ -6,23 +6,30 @@ import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.RopeSupport.rangesEqual;
 import static java.lang.System.arraycopy;
+import static java.lang.foreign.ValueLayout.*;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static jdk.incubator.vector.ByteVector.fromArray;
-import static jdk.incubator.vector.ByteVector.fromByteBuffer;
+import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 import static jdk.incubator.vector.VectorOperators.LE;
 import static jdk.incubator.vector.VectorOperators.MIN;
 
 @SuppressWarnings("unused")
 public abstract class Rope implements CharSequence, Comparable<Rope> {
+    public int len;
+
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     private static final ByteVector ZERO = ByteVector.zero(B_SP);
@@ -30,25 +37,10 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     private static final ByteBuffer EMPTY_BB = ByteBuffer.wrap(new byte[0]);
     private static final ByteOrder EMPTY_BO = EMPTY_BB.order();
 
-    private int checkRangeAndGetLen(int begin, int end) {
-        int len = len();
-        if (begin < 0 || end > len)
-            throw new IndexOutOfBoundsException(begin < 0 ? begin : end);
+    private void raiseBadRange(int begin, int end) {
         if (end < begin)
             throw new IllegalArgumentException("negative range");
-        return len;
-    }
-    private int checkIndexAndGetLen(int pos) {
-        int len = len();
-        if (pos < 0 || pos >= len)
-            throw new IndexOutOfBoundsException(pos);
-        return len;
-    }
-    private int laxCheckIndexAndGetLen(int pos) {
-        int len = len();
-        if (pos < 0 || pos > len)
-            throw new IndexOutOfBoundsException(pos);
-        return len;
+        throw new IndexOutOfBoundsException(begin < 0 ? begin : end);
     }
 
     private static IllegalArgumentException staticAccessorBadType(Object o) {
@@ -74,15 +66,9 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         };
     }
 
-    private static boolean isEscaped(byte[] u8, int begin, int i) {
+    private static boolean isEscaped(MemorySegment segment, int begin, int i) {
         int not = i-1;
-        while (not >= 0 && u8[not] == '\\') --not;
-        return ((i-not) & 1) == 0;
-    }
-
-    private static boolean isEscaped(ByteBuffer bb, int begin, int i) {
-        int not = i-1;
-        while (not >= 0 && bb.get(not) == '\\') --not;
+        while (not >= 0 && segment.get(JAVA_BYTE, not) == '\\') --not;
         return ((i-not) & 1) == 0;
     }
 
@@ -108,26 +94,21 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return ((i-not) & 1) == 0;
     }
 
+    public Rope(int len) { this.len = len; }
+
+    public abstract @Nullable MemorySegment segment();
+
     /** Get the number of bytes in this {@link Rope}. */
-    public final int len() {
-        return switch (this) {
-            case ByteRope r -> r.len;
-            case BufferRope r -> r.buffer.remaining();
-            case Term t -> t.local.length
-                        + (t.flaggedDictId==0 ? 0 : RopeDict.get(t.flaggedDictId&0x7fffffff).len);
-            default -> throw new UnsupportedOperationException();
-        };
-    }
+    public final int len() { return len; }
 
     /**
-     *  Get the i-th UTF-8 byte in this {@link Rope}.
+     * Get the i-th UTF-8 byte in this {@link Rope}.
      *
      * @throws IndexOutOfBoundsException iff {@code i < 0} or {@code i >= len()}
      */
-    public final byte get(int i) {
-        checkIndexAndGetLen(i);
+    public byte get(int i) {
+        if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
         return switch (this) {
-            case ByteRope r -> r.utf8[r.offset+i];
             case BufferRope r -> r.buffer.get(r.buffer.position()+i);
             case Term t -> {
                 int id = t.flaggedDictId;
@@ -138,8 +119,6 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
             default -> throw new UnsupportedOperationException();
         };
     }
-
-
 
     /**
      * Get a {@code byte[]} with {@code length == end-begin} containing bytes from {@code begin} to
@@ -161,7 +140,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return {@code dest};
      */
     public final byte[] copy(int begin, int end, byte[] dest, int offset) {
-        checkRangeAndGetLen(begin, end);
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
         int len = end - begin;
         switch (this) {
             case   ByteRope r -> arraycopy(r.utf8, r.offset+begin, dest, offset, len);
@@ -218,7 +197,8 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      *         {@code sub.get(i) == this.get(begin+i)}.
      */
     public final Rope sub(int begin, int end) {
-        if (begin == 0 && end == checkRangeAndGetLen(begin, end)) return this;
+        if (begin < 0 || end > len || end < begin) raiseBadRange(begin, end);
+        if (begin == 0 && end == len) return this;
         int len = end-begin;
         return switch (this) {
             case ByteRope   r -> new   ByteRope(r.utf8, r.offset+begin, len);
@@ -468,46 +448,61 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Equivalent to {@code skipUntil(begin, end, c0, c0)}.
      */
     public final int skipUntil(int begin, int end, char c0) {
-        int i, lane;
-        checkRangeAndGetLen(begin, end);
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        var segment = segment();
+        if (segment == null)
+            return scalarSkipUntil(begin, end, c0, 256);
         Vector<Byte> c0Vec = B_SP.broadcast(c0);
-        switch (this) {
-            case   ByteRope r -> {
-                byte[] u8 =  r.utf8;
-                end += (i = r.offset);
-                i = begin += i;
-                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
-                    if ((lane = fromArray(B_SP, u8, i).eq(c0Vec).firstTrue()) < B_LEN)
-                        return i+lane-r.offset;
-//                    ByteVector vec = fromArray(B_SP, u8, i);
-//                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec));
-//                    if (candidate != Byte.MAX_VALUE)
-//                        return i+candidate-r.offset;
-                }
-                while (i < end && u8[i] != c0) ++i;
-                return i-r.offset;
-            }
-            case BufferRope r -> {
-                ByteBuffer bb = r.buffer;
-                ByteOrder bo = bb.order();
-                end += (i = bb.position());
-                i = begin += i;
-                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
-                    if ((lane = fromByteBuffer(B_SP, bb, i, bo).eq(c0Vec).firstTrue()) < B_LEN)
-                        return i+lane-bb.position();
-//                    ByteVector vec = fromByteBuffer(B_SP, bb, i, bo);
-//                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec));
-//                    if (candidate != Byte.MAX_VALUE)
-//                        return i+candidate-bb.position();
-                }
-                while (i < end && bb.get(i) != c0) ++i;
-                return i-bb.position();
-            }
-            default -> {
-                while (begin < end && get(begin) != c0) ++begin;
-                return begin;
-            }
+
+        for (int b = begin+B_SP.loopBound(end-begin); begin < b; begin += B_SP.length()) {
+            int lane = fromMemorySegment(B_SP, segment, begin, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
+            if (lane < B_LEN) return begin+lane;
         }
+        while (begin < end && segment.get(ValueLayout.JAVA_BYTE, begin) != c0) ++begin;
+        return begin;
+//        switch (this) {
+//            case   ByteRope r -> {
+//                byte[] u8 =  r.utf8;
+//                end += (i = r.offset);
+//                i = begin += i;
+//                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+//                    if ((lane = fromArray(B_SP, u8, i).eq(c0Vec).firstTrue()) < B_LEN)
+//                        return i+lane-r.offset;
+////                    ByteVector vec = fromArray(B_SP, u8, i);
+////                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec));
+////                    if (candidate != Byte.MAX_VALUE)
+////                        return i+candidate-r.offset;
+//                }
+//                while (i < end && u8[i] != c0) ++i;
+//                return i-r.offset;
+//            }
+//            case BufferRope r -> {
+//                ByteBuffer bb = r.buffer;
+//                ByteOrder bo = bb.order();
+//                end += (i = bb.position());
+//                i = begin += i;
+//                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+//                    if ((lane = fromByteBuffer(B_SP, bb, i, bo).eq(c0Vec).firstTrue()) < B_LEN)
+//                        return i+lane-bb.position();
+////                    ByteVector vec = fromByteBuffer(B_SP, bb, i, bo);
+////                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec));
+////                    if (candidate != Byte.MAX_VALUE)
+////                        return i+candidate-bb.position();
+//                }
+//                while (i < end && bb.get(i) != c0) ++i;
+//                return i-bb.position();
+//            }
+//            default -> {
+//                while (begin < end && get(begin) != c0) ++begin;
+//                return begin;
+//            }
+//        }
+    }
+
+    private int scalarSkipUntil(int begin, int end, int c0, int c1) {
+        byte b;
+        while (begin < end && (b = get(begin)) != c0 && b != c1) ++begin;
+        return begin;
     }
 
     /** Whether the byte at index {@code i} is under effect of two-byte escape sequence where the
@@ -534,51 +529,71 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @throws IndexOutOfBoundsException if {@code begin < 0} or {@code end > len()}
      */
     public final int skipUntilUnescaped(int begin, int end, char c) {
-        checkRangeAndGetLen(begin, end);
-        int i = begin, offset;
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        int i = begin;
+        MemorySegment segment = segment();
+        if (segment == null) {
+            while ((i=skipUntil(i, end, c)) < end && (get(i) != c || isEscaped(i)))
+                ++i;
+            return i;
+        }
         Vector<Byte> c0Vec = B_SP.broadcast(c);
-        switch (this) {
-            case   ByteRope r -> {
-                byte[] u8 = r.utf8;
-                end += offset = r.offset;
-                i = begin += offset;
-                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
-                    VectorMask<Byte> matches = fromArray(B_SP, u8, i).eq(c0Vec);
-                    ByteVector iota = IOTA;
-                    while (true) {
-                        byte m = iota.reduceLanes(MIN, matches);
-                        if      (m == 127)                     break;
-                        else if (!isEscaped(u8, begin, i+m)) return i+m-offset;
-                        iota = iota.withLane(m, Byte.MAX_VALUE);
-                    }
-                }
-                while (i < end && (u8[i] != c || isEscaped(u8, offset, i))) ++i;
-                return i-offset;
-            }
-            case BufferRope r -> {
-                var bb = r.buffer;
-                var bo = bb.order();
-                end += offset  = bb.position();
-                i = begin += offset;
-                for (int b = begin + B_SP.loopBound(end - begin); i < b; i += B_SP.length()) {
-                    VectorMask<Byte> matches = fromByteBuffer(B_SP, bb, i, bo).eq(c0Vec);
-                    ByteVector iota = IOTA;
-                    while (true) {
-                        byte m = iota.reduceLanes(MIN, matches);
-                        if (m == 127) break;
-                        else if (!isEscaped(bb, offset, i+m)) return i+m-offset;
-                        iota = iota.withLane(m, Byte.MAX_VALUE);
-                    }
-                }
-                while (i < end && (bb.get(i) != c || isEscaped(bb, offset, i))) ++i;
-                return i-offset;
-            }
-            default -> {
-                while ((i=skipUntil(i, end, c)) < end && (get(i) != c || isEscaped(i)))
-                    ++i;
-                return i;
+        for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+            VectorMask<Byte> matches = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec);
+            ByteVector iota = IOTA;
+            while (true) {
+                byte m = iota.reduceLanes(MIN, matches);
+                if      (m == 127)                           break;
+                else if (!isEscaped(segment, begin, i+m)) return i+m;
+                iota = iota.withLane(m, Byte.MAX_VALUE);
             }
         }
+        while (i < end && (segment.get(JAVA_BYTE, i) != c || isEscaped(segment, begin, i))) ++i;
+        return i;
+//        int i = begin, offset;
+//        Vector<Byte> c0Vec = B_SP.broadcast(c);
+//        switch (this) {
+//            case   ByteRope r -> {
+//                byte[] u8 = r.utf8;
+//                end += offset = r.offset;
+//                i = begin += offset;
+//                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+//                    VectorMask<Byte> matches = fromArray(B_SP, u8, i).eq(c0Vec);
+//                    ByteVector iota = IOTA;
+//                    while (true) {
+//                        byte m = iota.reduceLanes(MIN, matches);
+//                        if      (m == 127)                     break;
+//                        else if (!isEscaped(u8, begin, i+m)) return i+m-offset;
+//                        iota = iota.withLane(m, Byte.MAX_VALUE);
+//                    }
+//                }
+//                while (i < end && (u8[i] != c || isEscaped(u8, offset, i))) ++i;
+//                return i-offset;
+//            }
+//            case BufferRope r -> {
+//                var bb = r.buffer;
+//                var bo = bb.order();
+//                end += offset  = bb.position();
+//                i = begin += offset;
+//                for (int b = begin + B_SP.loopBound(end - begin); i < b; i += B_SP.length()) {
+//                    VectorMask<Byte> matches = fromByteBuffer(B_SP, bb, i, bo).eq(c0Vec);
+//                    ByteVector iota = IOTA;
+//                    while (true) {
+//                        byte m = iota.reduceLanes(MIN, matches);
+//                        if (m == 127) break;
+//                        else if (!isEscaped(bb, offset, i+m)) return i+m-offset;
+//                        iota = iota.withLane(m, Byte.MAX_VALUE);
+//                    }
+//                }
+//                while (i < end && (bb.get(i) != c || isEscaped(bb, offset, i))) ++i;
+//                return i-offset;
+//            }
+//            default -> {
+//                while ((i=skipUntil(i, end, c)) < end && (get(i) != c || isEscaped(i)))
+//                    ++i;
+//                return i;
+//            }
+//        }
     }
 
     /**
@@ -626,49 +641,64 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return The aforementioned {@code i} or {@code end} if there is no such {@code i}
      */
     public final int skipUntil(int begin, int end, char c0, char c1) {
-        int i, lane;
-        checkRangeAndGetLen(begin, end);
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        var segment = segment();
+        if (segment == null)
+            return scalarSkipUntil(begin, end, c0, c1);
         Vector<Byte> c0Vec = B_SP.broadcast(c0), c1Vec = B_SP.broadcast(c1);
-        switch (this) {
-            case   ByteRope r -> {
-                byte[] u8 =  r.utf8;
-                end += (i = r.offset);
-                i = begin += i;
-                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
-                    ByteVector vec = fromArray(B_SP, u8, i);
-                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue()) < B_LEN)
-                        return i+lane-r.offset;
-//                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec).or(vec.eq(c1Vec)));
-//                    if (candidate != Byte.MAX_VALUE)
-//                        return i+candidate-r.offset;
-                }
-                for (byte c; i != end && (c = u8[i]) != c0 && c != c1; ) ++i;
-                return i-r.offset;
-            }
-            case BufferRope r -> {
-                ByteBuffer bb = r.buffer;
-                ByteOrder bo = bb.order();
-                end += (i = bb.position());
-                i = begin += i;
-                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
-                    ByteVector vec = fromByteBuffer(B_SP, bb, i, bo);
-                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue()) < B_LEN)
-                        return i+lane-bb.position();
-//                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec).or(vec.eq(c1Vec)));
-//                    if (candidate != Byte.MAX_VALUE)
-//                        return i+candidate-bb.position();
-                }
-                for (byte c; i != end && (c = bb.get(i)) != c0 && c != c1; ) ++i;
-                return i-bb.position();
-            }
-            default -> {
-                for (i = begin; i < end; i++) {
-                    byte c = get(i);
-                    if (c == c0 || c == c1) return i;
-                }
-                return end;
-            }
+        for (int b = begin+B_SP.loopBound(end-begin); begin < b; begin += B_SP.length()) {
+            ByteVector vector = fromMemorySegment(B_SP, segment, begin, LITTLE_ENDIAN);
+            int lane = vector.eq(c0Vec).or(vector.eq(c1Vec)).firstTrue();
+            if (lane < B_LEN) return begin+lane;
         }
+        byte b;
+        while (begin < end && (b=segment.get(ValueLayout.JAVA_BYTE, begin)) != c0 && b != c1)
+            ++begin;
+        return begin;
+//        int i, lane;
+//      if (end <in beg || begin < 0 || end > len raiseBadRange(begin, end);
+//
+//        Vector<Byte> c0Vec = B_SP.broadcast(c0), c1Vec = B_SP.broadcast(c1);
+//        switch (this) {
+//            case   ByteRope r -> {
+//                byte[] u8 =  r.utf8;
+//                end += (i = r.offset);
+//                i = begin += i;
+//                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+//                    ByteVector vec = fromArray(B_SP, u8, i);
+//                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue()) < B_LEN)
+//                        return i+lane-r.offset;
+////                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec).or(vec.eq(c1Vec)));
+////                    if (candidate != Byte.MAX_VALUE)
+////                        return i+candidate-r.offset;
+//                }
+//                for (byte c; i != end && (c = u8[i]) != c0 && c != c1; ) ++i;
+//                return i-r.offset;
+//            }
+//            case BufferRope r -> {
+//                ByteBuffer bb = r.buffer;
+//                ByteOrder bo = bb.order();
+//                end += (i = bb.position());
+//                i = begin += i;
+//                for (int b = begin+B_SP.loopBound(end-begin); i < b; i += B_SP.length()) {
+//                    ByteVector vec = fromByteBuffer(B_SP, bb, i, bo);
+//                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue()) < B_LEN)
+//                        return i+lane-bb.position();
+////                    byte candidate = IOTA.reduceLanes(MIN, vec.eq(c0Vec).or(vec.eq(c1Vec)));
+////                    if (candidate != Byte.MAX_VALUE)
+////                        return i+candidate-bb.position();
+//                }
+//                for (byte c; i != end && (c = bb.get(i)) != c0 && c != c1; ) ++i;
+//                return i-bb.position();
+//            }
+//            default -> {
+//                for (i = begin; i < end; i++) {
+//                    byte c = get(i);
+//                    if (c == c0 || c == c1) return i;
+//                }
+//                return end;
+//            }
+//        }
     }
 
     /**
@@ -715,56 +745,80 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     /** Equivalent to {@code skipUntilLast(begin, end, c0, c0)}. */
     public final int skipUntilLast(int begin, int end, char c0) {
-        int i, lane, len = checkRangeAndGetLen(begin, end);
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        MemorySegment segment = segment();
+        if (segment == null) return scalarSkipUntilLast(begin, end, c0, 256);
         Vector<Byte> c0Vec = B_SP.broadcast(c0);
-        switch (this) {
-            case ByteRope r -> {
-                byte[] u8 = r.utf8;
-                begin += (i = r.offset);
-                i = end += i;
-                while ((i -= B_SP.length()) >= begin) {
-                    if ((lane = fromArray(B_SP, u8, i).eq(c0Vec).lastTrue()) < B_LEN)
-                        return i+lane-r.offset;
-//                    ByteVector vec = fromArray(B_SP, u8, i);
-//                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec));
-//                    if (candidate != Byte.MIN_VALUE)
-//                        return i+candidate- r.offset;
-                }
-                i += B_SP.length()-1; // while always overdraws from i, revert that
-                for (; i >= begin; --i) {
-                    byte c = u8[i];
-                    if (c == c0) return i-r.offset;
-                }
-                return end- r.offset;
-            }
-            case BufferRope r -> {
-                ByteBuffer buf = r.buffer;
-                ByteOrder bo = buf.order();
-                begin += i = buf.position();
-                i = end += i;
-                while ((i -= B_SP.length()) >= begin) {
-                    if ((lane = fromByteBuffer(B_SP, buf, i, bo).eq(c0Vec).lastTrue()) < B_LEN)
-                        return i+lane-buf.position();
-//                    ByteVector vec = fromByteBuffer(B_SP, buf, i, bo);
-//                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec));
-//                    if (candidate != Byte.MIN_VALUE)
-//                        return i+candidate-buf.position();
-                }
-                i += B_SP.length()-1; // while always overdraws from i, revert that
-                for (; i >= begin; --i) {
-                    byte c = buf.get(i);
-                    if (c == c0) return i-buf.position();
-                }
-                return end-buf.position();
-            }
-            default -> {
-                for (i = end-1; i >= begin; --i) {
-                    byte c = get(i);
-                    if (c == c0) return i;
-                }
-                return end;
-            }
+        int i = end;
+        while ((i -= B_SP.length()) >= begin) {
+            int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).lastTrue();
+            if (lane > -1)
+                return i+lane;
         }
+        i += B_SP.length()-1; // while always overdraws from i, revert that
+        for (; i >= begin; --i) {
+            byte c = segment.get(JAVA_BYTE, i);
+            if (c == c0) return i;
+        }
+        return end;
+//
+//        ###
+//        switch (this) {
+//            case ByteRope r -> {
+//                byte[] u8 = r.utf8;
+//                begin += (i = r.offset);
+//                i = end += i;
+//                while ((i -= B_SP.length()) >= begin) {
+//                    if ((lane = fromArray(B_SP, u8, i).eq(c0Vec).lastTrue()) < B_LEN)
+//                        return i+lane-r.offset;
+////                    ByteVector vec = fromArray(B_SP, u8, i);
+////                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec));
+////                    if (candidate != Byte.MIN_VALUE)
+////                        return i+candidate- r.offset;
+//                }
+//                i += B_SP.length()-1; // while always overdraws from i, revert that
+//                for (; i >= begin; --i) {
+//                    byte c = u8[i];
+//                    if (c == c0) return i-r.offset;
+//                }
+//                return end- r.offset;
+//            }
+//            case BufferRope r -> {
+//                ByteBuffer buf = r.buffer;
+//                ByteOrder bo = buf.order();
+//                begin += i = buf.position();
+//                i = end += i;
+//                while ((i -= B_SP.length()) >= begin) {
+//                    if ((lane = fromByteBuffer(B_SP, buf, i, bo).eq(c0Vec).lastTrue()) < B_LEN)
+//                        return i+lane-buf.position();
+////                    ByteVector vec = fromByteBuffer(B_SP, buf, i, bo);
+////                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec));
+////                    if (candidate != Byte.MIN_VALUE)
+////                        return i+candidate-buf.position();
+//                }
+//                i += B_SP.length()-1; // while always overdraws from i, revert that
+//                for (; i >= begin; --i) {
+//                    byte c = buf.get(i);
+//                    if (c == c0) return i-buf.position();
+//                }
+//                return end-buf.position();
+//            }
+//            default -> {
+//                for (i = end-1; i >= begin; --i) {
+//                    byte c = get(i);
+//                    if (c == c0) return i;
+//                }
+//                return end;
+//            }
+//        }
+    }
+
+    private int scalarSkipUntilLast(int begin, int end, int c0, int c1) {
+        for (int i = end-1; i >= begin; --i) {
+            byte c = get(i);
+            if (c == c0 || c == c1) return i;
+        }
+        return end;
     }
 
     /**
@@ -772,56 +826,72 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * <strong>LAST</strong> {@code i}.
      */
     public final int skipUntilLast(int begin, int end, char c0, char c1) {
-        int i, lane, len = checkRangeAndGetLen(begin, end);
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        MemorySegment segment = segment();
+        if (segment == null) return scalarSkipUntilLast(begin, end, c0, c1);
         Vector<Byte> c0Vec = B_SP.broadcast(c0), c1Vec = B_SP.broadcast(c1);
-        switch (this) {
-            case ByteRope r -> {
-                byte[] u8 = r.utf8;
-                begin += (i = r.offset);
-                i = end += i;
-                while ((i -= B_SP.length()) >= begin) {
-                    ByteVector vec = fromArray(B_SP, u8, i);
-                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue()) > -1)
-                        return i+lane-r.offset;
-//                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec).or(vec.eq(c1Vec)));
-//                    if (candidate != Byte.MIN_VALUE)
-//                        return i+candidate- r.offset;
-                }
-                i += B_LEN-1; // while always overdraws from i, revert that
-                for (; i >= begin; --i) {
-                    byte c = u8[i];
-                    if (c == c0 || c == c1) return i- r.offset;
-                }
-                return end-r.offset;
-            }
-            case BufferRope r -> {
-                ByteBuffer buf = r.buffer;
-                ByteOrder bo = buf.order();
-                begin += i = buf.position();
-                i = end += i;
-                while ((i -= B_SP.length()) >= begin) {
-                    ByteVector vec = fromByteBuffer(B_SP, buf, i, bo);
-                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue()) > -1)
-                        return i+lane-buf.position();
-//                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec).or(vec.eq(c1Vec)));
-//                    if (candidate != Byte.MIN_VALUE)
-//                        return i+candidate-buf.position();
-                }
-                i += B_LEN-1; // while always overdraws from i, revert that
-                for (; i >= begin; --i) {
-                    byte c = buf.get(i);
-                    if (c == c0 || c == c1) return i-buf.position();
-                }
-                return end-buf.position();
-            }
-            default -> {
-                for (i = end-1; i >= begin; --i) {
-                    byte c = get(i);
-                    if (c == c0 || c == c1) return i;
-                }
-                return end;
-            }
+        int i = end, lane;
+        while ((i -= B_SP.length()) >= begin) {
+            ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
+            if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue()) > -1)
+                return i+lane;
         }
+        i += B_SP.length()-1; // while always overdraws from i, revert that
+        for (; i >= begin; --i) {
+            byte c = segment.get(JAVA_BYTE, i);
+            if (c == c0 || c == c1) return i;
+        }
+        return end;
+//        int i, lane, len = checkRangeAndGetLen(begin, end);
+//        Vector<Byte> c0Vec = B_SP.broadcast(c0), c1Vec = B_SP.broadcast(c1);
+//        switch (this) {
+//            case ByteRope r -> {
+//                byte[] u8 = r.utf8;
+//                begin += (i = r.offset);
+//                i = end += i;
+//                while ((i -= B_SP.length()) >= begin) {
+//                    ByteVector vec = fromArray(B_SP, u8, i);
+//                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue()) > -1)
+//                        return i+lane-r.offset;
+////                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec).or(vec.eq(c1Vec)));
+////                    if (candidate != Byte.MIN_VALUE)
+////                        return i+candidate- r.offset;
+//                }
+//                i += B_LEN-1; // while always overdraws from i, revert that
+//                for (; i >= begin; --i) {
+//                    byte c = u8[i];
+//                    if (c == c0 || c == c1) return i- r.offset;
+//                }
+//                return end-r.offset;
+//            }
+//            case BufferRope r -> {
+//                ByteBuffer buf = r.buffer;
+//                ByteOrder bo = buf.order();
+//                begin += i = buf.position();
+//                i = end += i;
+//                while ((i -= B_SP.length()) >= begin) {
+//                    ByteVector vec = fromByteBuffer(B_SP, buf, i, bo);
+//                    if ((lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue()) > -1)
+//                        return i+lane-buf.position();
+////                    byte candidate = IOTA.reduceLanes(MAX, vec.eq(c0Vec).or(vec.eq(c1Vec)));
+////                    if (candidate != Byte.MIN_VALUE)
+////                        return i+candidate-buf.position();
+//                }
+//                i += B_LEN-1; // while always overdraws from i, revert that
+//                for (; i >= begin; --i) {
+//                    byte c = buf.get(i);
+//                    if (c == c0 || c == c1) return i-buf.position();
+//                }
+//                return end-buf.position();
+//            }
+//            default -> {
+//                for (i = end-1; i >= begin; --i) {
+//                    byte c = get(i);
+//                    if (c == c0 || c == c1) return i;
+//                }
+//                return end;
+//            }
+//        }
     }
 
     /**
@@ -876,13 +946,13 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @throws IllegalArgumentException if {@code begin < 0}.
      */
     public final int skip(int begin, int end, int[] alphabet) {
-        int len = checkRangeAndGetLen(begin, end);
+        if (begin < 0 || end > len || end < begin) raiseBadRange(begin, end);
         if (this instanceof ByteRope b) {
             end += b.offset;
             return RopeSupport.skip(b.utf8, b.offset+begin, end, alphabet)-b.offset;
         } else {
             boolean stopOnNonAscii = (alphabet[3] & 0x80000000) == 0;
-            for (int i = begin, eEnd = Math.min(len(), end); i < eEnd; ++i) {
+            for (int i = begin, eEnd = Math.min(len, end); i < eEnd; ++i) {
                 byte c = get(i);
                 if (c >= 0) { // c is ASCII
                     if ((alphabet[c >> 5] & (1 << c)) == 0)
@@ -938,7 +1008,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      *         for all {@code i} in {@code [begin, end)}.
      */
     public final int reverseSkip(int begin, int end, int[] alphabet) {
-        int len = checkRangeAndGetLen(begin, end);
+        if (begin < 0 || end > len || end < begin) raiseBadRange(begin, end);
         if (this instanceof ByteRope b) {
             begin += b.offset;
             end = b.offset+Math.min(end, len);
@@ -982,124 +1052,127 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return Math.max(end, begin)-offset;
     }
 
-    /** Whether {@code get(i) == sequence[i]} for every {@code i} in {@code [begin, end)}. */
-    public final boolean has(int position, byte[] sequence) {
-        if (position+sequence.length > laxCheckIndexAndGetLen(position)) return false;
-        return switch (this) {
-            case ByteRope r ->
-                RopeSupport.rangesEqual(r.utf8, r.offset+position, sequence, 0, sequence.length);
-            case BufferRope r -> {
-                int i = 0;
-                position += r.buffer.position();
-                if (sequence.length > 32) {
-                    ByteOrder bo = r.buffer.order();
-                    for (int e = B_SP.loopBound(sequence.length); i < e; i += B_SP.length()) {
-                        ByteVector sVec = fromArray(B_SP, sequence, i);
-                        ByteVector bVec = fromByteBuffer(B_SP, r.buffer, position+i, bo);
-                        if (!sVec.eq(bVec).allTrue()) yield false;
-                    }
-                }
-                while (i < sequence.length && r.buffer.get(position+i) == sequence[i]) ++i;
-                yield i == sequence.length;
-            }
-            default -> {
-                for (byte b : sequence) {
-                    if (b != get(position++)) yield false;
-                }
-                yield true;
-            }
-        };
+    /** Whether {@code get(i) == seq[i]} for every {@code i} in {@code [begin, end)}. */
+    public final boolean has(int position, byte[] seq) {
+        if (position < 0) throw new IndexOutOfBoundsException(position);
+        if (position+seq.length > len) return false;
+        MemorySegment s = segment();
+        if (s != null)
+            return rangesEqual(s, position, MemorySegment.ofArray(seq), 0, seq.length);
+        for (byte b : seq) {
+            if (b != get(position++)) return false;
+        }
+        return true;
     }
 
     /** Whether {@code sub(pos, pos+(end-begin)).equals(rope.sub(begin, end))}. */
     public final boolean has(int pos, Rope rope, int begin, int end) {
-        int len = end - begin;
-        if (pos+len > laxCheckIndexAndGetLen(pos)) return false;
-        return switch (this) {
-            case ByteRope l -> {
-                if (len > 32 && rope instanceof ByteRope r)
-                    yield RopeSupport.rangesEqual(l.utf8, l.offset + pos, r.utf8, r.offset+begin, len);
-                for (pos += l.offset; begin < end && l.utf8[pos] == rope.get(begin); ++pos)
-                    ++begin;
-                yield begin == end;
-            }
-            case BufferRope l -> {
-                pos += l.buffer.position();
-                if (len > 32 && rope instanceof ByteRope r) {
-                    ByteOrder lo = l.buffer.order();
-                    begin += r.offset;
-                    for (int e = pos+B_SP.loopBound(len); pos < e; pos += B_SP.length(), begin += B_SP.length()) {
-                        ByteVector lv = fromByteBuffer(B_SP, l.buffer, pos, lo);
-                        if (!lv.eq(fromArray(B_SP, r.utf8, begin)).allTrue()) yield false;
-                    }
-                    begin -= r.offset;
-                }
-                while (begin < end) {
-                    if (l.buffer.get(pos++) != rope.get(begin++)) yield false;
-                }
-                yield true;
-            }
-            default -> {
-                while (begin < end) {
-                    if (get(pos++) != rope.get(begin++)) yield false;
-                }
-                yield true;
-            }
-        };
+        int rLen = end - begin;
+        if (pos < 0) throw new IndexOutOfBoundsException(pos);
+        if (pos+rLen > this.len) return false;
+        MemorySegment lSeg = segment(), rSeg;
+        if (lSeg != null && (rSeg = rope.segment()) != null)
+            return RopeSupport.rangesEqual(lSeg, pos, rSeg, begin, rLen);
+        while (begin < end) {
+            if (get(pos++) != rope.get(begin++)) return false;
+        }
+        return true;
+//
+//
+//        return switch (this) {
+//            case ByteRope l -> {
+//                if (len > 32 && rope instanceof ByteRope r)
+//                    yield rangesEqual(l.utf8, l.offset + pos, r.utf8, r.offset+begin, len);
+//                for (pos += l.offset; begin < end && l.utf8[pos] == rope.get(begin); ++pos)
+//                    ++begin;
+//                yield begin == end;
+//            }
+//            case BufferRope l -> {
+//                pos += l.buffer.position();
+//                if (len > 32 && rope instanceof ByteRope r) {
+//                    ByteOrder lo = l.buffer.order();
+//                    begin += r.offset;
+//                    for (int e = pos+B_SP.loopBound(len); pos < e; pos += B_SP.length(), begin += B_SP.length()) {
+//                        ByteVector lv = fromByteBuffer(B_SP, l.buffer, pos, lo);
+//                        if (!lv.eq(fromArray(B_SP, r.utf8, begin)).allTrue()) yield false;
+//                    }
+//                    begin -= r.offset;
+//                }
+//                while (begin < end) {
+//                    if (l.buffer.get(pos++) != rope.get(begin++)) yield false;
+//                }
+//                yield true;
+//            }
+//            default -> {
+//                while (begin < end) {
+//                    if (get(pos++) != rope.get(begin++)) yield false;
+//                }
+//                yield true;
+//            }
+//        };
     }
 
     /** Whether {@code sub(position, position+rope.len()).equals(rope.sub(begin, end))}. */
     public final  boolean has(int position, Rope rope) {
-        int len = rope.len();
-        if (position+len > checkIndexAndGetLen(position)) return false;
-        return switch (this) {
-            case ByteRope l -> {
-                if (len > 32 && rope instanceof ByteRope r)
-                    yield RopeSupport.rangesEqual(l.utf8, l.offset+position, r.utf8, r.offset, len);
-                position += l.offset;
-                for (int i = 0; i < len; i++, position++) {
-                    if (l.utf8[position] != rope.get(i)) yield false;
-                }
-                yield true;
-            }
-            case BufferRope l -> {
-                int i = 0;
-                if (len > 32) {
-                    ByteOrder lo = l.buffer.order();
-                    if (rope instanceof ByteRope r) {
-                        for (int e = B_SP.loopBound(len), ro = r.offset; i < e; i += B_SP.length()) {
-                            ByteVector lv = fromByteBuffer(B_SP, l.buffer, position+i, lo);
-                            ByteVector rv = fromArray(B_SP, r.utf8, ro+i);
-                            if (!lv.eq(rv).allTrue()) yield false;
-                        }
-                    } else if (rope instanceof BufferRope r) {
-                        ByteOrder ro = r.buffer.order();
-                        for (int e = B_SP.loopBound(len), rOff = r.buffer.position(); i < e; i += B_SP.length()) {
-                            ByteVector lv = fromByteBuffer(B_SP, l.buffer, position+i, lo);
-                            ByteVector rv = fromByteBuffer(B_SP, r.buffer, rOff+i, ro);
-                            if (!lv.eq(rv).allTrue()) yield false;
-                        }
-                    }
-                    position += i;
-                }
-                for (position += l.buffer.position(); i < len; ++position, ++i) {
-                    if (l.buffer.get(position++) != rope.get(i++)) yield false;
-                }
-                yield true;
-            }
-            default -> {
-                for (int i = 0; i < len; i++, position++) {
-                    if (get(position) != rope.get(i)) yield false;
-                }
-                yield true;
-            }
-        };
+        int rLen = rope.len();
+        if (position+rLen > len) return false;
+
+        MemorySegment lSeg = segment(), rSeg;
+        if (lSeg != null && (rSeg = rope.segment()) != null)
+            return RopeSupport.rangesEqual(lSeg, position, rSeg, 0, rLen);
+        for (int i = 0; i < rLen; i++, position++) {
+            if (get(position) != rope.get(i)) return false;
+        }
+        return true;
+
+//        return switch (this) {
+//            case ByteRope l -> {
+//                if (len > 32 && rope instanceof ByteRope r)
+//                    yield rangesEqual(l.utf8, l.offset+position, r.utf8, r.offset, len);
+//                position += l.offset;
+//                for (int i = 0; i < len; i++, position++) {
+//                    if (l.utf8[position] != rope.get(i)) yield false;
+//                }
+//                yield true;
+//            }
+//            case BufferRope l -> {
+//                int i = 0;
+//                if (len > 32) {
+//                    ByteOrder lo = l.buffer.order();
+//                    if (rope instanceof ByteRope r) {
+//                        for (int e = B_SP.loopBound(len), ro = r.offset; i < e; i += B_SP.length()) {
+//                            ByteVector lv = fromByteBuffer(B_SP, l.buffer, position+i, lo);
+//                            ByteVector rv = fromArray(B_SP, r.utf8, ro+i);
+//                            if (!lv.eq(rv).allTrue()) yield false;
+//                        }
+//                    } else if (rope instanceof BufferRope r) {
+//                        ByteOrder ro = r.buffer.order();
+//                        for (int e = B_SP.loopBound(len), rOff = r.buffer.position(); i < e; i += B_SP.length()) {
+//                            ByteVector lv = fromByteBuffer(B_SP, l.buffer, position+i, lo);
+//                            ByteVector rv = fromByteBuffer(B_SP, r.buffer, rOff+i, ro);
+//                            if (!lv.eq(rv).allTrue()) yield false;
+//                        }
+//                    }
+//                    position += i;
+//                }
+//                for (position += l.buffer.position(); i < len; ++position, ++i) {
+//                    if (l.buffer.get(position++) != rope.get(i++)) yield false;
+//                }
+//                yield true;
+//            }
+//            default -> {
+//                for (int i = 0; i < len; i++, position++) {
+//                    if (get(position) != rope.get(i)) yield false;
+//                }
+//                yield true;
+//            }
+//        };
     }
 
     /** Similar to {@link Rope#has(int, byte[])} but */
     public final boolean hasAnyCase(int position, byte[] uppercaseSequence) {
-        int end = position +uppercaseSequence.length;
-        if (end > laxCheckIndexAndGetLen(position)) return false;
+        if (position < 0) throw new IndexOutOfBoundsException(position);
+        if (position+uppercaseSequence.length > len) return false;
         for (byte expected : uppercaseSequence) {
             byte actual = get(position++);
             if (actual != expected && ((actual < 'a' || actual > 'z') || actual - 32 != expected))
@@ -1108,33 +1181,36 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return true;
     }
 
+    private static final boolean IS_LE = ByteOrder.nativeOrder()== LITTLE_ENDIAN;
+    private static final long LSB_MASK_L = 0x0101010101010101L;
+    private static final int  LSB_MASK_I = 0x01010101;
+    private static final ValueLayout.OfLong LONG_UNALIGNED = JAVA_LONG.withBitAlignment(8);
+    private static final ValueLayout.OfInt INT_UNALIGNED = JAVA_INT.withBitAlignment(8);
+
     /**
-     * Compute a hash value where bit {@code i} is {@code get(end-1-i)&0x1}.
+     * Compute a hash value with {@code Math.min(32, end-begin)} bits where bit
+     * {@code i} is {@code get(begin+i)&0x1}.
      *
      * @param begin index of the leftmost byte to include in the hash
      * @param end {@code len()} or index of first byte right of the byte sequence used to hash.
-     * @return a int with the lowest {@code end-begin} bits set as described above.
+     * @return an int with the lowest {@code end-begin} bits set as described above.
      */
     public int lsbHash(int begin, int end) {
-        int h = 0, bit = end-begin-1;
-        switch (this) {
-            case ByteRope r -> {
-                byte[] u8 = r.utf8;
-                begin += r.offset;
-                while (bit >= 0)
-                    h |= (u8[begin++]&1) << bit--;
-            }
-            case BufferRope r -> {
-                var bb = r.buffer;
-                begin += bb.position();
-                while (bit >= 0)
-                    h |= (bb.get(begin++)&1) << bit--;
-            }
-            default -> {
-                while (begin < end)
-                    h |= (get(begin++)&1) << bit--;
+        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
+        int h = 0, bit = 0, bits = end-begin;
+        if (bits > 32)
+            begin = end-(bits = 32);
+        MemorySegment s;
+        if (IS_LE && bits >= 8 && (s = segment()) != null) {
+            for (; bit + 8 <= bits; bit += 8)
+                h |= (int) Long.compress(s.get(LONG_UNALIGNED, begin + bit), LSB_MASK_L) << bit;
+            if (bit + 4 <= bits) {
+                h |= Integer.compress(s.get(INT_UNALIGNED, begin + bit), LSB_MASK_I) << bit;
+                bit += 4;
             }
         }
+        while (bit < bits)
+            h |= (get(begin + bit) & 1) << bit++;
         return h;
     }
 
@@ -1190,35 +1266,21 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     public boolean isAscii() {
-        int i = 0, end = len(), vecEnd = B_SP.loopBound(end);
-        switch (this) {
-            case ByteRope r -> {
-                byte[] u8 = r.utf8;
-                end += i = r.offset;
-                for (; i < vecEnd; i+= B_SP.length()) {
-                    if (!ZERO.compare(LE, fromArray(B_SP, u8, i)).allTrue())
-                        return false;
-                }
-                while (i < end && u8[i] >= 0) ++i;
+        int i = 0, len = this.len;
+        MemorySegment s = segment();
+        if (s != null) {
+            for (int e = B_SP.loopBound(len); i < e; i += B_SP.length()) {
+                if (!ZERO.compare(LE, fromMemorySegment(B_SP, s, i, LITTLE_ENDIAN)).allTrue())
+                    return false;
             }
-            case BufferRope r -> {
-                ByteBuffer bb = r.buffer;
-                ByteOrder bo = bb.order();
-                end += i = bb.position();
-                for (; i < vecEnd; i+= B_SP.length()) {
-                    if (!ZERO.compare(LE, fromByteBuffer(B_SP, bb, i, bo)).allTrue())
-                        return false;
-                }
-                while (i < end && bb.get(i) >= 0) ++i;
-            }
-            default -> {
-                while (i < end && get(i) >= 0) ++i;
-            }
+            while (i < len && s.get(JAVA_BYTE, i) >= 0)  ++i;
+        } else {
+            while (i < len && get(i) >= 0) ++i;
         }
-        return i == end;
+        return i == len;
     }
 
-    @Override public int length() { return len(); }
+    @Override public int length() { return len; }
 
     @Override public char charAt(int index) {
         int i = 0, len = len();
@@ -1257,7 +1319,8 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     @Override public boolean equals(Object o) {
         int len = len();
-        return o == this || o instanceof Rope r && r.len() == len && has(0, r, 0, len);
+        if (o == this) return true;
+        return o instanceof Rope r && r.len() == len && has(0, r, 0, len);
     }
 
     @Override public int compareTo(@NonNull Rope o) {
