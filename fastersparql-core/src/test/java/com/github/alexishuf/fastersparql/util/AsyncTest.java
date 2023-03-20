@@ -10,7 +10,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-import static com.github.alexishuf.fastersparql.util.Async.waitStage;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.waitStage;
 import static java.lang.Runtime.getRuntime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;

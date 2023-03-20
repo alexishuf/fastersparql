@@ -1,159 +1,100 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItGenerator;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
-import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import com.github.alexishuf.fastersparql.model.row.dedup.WeakCrossSourceDedup;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Union;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
-import static java.lang.String.format;
+import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
+import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
 import static java.util.List.of;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static java.util.stream.Collectors.joining;
 
 class WeakCrossSourceDedupBItTest {
+    record D(List<int[]> sources, int[] expectedSequential, int minBatch, int maxBatch,
+             BItGenerator gen, BItDrainer drainer, boolean sequential) implements Runnable {
 
-    static List<Term> r(CharSequence... value) {
-        TermParser parser = new TermParser();
-        return Arrays.stream(value).map(s -> parser.parseTerm(Rope.of(s))).toList();
-    }
-
-    interface ItGenerator {
-        BIt<List<Term>> create(List<List<Term>> sources);
-    }
-
-    private static final ItGenerator itGenerator = new ItGenerator() {
-        @Override public BIt<List<Term>> create(List<List<Term>> list) {
-            return new IteratorBIt<>(list, RowType.LIST, Vars.of("x")) {
-                @Override public String toString() { return "IteratorBIt(" + list + ")"; }
-            };
-        }
-        @Override public String toString() { return "itGenerator"; }
-    };
-
-    private static final ItGenerator cbGenerator = new ItGenerator() {
-        @Override public BIt<List<Term>> create(List<List<Term>> list) {
-            SPSCBufferedBIt<List<Term>> it = new SPSCBufferedBIt<>(RowType.LIST, Vars.of("x")) {
-                @Override public String toString() { return "Callback("+list+")"; }
-            };
-            Thread.startVirtualThread(() -> {
-                for (List<Term> r : list)
-                    it.feed(r);
-                it.complete(null);
-            });
-            return it;
-        }
-        @Override public String toString() { return "cbGenerator"; }
-    };
-
-
-    private static final Map<List<List<List<Term>>>, Map<Term, Integer>> minCountCache
-            = Collections.synchronizedMap(new IdentityHashMap<>());
-
-    private static  Map<Term, Integer> minCount(List<List<List<Term>>> inputs) {
-        Map<Term, Integer> map = minCountCache.get(inputs);
-        if (map == null) {
-            map = new HashMap<>();
-            Map<Term, Integer> tmp = new HashMap<>();
-            for (List<List<Term>> source : inputs) {
-                tmp.clear();
-                for (List<Term> row : source)
-                    tmp.put(row.get(0), tmp.getOrDefault(row.get(0), 0)+1);
-                for (var e : tmp.entrySet()) {
-                    if (map.getOrDefault(e.getKey(), Integer.MAX_VALUE) > e.getValue())
-                        map.put(e.getKey(), e.getValue());
-                }
-            }
-            minCountCache.put(inputs, map);
-        }
-        return map;
-    }
-
-    record D(List<List<List<Term>>> inputs, int minBatch, int maxBatch,
-             ItGenerator generator, BItDrainer drainer, boolean sequential) implements Runnable {
-
-        private BIt<List<Term>> createBIt() {
-            List<BIt<List<Term>>> its = new ArrayList<>();
-            Plan[] operands = new Plan[inputs.size()];
+        private BIt<TermBatch> createBIt() {
+            List<BIt<TermBatch>> its = new ArrayList<>();
+            Plan[] operands = new Plan[sources.size()];
             for (int i = 0; i < operands.length; i++) {
-                its.add(generator.create(inputs.get(i)));
+                its.add(gen.asBIt(it -> it.minBatch(minBatch).maxBatch(maxBatch), sources.get(i)));
                 operands[i] = new Empty(Vars.of("x"), Vars.of("x"));
             }
             var union = new Union(0, operands);
-            var dedup = new WeakCrossSourceDedup<>(RowType.LIST, 3);
-            if (sequential)
-                return new DedupConcatBIt<>(its, union, dedup);
-            else
-                return new DedupMergeBIt<>(its, union, dedup);
+            var dedup = new WeakCrossSourceDedup<>(Batch.TERM, 3, 1);
+            return sequential ? new DedupConcatBIt<>(its, union, dedup)
+                              : new DedupMergeBIt<>(its, union, dedup);
         }
 
         @Override public void run() {
-            // compute expected
-            Map<Term, Integer> minCount = minCount(inputs);
-
-            Map<Term, Integer> actual = new HashMap<>();
-            for (List<Term> row : drainer.toList(createBIt()))
-                actual.put(row.get(0), actual.getOrDefault(row.get(0), 0)+1);
-
-            assertEquals(minCount.keySet(), actual.keySet());
-            for (var e : minCount.entrySet()) {
-                int count = actual.getOrDefault(e.getKey(), 0);
-                int min = e.getValue();
-                assertTrue(count >= min, format("%d instances of %s, expected at least %d", count, e.getKey(), min));
+            int[] ints = drainer.drainToInts(createBIt(), expectedSequential.length);
+            if (sequential) {
+                assertEqualsOrdered(expectedSequential, ints, ints.length);
+            } else {
+                assertEqualsUnordered(expectedSequential, ints, ints.length, true, false, false);
             }
+        }
+
+        @Override public String toString() {
+            return "D{sources=[" +
+                    sources.stream().map(Arrays::toString).collect(joining(", ")) +
+                    "], expectedSequential=" + Arrays.toString(expectedSequential) +
+                    ", minBatch=" + minBatch +
+                    ", maxBatch=" + maxBatch +
+                    ", gen=" + gen +
+                    ", drainer=" + drainer +
+                    ", sequential=" + sequential;
         }
     }
 
     static List<D> data() {
-        List<List<List<List<Term>>>> sourcesList = new ArrayList<>(of(
-                //fully distinct cases
-                of(of(r("1"))), // single, non-empty source
-                of(of()),           // single, empty source
-                of(of(r("1"), r("2"))),           // single 2-source
-                of(of(r("1")), of(r("2"))),  // 2 1-source
+        record IO(List<int[]> sources, int[] expected) {}
+        List<IO> sourcesLists = List.of(
+                //single fully distinct source
+                new IO(List.of(new int[]{1}), new int[]{1}),
+                new IO(List.of(new int[]{1, 2}), new int[]{1, 2}),
+                new IO(List.of(new int[]{}), new int[]{}),
+
+                // two sources without duplicates
+                new IO(List.of(new int[] {1   }, new int[] {2}),  new int[]{1, 2}),
+                new IO(List.of(new int[] {    }, new int[] {2}),  new int[]{2}),
+                new IO(List.of(new int[] {1, 2}, new int[] { }),  new int[]{1, 2}),
+
+                // intra-source duplicates, distinct inter-sources
+                new IO(List.of(new int[] {1, 1}, new int[] {2}),  new int[]{1, 1, 2}),
+                new IO(List.of(new int[] {1   }, new int[] {2, 3, 2}),  new int[]{1, 2, 3, 2}),
 
                 // cross-source duplicates
-                of(of(r("1")), of(r("2"), r("1")), of(r("3"), r("1"))),
-                of(of(r("1"), r("1")),
-                   of(r("2"), r("1")),
-                   of(r("3"), r("1")),
-                   of(r("2")))
-        ));
-        List<List<List<Term>>> longSources = new ArrayList<>();
-        for (int source = 0; source < 20; source++) {
-            List<List<Term>> rows = new ArrayList<>();
-            for (int row = 0; row < 256; row++) {
-                rows.add(r(""+row));
-                rows.add(r(""+row));
-            }
-            for (int row = 0; row < 128; row++)
-                rows.add(r(""+row));
-            longSources.add(rows);
-        }
-        sourcesList.add(longSources);
+                new IO(List.of(new int[] {1, 2}, new int[]{1, 3}),  new int[]{1, 2, 3}),
+                new IO(List.of(new int[] {1, 2}, new int[]{3, 2}),  new int[]{1, 2, 3}),
+                new IO(List.of(new int[] {1, 2, 3}, new int[]{3, 4, 5, 1}), new int[]{1, 2, 3, 4, 5})
+        );
 
         List<D> dList = new ArrayList<>();
         for (int minBatch : of(1, 2)) {
-            for (int maxBatch : of(32_768, 2)) {
-                for (var generator : of(itGenerator, cbGenerator)) {
-                    for (BItDrainer drainer : BItDrainer.all()) {
+            for (int maxBatch : of(1<<14, 2)) {
+                for (var generator : BItGenerator.GENERATORS) {
+                    for (BItDrainer drainer : BItDrainer.ALL) {
                         for (boolean sequential : of(false, true)) {
-                            for (var sources : sourcesList)
-                                dList.add(new D(sources, minBatch, maxBatch, generator, drainer, sequential));
+                            for (var sources : sourcesLists)
+                                dList.add(new D(sources.sources, sources.expected, minBatch, maxBatch, generator, drainer, sequential));
                         }
                     }
                 }
@@ -164,8 +105,25 @@ class WeakCrossSourceDedupBItTest {
 
     @RepeatedTest(3)
     void test() throws Exception {
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
             data().forEach(tasks::add);
+        }
+    }
+
+    @Test
+    void serialTest() {
+        List<D> data = data();
+        for (int i = 0; i < data.size(); i++) {
+            try {
+                data.get(i).run();
+            } catch (AssertionFailedError e) {
+                String msg = e.getMessage() + " at data[" + i + "]=" + data.get(i);
+                Object ex = e.isExpectedDefined() ? e.getExpected().getEphemeralValue() : null;
+                Object ac = e.  isActualDefined() ? e.  getActual().getEphemeralValue() : null;
+                if (ex instanceof int[] a) ex = Arrays.toString(a);
+                if (ac instanceof int[] a) ac = Arrays.toString(a);
+                throw new AssertionFailedError(msg, ex, ac, e);
+            }
         }
     }
 }

@@ -1,16 +1,16 @@
 package com.github.alexishuf.fastersparql.batch.impl;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.NotRowType;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.Collection;
 import java.util.stream.Stream;
 
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
@@ -63,18 +63,15 @@ public class BatchReadyTest {
         try (var helper = new ReadyHelper()) {
             helper.minBatch(min).maxBatch(max);
             helper.minWait(atLeast, NANOSECONDS).maxWait(atMost, NANOSECONDS);
-            assertEquals(expected, helper.ready(size, System.nanoTime() + startOffset));
+            assertEquals(expected, helper.readyInNanos(size, System.nanoTime() + startOffset) == 0);
         }
     }
 
-    private static final class ReadyHelper extends AbstractBIt<Integer> {
-        public ReadyHelper() { super(NotRowType.INTEGER, Vars.EMPTY); }
-        @Override public boolean ready(int size, long start) { return super.ready(size, start); }
-        @Override public @This BIt<Integer> tempEager() { return this; }
-        @Override public Batch<Integer> nextBatch() { throw new UnsupportedOperationException(); }
-        @Override public int nextBatch(Collection<? super Integer> destination) { throw new UnsupportedOperationException(); }
-        @Override public boolean hasNext() { throw new UnsupportedOperationException(); }
-        @Override public Integer next() { throw new UnsupportedOperationException(); }
+    private static final class ReadyHelper extends AbstractBIt<TermBatch> {
+        public ReadyHelper() { super(Batch.TERM, Vars.of("x")); }
+        @Override public long readyInNanos(int r, long start) { return super.readyInNanos(r, start); }
+        @Override public @This BIt<TermBatch> tempEager() { return this; }
+        @Override public TermBatch nextBatch(@Nullable TermBatch b) { throw new UnsupportedOperationException(); }
         @Override public String toString() { return "test"; }
     }
 }

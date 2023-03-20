@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -49,7 +50,7 @@ class PlanBindTest {
     void testBind(String rightSparql, Vars leftVars, List<Term> leftRow,
                   String expectedSparql) {
         var right = FS.query(DUMMY, rightSparql);
-        var binding = new RowBinding<>(RowType.LIST, leftVars).row(leftRow);
+        var binding = new BatchBinding<>(Batch.TERM, leftVars).setRow(TermBatch.of(leftRow), 0);
         var bound = (Query)right.bound(binding);
         assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
     }

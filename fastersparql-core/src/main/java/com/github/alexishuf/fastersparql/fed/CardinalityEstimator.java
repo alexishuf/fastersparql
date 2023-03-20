@@ -101,7 +101,7 @@ public abstract class CardinalityEstimator {
     public int estimate(Plan plan, @Nullable Binding binding) {
         return switch (plan.type) {
             case EMPTY -> 0;
-            case VALUES -> ((Values)plan).rows().size();
+            case VALUES -> ((Values)plan).values().rows;
             case TRIPLE -> estimate((TriplePattern) plan, binding);
             case QUERY -> estimate((Query)plan, binding);
             case MODIFIER -> estimateModifier((Modifier)plan, binding);

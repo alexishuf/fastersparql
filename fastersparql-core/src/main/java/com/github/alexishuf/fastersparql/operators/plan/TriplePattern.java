@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.TripleRoleSet;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -59,7 +60,7 @@ public final class TriplePattern extends Plan {
     @Override public Plan copy(@Nullable Plan[] ops) { return new TriplePattern(s, p, o); }
 
     @Override
-    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+    public <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
         throw new UnsupportedOperationException();
     }
 

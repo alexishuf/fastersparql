@@ -20,7 +20,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.fed.Selector.InitOrigin.*;
-import static com.github.alexishuf.fastersparql.util.Async.waitStage;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.waitStage;
 import static java.lang.System.arraycopy;
 import static org.junit.jupiter.api.Assertions.*;
 

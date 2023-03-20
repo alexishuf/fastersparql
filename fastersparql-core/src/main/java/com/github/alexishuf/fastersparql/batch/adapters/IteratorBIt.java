@@ -2,15 +2,18 @@ package com.github.alexishuf.fastersparql.batch.adapters;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.Collection;
 import java.util.Iterator;
-import java.util.NoSuchElementException;
 
 /** Wrap a plain {@link Iterator} as a {@link BIt}. */
-public class IteratorBIt<T> extends UnitaryBIt<T> {
+public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
     private final Iterator<T> it;
 
     /**
@@ -20,16 +23,16 @@ public class IteratorBIt<T> extends UnitaryBIt<T> {
      * this {@link IteratorBIt} finishes or is {@link IteratorBIt#close()}d.</p>
      *
      * @param it the iterator to wrap.
-     * @param rowType methods for manipulating rows of type {@code R}
+     * @param batchType methods for manipulating rows of type {@code R}
      */
-    public IteratorBIt(Iterator<T> it, RowType<T> rowType, Vars vars) {
-        super(rowType, vars);
+    public IteratorBIt(Iterator<T> it, BatchType<B> batchType, Vars vars) {
+        super(batchType, vars);
         this.it = it;
     }
 
-    /** Equivalent to {@code IteratorBIt(iterable.iterator(), rowType)}. */
-    public IteratorBIt(Iterable<T> iterable, RowType<T> rowType, Vars vars) {
-        this(iterable.iterator(), rowType, vars);
+    /** Equivalent to {@code IteratorBIt(iterable.iterator(), batchType)}. */
+    public IteratorBIt(Iterable<T> iterable, BatchType<B> batchType, Vars vars) {
+        this(iterable.iterator(), batchType, vars);
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
@@ -40,21 +43,30 @@ public class IteratorBIt<T> extends UnitaryBIt<T> {
         }
     }
 
-    @Override public boolean hasNext() {
-        boolean has = it.hasNext();
-        if (!has)
-            onTermination(null);
-        return has;
-    }
-
-    @Override public T next() {
-        try {
-            return it.next();
-        } catch (Throwable t) {
-            if (!(t instanceof NoSuchElementException)) onTermination(t);
-            throw t;
+    @Override protected boolean fetch(B dest)  {
+        if (!it.hasNext())
+            return false;
+        T next = it.next();
+        switch (next) {
+            case Term[] a -> dest.putRow(a);
+            case Batch<?> b -> //noinspection rawtypes,unchecked
+                dest.putConverting((Batch) b);
+            case Collection<?> coll -> dest.putRow(coll);
+            case Integer i when dest.cols == 1 -> { // test cases compatibility
+                dest.beginPut();
+                dest.putTerm(Term.typed(i, RopeDict.DT_integer));
+                dest.commitPut();
+            }
+            case Term term -> {
+                dest.beginPut();
+                dest.putTerm(term);
+                dest.commitPut();
+            }
+            case null, default ->
+                    throw new IllegalArgumentException("Unexpected value from it.next(): " + next);
         }
-
+        return true;
     }
+
     @Override public String toString() { return it.toString(); }
 }

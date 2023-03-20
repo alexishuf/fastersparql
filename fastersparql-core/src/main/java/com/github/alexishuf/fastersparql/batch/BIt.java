@@ -1,32 +1,16 @@
 package com.github.alexishuf.fastersparql.batch;
 
+import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import org.checkerframework.checker.calledmethods.qual.CalledMethods;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.time.Duration;
-import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
-import static java.util.Spliterator.IMMUTABLE;
-import static java.util.Spliterators.spliteratorUnknownSize;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
-
-public interface BIt<T> extends Iterator<T>, AutoCloseable {
-    /**
-     * Preferred value for {@link BIt#minWait(long, TimeUnit)}, in milliseconds.
-     *
-     * <p>The default is zero (any non-empty batch is ready for consumption, nullifying the
-     * semantics of {@link BIt#minBatch(int)}), to avoid introducing compounding unexpected
-     * latencies. This value is used</p>
-     */
-    int PREFERRED_MIN_WAIT_MS = 4;
-    int PREFERRED_MAX_WAIT_MS = 16;
-
+public interface BIt<B extends Batch<B>> extends AutoCloseable {
     /**
      * Preferred {@link BIt#minBatch(int)} value if values above 1 (the default) are possible.
      *
@@ -37,7 +21,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      *     <li>Cache lines are fetched/evicted/invalidated in pairs</li>
      * </ol>
      *
-     * <p>ON the software side, the following is assumed:</p>
+     * <p>On the software side, the following is assumed:</p>
      * <ol>
      *     <li>Consumers of BIt will be bottlenecked by RAM (i.e., they are not doing expensive
      *         processing on each {@link Batch} item</li>
@@ -45,13 +29,10 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      *     <li>The JVM overhead for an array (including the {@code length}) is 24 bytes</li>
      * </ol>
      *
-     * Thus, seeking to keep {@link BIt#nextBatch()} latency low, this number tries to
-     * fill 4 cache lines with the {@link Batch#array}. Since we cannot guarantee the actual memory
-     * address is 128-aligned, we can at least expect that for at least 2 cache lines in the
-     * middle of the array there will be no false sharing (which requires implicit synchronization
-     * between CPU cores).
+     * Between {@code TERM} and {@code COMPRESSED} {@code Term} has the smallest bytes/term ratio
+     * of 4 bytes. Thus, we try to fill 2 cache lines with 1-column rows using a {@code TERM} batch.
      */
-    int PREFERRED_MIN_BATCH = (4*64-24)/4;
+    int PREFERRED_MIN_BATCH = (2*64-24)/4;
 
     /**
      * Preferred value for {@link BIt#maxBatch(int)}.
@@ -59,7 +40,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
     int DEF_MAX_BATCH = 1<<16;
 
     /** Set of methods to manipulate elements produced by this iterator. */
-    RowType<T> rowType();
+    BatchType<B> batchType();
 
     /**
      * If {@code T} represents something akin to rows in a table, this returns the
@@ -84,12 +65,12 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @param unit the {@link TimeUnit} of {@code time}
      * @return {@code this} {@link BIt}
      */
-    @This BIt<T> minWait(long time, TimeUnit unit);
+    @This BIt<B> minWait(long time, TimeUnit unit);
 
     /**
      * Equivalent to {@code minWait(duration.toMillis(), MILLISECONDS)}
      */
-    default @This BIt<T> minWait(Duration duration) {
+    default @This BIt<B> minWait(Duration duration) {
         return minWait(duration.toMillis(), TimeUnit.MILLISECONDS);
     }
 
@@ -114,12 +95,12 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @param unit the {@link TimeUnit} of {@code time}
      * @return {@code this} {@link BIt}
      */
-    @This BIt<T> maxWait(long time, TimeUnit unit);
+    @This BIt<B> maxWait(long time, TimeUnit unit);
 
     /**
      * Equivalent to {@code minWait(duration.toMillis(), MILLISECONDS)}
      */
-    default @This BIt<T> maxWait(Duration duration) {
+    default @This BIt<B> maxWait(Duration duration) {
         return maxWait(duration.toMillis(), TimeUnit.MILLISECONDS);
     }
 
@@ -127,18 +108,18 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
     long maxWait(TimeUnit unit);
 
     /**
-     * The minimum number of items in a batch produced by this {@link BIt}. Smaller batches may
+     * The minimum number of rows in a batch produced by this {@link BIt}. Smaller batches may
      * nevertheless be produced if {@link BIt#maxWait(TimeUnit)} is zero (the default) or if
      * the iterator source is exhausted.
      *
      * <p>The default is {@code 1}, making any non-empty ready.</p>
      *
-     * @param size the minimum batch size. Note that batches will be smaller if
+     * @param rows the minimum batch rows. Note that batches will be smaller if
      *             {@link BIt#maxWait(TimeUnit)} is reached or empty
      *             if the iteration end is reached (and thus there are no more items).
      * @return {@code this} {@link BIt}, for chaining
      */
-    BIt<T> minBatch(int size);
+    BIt<B> minBatch(int rows);
 
     /** Get current {@link BIt#minBatch(int)} constraint. */
     int minBatch();
@@ -152,7 +133,7 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * @param size the maximum batch size.
      * @return {@code this} {@link BIt}, for chaining
      */
-    @This BIt<T> maxBatch(int size);
+    @This BIt<B> maxBatch(int size);
 
     /**
      * If there is no batch ready at the time of the call, temporarily set
@@ -163,36 +144,20 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      *
      * @return {@code this} {@link BIt}, for chaining.
      */
-    @This BIt<T> tempEager();
+    @This BIt<B> tempEager();
 
     /**
      * Sets min/max batch size and batch wait to preferred values. This will introduce a
-     * delay per {@link BIt#nextBatch()} call of at least {@link BIt#PREFERRED_MIN_WAIT_MS} and
-     * at most {@link BIt#PREFERRED_MAX_WAIT_MS}.
-     *
-     * <p>Equivalent to:</p>
-     * <pre>
-     *     minBatch(Bit.PREFERRED_MIN_BATCH);
-     *     if (maxBatch() < Bit.DEF_MAX_BATCH)
-     *         maxBatch(Bit.DEF_MAX_BATCH);
-     *     minWait(Bit.PREFERRED_MIN_WAIT_MS, MILLISECONDS);
-     *     maxWait(Bit.PREFERRED_MAX_WAIT_MS, MILLISECONDS);
-     * </pre>
+     * delay per {@link BIt#nextBatch(B)} call of at least
+     * {@link FSProperties#batchMinWait(TimeUnit)} and at most
+     * {@link FSProperties#batchMaxWait(TimeUnit)}.
      *
      * @return {@code this}, for chaining.
      */
-    default BIt<T> preferred() {
-        minBatch(PREFERRED_MIN_BATCH);
-        if (maxBatch() < DEF_MAX_BATCH)
-            maxBatch(DEF_MAX_BATCH);
-        minWait(PREFERRED_MIN_WAIT_MS, MILLISECONDS);
-        maxWait(PREFERRED_MAX_WAIT_MS, MILLISECONDS);
-        return this;
-    }
-
+    BIt<B> preferred();
 
     /**
-     * Sets min/max batch size and wait time so that {@link BIt#nextBatch()} delay is minimal.
+     * Sets min/max batch size and wait time so that {@link BIt#nextBatch(B)} delay is minimal.
      *
      * <p>Equivalent to:</p>
      *
@@ -203,62 +168,26 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * </pre>
      * @return {@code this}, for chaining.
      */
-    default @This BIt<T> eager() {
-        return minBatch(1).minWait(0, NANOSECONDS).maxWait(0, NANOSECONDS);
-    }
+    @This BIt<B> eager();
 
     /** Get current {@link BIt#maxBatch(int)} constraint. */
     int maxBatch();
 
     /**
-     * Get the next batch as an array.
+     * Get the next batch or {@code null} if there are no more batches.
      *
-     * <p>The array ownership is transferred to the called, meaning it can be mutated or held without
-     * affecting or being affected by subsequent {@code nextBatch()} calls.</p>
+     * <p>Ownership of the batch is passed to the caller, who should release the batch
+     * only once through a subsequent call to this method or {@link BIt#recycle(Batch)}, or
+     * {@link BatchType#recycle(Batch)}.</p>
      *
-     * @return the next batch as an array. An empty batch signals the iterator end ,
-     *         i.e., {@code hasNext() == false}.
+     * @param offer if non-null this batch may be clear()ed and used as the return batch in this
+     *              call or in subsequent calls. Note that the caller
+     *              <strong>ALWAYS</strong> looses ownership of {@code offer} and
+     *              should not read nor write to the batch.
+     * @return {@code null} if the iterator is exhausted or a non-empty batch whose
+     *          ownership is transferred to the caller.
      */
-    Batch<T> nextBatch();
-
-    /**
-     * Equivalent to {@code recycle(offer); return nextBatch();}.
-     * @param offer A {@link Batch} to be offered for reuse via {@link BIt#recycle(Batch)}.
-     * @return the next {@link Batch}, as returned by {@link BIt#nextBatch()}
-     */
-    default Batch<T> nextBatch(Batch<T> offer) {
-        boolean accepted = recycle(offer);
-        Batch<T> b = nextBatch();
-        if (!accepted) recycle(offer);
-        return b;
-    }
-
-    /**
-     * Similar to {@link BIt#nextBatch()}, but adds elements to a pre-existing
-     * collection instead of allocating a new array.
-     *
-     * <p>Note: {@link Collection#clear()} is not called before the elements are
-     * {@link Collection#add(Object)}ed. See {@link BIt#replaceWithNextBatch(Collection)}
-     * if a {@code clear} is desired.</p>
-     *
-     * @param destination where to add batch elements.
-     * @return the batch size: number of elements added to {@code destination}.
-     */
-    default int nextBatch(Collection<? super T> destination) {
-        var b = nextBatch();
-        int size = b.drainTo(destination);
-        recycle(b);
-        return size;
-    }
-
-    /**
-     * Equivalent to {@code destination.clear(); return this.nextBatch(destination)}.
-     */
-    @SuppressWarnings("unused")
-    default int replaceWithNextBatch(Collection<? super T> destination) {
-        destination.clear();
-        return nextBatch(destination);
-    }
+    @Nullable B nextBatch(@Nullable B offer);
 
     /**
      * Return ownership of {@link Batch} to this {@link BIt} so that it can be used when
@@ -268,31 +197,13 @@ public interface BIt<T> extends Iterator<T>, AutoCloseable {
      * but are not required to.</p>
      *
      * @param batch the batch whose ownership will be returned to this {@link BIt}
-     * @return {@code true} iff ownership of {@code batch} has been taken by this {@link BIt}.
+     * @return {@code batch} if the caller remains owner of batch or {@code null} if the
+     *         caller lost ownership of {@code batch}.
      */
-    default boolean recycle(Batch<T> batch) { return false; }
+    @Nullable B recycle(B batch);
 
-    /** Drain all remaining items into {@code dest} */
-    default <Coll extends Collection<? super T>> Coll drainTo(Coll dest) {
-        try {
-            for (var b = nextBatch(); b.size > 0; b = nextBatch(b))
-                b.drainTo(dest);
-            return dest;
-        } finally { close(); }
-    }
-
-    /** Drain all remaining items into a new {@link ArrayList}. */
-    @CalledMethods("close")
-    default List<T> toList() { return drainTo(new ArrayList<>()); }
-
-    /** Drain all remaining items into a new {@link HashSet}. */
-    @CalledMethods("close")
-    default Set<T>  toSet()  { return drainTo(new HashSet<>()); }
-
-    /** Get a {@link Stream} over this {@link BIt} contents */
-    default Stream<T> stream() {
-        return StreamSupport.stream(spliteratorUnknownSize(this, IMMUTABLE), false);
-    }
+    /** Take ownership of a previously {@link BIt#recycle(Batch)}ed batch. */
+    @Nullable B stealRecycled();
 
     /**
      * Signals the iterator will not be used anymore and background processing (if any) as

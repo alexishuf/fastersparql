@@ -1,14 +1,14 @@
 package com.github.alexishuf.fastersparql.operators;
 
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.util.Results;
-import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -23,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 public class ModifierTest {
-    private static final int N_ITERATIONS = 3;
-    private static final int N_THREADS = Runtime.getRuntime().availableProcessors();
+    private static final int N_ITERATIONS = 16;
+    private static final int N_THREADS = 2;
 
     private static Modifier modifier(Results in, Vars projection,
                                                  int distinctCapacity, long offset, long limit,
@@ -58,7 +58,7 @@ public class ModifierTest {
         void run() {
             if (!expected.isEmpty())
                 assertEquals(expected.columns(), plan.publicVars().size());
-            expected.check(plan.execute(RowType.LIST));
+            expected.check(plan.execute(Batch.TERM));
         }
     }
 
@@ -178,13 +178,15 @@ public class ModifierTest {
     @ParameterizedTest @MethodSource
     void test(D c) { c.run(); }
 
-    @RepeatedTest(3)
-    void testRace() throws Exception {
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
-            test().map(a -> (D)a.get()[0]).forEach(d -> tasks.repeat(N_THREADS, thread -> {
-                for (int i = 0; i < N_ITERATIONS; i++)
-                    d.run();
-            }));
+    @Test void testRace() throws Exception {
+        try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
+            for (var it = test().map(a -> (D)a.get()[0]).iterator(); it.hasNext(); ) {
+                D d = it.next();
+                tasks.repeat(N_THREADS, () -> {
+                    for (int i = 0; i < N_ITERATIONS; i++) d.run();
+                });
+                tasks.await();
+            }
         }
     }
     

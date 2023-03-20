@@ -1,12 +1,13 @@
 package com.github.alexishuf.fastersparql.hdt;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.hdt.HDT;
@@ -38,7 +39,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    @Override public <R> BIt<R> query(RowType<R> rowType, SparqlQuery sparql) {
+    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         throw new UnsupportedOperationException();
     }
 

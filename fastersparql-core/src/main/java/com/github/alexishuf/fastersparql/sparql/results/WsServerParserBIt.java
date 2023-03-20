@@ -1,13 +1,14 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 
-public class WsServerParserBIt<R> extends AbstractWsParserBIt<R> {
-    public WsServerParserBIt(WsFrameSender frameSender, RowType<R> rowType,
-                             CallbackBIt<R> destination) {
-        super(frameSender, rowType, destination);
+public class WsServerParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B> {
+    public WsServerParserBIt(WsFrameSender frameSender, BatchType<B> batchType,
+                             CallbackBIt<B> destination) {
+        super(frameSender, batchType, destination);
     }
 
 

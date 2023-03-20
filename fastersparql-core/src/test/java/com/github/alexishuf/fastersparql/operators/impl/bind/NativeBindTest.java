@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.operators.bit.PlanBindingBIt;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.AL
 import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.EXACT;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class NativeBindTest {
     private static final AtomicInteger nextClientId = new AtomicInteger(1);
@@ -67,7 +69,7 @@ class NativeBindTest {
                 var finalResults = Results.results(results.vars(), finalRows)
                                           .duplicates(dedup || crossDedup ? ALLOW_DEDUP : EXACT);
 
-                try (var it = NativeBind.preferNative(RowType.LIST, join, null, dedup)) {
+                try (var it = NativeBind.preferNative(Batch.TERM, join, null, dedup)) {
                     assertFalse(it instanceof PlanBindingBIt, "not using native joins");
                     finalResults.check(it);
                 }
@@ -110,11 +112,26 @@ class NativeBindTest {
     @Test
     void test() throws Exception {
         List<D> data = data();
-        for (D d : data)
-            d.run();
-        int threads = Math.max(2, (int)(Runtime.getRuntime().availableProcessors() * 1.5));
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
-            data.forEach(d -> tasks.repeat(threads, d));
+        for (int i = 0, n = data.size(); i < n; i++) {
+            D d = data.get(i);
+            try {
+                d.run();
+            } catch (AssertionError e) {
+                throw new AssertionFailedError(e.getMessage()+" at data["+i+"]", e.getCause());
+            } catch (Throwable t) {
+                fail("Unexpected exception at data["+i+"]", t);
+            }
+        }
+        int threads = Runtime.getRuntime().availableProcessors();
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
+            for (int i = 0; i < data.size(); i++) {
+                tasks.repeat(threads, data.get(i));
+                try {
+                    tasks.await();
+                } catch (Throwable t) {
+                    fail("data["+i+"] failed with "+threads+" threads", t);
+                }
+            }
         }
     }
 

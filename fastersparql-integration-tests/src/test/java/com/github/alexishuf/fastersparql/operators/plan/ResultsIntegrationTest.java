@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
@@ -19,7 +19,7 @@ public abstract class ResultsIntegrationTest {
     @Test void test() throws Exception{
         List<Results> data = data();
         int repetitions = Math.max(1, Runtime.getRuntime().availableProcessors() * 4 / data.size());
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName());
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName());
              var clients = createClients()) {
             test(data, clients, Runnable::run);
             test(data, clients, runnable -> tasks.repeat(repetitions, runnable));

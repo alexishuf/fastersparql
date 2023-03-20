@@ -1,88 +1,84 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
-import com.github.alexishuf.fastersparql.model.row.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
+import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Arrays;
 import java.util.List;
-import java.util.NoSuchElementException;
 
-public final class DedupConcatBIt<R> extends MeteredConcatBIt<R> {
-    private final Dedup<R> dedup;
-    private @Nullable R polled = null;
+public final class DedupConcatBIt<B extends Batch<B>> extends ConcatBIt<B> {
+    private final Dedup<B> dedup;
+    private final @Nullable Metrics metrics;
+    private BatchFilter<B> filter;
+    private int sourceIdx = -1;
 
-    public DedupConcatBIt(List<? extends BIt<R>> sources, Plan plan,
-                          Dedup<R> dedup) {
-        super(sources, plan);
+    public DedupConcatBIt(List<? extends BIt<B>> sources, Plan plan, Dedup<B> dedup) {
+        super(sources, sources.iterator().next().batchType(), plan.publicVars());
+        this.metrics = Metrics.createIf(plan);
         this.dedup = dedup;
     }
 
     /* --- --- --- customize ConcatBIt behavior --- --- --- */
 
-    @Override public boolean hasNext() {
-        try {
-            while (polled == null && super.hasNext()) {
-                R row = source.next();
-                if (!dedup.isDuplicate(row, sourceIdx))
-                    polled = row;
-            }
-            return polled != null;
-        } catch (Throwable t) {
-            onTermination(t);
-            throw t;
-        }
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        if (metrics != null)
+            metrics.complete(cause, BItClosedAtException.isClosedFor(cause, this)).deliver();
+        DedupPool<B> pool = batchType.dedupPool;
+        if (dedup instanceof WeakCrossSourceDedup<B> cd)
+            pool.offerWeakCross(cd);
+        else if (dedup instanceof WeakDedup<B> wd)
+            pool.offerWeak(wd);
     }
 
-    @Override public R next() {
-        try {
-            if (!hasNext()) throw new NoSuchElementException();
-            R r = projector == null ? polled : projector.merge(polled, null);
-            polled = null;
-            if (metrics != null) metrics.rowsEmitted(1);
-            return r;
-        } catch (Throwable t) {
-            onTermination(t);
-            throw t;
-        }
+    @Override protected boolean nextSource() {
+        if (!super.nextSource()) return false;
+        var rowFilter = dedup.sourcedFilter(++sourceIdx);
+        //noinspection DataFlowIssue
+        filter = batchType().filter(vars, inner.vars(), rowFilter);
+        return true;
     }
 
-    @Override public Batch<R> nextBatch() {
+    @Override public @Nullable B recycle(B batch) {
+        if (batch != null && super.recycle(batch) != null)
+            return filter.recycle(batch);
+        return null;
+    }
+
+    @Override public @Nullable B stealRecycled() {
+        B b = filter.stealRecycled();
+        return b == null ? super.stealRecycled() : b;
+    }
+
+    @Override public @Nullable B nextBatch(@Nullable B b) {
         try {
-            while (true) {
-                Batch<R> b;
-                do {
-                    b = source.nextBatch();
-                    if (b.size > 0 && projector != null)
-                        projector.projectInPlace(b);
-                } while (b.size == 0 && nextSource());
-                if (polled != null)  //cold branch
-                    addPolled(b);
-                if (b.size == 0)
-                    return b;
-                dedup.filter(b, sourceIdx, projector);
-                if (b.size > 0) {
-                    if (metrics != null)
-                        metrics.rowsEmitted(b.size);
-                    return b;
+            while (true) { //noinspection DataFlowIssue
+                b = inner.nextBatch(b);
+                if (b == null) {
+                    if (!nextSource()) break;
+                } else {
+                    b = filter.filterInPlace(b);
+                    if (b.rows > 0) {
+                        eager = false;
+                        if (metrics != null) metrics.rowsEmitted(b.rows);
+                        return b;
+                    }
                 }
             }
+            onTermination(null);
+            return null;
         } catch (Throwable t) {
             onTermination(t);
             throw t;
         }
-    }
-
-    private void addPolled(Batch<R> b) {
-        // grow b.array to fit polled
-        if (b.array.length == b.size)
-            b.array = Arrays.copyOf(b.array, b.array.length+1);
-
-        // move polled to b.array[0]
-        System.arraycopy(b.array, 1, b.array, 0, b.size++);
-        b.array[0] = polled;
-        polled = null;
     }
 }

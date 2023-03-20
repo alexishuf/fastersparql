@@ -1,103 +1,72 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
-import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import org.checkerframework.common.returnsreceiver.qual.This;
+import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
 import java.util.Iterator;
 
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
-public class ConcatBIt<T> extends AbstractBIt<T> {
-    private final Collection<? extends BIt<T>> sources;
-    private final Iterator<? extends BIt<T>> sourcesIt;
-    protected BIt<T> source;
+public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
+    private final Collection<? extends BIt<B>> sources;
+    private final Iterator<? extends BIt<B>> sourcesIt;
 
-    public ConcatBIt(Collection<? extends BIt<T>> sources, RowType<T> rowType,
+    public ConcatBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
                      Vars vars) {
-        super(rowType, vars);
-        this.source = new EmptyBIt<>(rowType, vars);
+        super(batchType, vars);
         this.sourcesIt = (this.sources = sources).iterator();
+        this.inner = new EmptyBIt<>(batchType, vars);
     }
     
     /* --- --- --- helper --- --- --- */
 
+    @EnsuresNonNullIf(expression = "this.inner", result = true)
     protected boolean nextSource() {
         if (sourcesIt.hasNext()) {
-            source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
-                                     .minWait(minWait(NANOSECONDS), NANOSECONDS);
+            var source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
+                                         .minWait(minWait(NANOSECONDS), NANOSECONDS);
+            //noinspection DataFlowIssue (inner is @NonNull in ConcatBIt)
+            for (B b; (b = this.inner.stealRecycled()) != null; ) {
+                if ((b = source.recycle(b)) != null) batchType.recycle(b);
+            }
+            if (eager) source.tempEager();
+            this.inner = source;
             return true;
         }
         return false;
     }
 
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        ExceptionCondenser.closeAll(sourcesIt);
+    }
+
     /* --- --- --- implementations --- --- --- */
 
-    @Override public @This BIt<T> tempEager() {
-        source.tempEager();
-        return this;
-    }
-
-    @Override public Batch<T> nextBatch() {
+    @Override public @Nullable B nextBatch(@Nullable B b) {
         try {
             do {
-                Batch<T> batch = source.nextBatch();
-                if (batch.size > 0)
-                    return batch;
+                //noinspection DataFlowIssue inner != null
+                b = inner.nextBatch(b);
+                if (b != null)  {
+                    eager = false;
+                    return b;
+                }
             } while (nextSource());
             onTermination(null);
-            return Batch.terminal();
+            return null;
         } catch (Throwable t) {
             onTermination(t);
-            throw t;
+            throw new BItReadFailedException(this, t);
         }
-    }
-
-    @Override public boolean hasNext() {
-        try {
-            do {
-                if (source.hasNext()) return true;
-            } while (nextSource());
-            onTermination(null);
-            return false;
-        } catch (Throwable t) {
-            onTermination(t);
-            throw t;
-        }
-    }
-
-    @Override public T next() {
-        try {
-            return source.next();
-        } catch (Throwable t) {
-            onTermination(t);
-            throw t;
-        }
-    }
-    @Override public boolean recycle(Batch<T> batch) { return source.recycle(batch); }
-
-    @Override protected void cleanup(Throwable cause) {
-        if (cause == null)
-            return; // source.close() is a no-op and sourcesIt.hasNext() == false
-        Throwable error = null;
-        try {
-            source.close();
-        } catch (Throwable t) { error = t; }
-        while (sourcesIt.hasNext()) {
-            try {
-                sourcesIt.next().close();
-            } catch (Throwable t) {
-                if (error == null) error = t;
-                else               error.addSuppressed(t);
-            }
-        }
-        if      (error instanceof RuntimeException re) throw re;
-        else if (error instanceof Error             e) throw e;
     }
 
     @Override public String toString() { return toStringWithOperands(sources); }

@@ -66,6 +66,7 @@
     <module>fastersparql-hdt</module>
 <!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
+    <module>fastersparql-jcstress</module>
     <module>fastersparql-bom</module>
   </modules>
 

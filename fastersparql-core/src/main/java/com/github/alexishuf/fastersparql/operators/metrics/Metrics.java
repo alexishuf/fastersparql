@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.metrics;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 

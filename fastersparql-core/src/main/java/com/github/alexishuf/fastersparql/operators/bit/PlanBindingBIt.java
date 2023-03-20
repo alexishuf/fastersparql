@@ -1,18 +1,20 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.operators.BindingBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.util.BindingBIt;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-public final class PlanBindingBIt<R> extends BindingBIt<R> {
+public final class PlanBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
     private final Plan right;
     private final boolean canDedup;
 
-    public PlanBindingBIt(BIt<R> left, BindType bindType,
+    public PlanBindingBIt(BIt<B> left, BindType bindType,
                           Vars leftPublicVars, Plan right,
                           boolean canDedup, @Nullable Vars projection,
                           Metrics.@Nullable JoinMetrics joinMetrics) {
@@ -21,9 +23,9 @@ public final class PlanBindingBIt<R> extends BindingBIt<R> {
         this.canDedup = canDedup;
     }
 
-    @Override protected BIt<R> bind(R input) {
-        return right.bound(tempBinding.row(input)).execute(rowType, canDedup);
+    @Override protected BIt<B> bind(BatchBinding<B> binding) {
+        return right.bound(binding).execute(batchType, canDedup);
     }
 
-    @Override protected Object right() { return right; }
+    @Override protected Object rightUnbound() { return right; }
 }

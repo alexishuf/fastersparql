@@ -1,18 +1,27 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.lang.Character.MAX_RADIX;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -21,15 +30,15 @@ class DedupTest {
 
     private static final String[] DOMAINS = {"example.org", "www.informatik.de", "somewhere.com"};
     private static final String[] PATHS = {"/#", "/ns#", "/d/", "/ontology/", "/graph/"};
-    List<Term[]> generateRows(int n) {
-        List<Term[]> list = new ArrayList<>(n);
+    TermBatch generateRows(int n) {
+        TermBatch batch = Batch.TERM.create(n, 1, 0);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < n; i++) {
             sb.setLength(0);
             int type = i & 7;
             switch (type) {
                 case 0, 1, 2, 3 -> //IRI
-                    list.add(new Term[]{Term.valueOf(sb.append("<http://")
+                    batch.putRow(new Term[]{Term.valueOf(sb.append("<http://")
                                                        .append(DOMAINS[i % DOMAINS.length])
                                                        .append(PATHS[i % PATHS.length])
                                                        .append(Integer.toString(i, MAX_RADIX))
@@ -39,17 +48,17 @@ class DedupTest {
                     for (int j = 0; j < type; j++)
                         sb.append(Long.toString((long)(Math.random()*Long.MAX_VALUE), MAX_RADIX));
                     sb.append(type == 4 ? "\"" : "\"@en");
-                    list.add(new Term[]{Term.valueOf(sb)});
+                    batch.putRow(new Term[]{Term.valueOf(sb)});
                 }
                 case 7 -> { // typed literal
                     String lit = sb.append("\"").append(Math.random())
                                    .append("\"^^<http://www.w3.org/2001/XMLSchema#double>")
                                    .toString();
-                    list.add(new Term[]{Term.valueOf(lit)});
+                    batch.putRow(new Term[]{Term.valueOf(lit)});
                 }
             }
         }
-        return list;
+        return batch;
     }
 
     static Stream<Arguments> testGenerateRows() {
@@ -59,31 +68,36 @@ class DedupTest {
 
     @ParameterizedTest @MethodSource
     void testGenerateRows(int n) {
-        List<Term[]> list = generateRows(n);
-        Map<List<Term>, Integer> histogram = new HashMap<>();
-        list.stream().map(Arrays::asList)
-                .forEach(l -> histogram.put(l, 1+histogram.getOrDefault(l, 0)));
+        TermBatch batch = generateRows(n);
+        assertEquals(1, batch.cols);
+        assertEquals(n, batch.rows);
+
+        Map<Term, Integer> histogram = new HashMap<>();
+        for (int r = 0; r < batch.rows; r++) {
+            Term t = batch.get(r, 0);
+            histogram.put(t, 1+histogram.getOrDefault(t, 0));
+        }
         var duplicates = histogram.entrySet().stream().filter(e -> e.getValue() > 1)
                 .map(Map.Entry::getKey).toList();
         if (!duplicates.isEmpty())
             fail("duplicate rows: "+duplicates);
     }
 
-    private static final Function<Integer, Dedup<Term[]>> wFac = new Function<>() {
-        @Override public Dedup<Term[]> apply(Integer c) {
-            return new WeakDedup<>(RowType.ARRAY, c);
+    private static final Function<Integer, Dedup<TermBatch>> wFac = new Function<>() {
+        @Override public Dedup<TermBatch> apply(Integer c) {
+            return new WeakDedup<>(Batch.TERM, c, 1);
         }
         @Override public String toString() { return "WeakDedup"; }
     };
-    private static final Function<Integer, Dedup<Term[]>> sFac = new Function<>() {
-        @Override public Dedup<Term[]> apply(Integer c) {
-            return StrongDedup.strongForever(RowType.ARRAY, c);
+    private static final Function<Integer, Dedup<TermBatch>> sFac = new Function<>() {
+        @Override public Dedup<TermBatch> apply(Integer c) {
+            return StrongDedup.strongForever(Batch.TERM, c, 1);
         }
         @Override public String toString() { return "StrongDedup"; }
     };
-    private static final Function<Integer, Dedup<Term[]>> cFac = new Function<>() {
-        @Override public Dedup<Term[]> apply(Integer c) {
-            return new WeakCrossSourceDedup<>(RowType.ARRAY, c);
+    private static final Function<Integer, Dedup<TermBatch>> cFac = new Function<>() {
+        @Override public Dedup<TermBatch> apply(Integer c) {
+            return new WeakCrossSourceDedup<>(Batch.TERM, c, 1);
         }
         @Override public String toString() { return "WeakCrossSourceDedup"; }
     };
@@ -119,23 +133,23 @@ class DedupTest {
         return list.stream();
     }
 
-    private void work(D d, List<Term[]> rows, int thread, Dedup<Term[]> dedup,
+    private void work(D d, TermBatch batch, int thread, Dedup<TermBatch> dedup,
                       boolean strict) {
-        int chunk = rows.size()/d.threads;
-        int begin = thread*chunk, end = thread == d.threads-1 ? rows.size() : begin+chunk;
+        int chunk = batch.rows/d.threads;
+        int begin = thread*chunk, end = thread == d.threads-1 ? batch.rows : begin+chunk;
         int twiceFailures = 0;
         int repeatFailures = 0, repeatTries = 0;
         for (int i = begin; i < end; i++) {
             if (thread == 0)
-                assertFalse(dedup.contains(rows.get(i)));
-            assertFalse(dedup.isDuplicate(rows.get(i), thread));
+                assertFalse(dedup.contains(batch, i));
+            assertFalse(dedup.isDuplicate(batch, i, thread));
             if (thread == 0 && !dedup.isWeak() && d.threads == 1)
-                assertTrue(dedup.contains(rows.get(i)));
-            if (d.twice && !dedup.isDuplicate(rows.get(i), thread))
+                assertTrue(dedup.contains(batch, i));
+            if (d.twice && !dedup.isDuplicate(batch, i, thread))
                 twiceFailures++;
             if (d.repeatEvery > 0 && i % d.repeatEvery == 0 && i-d.repeatEvery >= begin) {
                 repeatTries++;
-                repeatFailures += !dedup.isDuplicate(rows.get(i - d.repeatEvery), thread) ? 1 : 0;
+                repeatFailures += !dedup.isDuplicate(batch, i - d.repeatEvery, thread) ? 1 : 0;
             }
         }
         if (strict) {
@@ -149,7 +163,7 @@ class DedupTest {
                 assertEquals(0, twiceFailures);
                 if (repeatTries > 100) {
                     double failRatio = repeatFailures / (double) repeatTries;
-                    double maxFailRatio = 1 - (d.capacity / (4.0 * rows.size()));
+                    double maxFailRatio = 1 - (d.capacity / (4.0 * batch.rows));
                     assertTrue(failRatio < maxFailRatio);
                 }
             }
@@ -157,10 +171,10 @@ class DedupTest {
     }
 
     @ParameterizedTest @MethodSource
-    void test(D d, Function<Integer, Dedup<Term[]>> factory, boolean strict) throws Exception {
-        List<Term[]> rows = generateRows(d.uniqueRows);
-        Dedup<Term[]> add = factory.apply(d.capacity);
-//        WeakDedup<Term[]> dedup = new WeakDedup<>(ArrayRow.STRING, d.capacity);
+    void test(D d, Function<Integer, Dedup<TermBatch>> factory, boolean strict) throws Exception {
+        TermBatch rows = generateRows(d.uniqueRows);
+        Dedup<TermBatch> add = factory.apply(d.capacity);
+//        WeakDedup<TermBatch> dedup = new WeakDedup<>(ArrayRow.STRING, d.capacity);
 //        RowHashWindowSet<String[]> dedup = new RowHashWindowSet<>(d.capacity, ArrayRow.STRING);
         if (d.threads > 1) {
             try (var e = Executors.newFixedThreadPool(d.threads)) {
@@ -178,23 +192,24 @@ class DedupTest {
 
     static Stream<Arguments> testHasAndAdd() {
         return Stream.of(
-                StrongDedup.strongUntil(RowType.ARRAY, 128),
-                new WeakDedup<>(RowType.ARRAY, 128),
-                new WeakCrossSourceDedup<>(RowType.ARRAY, 128)
+                StrongDedup.strongUntil(Batch.TERM, 128, 1),
+                new WeakDedup<>(Batch.TERM, 128, 1),
+                new WeakCrossSourceDedup<>(Batch.TERM, 128, 1)
         ).map(Arguments::arguments);
     }
 
     @ParameterizedTest @MethodSource
-    void testHasAndAdd(Dedup<Term[]> set) {
-        var terms = Term.termList("<a>", "_:bn", "23", "exns:bob", "\"alice\"@en");
-        for (Term t : terms) {
-            assertFalse(set.contains(new Term[]{t}));
-            assertTrue(set.add(new Term[]{t}));
-            assertTrue(set.contains(new Term[]{t}));
+    void testHasAndAdd(Dedup<TermBatch> set) {
+        var batch = TermBatch.rowMajor(termList("<a>", "_:bn", "23", "exns:bob", "\"alice\"@en"),
+                                       5, 1);
+        for (int r = 0; r < batch.rows; r++) {
+            assertFalse(set.contains(batch, r));
+            assertTrue(set.add(batch, r));
+            assertTrue(set.contains(batch, r));
         }
         if (!set.isWeak()) {
-            for (Term t : terms)
-                assertTrue(set.contains(new Term[]{t}));
+            for (int r = 0; r < batch.rows; r++)
+                assertTrue(set.contains(batch, r));
         }
     }
 

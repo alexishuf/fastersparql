@@ -2,10 +2,10 @@ package com.github.alexishuf.fastersparql.sparql.parser;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -21,6 +21,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
@@ -419,36 +420,37 @@ public class SparqlParser {
             require(')');
             int n = vars.size();
             require('{');
-            List<Term[]> rows = new ArrayList<>();
+            var batch = TERM.create(8, n, 0);
             while (poll('(')) {
-                Term[] row = new Term[n];
+                batch.beginPut();
                 for (int i = 0; i < n; i++)
-                    row[i] = pTerm();
-                rows.add(row);
+                    batch.putTerm(pTerm());
+                batch.commitPut();
                 require(')');
             }
             require('}');
-            return new Values(vars, rows);
+            return new Values(vars, batch);
         }
 
         private void mergeValues(Values v) {
-            if (this.values == null) {
+            if (this.values == null)
                 this.values = v;
-            } else {
-                Vars union = this.values.publicVars().union(v.publicVars());
-                if (union == this.values.publicVars()) {
-                    this.values.rows().addAll(v.rows());
-                } else {
-                    var rows = new ArrayList<Term[]>(this.values.rows().size() + v.rows().size());
-                    var projector = RowType.ARRAY.projector(union, values.publicVars());
-                    for (Term[] row : this.values.rows())
-                        rows.add(projector.projectInPlace(row));
-                    projector = RowType.ARRAY.projector(union, v.publicVars());
-                    for (Term[] row : v.rows())
-                        rows.add(projector.projectInPlace(row));
-                    this.values = new Values(union, rows);
-                }
-            }
+            else if (values.publicVars().equals(v.publicVars()))
+                this.values.values().put(v.values());
+            else
+                coldMergeValues(v);
+        }
+
+        private void coldMergeValues(Values v) {
+            Vars currentVars = this.values.publicVars();
+            Vars union = currentVars.union(v.publicVars());
+            TermBatch current = this.values.values();
+            var p = TERM.projector(union, currentVars);
+            current = p == null ? current : p.projectInPlace(current);
+            p = TERM.projector(union, v.publicVars());
+            if (p == null) current.put(v.values());
+            else           p.project(current, v.values());
+            this.values = new Values(union, current);
         }
 
         private static final byte[] UNION_u8 = "UNION".getBytes(UTF_8);

@@ -1,29 +1,20 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
-import com.github.alexishuf.fastersparql.model.row.NotRowType;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class FailedBItTest {
-    static Stream<Arguments> getters() {
-        return BatchGetter.all().stream().map(Arguments::arguments);
-    }
-
-    @ParameterizedTest @MethodSource("getters")
-    void test(BatchGetter getter) {
+    @Test void test() {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(NotRowType.INTEGER, ex)) {
+        try (var it = new FailedBIt<>(Batch.TERM, ex)) {
             it.minBatch(2);
             try {
-                getter.getBatch(it);
+                it.nextBatch(null);
                 fail("Expected exception to be thrown");
             } catch (Exception e) {
                 assertSame(ex, e);
@@ -31,13 +22,12 @@ class FailedBItTest {
         }
     }
 
-    @ParameterizedTest @MethodSource("getters")
-    void testWait(BatchGetter getter) {
+    @Test void testWait() {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(NotRowType.INTEGER, ex)) {
+        try (var it = new FailedBIt<>(Batch.TERM, ex)) {
             it.minWait(1, TimeUnit.MINUTES).maxWait(2, TimeUnit.MINUTES);
             try {
-                getter.getBatch(it);
+                it.nextBatch(null);
                 fail("Expected exception to be thrown");
             } catch (Exception e) {
                 assertSame(ex, e);

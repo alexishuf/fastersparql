@@ -17,9 +17,9 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.of;
 import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
-import static com.github.alexishuf.fastersparql.model.row.RowType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
@@ -83,7 +83,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         @Override public Term eval(Binding binding) {
             try (var it = filter.bound(binding).execute(COMPRESSED).eager()) {
-                return it.hasNext() ^ negate ? TRUE : FALSE;
+                return (it.nextBatch(null) != null) ^ negate ? TRUE : FALSE;
             }
         }
 

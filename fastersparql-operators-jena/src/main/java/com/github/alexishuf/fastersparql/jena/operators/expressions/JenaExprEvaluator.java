@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
-import com.github.alexishuf.fastersparql.model.row.RowType;
+
 import com.github.alexishuf.fastersparql.jena.JenaUtils;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.UnboundVariablesException;
@@ -36,10 +36,10 @@ public class JenaExprEvaluator<R> implements ExprEvaluator<R> {
     private final RowJenaBinding<R> binding;
 
 
-    public JenaExprEvaluator(String exprString, Expr expr, RowType<R, ?> rowType, List<String> varNames) {
+    public JenaExprEvaluator(String exprString, Expr expr, RowType<R, ?> batchType, List<String> varNames) {
         this.exprString = exprString;
         this.expr = expr;
-        this.binding = new RowJenaBinding<>(rowType, varNames);
+        this.binding = new RowJenaBinding<>(batchType, varNames);
     }
 
     @Override public String evaluate(R row) {

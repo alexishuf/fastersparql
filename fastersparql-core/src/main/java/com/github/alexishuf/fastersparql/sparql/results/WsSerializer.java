@@ -1,30 +1,27 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 
-public class WsSerializer<R> {
+public class WsSerializer<B extends Batch<B>> {
     private static final ByteRope PREFIX_CMD = new ByteRope("!prefix ");
 
-    private final RowType<R> rowType;
     private final int[] columns;
     private final ByteRope buffer = new ByteRope(128);
     private final ByteRope rowsBuffer = new ByteRope(128);
     private final WsPrefixAssigner prefixAssigner;
     private boolean headersDone;
 
-    public WsSerializer(RowType<R> rowType, Vars vars) {
-        this(rowType, vars, vars);
+    public WsSerializer(Vars vars) {
+        this(vars, vars);
     }
-    public WsSerializer(RowType<R> rowType, Vars vars, Vars subset) {
-        this.rowType = rowType;
+    public WsSerializer(Vars vars, Vars subset) {
         this.columns = new int[subset.size()];
         if (subset == vars) {
             for (int i = 0; i < columns.length; i++)
@@ -47,21 +44,20 @@ public class WsSerializer<R> {
         buffer.append('\n');
     }
 
-    public ByteRope serialize(Batch<R> batch) {
-        return serialize(batch, 0, batch.size);
+    public ByteRope serialize(B batch) {
+        return serialize(batch, 0, batch == null ? 0 : batch.rows);
     }
 
-    public ByteRope serialize(Batch<R> batch, int begin, int nRows) {
+    public ByteRope serialize(B batch, int begin, int nRows) {
         if (headersDone) buffer.clear();
         else             headersDone = true;
 
         if (this.columns.length == 0)
             return buffer.repeat((byte) '\n', nRows);
-        R[] a = batch.array;
         for (int end = begin+nRows; begin < end; ++begin) {
             // write terms to rowsBuffer, concurrently !prefix commands may be written to buffer
             for (int col : columns) {
-                rowType.writeSparql(rowsBuffer, a[begin], col, prefixAssigner);
+                batch.writeSparql(rowsBuffer, begin, col, prefixAssigner);
                 rowsBuffer.append('\t');
             }
             rowsBuffer.utf8[rowsBuffer.len-1] = '\n'; // replace last '\t' with line separator

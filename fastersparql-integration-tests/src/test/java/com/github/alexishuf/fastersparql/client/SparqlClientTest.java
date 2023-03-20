@@ -3,13 +3,16 @@ package com.github.alexishuf.fastersparql.client;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FusekiContainer;
 import com.github.alexishuf.fastersparql.HdtssContainer;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.model.*;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
@@ -30,12 +33,10 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.*;
-import static com.github.alexishuf.fastersparql.client.GraphData.graph;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.client.model.SparqlEndpoint.parse;
-import static com.github.alexishuf.fastersparql.model.row.RowType.*;
 import static com.github.alexishuf.fastersparql.util.Results.*;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 
 @SuppressWarnings("SameParameterValue")
 @Testcontainers
@@ -50,7 +51,8 @@ public class SparqlClientTest {
     private static final int REPETITIONS_PER_CLIENT = 2;
     private static final int THREADS_PER_CLIENT = Runtime.getRuntime().availableProcessors();
 
-    private static final List<RowType<?>> ROW_TYPES = List.of(LIST, ARRAY, COMPRESSED);
+    private static final List<BatchType<? extends Batch<?>>> BATCH_TYPES
+            = List.of(TERM, Batch.COMPRESSED);
 
     private static Stream<Arguments> resultsData() {
         return Stream.of(
@@ -143,21 +145,6 @@ public class SparqlClientTest {
             return set;
         }
 
-        public static ClientSet forGraph(String tag) {
-            ClientSet set = new ClientSet();
-            for (MediaType mt : RDFMediaTypes.DEFAULT_ACCEPTS) {
-                for (SparqlMethod method : SparqlMethod.VALUES) {
-                    if (method == SparqlMethod.WS) continue;
-                    var cfg = SparqlConfiguration.builder()
-                            .clearRdfAccepts().rdfAccept(mt)
-                            .clearMethods().method(method).build();
-                    var ep = FUSEKI.asEndpoint(cfg);
-                    set.add(FS.clientFor(ep, tag));
-                }
-            }
-            return set;
-        }
-
         public SparqlClient first() { return get(0); }
     }
 
@@ -176,7 +163,7 @@ public class SparqlClientTest {
                 Thread.sleep(1_000);
             }
         }
-        try (var tasks = new VThreadTaskSet("testUnreachable(" + tag + ")")) {
+        try (var tasks = TestTaskSet.virtualTaskSet("testUnreachable(" + tag + ")")) {
             for (SparqlMethod meth : SparqlMethod.values()) {
                 if (meth == SparqlMethod.WS) {
                     String uri = "ws://127.0.0.1:"+port+"/sparql";
@@ -195,10 +182,10 @@ public class SparqlClientTest {
 
     private void testUnreachable(String tag, String uri) {
         try (var client = FS.clientFor(parse(uri), tag)) {
-            var results = client.query(ARRAY, new OpaqueSparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
+            var results = client.query(TERM, new OpaqueSparqlQuery("SELECT * WHERE { ?x a <http://example.org/Dummy>}"));
             assertEquals(List.of("x"), results.vars());
             assertThrows(FSException.class,
-                    () -> assertEquals(0, results.nextBatch().size));
+                    () -> assertNull(results.nextBatch(null)));
         }
     }
 
@@ -209,9 +196,9 @@ public class SparqlClientTest {
 
     private void testServerEarlyClose(String tag, String uri) {
         try (var client = FS.clientFor(parse(uri), tag)) {
-            var it = client.query(ARRAY, new OpaqueSparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
+            var it = client.query(TERM, new OpaqueSparqlQuery("SELECT * WHERE { ?s ?p ?o}"));
             assertEquals(List.of("s", "p", "o"), it.vars());
-            assertThrows(FSException.class, () -> assertEquals(0, it.nextBatch().size));
+            assertThrows(FSException.class, () -> assertNull(it.nextBatch(null)));
         }
     }
 
@@ -233,7 +220,7 @@ public class SparqlClientTest {
                         log.error("Error before server close()", e);
                 }
             });
-            try (var tasks = new VThreadTaskSet("testServerEarlyClose(" + tag + ")")) {
+            try (var tasks = TestTaskSet.virtualTaskSet("testServerEarlyClose(" + tag + ")")) {
                 for (SparqlMethod meth : SparqlMethod.values()) {
                     if (meth == SparqlMethod.WS) {
                         String uri = "ws://127.0.0.1:"+port+"/sparql";
@@ -435,16 +422,16 @@ public class SparqlClientTest {
 
     private void test(Results d, String clientTag) throws Exception {
         try (var clients = ClientSet.forSelect(clientTag);
-             var tasks = new VThreadTaskSet(getClass().getSimpleName() + ".testBind")) {
+             var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName() + ".testBind")) {
             d.check(clients.first());
             for (SparqlClient client : clients) {
-                for (RowType<?> rt : ROW_TYPES)
+                for (var rt : BATCH_TYPES)
                     d.check(client, rt);
             }
             for (var client : clients) {
                 tasks.repeat(THREADS_PER_CLIENT, thread -> {
                     for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
-                        for (RowType<?> rt : ROW_TYPES)
+                        for (var rt : BATCH_TYPES)
                             d.check(client, rt);
                 });
             }
@@ -456,38 +443,38 @@ public class SparqlClientTest {
          test(data, "netty");
     }
 
-    private void testGraph(GraphData data, String tag) throws Exception {
-        try (var clients = ClientSet.forGraph(tag);
-             var tasks = new VThreadTaskSet(getClass().getSimpleName()+".testGraph")) {
-            data.assertExpected(clients.first());
-            for (SparqlClient client : clients) {
-                tasks.repeat(THREADS_PER_CLIENT, thread -> {
-                    for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
-                        data.assertExpected(client);
-                });
-            }
-        }
-    }
-
-    static Stream<Arguments> graphData() {
-        return Stream.of(
-                // only URIs
-                graph("CONSTRUCT {:Graph :hasPerson ?x} WHERE {?x ?p ?o}",
-                      ":Graph  :hasPerson  :Alice, :Eric, :Dave, :Harry, :Bob, :Charlie."),
-                //list names
-                graph("CONSTRUCT {:Graph :hasName ?x} WHERE {?s foaf:name ?x}",
-                      """
-                          :Graph  :hasName  "alice"@en-US, "bob"^^xsd:string, "charlie",
-                          "Dave\\nNewline", "Dave\\r\\nWindows"@en-US,
-                          "Eric\\r\\nNewline"@en, "Harry"."""),
-                //list ages
-                graph("CONSTRUCT {:Graph :hasAge ?x} WHERE {?s foaf:age ?x}",
-                      ":Graph  :hasAge  23, \"25\"^^xsd:int.")
-        ).map(Arguments::arguments);
-    }
-
-    @ParameterizedTest @MethodSource("graphData")
-    void testGraphNetty(GraphData data) throws Exception {
-        testGraph(data, "netty");
-    }
+//    private void testGraph(GraphData data, String tag) throws Exception {
+//        try (var clients = ClientSet.forGraph(tag);
+//             var tasks = new VThreadTaskSet(getClass().getSimpleName()+".testGraph")) {
+//            data.assertExpected(clients.first());
+//            for (SparqlClient client : clients) {
+//                tasks.repeat(THREADS_PER_CLIENT, thread -> {
+//                    for (int repetition = 0; repetition < REPETITIONS_PER_CLIENT; repetition++)
+//                        data.assertExpected(client);
+//                });
+//            }
+//        }
+//    }
+//
+//    static Stream<Arguments> graphData() {
+//        return Stream.of(
+//                // only URIs
+//                graph("CONSTRUCT {:Graph :hasPerson ?x} WHERE {?x ?p ?o}",
+//                      ":Graph  :hasPerson  :Alice, :Eric, :Dave, :Harry, :Bob, :Charlie."),
+//                //list names
+//                graph("CONSTRUCT {:Graph :hasName ?x} WHERE {?s foaf:name ?x}",
+//                      """
+//                          :Graph  :hasName  "alice"@en-US, "bob"^^xsd:string, "charlie",
+//                          "Dave\\nNewline", "Dave\\r\\nWindows"@en-US,
+//                          "Eric\\r\\nNewline"@en, "Harry"."""),
+//                //list ages
+//                graph("CONSTRUCT {:Graph :hasAge ?x} WHERE {?s foaf:age ?x}",
+//                      ":Graph  :hasAge  23, \"25\"^^xsd:int.")
+//        ).map(Arguments::arguments);
+//    }
+//
+//    @ParameterizedTest @MethodSource("graphData")
+//    void testGraphNetty(GraphData data) throws Exception {
+//        testGraph(data, "netty");
+//    }
 }

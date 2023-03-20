@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -73,12 +74,10 @@ public class DictionarySelector extends Selector {
 
     private IriImmutableSet fetch(SparqlClient client, OpaqueSparqlQuery query) {
         List<Term> iris = new ArrayList<>();
-        try (var it = client.query(RowType.ARRAY, query)) {
-            int n;
-            for (var b = it.nextBatch(); (n = b.size) > 0; b = it.nextBatch(b)) {
-                Term[][] a = b.array;
-                for (int i = 0; i < n; i++) {
-                    Term term = a[i][0];
+        try (var it = client.query(Batch.TERM, query)) {
+            for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
+                for (int r = 0, rows = b.rows; r < rows; r++) {
+                    Term term = b.get(r, 0);
                     if (term != null && term.isIri())
                         iris.add(term);
                 }
@@ -86,8 +85,6 @@ public class DictionarySelector extends Selector {
         }
         return new IriImmutableSet(iris);
     }
-
-    @Override public void close() { }
 
     @Override public void save(OutputStream out) throws IOException {
         out.write(TYPE_LINE_U8);

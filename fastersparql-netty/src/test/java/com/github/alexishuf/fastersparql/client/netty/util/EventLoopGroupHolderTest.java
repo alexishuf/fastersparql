@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import io.netty.channel.EventLoopGroup;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +18,7 @@ class EventLoopGroupHolderTest {
 
     @Test
     void test() throws Exception {
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
             tasks.add(this::doTestKeepAlive1Second);
             tasks.add(this::doTestNoKeepAlive);
             tasks.add(this::doTestConcurrency);

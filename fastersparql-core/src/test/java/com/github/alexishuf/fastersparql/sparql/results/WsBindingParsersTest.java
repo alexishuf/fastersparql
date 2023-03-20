@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -21,8 +22,9 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingDeque;
 
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
-import static com.github.alexishuf.fastersparql.model.row.RowType.LIST;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -103,33 +105,33 @@ public class WsBindingParsersTest {
         } catch (Throwable t) {
             parser.complete(t);
         } finally {
-            if (!parser.isComplete())
+            if (!parser.isCompleted())
                 parser.complete(null);
         }
         return null;
     }
 
     private @Nullable Object server(Results ex, Map<List<Term>, Results> bRow2Res,
-                                    BIt<List<Term>> serverIt, Mailbox clientMBox) {
+                                    BIt<TermBatch> serverIt, Mailbox clientMBox) {
         assertTrue(bRow2Res.values().stream().map(Results::vars).distinct().count() <= 1);
         var serverVars = bRow2Res.values().stream().map(Results::vars).distinct().findFirst()
                                  .orElse(ex.vars().minus(ex.bindingsVars()));
 
-        var serializer = new WsSerializer<>(LIST, serverVars);
-        int requested = ex.bindingsList().size() < 4 ? 23 : 2;
+        var serializer = new WsSerializer<TermBatch>(serverVars);
+//        int requested = ex.bindingsList().size() < 4 ? 23 : 2;
         int activeBinding = 0;
-        clientMBox.send("!bind-request "+requested+"\n");
-        for (var b = serverIt.nextBatch(); b.size > 0; b = serverIt.nextBatch(b)) {
-            for (int i = 0; i < b.size; i++, ++activeBinding) {
-                if (--requested == 0)
-                    clientMBox.send("!bind-request "+(++requested)+"\n");
-                var bResults = bRow2Res.get(b.array[i]);
-                assertNotNull(bResults, "no results defined for row " + b.array[i]);
+//        clientMBox.send("!bind-request "+requested+"\n");
+        for (TermBatch b = null; (b = serverIt.nextBatch(b)) != null;) {
+            for (int r = 0; r < b.rows; r++, ++activeBinding) {
+//                if (--requested == 0)
+//                    clientMBox.send("!bind-request "+(++requested)+"\n");
+                var bResults = bRow2Res.get(b.asList(r));
+                assertNotNull(bResults, "no results defined for row " + b.asList(r));
                 if (!bResults.isEmpty())
                     clientMBox.send("!active-binding "+activeBinding+"\n");
-                try (var bIt = bResults.asPlan().execute(LIST)) {
+                try (var bIt = bResults.asPlan().execute(TERM)) {
                     assertEquals(serverVars, bIt.vars());
-                    for (var bb = bIt.nextBatch(); bb.size > 0; bIt.nextBatch(bb))
+                    for (TermBatch bb = null; (bb = bIt.nextBatch(bb)) != null; )
                         clientMBox.send(serializer.serialize(bb));
                 }
             }
@@ -141,7 +143,7 @@ public class WsBindingParsersTest {
         clientMBox.send("!active-binding "+(activeBinding-1)+"\n");
         //client must ignore !bind-request after it finished sending bindings
 
-        clientMBox.send("!bind-request 997\n");
+//        clientMBox.send("!bind-request 997\n");
         clientMBox.send("!end\n");
         return null;
     }
@@ -158,12 +160,12 @@ public class WsBindingParsersTest {
         Mailbox serverMB = new Mailbox("server"), clientMB = new Mailbox("client");
         Thread serverFeeder = null, clientFeeder = null, server = null;
         try (var stuff = new AutoCloseableSet<>();
-             var clientCb = stuff.put(new SPSCBufferedBIt<>(LIST, ex.vars()));
-             var serverCb = stuff.put(new SPSCBufferedBIt<>(LIST, ex.bindingsVars()));
-             var clientParser = new WsClientParserBIt<>(serverMB::send, LIST,
+             var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxBatches()));
+             var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxBatches()));
+             var clientParser = new WsClientParserBIt<>(serverMB::send, TERM,
                                                         clientCb, ex.bindType(),
                                                         ex.bindingsBIt(), null, null);
-             var serverParser = new WsServerParserBIt<>(clientMB::send, LIST, serverCb)) {
+             var serverParser = new WsServerParserBIt<>(clientMB::send, TERM, serverCb)) {
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
             server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));

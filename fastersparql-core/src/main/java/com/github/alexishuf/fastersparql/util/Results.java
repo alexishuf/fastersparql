@@ -3,9 +3,11 @@ package com.github.alexishuf.fastersparql.util;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
-import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -13,8 +15,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
-import com.github.alexishuf.fastersparql.model.row.CompressedRow;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -29,7 +29,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.util.*;
 
-import static com.github.alexishuf.fastersparql.model.row.RowType.LIST;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static java.lang.Math.max;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -273,8 +273,8 @@ public final class Results {
 
     /** Create a copy of {@code this} that will send the given {@link SparqlQuery}
      *  (or {@link Rope}/{@link CharSequence} to be parsed as one) to
-     *  {@link SparqlClient#query(RowType, SparqlQuery)} or
-     *  {@link SparqlClient#query(RowType, SparqlQuery, BIt, BindType)}
+     *  {@link SparqlClient#query(BatchType, SparqlQuery)} or
+     *  {@link SparqlClient#query(BatchType, SparqlQuery, BIt, BindType)}
      *  on {@link Results#check(SparqlClient)}. */
     public <R> Results query(Object sparql) {
         SparqlQuery query;
@@ -314,7 +314,7 @@ public final class Results {
     }
 
     /** Create a copy of {@code this} that will send {@code bindType} to
-     *  {@link SparqlClient#query(RowType, SparqlQuery, BIt, BindType)} on
+     *  {@link SparqlClient#query(BatchType, SparqlQuery, BIt, BindType)} on
      *  {@link Results#check(SparqlClient)}. */
     public Results bindType(BindType bindType) {
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
@@ -357,14 +357,10 @@ public final class Results {
     public SparqlQuery      query()        { return query; }
     public List<List<Term>> expected()     { return expected; }
 
-    public BIt<List<Term>>  asBIt()        { return asPlan().execute(LIST); }
+    public BIt<TermBatch>   asBIt()        { return asPlan().execute(TERM); }
     public BindType         bindType()     { return bindType; }
     public boolean          hasBindings()  { return bindingsList != null; }
     public Vars             bindingsVars() { return bindingsVars; }
-
-    public Batch<List<Term>> expectedAsBatch() {//noinspection unchecked
-        return new Batch<List<Term>>(expected.toArray(List[]::new), expected.size());
-    }
 
     public Plan asPlan() {
         if (expectedError != null)
@@ -381,10 +377,10 @@ public final class Results {
         if (!hasBindings()) throw new UnsupportedOperationException("No bindings set");
         return bindingsList;
     }
-    public BIt<List<Term>>  bindingsBIt()  {
+    public BIt<TermBatch>  bindingsBIt()  {
         if (bindingsList == null)
-            return new EmptyBIt<>(LIST, bindingsVars);
-        return new IteratorBIt<>(bindingsList, LIST, bindingsVars);
+            return new EmptyBIt<>(TERM, bindingsVars);
+        return new IteratorBIt<>(bindingsList, TERM, bindingsVars);
     }
     public Results bindingsAsResults() {
         if (bindingsList == null || bindingsVars == null)
@@ -394,9 +390,9 @@ public final class Results {
 
     /* --- --- --- check() methods --- --- --- */
 
-    /** Equivalent to {@link Results#check(SparqlClient, RowType)} with {@link RowType#LIST}. */
+    /** Equivalent to {@link Results#check(SparqlClient, BatchType)} with {@link Batch#TERM}. */
     public void check(SparqlClient client) throws AssertionError {
-        check(client, LIST);
+        check(client, TERM);
     }
 
     /**
@@ -404,16 +400,17 @@ public final class Results {
      * (with bindings, if {@link Results#hasBindings()})  against client and receiving rows
      * using the given {@code rowType}.
      */
-    public <R> void check(SparqlClient client, RowType<R> rowType) throws AssertionError {
+    public <B extends Batch<B>> void check(SparqlClient client,
+                                           BatchType<B> batchType) throws AssertionError {
         if (query == null)
             throw new IllegalStateException("No query defined, cannot check(SparqlClient)");
         SparqlQuery query = this.query;
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
         if (bindingsList != null) {
-            check(client.query(rowType, query, rowType.convert(bindingsBIt()), bindType));
+            check(client.query(batchType, query, batchType.convert(bindingsBIt()), bindType));
         } else {
-            check(client.query(rowType, query));
+            check(client.query(batchType, query));
         }
     }
 
@@ -430,22 +427,23 @@ public final class Results {
 
     /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q)} */
     public void check(SparqlClient client, SparqlQuery q) throws AssertionError {
-        check(client.query(LIST, q));
+        check(client.query(TERM, q));
     }
 
     /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q, bindings, bindType)} */
-    public <R> void check(SparqlClient client, RowType<R> rowType, SparqlQuery q, BIt<R> bindings,
-                          BindType bindType) throws AssertionError {
-        check(client.query(rowType, q, bindings, bindType));
+    public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType,
+                                           SparqlQuery q, BIt<B> bindings,
+                                           BindType bindType) throws AssertionError {
+        check(client.query(batchType, q, bindings, bindType));
     }
 
     /** Equivalent to {@code check(((Plan)query()).execute())}. */
     public void check() {
         if (query == null)
             throw new IllegalArgumentException("no query() set for "+this);
-        BIt<List<Term>> it;
+        BIt<TermBatch> it;
         try {
-            it = ((Plan) query).execute(LIST);
+            it = ((Plan) query).execute(TERM);
         } catch (Throwable t) {
             var msg = "Cannot ((Plan)query).execute() for "+this+": "
                     + t.getClass().getSimpleName()
@@ -456,14 +454,14 @@ public final class Results {
     }
 
     /** Consume {@code it} and check the results (and any Throwable) against this {@link Results} spec */
-    public <R> void check(BIt<R> it) throws AssertionError {
+    public <B extends Batch<B>> void check(BIt<B> it) throws AssertionError {
         LinkedHashMap<List<Term>, Integer> ac = new LinkedHashMap<>(), ex = new LinkedHashMap<>();
         List<List<Term>> acList = new ArrayList<>();
         Throwable thrown = null;
         try {
-            for (var b = it.nextBatch(); b.size > 0; b = it.nextBatch(b)) {
-                for (int i = 0; i < b.size; i++)
-                    acList.add(normalizeRow(b.array[i]));
+            for (B b = null; (b = it.nextBatch(b)) != null; ) {
+                for (int i = 0; i < b.rows; i++)
+                    acList.add(normalizeRow(b, i));
             }
         } catch (Throwable t) { thrown = t; }
         count(ex, expected);
@@ -509,13 +507,19 @@ public final class Results {
         return sb.append('}').toString();
     }
 
-    @SuppressWarnings("unchecked")
+    public static List<Term> normalizeRow(Batch<?> batch, int row) {
+        ArrayList<Term> list = new ArrayList<>(batch.cols);
+        for (int c = 0; c < batch.cols; c++)
+            list.add(batch.get(row, c));
+        return list;
+    }
+
     public static List<Term> normalizeRow(Object row) {
         TermParser p = new TermParser();
         p.prefixMap = PREFIX_MAP;
         return switch (row) {
             case Collection<?> l -> {
-                if (l instanceof List<?> && l.stream().allMatch(o -> o == null || o instanceof Term))
+                if (l instanceof List<?> && l.stream().allMatch(o -> o == null || o instanceof Term)) //noinspection unchecked
                     yield (List<Term>) l;
                 var terms = new ArrayList<Term>();
                 for (Object o : l)
@@ -523,12 +527,13 @@ public final class Results {
                 yield terms;
             }
             case Term[] a -> asList(a);
-            case byte[] a -> {
-                var terms = new ArrayList<Term>();
-                CompressedRow rt = RowType.COMPRESSED;
-                for (int i = 0, cols = rt.columns(a); i < cols; i++)
-                    terms.add(rt.get(a, i));
-                yield terms;
+            case Batch<?> b -> {
+                if (b.rows != 1)
+                    throw new IllegalArgumentException("Cannot normalize non-singleton batch as row");
+                var list = new ArrayList<Term>(b.cols);
+                for (int c = 0; c < b.cols; c++)
+                    list.add(b.get(0, c));
+                yield list;
             }
             case int[] a -> {
                 var terms = new ArrayList<Term>();
@@ -547,6 +552,15 @@ public final class Results {
         };
     }
 
+    private static String toString(List<Term> row) {
+        var sb = new StringBuilder().append('[');
+        for (Term t : row)
+            sb.append(t == null ? "null" : t.toSparql()).append(", ");
+        sb.setLength(Math.max(1, sb.length()-2));
+        return sb.append(']').toString();
+
+    }
+
     private boolean checkDuplicates(LinkedHashMap<List<Term>, Integer> ac, LinkedHashMap<List<Term>, Integer> ex, StringBuilder sb) {
         return switch (duplicatesPolicy) {
             case REQUIRE_DEDUP -> {
@@ -555,7 +569,7 @@ public final class Results {
                     sb.append("Rows with duplicates:\n");
                     for (List<Term> row : duplicates) {
                         sb.append("  (").append(ac.get(row)).append(" duplicates)")
-                                        .append(LIST.toString(row)).append('\n');
+                                        .append(toString(row)).append('\n');
                     }
                 }
                 yield duplicates.isEmpty();
@@ -568,7 +582,7 @@ public final class Results {
                     for (List<Term> row : bad) {
                         sb.append("  (").append(ac.get(row)).append(" instances, expected ")
                                 .append(ex.getOrDefault(row, 0)).append(") ")
-                                .append(LIST.toString(row)).append('\n');
+                                .append(toString(row)).append('\n');
                     }
                 }
                 yield bad.isEmpty();
@@ -582,7 +596,7 @@ public final class Results {
                     for (List<Term> row : bad) {
                         sb.append("  (").append(ac.get(row)).append(", expected ")
                                 .append(ex.getOrDefault(row, 0)).append(") ")
-                                .append(LIST.toString(row)).append('\n');
+                                .append(toString(row)).append('\n');
                     }
                 }
                 yield bad.isEmpty();
@@ -597,7 +611,7 @@ public final class Results {
         if (!ok) {
             sb.append("Missing rows:\n");
             for (List<Term> row : missing)
-                sb.append("  ").append(row).append('\n');
+                sb.append("  ").append(toString(row)).append('\n');
         }
         return ok;
     }
@@ -609,7 +623,7 @@ public final class Results {
         if (!ok) {
             sb.append("Unexpected rows:\n");
             for (List<Term> row : unexpected)
-                sb.append("  ").append(LIST.toString(row)).append('\n');
+                sb.append("  ").append(toString(row)).append('\n');
         }
         return ok;
     }

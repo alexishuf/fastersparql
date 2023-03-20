@@ -524,7 +524,7 @@ public class RopeDict {
      * @return the new bucket at {@code buckets[bucket]}.
      */
     private static int[] swapBucket(int bucket, int @Nullable [] biggerBucket) {
-        spinlock.setOpaque(2);
+        spinlock.setRelease(2);
         int[] old = buckets[bucket];
         int required = old.length + (old.length >> 1);
         if (biggerBucket == null || biggerBucket.length < required)
@@ -556,7 +556,7 @@ public class RopeDict {
     private static void grow() {
         if (strings.length >= MAX_SIZE)
             throw new IllegalStateException("Cannot grow past MAX_SIZE");
-        spinlock.setOpaque(2); // makes threads stuck lock() park()
+        spinlock.setRelease(2); // make spinning threads park()
         //grow arrays
         strings = copyOf(RopeDict.strings, RopeDict.strings.length<<1);
         hashes = copyOf(hashes, hashes.length<<1);

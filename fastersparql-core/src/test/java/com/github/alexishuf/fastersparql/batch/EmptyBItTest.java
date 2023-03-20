@@ -1,45 +1,35 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.adapters.BatchGetter;
-import com.github.alexishuf.fastersparql.model.row.NotRowType;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.List;
-import java.util.stream.Stream;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.model.Vars;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static java.util.concurrent.TimeUnit.MINUTES;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.params.provider.Arguments.arguments;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class EmptyBItTest {
-    static Stream<Arguments> test() {
-        return Stream.of(1, 2, 3).flatMap(min
-                -> BatchGetter.all().stream().map(getter -> arguments(getter, min))
-        );
-    }
-
-    @ParameterizedTest @MethodSource
-    void test(BatchGetter getter, int min) {
-        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
-            assertEquals(List.of(), getter.getList(it.minBatch(min)));
+    @ParameterizedTest @ValueSource(ints = {1, 2, 3})
+    void test(int min) {
+        try (var it = new EmptyBIt<>(Batch.TERM, Vars.of("x"))) {
+            assertNull(it.minBatch(min).nextBatch(null));
         }
     }
 
-    @ParameterizedTest() @MethodSource("test")
-    void testMinWait(BatchGetter getter, int minBatch) {
-        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
+    @ParameterizedTest @ValueSource(ints = {1, 2, 3})
+    void testMinWait(int minBatch) {
+        try (var it = new EmptyBIt<>(Batch.TERM, Vars.of("x"))) {
             it.minBatch(minBatch).minWait(2, MINUTES);
-            assertEquals(List.of(), getter.getList(it));
+            assertNull(it.nextBatch(null));
         }
     }
 
-    @ParameterizedTest() @MethodSource("test")
-    void testMaxWait(BatchGetter getter, int minBatch) {
-        try (var it = new EmptyBIt<>(NotRowType.INTEGER)) {
+    @ParameterizedTest @ValueSource(ints = {1, 2, 3})
+    void testMaxWait(int minBatch) {
+        try (var it = new EmptyBIt<>(Batch.TERM, Vars.of("x"))) {
             it.minBatch(minBatch).minWait(1, MINUTES).maxWait(2, MINUTES);
-            assertEquals(List.of(), getter.getList(it));
+            assertNull(it.nextBatch(null));
         }
     }
 }

@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
@@ -16,7 +17,7 @@ import java.util.ArrayDeque;
 import static java.lang.String.format;
 import static java.lang.String.join;
 
-public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
+public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B> {
     private @Nullable ByteRope partial = null, allocPartial = null;
     private final ArrayDeque<JsonState> jsonStack = new ArrayDeque<>();
     private final ArrayDeque<SparqlState> sparqlStack = new ArrayDeque<>();
@@ -30,21 +31,23 @@ public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
 
     public static final class JsonFactory implements Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.JSON; }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars) {
-            return new JsonParserBIt<>(rowType, vars);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
+            return new JsonParserBIt<>(batchType, vars, maxBatches);
         }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> dst) {
-            return new JsonParserBIt<>(rowType, dst);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
+            return new JsonParserBIt<>(batchType, destination);
         }
     }
 
-    public JsonParserBIt(RowType<R> rowType, Vars vars) {
-        super(rowType, vars);
+    public JsonParserBIt(BatchType<B> batchType, Vars vars, int maxBatches) {
+        super(batchType, vars, maxBatches);
         push(SparqlState.ROOT);
     }
 
-    public JsonParserBIt(RowType<R> rowType, CallbackBIt<R> destination) {
-        super(rowType, destination);
+    public JsonParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
+        super(batchType, destination);
         push(SparqlState.ROOT);
     }
 
@@ -61,7 +64,7 @@ public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
     }
 
     @Override public void complete(@Nullable Throwable error) {
-        if (error == null && !isComplete() && !hadSparqlProperties)
+        if (error == null && !terminated && !hadSparqlProperties)
             error = new InvalidSparqlResultsException("No \"results\" object nor \"boolean\" value in JSON");
         super.complete(error);
     }
@@ -145,7 +148,7 @@ public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
         return e;
     }
 
-    private void emit() { feed(builder.build()); }
+    private void emit() { emitRowClear(); }
 
     /* --- --- --- SPARQL-level parsing --- --- --- */
 
@@ -273,7 +276,7 @@ public final class JsonParserBIt<R> extends ResultsParserBIt<R> {
                         }
                         default -> throw new UnsupportedOperationException();
                     };
-                    p.builder.set(p.column, term);
+                    p.row[p.column] = term;
                 }
                 case BINDING_ROW -> p.emit();
                 case VARS, BOOLEAN, BINDINGS, BINDING_VALUE_TYPE,

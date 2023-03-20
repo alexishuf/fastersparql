@@ -2,12 +2,13 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -49,7 +50,9 @@ class WsClientParserBItTest extends ResultsParserTest {
 
                 // 2 columns
                 arguments(results("?x", "?y"), "?x\t?y\n!end\n"),
-                arguments(results("?x", "?y", "_:x1", null, null, "_:y2"),
+                arguments(results("?x",  "?y",
+                                 "_:x1", null,
+                                 null,   "_:y2"),
                           "?x\t?y\n_:x1\t\n\t_:y2\n!end\n"),
                 arguments(results("?x", "?y", "_:x1", null, null, "_:y2"),
                           "?x\t?y\n_:x1\t\n\t_:y2"),
@@ -97,24 +100,24 @@ class WsClientParserBItTest extends ResultsParserTest {
         if (in.contains("!active-binding") || in.contains("!bind-request")) {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars) {
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, rowType, vars, expected.bindType(), (BIt<R>) expected.bindingsBIt(), null, null);
+                    return new WsClientParserBIt<>(frameSender, batchType, vars, expected.bindType(), (BIt<B>) expected.bindingsBIt(), null, null, maxBatches);
                 }
                 @Override
-                public <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> destination) {
+                public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, rowType, destination, expected.bindType(), (BIt<R>) expected.bindingsBIt(), null, null);
+                    return new WsClientParserBIt<>(frameSender, batchType, destination, expected.bindType(), (BIt<B>) expected.bindingsBIt(), null, null);
                 }
             };
         } else {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars) {
-                    return new WsClientParserBIt<>(frameSender, rowType, vars);
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
+                    return new WsClientParserBIt<>(frameSender, batchType, vars, maxBatches);
                 }
-                @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> destination) {
-                    return new WsClientParserBIt<>(frameSender, rowType, destination);
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
+                    return new WsClientParserBIt<>(frameSender, batchType, destination);
                 }
             };
         }

@@ -1,9 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.Batch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -84,7 +83,7 @@ class WsSerializerTest {
         );
 
         List<Arguments> args = new ArrayList<>();
-        for (RowType<?> rt : List.of(RowType.ARRAY, RowType.LIST, RowType.COMPRESSED)) {
+        for (BatchType<?> rt : List.of(Batch.TERM, Batch.TERM, Batch.COMPRESSED)) {
             for (D d : list)
                 args.add(arguments(d.results, d.expected, rt));
         }
@@ -92,33 +91,33 @@ class WsSerializerTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testSerialize(Results in, String expected, RowType<Object> rowType) {
-        var serializer = new WsSerializer<>(rowType, in.vars());
-        //noinspection unchecked
-        var b = new Batch<>((Class<List<Term>>) (Object) List.class, 1);
+    <B extends Batch<B>> void testSerialize(Results in, String expected,
+                                            BatchType<B> batchType) {
+        var serializer = new WsSerializer<B>(in.vars());
+        var b = Batch.TERM.createSingleton(in.vars().size());
         var rows = in.expected();
         var actual = new StringBuilder();
 
         //feed single batch with first row
         if (!rows.isEmpty()) {
-            b.add(rows.get(0));
-            actual.append(serializer.serialize(rowType.convert(RowType.LIST, b)));
+            b.putRow(rows.get(0));
+            actual.append(serializer.serialize(batchType.convert(b)));
         }
         // feed a batch with rows [1,rows.size()-1)
         if (rows.size() > 2) {
             b.clear();
             for (int i = 1; i < rows.size()-1; i++)
-                b.add(rows.get(i));
-            actual.append(serializer.serialize(rowType.convert(RowType.LIST, b)));
+                b.putRow(rows.get(i));
+            actual.append(serializer.serialize(batchType.convert(b)));
         }
         // feed a batch with the last row if it is not also the first
         if (rows.size() > 1) {
             b.clear();
-            b.add(rows.get(rows.size()-1));
-            actual.append(serializer.serialize(rowType.convert(RowType.LIST, b)));
+            b.putRow(rows.get(rows.size()-1));
+            actual.append(serializer.serialize(batchType.convert(b)));
         }
         // feeding a terminal batch has no effect
-        actual.append(serializer.serialize(Batch.terminal()));
+        actual.append(serializer.serialize(null));
         actual.append("!end\n");
 
         assertEquals(expected, actual.toString());

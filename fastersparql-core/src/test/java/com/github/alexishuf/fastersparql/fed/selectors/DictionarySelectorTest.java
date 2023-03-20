@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.fed.selectors;
 import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.util.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

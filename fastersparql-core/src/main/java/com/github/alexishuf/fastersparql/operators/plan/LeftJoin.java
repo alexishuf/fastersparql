@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -20,8 +21,9 @@ public final class LeftJoin extends Plan {
     }
 
     @Override
-    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
-        return NativeBind.preferNative(rt, this, binding, canDedup);
+    public <B extends Batch<B>>
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+        return NativeBind.preferNative(bt, this, binding, canDedup);
     }
 
     @Override public boolean equals(Object obj) {

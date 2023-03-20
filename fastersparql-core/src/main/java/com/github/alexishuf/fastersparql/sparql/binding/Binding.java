@@ -102,8 +102,10 @@ public abstract class Binding {
 
     @Override public final String toString() {
         var sb = new StringBuilder().append('{');
-        for (int i = 0; i < vars.size(); i++)
-            sb.append(vars.get(i)).append('=').append(get(i)).append(", ");
+        for (int i = 0; i < vars.size(); i++) {
+            Term t = get(i);
+            sb.append(vars.get(i)).append('=').append(t==null ? "null" : t.toSparql()).append(", ");
+        }
         sb.setLength(Math.max(1, sb.length()-2));
         return sb.append('}').toString();
     }

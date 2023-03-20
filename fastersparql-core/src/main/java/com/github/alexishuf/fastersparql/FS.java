@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql;
 
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -20,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.client.UnboundSparqlClient.UNBOUND_CLIENT;
 import static com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.EMPTY;
 
@@ -130,28 +132,23 @@ public class FS {
         return new Query(query, UNBOUND_CLIENT);
     }
 
-    public static Values values(Vars vars, Iterable<?> rows) {
-        List<Term[]> sanitized;
-        boolean bad = !(rows instanceof List<?>);
-        if (!bad) {
-            for (Object o : rows) {
-                if (!(o instanceof Term[])) { bad = true; break; }
+    public static Values values(Vars vars, Collection<?> rows) {
+        TermBatch b;
+        int cols = vars.size(), rowsSize = rows.size();
+        if (rowsSize == 0) {
+            b = null;
+        } else {
+            b = TERM.create(rows.size(), cols, 0);
+            for (Object row : rows) {
+                switch (row) {
+                    case Term[] a -> b.putRow(a);
+                    case Collection<?> c -> b.putRow(c);
+                    case null -> throw new IllegalArgumentException("Unexpected null in rows");
+                    default -> throw new UnsupportedOperationException("Unexpected row type");
+                }
             }
         }
-        if (bad) {
-            sanitized = new ArrayList<>(rows instanceof Collection<?> c ? c.size() : 10);
-            for (var o : rows) { //noinspection unchecked
-                List<Term> list = (List<Term>) o;
-                assert list.size() == vars.size() : "Row columns != vars.size()";
-                sanitized.add(list.toArray(new Term[0]));
-            }
-        } else {//noinspection unchecked
-            sanitized = (List<Term[]>) rows;
-            assert sanitized.stream().allMatch(r -> r.length == vars.size())
-                    : "Rows with columns != vars.size()";
-
-        }
-        return new Values(vars, sanitized);
+        return new Values(vars, b);
     }
 
     public static Plan join(Plan left, Plan right) {

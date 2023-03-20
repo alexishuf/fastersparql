@@ -1,13 +1,13 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 
-import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResultsParserTest {
@@ -82,7 +83,7 @@ class ResultsParserTest {
         }
     }
 
-    private static final List<RopeFac> ROPE_FACS = List.of(
+    private static final List<RopeFac> ROPE_FACTORIES = List.of(
             new ByteRopeFac(),
             new BufferRopeFac(),
             new OffsetByteRopeFac()
@@ -90,24 +91,24 @@ class ResultsParserTest {
 
     protected void doTestSingleFeed(ResultsParserBIt.Factory factory, Results expected,
                                     Rope input) throws Exception {
-        for (RopeFac ropeFac : ROPE_FACS)
+        for (RopeFac ropeFac : ROPE_FACTORIES)
             singleFeed(factory, expected, input, ropeFac);
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
-            for (RopeFac ropeFac : ROPE_FACS)
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
+            for (RopeFac ropeFac : ROPE_FACTORIES)
                 tasks.repeat(REPETITIONS, () -> singleFeed(factory, expected, input, ropeFac));
         }
     }
 
     protected void doTest(ResultsParserBIt.Factory factory, Results expected,
                           Rope input) throws Exception {
-        for (RopeFac ropeFac : ROPE_FACS) {
+        for (RopeFac ropeFac : ROPE_FACTORIES) {
             singleFeed(factory, expected, input, ropeFac);
             byteFeed(factory, expected, input, ropeFac);
             wsFeed(factory, expected, input, ropeFac);
             lineFeed(factory, expected, input, ropeFac);
         }
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
-            for (RopeFac ropeFac : ROPE_FACS) {
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
+            for (RopeFac ropeFac : ROPE_FACTORIES) {
                 tasks.repeat(REPETITIONS, () -> singleFeed(factory, expected, input, ropeFac));
                 tasks.repeat(REPETITIONS, () -> byteFeed(factory, expected, input, ropeFac));
                 tasks.repeat(REPETITIONS, () -> wsFeed(factory, expected, input, ropeFac));
@@ -117,15 +118,15 @@ class ResultsParserTest {
     }
 
     private void singleFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
-             var parser = factory.create(RowType.LIST, dst)) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+             var parser = factory.create(Batch.TERM, dst)) {
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
                 parser.feedShared(input);
                 ropeFac.invalidate(copy);
             } catch (Throwable ignored) {
             } finally {
-                if (!parser.isComplete())
+                if (!parser.isCompleted())
                     parser.complete(null);
             }
             ex.check(dst);
@@ -133,8 +134,8 @@ class ResultsParserTest {
     }
 
     private void byteFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
-             var parser = factory.create(RowType.LIST, dst)) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+             var parser = factory.create(Batch.TERM, dst)) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, len = input.len(); i < len; i++) {
@@ -154,7 +155,7 @@ class ResultsParserTest {
 
     private void wsFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                         RopeFac ropeFac) {
-        try (var parser = factory.create(RowType.LIST, ex.vars())) {
+        try (var parser = factory.create(Batch.TERM, ex.vars(), queueMaxBatches())) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {
@@ -165,7 +166,7 @@ class ResultsParserTest {
                     }
                 } catch (Throwable ignored) {
                 } finally {
-                    if (!parser.isComplete())
+                    if (!parser.isCompleted())
                         parser.complete(null);
                 }
             });
@@ -175,8 +176,8 @@ class ResultsParserTest {
 
     private void lineFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
-        try (var dst = new SPSCBufferedBIt<>(RowType.LIST, ex.vars());
-             var parser = factory.create(RowType.LIST, dst)) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+             var parser = factory.create(Batch.TERM, dst)) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {
@@ -191,7 +192,7 @@ class ResultsParserTest {
                         parser.complete(null);
                 }
             });
-            ex.check(parser);
+            ex.check(dst);
         }
     }
 

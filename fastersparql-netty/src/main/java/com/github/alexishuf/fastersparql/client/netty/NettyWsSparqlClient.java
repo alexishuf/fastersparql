@@ -1,7 +1,10 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
@@ -9,7 +12,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
-import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBufferedBIt;
+import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -22,7 +25,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
@@ -85,19 +87,20 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    public <R> BIt<R> query(RowType<R> rowType, SparqlQuery sparql) {
+    public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         if (sparql.isGraph())
             throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
         try {
-            return new WsBIt<>(rowType, sparql);
+            return new WsBIt<>(batchType, sparql);
         } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
     }
 
     @Override
-    public <R> BIt<R> query(RowType<R> rowType, SparqlQuery sp, @Nullable BIt<R> bindings,
-                            @Nullable BindType bindType, @Nullable JoinMetrics metrics) {
+    public <B extends Batch<B>>
+    BIt<B> query(BatchType<B> batchType, SparqlQuery sp, @Nullable BIt<B> bindings,
+                 @Nullable BindType bindType, @Nullable JoinMetrics metrics) {
         if (bindings == null || bindings instanceof EmptyBIt)
-            return query(rowType, sp);
+            return query(batchType, sp);
         if (bindType == null)
             throw new FSInvalidArgument("bindType is null with non-null bindings");
         if (sp.isGraph())
@@ -108,7 +111,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             else if (!bindType.isJoin())
                 sp = sp.toAsk();
             Vars exVars = bindType.resultVars(bindings.vars(), sp.publicVars());
-            return new WsBIt<>(rowType, sp, exVars, bindType, bindings, metrics);
+            return new WsBIt<>(batchType, sp, exVars, bindType, bindings, metrics);
         } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
     }
 
@@ -128,41 +131,40 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     /* --- --- --- BIt implementations --- --- --- */
 
-    private class WsBIt<R> extends NettySPSCBufferedBIt<R> implements NettyWsClientHandler, WsFrameSender {
+    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> implements NettyWsClientHandler, WsFrameSender {
         private final Rope requestMessage;
-        private final WsClientParserBIt<R> parser;
+        private final WsClientParserBIt<B> parser;
         private boolean gotFrames = false;
         private final BufferRope bufferRope = new BufferRope(ByteBuffer.wrap(ByteRope.EMPTY.utf8));
         protected @MonotonicNonNull ChannelRecycler recycler;
 
-        public WsBIt(RowType<R> rowType, SparqlQuery query) {
-            super(rowType, query.publicVars());
+        public WsBIt(BatchType<B> batchType, SparqlQuery query) {
+            super(batchType, query.publicVars(), FSProperties.queueMaxBatches());
             this.requestMessage = createRequest(QUERY_VERB, query.sparql());
-            this.parser = new WsClientParserBIt<>(this, rowType, this);
+            this.parser = new WsClientParserBIt<>(this, batchType, this);
+            request();
         }
 
-        public WsBIt(RowType<R> rowType, SparqlQuery query, Vars outVars, BindType bindType, BIt<R> bindings,
+        public WsBIt(BatchType<B> batchType, SparqlQuery query, Vars outVars, BindType bindType, BIt<B> bindings,
                      @Nullable JoinMetrics metrics) {
-            super(rowType, outVars);
+            super(batchType, outVars, FSProperties.queueMaxBatches());
             this.requestMessage = createRequest(BIND_VERB, query.sparql());
             var usefulBindingVars = bindings.vars().intersection(query.allVars());
-            this.parser = new WsClientParserBIt<>(this, rowType, this, bindType, bindings, usefulBindingVars, metrics);
+            this.parser = new WsClientParserBIt<>(this, batchType, this, bindType, bindings, usefulBindingVars, metrics);
+            request();
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
 
         @Override public void sendFrame(Rope content) {
-            Channel ch;
-            lock();
-            try {
-                ch = channel;
-                if (channel == null)
-                    throw new IllegalStateException("sendFrame() before attach()");
-                if (terminated) {
-                    log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, error);
-                    return;
-                }
-            } finally { unlock(); }
+            if (terminated) {
+                //noinspection RedundantCast
+                log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, (Object)error);
+                return;
+            }
+            final Channel ch = this.channel;
+            if (ch == null)
+                throw new IllegalStateException("sendFrame() before attach()");
             ch.writeAndFlush(NettyRopeUtils.wrap(content, UTF_8));
         }
 
@@ -176,32 +178,27 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert channel == null : "previous attach()";
-            lock();
-            try {
-                this.recycler = recycler;
-                if (terminated) {
-                    this.recycler.recycle(ctx.channel());
-                    return;
-                }
-                this.channel = ctx.channel();
-            } finally { unlock(); }
+            this.recycler = recycler;
+            if (isCompleted()) {
+                this.recycler.recycle(ctx.channel());
+                return;
+            }
+            this.channel = ctx.channel();
             ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
         }
 
         @Override public void detach(Throwable cause) {
-            if (!terminated) // flush parser, which may call end() or onError(String)
+            if (!isCompleted()) { // flush parser, which may call end() or onError(String)
                 parser.complete(null);
-            lock();
-            try {
-                if (!terminated) {
+                if (!isCompleted()) {
                     if (cause == null) {
-                        var suffix = gotFrames ? "!end but after " : "" + "starting a response";
-                        var ex = new FSServerException("Connection closed before " + suffix);
-                        cause = ex.shouldRetry(!gotFrames);
+                        cause = new FSServerException("Connection closed before "
+                                + (gotFrames ? "!end but after " : "") + "starting a response"
+                        ).shouldRetry(!gotFrames);
                     }
                     complete(cause);
                 }
-            } finally { unlock(); }
+            }
         }
 
         @Override public void frame(WebSocketFrame frame) {

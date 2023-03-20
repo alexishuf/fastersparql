@@ -150,7 +150,7 @@ public final class Term extends Rope implements Expr {
             XSD_UNSIGNEDSHORT
     };
 
-    private static final Term[] FREQ_XSD_DT = new Term[] {
+    public static final Term[] FREQ_XSD_DT = new Term[] {
             XSD_INTEGER,
             XSD_DECIMAL,
             XSD_BOOLEAN,
@@ -190,7 +190,7 @@ public final class Term extends Rope implements Expr {
             XSD_TOKEN
     };
 
-    private static final int[] FREQ_XSD_DT_ID = {
+    public static final int[] FREQ_XSD_DT_ID = {
             DT_integer,
             DT_decimal,
             DT_BOOLEAN,
@@ -271,7 +271,7 @@ public final class Term extends Rope implements Expr {
             for (int i1 = 0; i1 < INTERN_W; i1++) {
                 char c1 = (char) INTERN_ALPHABET[i1];
                 t = new Term(0, ("\""+c0+c1+"\"").getBytes(UTF_8));
-                l = (""+c0+c1+">").getBytes(UTF_8);
+                l = (String.valueOf(c0)+c1+">").getBytes(UTF_8);
                 PLAIN[1][internIdx(t.local, 1, 2)] = t;
                 IRI_LOCALS[1][internIdx(l, 0, 2)] = l;
             }
@@ -529,6 +529,7 @@ public final class Term extends Rope implements Expr {
     public static Term make(int flaggedId, byte[] src, int off, int len) {
         int end = off+len;
         if (flaggedId == 0 || flaggedId == (DT_string|SUFFIX_MASK)) {
+            if (len == 0) return null;
             return src[end-1] == '"' && len <= 4 ? internPlain(src, off, end)
                                                  : new Term(0, copyOfRange(src, off, end));
         } else if (flaggedId == (DT_BOOLEAN|SUFFIX_MASK)) {
@@ -723,26 +724,6 @@ public final class Term extends Rope implements Expr {
     public static List<@Nullable Term> termList(CharSequence... terms) { return Arrays.asList(array((Object[]) terms)); }
 
     /**
-     * Convert each non-null {@code item} into a {@link Term} representing a literal of the
-     * given {@code datatype} where {@code items[i].toString()} is used as the lexical form of
-     * the literal.
-     */
-    public static @Nullable Term[] literalArray(Term datatype, Object... items) {
-        int dtId = datatype.asKnownDatatypeId();
-        if (items.length == 1 && items[0] instanceof Collection<?> coll)
-            items = coll.toArray();
-        Term[] array = new Term[items.length];
-        for (int i = 0; i < items.length; i++)
-            array[i] = items[i] == null ? null : typed(items[i].toString(), dtId);
-        return array;
-    }
-
-    /** Equivalent to {@link Term#literalArray(Term, Object...)} but returns a {@link List} instead. */
-    public static List<@Nullable Term> literalList(Term datatype, Object... items) {
-        return Arrays.asList(literalArray(datatype, items));
-    }
-
-    /**
      * Create a plain string whose lexical for is {@code escapedLex}, which MAY be already
      * surrounded by {@code '"'}s.
      */
@@ -925,7 +906,6 @@ public final class Term extends Rope implements Expr {
     /**
      * Get the (explicit or implicit) datatype IRI or {@code null} if this is not a literal.
      */
-
     public @Nullable Term datatypeTerm() {
         if (flaggedDictId > 0 || local.length == 0 || local[0] != '"') {
             return null;
@@ -990,6 +970,16 @@ public final class Term extends Rope implements Expr {
         }
         return new Term(flaggedDictId, l);
     }
+
+    public static boolean isNumericDatatype(int maybeFlaggedId) {
+        int id = maybeFlaggedId & 0x7fffffff;
+        return id == DT_INT || id == DT_unsignedShort || id == DT_DOUBLE || id == DT_FLOAT ||
+               id == DT_integer || id == DT_positiveInteger || id == DT_nonPositiveInteger ||
+               id == DT_nonNegativeInteger || id == DT_unsignedLong || id == DT_decimal ||
+               id == DT_LONG || id == DT_unsignedInt || id == DT_SHORT || id == DT_unsignedByte ||
+               id == DT_BYTE;
+    }
+
 
     /** Get the {@link Number} for this term, or {@code null} if it is not a number. */
     public Number asNumber() {

@@ -1,15 +1,17 @@
 package com.github.alexishuf.fastersparql.client;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
+import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -20,7 +22,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static com.github.alexishuf.fastersparql.model.row.RowType.LIST;
 import static com.github.alexishuf.fastersparql.util.Results.negativeResult;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 
@@ -66,7 +67,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             var rows = results(bindingsVars, (Object[]) binding).expected();
             if (rows.size() != 1)
                 throw new IllegalArgumentException("Expected 1 binding, got "+rows.size());
-            var bound = unboundQuery.bound(new RowBinding<>(LIST, bindingsVars).row(rows.get(0)));
+            var bound = unboundQuery.bound(new ArrayBinding(bindingsVars, rows.get(0)));
             return new BoundAnswersStage2(this, bound);
         }
 
@@ -107,8 +108,9 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     @Override public void close() { }
 
     @Override
-    public <R> BIt<R> query(RowType<R> rowType, SparqlQuery sparql, @Nullable BIt<R> bindings,
-                            @Nullable BindType type, @Nullable JoinMetrics metrics) {
+    public <B extends Batch<B>>
+    BIt<B> query(BatchType<B> batchType, SparqlQuery sparql, @Nullable BIt<B> bindings,
+                 @Nullable BindType type, @Nullable JoinMetrics metrics) {
         Results expected = qry2results.get(sparql);
         if (expected == null)
             throw new AssertionError("Unexpected query "+sparql);
@@ -119,19 +121,23 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 throw error("Expected bindings, got null");
             else if (type != null)
                 throw new IllegalArgumentException("null bindings with type == "+type);
-            return rowType.convert(expected.asBIt());
+            return batchType.convert(expected.asBIt());
         } else if (!expected.hasBindings()) {
             throw error("Did not expected bindings for "+sparql);
         } else if (type == null) {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var cb = new SPSCBufferedBIt<>(rowType, expected.vars());
+            var cb = new SPSCBIt<>(batchType, expected.vars(), FSProperties.queueMaxBatches());
             Thread.startVirtualThread(() -> {
                 try {
                     exBindings.check(bindings);
-                    rowType.convert(expected.asBIt()).forEachRemaining(cb::feed);
-                    cb.complete(null);
+                    try (BIt<B> it = batchType.convert(expected.asBIt())) {
+                        for (B b = null; (b = it.nextBatch(b)) != null; )
+                            b = cb.offer(b);
+                    } finally {
+                        cb.complete(null);
+                    }
                 } catch (Throwable t) {
                     cb.complete(t);
                 }
@@ -140,7 +146,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         } else {
             Vars unboundVars = expected.vars().minus(bindings.vars());
             for (List<Term> bindingRow : exBindings.expected()) {
-                var bound = sparql.bound(new RowBinding<>(LIST, exBindings.vars()).row(bindingRow));
+                var bound = sparql.bound(new ArrayBinding(exBindings.vars(), bindingRow));
                 Results boundExpected = qry2results.get(bound);
                 if (boundExpected == null)
                     throw error("No result defined for bound query "+bound);

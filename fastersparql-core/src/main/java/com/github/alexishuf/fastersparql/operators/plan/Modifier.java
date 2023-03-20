@@ -2,21 +2,19 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
-import com.github.alexishuf.fastersparql.batch.operators.FilteringTransformBIt;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
+import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import com.github.alexishuf.fastersparql.model.row.dedup.Dedup;
-import com.github.alexishuf.fastersparql.model.row.dedup.StrongDedup;
-import com.github.alexishuf.fastersparql.model.row.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.sparql.binding.RowBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
-import com.github.alexishuf.fastersparql.util.BS;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,11 +28,11 @@ import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
 import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
-import static com.github.alexishuf.fastersparql.util.BS.*;
-import static java.lang.System.arraycopy;
 
 @SuppressWarnings("unused")
 public final class Modifier extends Plan {
+    private static final Logger log = LoggerFactory.getLogger(Modifier.class);
+
     public  @Nullable Vars projection;
     public int distinctCapacity;
     public long offset, limit;
@@ -142,287 +140,191 @@ public final class Modifier extends Plan {
         return sb;
     }
 
+    List<Expr> boundFilters(Binding binding) {
+        List<Expr> filters = this.filters, boundFilters = null;
+        for (int i = 0, n = filters.size(); i < n; i++) {
+            Expr e = filters.get(i), b = e.bound(binding);
+            if (e == b) continue;
+            if (boundFilters == null) boundFilters = new ArrayList<>(filters);
+            boundFilters.set(i, b);
+        }
+        return boundFilters == null ? filters : boundFilters;
+    }
+
     @Override
-    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
-        boolean childDedup = canDedup || distinctCapacity > 0;
-        //noinspection DataFlowIssue
-        BIt<R> in = left.execute(rt, binding, childDedup);
-        List<Expr> filters = this.filters;
-        if (filters.isEmpty())
-            return new NoFilterModifierBIt<>(in, this, canDedup);
-        if (binding != null) {
-            List<Expr> bFilters = null;
-            for (int i = 0, n = filters.size(); i < n; i++) {
-                Expr e = filters.get(i), b = e.bound(binding);
-                if (b != e)
-                    (bFilters == null ? bFilters = new ArrayList<>(filters) : bFilters).set(i, b);
+    public <B extends Batch<B>>
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+        BIt<B> in = left().execute(bt, binding,
+                                   (canDedup && !(offset > 0)) || distinctCapacity > 0);
+        Vars outVars = publicVars(), inVars = in.vars();
+        if (binding != null)
+            outVars = outVars.minus(binding.vars);
+        List<Expr> filters = binding == null ? this.filters : boundFilters(binding);
+        int dCap = distinctCapacity, cols = outVars.size();
+        long limit = this.limit;
+
+        Dedup<B> dedup = null;
+        if      (cols == 0)                limit = dCap > 0 || canDedup ? 1 : limit;
+        else if (dCap > reducedCapacity()) dedup = bt.dedupPool.getDistinct(dCap, cols);
+        else if (dCap > dedupCapacity())   dedup = bt.dedupPool.getReduced(dCap, cols);
+        else if (dCap > 0)                 dedup = bt.dedupPool.getDistinct(dCap, cols);
+        else if (canDedup)                 dedup = bt.dedupPool.getWeak(dedupCapacity(), cols);
+
+        BatchProcessor<B> processor;
+        boolean slice = limit < Long.MAX_VALUE || offset > 0;
+        if (!filters.isEmpty()) {
+            var rf = slice && dedup == null ? new SlicingFiltering<>(offset, limit, bt, inVars, filters)
+                                            : new Filtering<>(bt, inVars, filters);
+            processor = bt.filter(outVars, inVars, rf);
+            if (dedup != null) {
+                in = new ProcessorBIt<>(in, outVars, processor);
+                processor = bt.filter(slice ? new SlicingDedup<>(offset, limit, dedup) : dedup);
             }
-            if (bFilters != null)
-                filters = bFilters;
+        } else if (dedup == null) {
+            processor = slice ? bt.filter(outVars, inVars, new Slicing<>(offset, limit))
+                              : bt.projector(outVars, inVars);
+        } else {
+            var rf = slice ? new SlicingDedup<>(offset, limit, dedup) : dedup;
+            processor = bt.filter(outVars, inVars, rf);
         }
-        if (distinctCapacity == 0 && !canDedup)
-            return new NoDedupModifierBIt<>(in, this, filters);
-        return new GeneralModifierBIt<>(in, this, filters, canDedup);
+        return processor == null ? in : new ModifierBIt<>(in, outVars, processor);
     }
 
-    static abstract class ModifierBIt<R> extends FilteringTransformBIt<R, R> {
-        private static final Logger log = LoggerFactory.getLogger(ModifierBIt.class);
-        protected final Modifier plan;
-        protected final List<Expr> filters;
-        protected final @Nullable Metrics metrics;
-        protected final @Nullable RowType<R>.Merger filterSetProjector;
-        protected final @Nullable RowType<R>.Merger projector;
-        protected final RowBinding<R> binding;
-        protected final boolean hasFilters, hasSlice;
-        protected final long startNanos = System.nanoTime();
-        protected final @Nullable Dedup<R> outerSet;
-        protected final @Nullable WeakDedup<R> preFilterSet;
-        protected int failures;
-        protected long pendingSkips, rows;
+    private final class ModifierBIt<B extends Batch<B>> extends ProcessorBIt<B> {
+        private final @Nullable Metrics metrics;
+        private boolean completed = false;
 
+        public ModifierBIt(BIt<B> in, Vars outVars, BatchProcessor<B> processor) {
+            super(in, outVars, processor);
+            this.metrics = Metrics.createIf(Modifier.this);
+        }
 
-        public ModifierBIt(BIt<R> in, Modifier plan, List<Expr> filters, boolean canDedup) {
-            super(in, in.rowType(), plan.publicVars());
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
+                var pool = batchType.dedupPool;
+                int cap = Modifier.this.distinctCapacity;
+                if (d instanceof StrongDedup<B> sd) {
+                    if (cap >= FSProperties.distinctCapacity())
+                        pool.offerDistinct(sd);
+                    else if (cap >= reducedCapacity())
+                        pool.offerReduced(sd);
+                } else if (d instanceof WeakDedup<B> wd) {
+                    pool.offerWeak(wd);
+                }
+            }
+            super.cleanup(cause);
+        }
+
+        @Override public @Nullable B nextBatch(B b) {
+            try {
+                b = super.nextBatch(b);
+                if (metrics != null && !completed) {
+                    if (b == null) metrics.complete(null, false).deliver();
+                    else           metrics.rowsEmitted(b.rows);
+                }
+                if (b == null) completed = true;
+                return b;
+            } catch (Throwable t) {
+                if (metrics != null && !completed)
+                    metrics.complete(t, isClosedFor(t, delegate)).deliver();
+                completed = true;
+                throw t;
+            }
+        }
+    }
+
+    /* --- --- --- RowFilter implementations --- --- --- */
+
+    private static class Slicing<B extends Batch<B>> implements RowFilter<B> {
+        private long skip, allowed;
+
+        public Slicing(long offset, long limit) {
+            skip = offset;
+            allowed = limit;
+        }
+
+        @Override public boolean drop(B batch, int row) {
+            if (skip > 0) {
+                --skip;
+                return true;
+            } else if (allowed == 0) {
+                return true;
+            }
+            --allowed;
+            return false;
+        }
+    }
+
+    private static class SlicingDedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
+        private final Dedup<B> dedup;
+        private long skip, allowed;
+
+        public SlicingDedup(long offset, long limit, Dedup<B> dedup) {
+            this.dedup = dedup;
+            skip = offset;
+            allowed = limit;
+        }
+
+        @Override public boolean drop(B batch, int row) {
+            if (dedup.isDuplicate(batch, row, 0)) return true;
+            if (skip > 0) {
+                --skip;
+                return true;
+            } else if (allowed == 0) {
+                return true;
+            }
+            --allowed;
+            return false;
+        }
+    }
+
+    private static final class SlicingFiltering<B extends Batch<B>> extends Filtering<B> {
+        private long skip, allowed;
+
+        public SlicingFiltering(long offset, long limit, BatchType<B> bt, Vars inVars, List<Expr> filters) {
+            super(bt, inVars, filters);
+            skip = offset;
+            allowed = limit;
+        }
+
+        @Override public boolean drop(B batch, int row) {
+            if (allowed == 0 || super.drop(batch, row)) return true;
+            if (skip > 0) {
+                --skip;
+                return true;
+            }
+            --allowed;
+            return false;
+        }
+    }
+
+    private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
+        private final BatchBinding<B> binding;
+        private final List<Expr> filters;
+        private int failures = 0;
+
+        public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
+            this.binding = new BatchBinding<>(bt, inVars);
             this.filters = filters;
-            this.metrics = Metrics.createIf(this.plan = plan);
-            var inVars = in.vars();
-            hasFilters = !filters.isEmpty();
-            hasSlice = plan.offset > 0 || plan.limit != Long.MAX_VALUE;
-            pendingSkips = plan.offset;
-            if (plan.distinctCapacity > 0 || canDedup) {
-                if (plan.distinctCapacity == Integer.MAX_VALUE) {
-                    int cap = FSProperties.distinctCapacity();
-                    outerSet = new StrongDedup<>(rowType, Math.max(256, cap>>8), cap);
-                } else {
-                    int c = plan.distinctCapacity > 0 ? plan.distinctCapacity : dedupCapacity();
-                    outerSet = new WeakDedup<>(rowType, c);
+        }
+
+        private void logFailure(Throwable t) {
+            if (failures > 2) return;
+            String stop = ++failures == 2 ? "Will stop reporting for this BIt" : "";
+            log.info("Filter evaluation failed for {}. filters={}", binding, filters, t);
+        }
+
+        @Override public boolean drop(B batch, int row) {
+            var binding = this.binding.setRow(batch, row);
+            try {
+                for (Expr expr : filters) {
+                    if (!expr.eval(binding).asBool()) return true;
                 }
-                preFilterSet = hasFilters ? new WeakDedup<>(rowType, 32) : null;
-            } else {
-                outerSet = preFilterSet = null;
+                return false;
+            } catch (Throwable t) {
+                logFailure(t);
+                return true;
             }
-            if (plan.projection == null) {
-                projector = filterSetProjector = null;
-                binding = hasFilters ? new RowBinding<>(rowType, inVars) : null;
-            } else if (hasFilters) {
-                int filterOnlyVars = 0; //vars in filters but not in plan.projection
-                if (plan.distinctCapacity > 0) {
-                    // only project before preFilterSet if we can remove some var
-                    var beforeFilterVars = Vars.fromSet(plan.projection, Math.max(10, inVars.size()));
-                    for (Expr e : filters)
-                        beforeFilterVars.addAll(e.vars());
-                    filterOnlyVars = beforeFilterVars.size() - plan.projection.size();
-                    int removed = beforeFilterVars.novelItems(inVars, 1);
-                    filterSetProjector = removed == 0 ? null
-                                    : rowType.projector(beforeFilterVars, inVars);
-                } else {
-                    filterSetProjector = null;
-                }
-                binding = new RowBinding<>(rowType, filterSetProjector == null ? inVars : filterSetProjector.outVars);
-                projector = filterSetProjector == null || filterOnlyVars > 0
-                          ? rowType.projector(plan.projection, inVars)
-                          : null;
-            } else {
-                projector = rowType.projector(plan.projection, inVars);
-                filterSetProjector = null;
-                binding = null;
-            }
-        }
-
-        @Override protected void cleanup(Throwable error) {
-            if (error != null)
-                delegate.close();
-            if (metrics != null)
-                metrics.complete(error, isClosedFor(error, this)).deliver();
-        }
-
-        /* --- --- --- helpers --- --- --- */
-
-        /** Log only the first few failures during filter evaluation. */
-        protected final void logFilterFailed(R row, Throwable t) {
-            if (failures <= 5) {
-                ++failures;
-                String stopMsg = failures < 5
-                               ? "" : ". Will stop reporting for this iterator instance";
-                log.info("Failed to evaluate FILTER{} on {}: {}{}",
-                         filters, rowType.toString(row), t.getMessage(), stopMsg);
-            }
-        }
-    }
-
-    /** Implements any possible {@link Modifier} */
-    static class GeneralModifierBIt<R> extends ModifierBIt<R> {
-        protected int[] include;
-
-        public GeneralModifierBIt(BIt<R> in, Modifier plan, List<Expr> filters, boolean canDedup) {
-            super(in, plan, filters, canDedup);
-        }
-
-        @Override protected Batch<R> process(Batch<R> b) {
-            R[] a = b.array;
-            include = init(include, b.size);
-            set(include, 0, b.size);
-            if (hasFilters) filter(a);
-            if (outerSet != null) {
-                if (projector == null) dedup(a, outerSet);
-                else                   dedup(a, outerSet, projector);
-            }
-            if (pendingSkips > 0) offset();
-            if (plan.limit < Long.MAX_VALUE) limit();
-            if (projector == null || outerSet != null) b.size = condense(a);
-            else                                       b.size = condense(a, projector);
-            rows += b.size;
-            if (metrics != null) metrics.rowsEmitted(b.size);
-            return b;
-        }
-
-        private void filter(R[] a) {
-            if (preFilterSet != null) {
-                if (filterSetProjector == null) dedup(a, preFilterSet);
-                else                            dedup(a, preFilterSet, filterSetProjector);
-            }
-            for (int i = nextSet(include, 0); i >= 0; i = nextSet(include, i+1)) {
-                binding.row(a[i]);
-                boolean ok = true;
-                try {
-                    for (Expr filter : filters) {
-                        if (!(ok = filter.eval(binding).asBool())) break;
-                    }
-                } catch (Throwable t) {
-                    logFilterFailed(a[i], t);
-                }
-                if (!ok)
-                    include[i>>5] &= ~(1 << i);
-            }
-        }
-
-        private void dedup(R[] a, Dedup<R> set) {
-            for (int i = nextSet(include, 0); i >= 0; i = nextSet(include, i + 1)) {
-                if (set.isDuplicate(a[i], 0))
-                    include[i>>5] &= ~(1 << i);
-            }
-        }
-
-        private void dedup(R[] a, Dedup<R> set, RowType<R>.Merger projector) {
-            for (int i = nextSet(include, 0); i >= 0; i = nextSet(include, i+1)) {
-                if (set.isDuplicate(a[i], 0))
-                    include[i>>5] &= ~(1 << i);
-                else
-                    a[i] = projector.projectInPlace(a[i]);
-            }
-        }
-
-        private int condense(R[] a) {
-            int o = 0;
-            for (int i = nextSet(include, 0); i >= 0; o++, i = nextSet(include, i+1)) {
-                if (o != i) a[o] = a[i];
-            }
-            return o;
-        }
-
-        private int condense(R[] a, RowType<R>.Merger projector) {
-            int o = 0;
-            for (int i = nextSet(include, 0); i >= 0; o++, i = nextSet(include, i+1))
-                a[o] = projector.projectInPlace(a[i]);
-            return o;
-        }
-
-        private void offset() {
-            int clearUntil = 0, i = nextSet(include, 0);
-            while (i != -1 && pendingSkips > 0) {
-                --pendingSkips;
-                i = nextSet(include, (clearUntil = i)+1);
-            }
-            clear(include, 0, clearUntil+1);
-        }
-
-        private void limit() {
-            long allowed = plan.limit - rows;
-            if (allowed < (long) include.length <<5 && allowed <  BS.cardinality(include)) {
-                int last = -1;
-                for (int i = 0; i < allowed; i++)
-                    last = nextSet(include, last+1);
-                clear(include, last + 1, include.length << 5);
-            }
-        }
-    }
-
-    /** Implements a {@link Modifier} without de-duplication (FILTER/OFFSET/LIMIT/projection) */
-    static class NoDedupModifierBIt<R> extends ModifierBIt<R> {
-
-        public NoDedupModifierBIt(BIt<R> in, Modifier plan, List<Expr> filters) {
-            super(in, plan, filters, false);
-            assert outerSet == null && this.preFilterSet == null
-                                    && this.filterSetProjector == null;
-        }
-
-        @Override protected Batch<R> process(Batch<R> b) {
-            R[] a = b.array;
-            if (hasFilters) {
-                List<Expr> filters = this.filters;
-                int passed = 0;
-                int maxPassed = (int)Math.min(b.size, pendingSkips + plan.limit-rows);
-                batch: for (int i = 0, n = b.size; i < n && passed < maxPassed; i++) {
-                    try {
-                        binding.row(a[i]);
-                        for (Expr expr : filters) {
-                            if (!expr.eval(binding).asBool()) continue batch;
-                        }
-                        a[passed++] = a[i];
-                    } catch (Throwable t) {
-                        logFilterFailed(a[i], t);
-                    }
-                }
-                b.size = passed;
-            }
-            if (hasSlice) {
-                int skip = 0;
-                if (pendingSkips > 0) {
-                    skip = (int) Math.min(pendingSkips, b.size);
-                    pendingSkips -= skip;
-                }
-                b.size = (int)Math.min(plan.limit-rows, b.size-skip);
-                if (b.size > 0)
-                    arraycopy(a, skip, a, 0, b.size);
-            }
-            if (projector != null) {
-                for (int i = 0, n = b.size; i < n; i++)
-                    a[i] = projector.projectInPlace(a[i]);
-            }
-            if (metrics != null) metrics.rowsEmitted(b.size);
-            rows += b.size;
-            return b;
-        }
-    }
-
-    /** Implements a {@link Modifier} without FILTER clauses (DISTINCT/OFFSET/LIMIT/project) */
-    static class NoFilterModifierBIt<R> extends ModifierBIt<R> {
-        public NoFilterModifierBIt(BIt<R> in, Modifier plan, boolean canDedup) {
-            super(in, plan, List.of(), canDedup);
-            assert !hasFilters && preFilterSet == null && filterSetProjector == null;
-        }
-
-        @Override protected Batch<R> process(Batch<R> b) {
-            R[] a = b.array;
-            if (outerSet != null)
-                outerSet.filter(b, 0, projector);
-            if (hasSlice) {
-                long skip = pendingSkips;
-                if (skip > 0) {
-                    skip = Math.min(skip, b.size);
-                    pendingSkips -= skip;
-                }
-                b.size = (int) Math.min(plan.limit - rows, b.size - skip);
-                if (b.size > 0)
-                    arraycopy(a, (int)skip, a, 0, b.size);
-            }
-            if (outerSet == null && projector != null) {
-                for (int i = 0, n = b.size; i < n; i++)
-                    a[i] = projector.projectInPlace(a[i]);
-            }
-            if (metrics != null) metrics.rowsEmitted(b.size);
-            rows += b.size;
-            return b;
         }
     }
 }

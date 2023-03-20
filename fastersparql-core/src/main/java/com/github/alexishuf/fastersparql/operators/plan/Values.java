@@ -2,82 +2,84 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
-import com.github.alexishuf.fastersparql.batch.Batch;
-import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
+import com.github.alexishuf.fastersparql.batch.SingletonBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
-import com.github.alexishuf.fastersparql.model.row.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
-public final class Values extends Plan {
-    private final List<Term[]> rows;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 
-    public Values(Vars vars, List<Term[]> rows) {
+public final class Values extends Plan {
+    private final @Nullable TermBatch values;
+    private @MonotonicNonNull TermBatch dedupValues;
+
+    public Values(Vars vars, @Nullable TermBatch values) {
         super(Operator.VALUES);
         this.publicVars = this.allVars = vars;
-        this.rows = rows;
+        this.values = values != null && values.rows == 0 ? null : values;
     }
 
-    @Override public Plan copy(@Nullable Plan[] ops) { return new Values(publicVars, rows); }
+    @Override public Plan copy(@Nullable Plan[] ops) { return new Values(publicVars, values); }
 
-    public List<Term[]> rows() { return rows; }
+    public TermBatch values() { return values; }
 
-    @Override public <T> BIt<T> execute(RowType<T> rowType, @Nullable Binding binding,
-                                        boolean canDedup) {
-        List<T> source;
-        var converter = rowType.converter(RowType.ARRAY, publicVars);
-        if (canDedup && rows.size() > 1) {
-            source = new ArrayList<>(rows.size());
-            var dedup = StrongDedup.strongUntil(RowType.ARRAY, rows.size());
-            for (Term[] r : rows) {
-                if (!dedup.isDuplicate(r, 0))
-                    source.add(converter.apply(r));
-            }
-        } else if (rowType.equals(RowType.ARRAY)) {//noinspection unchecked
-            source = (List<T>) this.rows;
-        } else {
-            source = new ArrayList<>(rows.size());
-            for (Term[] row : rows)
-                source.add(converter.apply(row));
+    @Override public <B extends Batch<B>> BIt<B>
+    execute(BatchType<B> batchType, @Nullable Binding binding, boolean canDedup) {
+        TermBatch values = this.values;
+        if (canDedup && values != null && values.rows > 1)
+            values = dedupValues();
+        return new ValuesBIt<>(batchType, values == null ? null : batchType.convert(values));
+    }
+
+    private TermBatch dedupValues() {
+        TermBatch dedupValues = this.dedupValues;
+        if (dedupValues == null && values != null) {
+            var dedup = TERM.dedupPool.getWeak(values.rows, values.cols);
+            var filter = TERM.filter(dedup);
+            this.dedupValues = dedupValues = filter.filter(null, values);
+            filter.release();
+            TERM.dedupPool.offerWeak(dedup);
         }
-        return new ValuesBit<>(rowType, source);
+        return dedupValues;
     }
 
     @Override public boolean equals(Object obj) {
         return super.equals(obj) && obj instanceof Values r && publicVars.equals(r.publicVars)
-                                 && rows.equals(r.rows);
+                                 && Objects.equals(values, r.values);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(type, publicVars, rows);
+        return Objects.hash(type, publicVars, values);
     }
 
     @Override public String toString() {
         var sb = new StringBuilder();
         sb.append(algebraName()).append('(');
-        int displayed = Math.min(10, rows.size());
-        for (int i = 0; i < displayed; i++) {
+        if (values == null)
+            return sb.append(')').toString();
+        int displayed = Math.min(10, values.rows);
+        for (int r = 0; r < displayed; r++) {
             sb.append("\n  ");
-            var r = rows.get(i);
             sb.append('[');
-            for (int col = 0, n = publicVars.size(); col < n; col++) {
-                var term = r[col];
-                (col > 0 ? sb.append(", ") : sb).append(term == null ? "UNDEF" : term.toSparql());
+            for (int c = 0, n = publicVars.size(); c < n; c++) {
+                var term = values.get(r, c);
+                (c > 0 ? sb.append(", ") : sb).append(term == null ? "UNDEF" : term.toSparql());
             }
             sb.append("],");
         }
-        if (rows.size() > displayed)
+        if (values.rows > displayed)
             sb.append("\n  ...");
         else if (displayed > 0)
             sb.setLength(sb.length()-1);
@@ -94,23 +96,26 @@ public final class Values extends Plan {
         if (!publicVars.isEmpty())
             out.unAppend(1);
         out.append(')').append(' ').append('{');
-        for (Term[] row : rows) {
-            out.newline(indent).append('(').append(' ');
-            for (Term term : row) {
-                if (term == null) out.append(UNDEF_u8);
-                else              term.toSparql(out, assigner);
-                out.append(' ');
+        if (values != null) {
+            for (int r = 0, rows = values.rows, cols = values.cols; r < rows; r++) {
+                out.newline(indent).append('(').append(' ');
+                for (int c = 0; c < cols; c++) {
+                    Term term = values.get(r, c);
+                    if (term == null) out.append(UNDEF_u8);
+                    else              term.toSparql(out, assigner);
+                    out.append(' ');
+                }
+                out.append(')');
             }
-            out.append(')');
         }
         out.newline(--indent).append('}');
     }
 
-    private final class ValuesBit<T> extends IteratorBIt<T> {
+    private final class ValuesBIt<B extends Batch<B>> extends SingletonBIt<B> {
         private final @Nullable Metrics metrics;
 
-        public ValuesBit(RowType<T> rowType, List<T> rows) {
-            super(rows.iterator(), rowType, Values.this.publicVars);
+        ValuesBIt(BatchType<B> batchType, B values) {
+            super(values, batchType, publicVars);
             metrics = Metrics.createIf(Values.this);
         }
 
@@ -118,18 +123,6 @@ public final class Values extends Plan {
             super.cleanup(error);
             if (metrics != null)
                 metrics.complete(error, BItClosedAtException.isClosedFor(error, this)).deliver();
-        }
-
-        @Override public T next() {
-            var next = super.next();
-            if (metrics != null) metrics.rowsEmitted(1);
-            return next;
-        }
-
-        @Override public Batch<T> nextBatch() {
-            var b = super.nextBatch();
-            if (metrics != null) metrics.rowsEmitted(b.size);
-            return b;
         }
 
         @Override public String toString() { return Values.this.toString(); }

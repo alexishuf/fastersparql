@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -21,7 +22,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.UNTIL_LIT
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
+public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B> {
     private static final Logger log = LoggerFactory.getLogger(SVParserBIt.class);
 
     protected final int nVars;
@@ -31,21 +32,21 @@ public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
     protected int inputColumns = -1, column, line;
     protected int[] inVar2outVar;
 
-    private SVParserBIt(RowType<R> rowType, Vars vars, ByteRope eol) {
-        super(rowType, vars);
+    private SVParserBIt(BatchType<B> batchType, ByteRope eol, Vars vars, int maxBatches) {
+        super(batchType, vars, maxBatches);
         this.nVars = vars.size();
         this.eol = eol;
     }
 
-    private SVParserBIt(RowType<R> rowType, CallbackBIt<R> destination, ByteRope eol) {
-        super(rowType, destination);
+    private SVParserBIt(BatchType<B> batchType, ByteRope eol, CallbackBIt<B> destination) {
+        super(batchType, destination);
         this.nVars = vars.size();
         this.eol = eol;
     }
 
     @Override public void complete(@Nullable Throwable error) {
         try {
-            if (error == null && (!builder.isEmpty() || partialLine != null && partialLine.len > 0))
+            if (error == null && (column > 0 || partialLine != null && partialLine.len > 0))
                 feedCompletion();
         } catch (Throwable t) {
             error = t;
@@ -59,36 +60,40 @@ public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
             handlePartialLine(hasEOL ? ByteRope.EMPTY : eol);
             if (partialLine != null && partialLine.len > 0) //
                 throw unclosedQuote();
-        } else if (!builder.isEmpty()) {
+        } else if (column > 0) {
             emitRow();
         }
     }
 
     public final static class TsvFactory implements ResultsParserBIt.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.TSV; }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars) {
-            return new Tsv<>(rowType, vars);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
+            return new Tsv<>(batchType, vars, maxBatches);
         }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> dst) {
-            return new Tsv<>(rowType, dst);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
+            return new Tsv<>(batchType, destination);
         }
     }
 
     public final static class CsvFactory implements ResultsParserBIt.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.CSV; }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars) {
-            return new Csv<>(rowType, vars);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
+            return new Csv<>(batchType, vars, maxBatches);
         }
-        @Override public <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> dst) {
-            return new Csv<>(rowType, dst);
+        @Override
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
+            return new Csv<>(batchType, destination);
         }
     }
 
-    public static class Tsv<R> extends SVParserBIt<R> {
+    public static class Tsv<B extends Batch<B>> extends SVParserBIt<B> {
         private static final ByteRope EOL = new ByteRope("\n");
 
-        public Tsv(RowType<R> rowType, Vars vars) { super(rowType, vars, EOL); }
-        public Tsv(RowType<R> rowType, CallbackBIt<R> destination) { super(rowType, destination, EOL); }
+        public Tsv(BatchType<B> batchType, Vars vars, int maxBatches) { super(batchType, EOL, vars, maxBatches); }
+        public Tsv(BatchType<B> batchType, CallbackBIt<B> destination) { super(batchType, EOL, destination); }
 
         @Override protected final void doFeedShared(Rope rope) {
             int begin = 0, end = rope.len();
@@ -176,11 +181,11 @@ public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
         protected int handleControl(Rope rope, int begin) { return begin; }
     }
 
-    public final static class Csv<R> extends SVParserBIt<R> {
+    public final static class Csv<B extends Batch<B>> extends SVParserBIt<B> {
         private static final ByteRope EOL = new ByteRope("\r\n");
 
-        public Csv(RowType<R> rowType, Vars vars) { super(rowType, vars, EOL); }
-        public Csv(RowType<R> rowType, CallbackBIt<R> destination) { super(rowType, destination, EOL); }
+        public Csv(BatchType<B> batchType, Vars vars, int maxBatches) { super(batchType, EOL, vars, maxBatches); }
+        public Csv(BatchType<B> batchType, CallbackBIt<B> destination) { super(batchType, EOL, destination); }
 
         @Override protected void doFeedShared(Rope rope) {
             if (partialLine != null && partialLine.len != 0) {
@@ -391,12 +396,12 @@ public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
         return end;
     }
 
-    protected void emitRow() { feed(builder.build()); }
+    protected void emitRow() { emitRowClear(); }
 
     protected void set(int inputColumn, Term term) {
         int dest = inVar2outVar[inputColumn];
         if (dest >= 0)
-            builder.set(dest, term);
+            row[dest] = term;
     }
 
     protected InvalidSparqlResultsException varAsValue(Term var) {
@@ -455,7 +460,7 @@ public abstract class SVParserBIt<R> extends ResultsParserBIt<R> {
         String msg = format("Expected %s, got '%s' (0x%x) at line %d",
                 column >= nVars - 1 ? eol.len == 1 ? "\"\\n\"" : "\"\\r\\n\""
                                     : eol.len == 1 ? "'\\t'" : "','",
-                ""+(char)(0xff & actual),
+                (char)(0xff & actual),
                 0xff & actual,
                 line
         );

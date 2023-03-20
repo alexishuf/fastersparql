@@ -1,34 +1,28 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.batch.IntsBatch;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.RepeatedTest;
-import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Stream;
 
-import static java.util.stream.IntStream.range;
+import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
 
 public abstract class AbstractBItTest {
-    static Stream<Arguments> batchGetters() {
-        return BatchGetter.all().stream().map(Arguments::arguments);
-    }
-    static Stream<Arguments> timingReliableBatchGetters() {
-        return BatchGetter.all().stream().filter(BatchGetter::isTimingReliable)
-                                         .map(Arguments::arguments);
-    }
 
     public static class Scenario {
         protected final int size, minBatch, maxBatch;
         protected final BItDrainer drainer;
-        protected final @Nullable Throwable error;
+        protected final @Nullable RuntimeException error;
 
         public Scenario(int size, int minBatch, int maxBatch, BItDrainer drainer,
-                        @Nullable Throwable error) {
+                        @Nullable RuntimeException error) {
             this.size = size;
             this.minBatch = minBatch;
             this.maxBatch = maxBatch;
@@ -40,12 +34,19 @@ public abstract class AbstractBItTest {
             this(other.size, other.minBatch, other.maxBatch, other.drainer, other.error);
         }
 
-        public int                 size()     { return size; }
-        public int                 minBatch() { return minBatch; }
-        public int                 maxBatch() { return maxBatch; }
-        public BItDrainer          drainer()  { return drainer; }
-        public @Nullable Throwable error()    { return error; }
-        public List<Integer>       expected() { return range(0, size()).boxed().toList(); }
+        public int                        size()         { return size; }
+        public int                        minBatch()     { return minBatch; }
+        public int                        maxBatch()     { return maxBatch; }
+        public BItDrainer                 drainer()      { return drainer; }
+        public @Nullable RuntimeException error()        { return error; }
+        public int[]                      expectedInts() { return IntsBatch.ints(size); }
+
+        public List<List<Term>>     expected() {
+            ArrayList<List<Term>> rows = new ArrayList<>();
+            for (int i = 0; i < size; i++)
+                rows.add(List.of(IntsBatch.term(i)));
+            return rows;
+        }
 
         @Override public String toString() {
             return "BaseScenario{"+"size=" + size+", minBatch=" + minBatch
@@ -80,8 +81,8 @@ public abstract class AbstractBItTest {
                 int min = batchSizes.min(), max = batchSizes.max();
                 if (max > 2 && max < Integer.MAX_VALUE && max > size)
                     continue; // skip since batch will never be filled
-                for (Exception error : Arrays.asList(null, new RuntimeException("on purpose"))) {
-                    for (var d : BItDrainer.all())
+                for (var error : Arrays.asList(null, new RuntimeException("on purpose"))) {
+                    for (var d : BItDrainer.ALL)
                         list.add(new Scenario(size, min, max, d, error));
                 }
             }
@@ -103,8 +104,24 @@ public abstract class AbstractBItTest {
 
     @RepeatedTest(3)
     void test() throws Exception {
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+        try (var tasks = platformTaskSet(getClass().getSimpleName())) {
             scenarios().forEach(s -> tasks.add(() -> run(s)));
+        }
+    }
+
+    @Test void serialTest() {
+        List<? extends Scenario> scenarios = scenarios();
+        for (int i = 0; i < scenarios.size(); i++) {
+            try {
+                run(scenarios.get(i));
+            } catch (AssertionFailedError e) {
+                String msg = e.getMessage()+" at scenarios()["+i+"]="+scenarios.get(i);
+                Object ex = e.isExpectedDefined() ? e.getExpected().getEphemeralValue() : null;
+                Object ac = e.  isActualDefined() ? e.  getActual().getEphemeralValue() : null;
+                if (ex instanceof int[] a) ex = Arrays.toString(a);
+                if (ac instanceof int[] a) ac = Arrays.toString(a);
+                throw new AssertionFailedError(msg, ex, ac, e);
+            }
         }
     }
 }

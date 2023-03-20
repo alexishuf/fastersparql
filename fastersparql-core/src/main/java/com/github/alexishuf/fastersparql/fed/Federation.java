@@ -2,12 +2,13 @@ package com.github.alexishuf.fastersparql.fed;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.fed.Selector.InitOrigin;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
@@ -238,7 +239,7 @@ public class Federation extends AbstractSparqlClient {
 
     /* --- --- --- querying --- --- --- */
 
-    @Override public <R> BIt<R> query(RowType<R> rowType, SparqlQuery sparql) {
+    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         long entryNs = nanoTime();
         cdc = FSProperties.dedupCapacity();
 
@@ -265,7 +266,7 @@ public class Federation extends AbstractSparqlClient {
         // final dispatch for execution
         if (!planListeners.isEmpty())
             root.listeners().addAll(planListeners);
-        BIt<R> it = root.execute(rowType);
+        var it = root.execute(batchType);
         m.dispatchNs = nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
 
         // deliver metrics

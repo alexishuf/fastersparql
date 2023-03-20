@@ -1,11 +1,13 @@
 package com.github.alexishuf.fastersparql.model;
 
-import com.github.alexishuf.fastersparql.client.util.VThreadTaskSet;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.lang.reflect.Method;
 import java.util.*;
@@ -118,7 +120,7 @@ class VarsTest {
         List<D> data        = data().map(D::new).toList();
         List<D> mutableData = mutableData().map(D::new).toList();
         int methods = 0;
-        try (var tasks = new VThreadTaskSet(getClass().getSimpleName())) {
+        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
             for (Method m : getClass().getMethods()) {
                 String name = m.getName();
                 if (!name.matches("test.+") || name.equals("testAll")) continue;
@@ -130,8 +132,7 @@ class VarsTest {
         assertEquals(14, methods); //will break with new methods: thats intentional
     }
 
-//    @ParameterizedTest @MethodSource("data")
-    @SuppressWarnings("ResultOfMethodCallIgnored")
+    @ParameterizedTest @MethodSource("data")
     public void testQuery(Factory factory, int size, int slack) {
         Vars vars = factory.create(size, slack);
         assertEquals(size, vars.size());
@@ -355,7 +356,7 @@ class VarsTest {
 
         assertSame(Vars.EMPTY, left.intersection(Vars.EMPTY));
         assertSame(Vars.EMPTY, left.intersection(new Vars.Mutable(10)));
-        assertSame(Vars.EMPTY, left.intersection(Vars.of("-1", ""+size)));
+        assertSame(Vars.EMPTY, left.intersection(Vars.of("-1", String.valueOf(size))));
 
         for (int i = 0; i < size; i++) {
             Vars right = Vars.of(Rope.of(i));
@@ -364,7 +365,7 @@ class VarsTest {
         }
 
         for (int i = 0; i < size; i++) {
-            Vars right = Vars.of(""+i, "-1");
+            Vars right = Vars.of(String.valueOf(i), "-1");
             assertEquals(ropeList(i), new ArrayList<>(left.intersection(right)));
         }
 

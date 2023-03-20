@@ -2,8 +2,9 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -27,11 +28,12 @@ public final class Empty extends Plan {
     @Override public Plan copy(@Nullable Plan[] ops) { return new Empty(publicVars, allVars); }
 
     @Override
-    public <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup) {
+    public <B extends Batch<B>>
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
         Vars vars = publicVars;
         if (binding != null && vars.intersects(binding.vars))
             vars = vars.minus(binding.vars);
-        return new EmptyBIt<>(rt, vars);
+        return new EmptyBIt<>(bt, vars);
     }
 
     @Override public boolean equals(Object obj) {

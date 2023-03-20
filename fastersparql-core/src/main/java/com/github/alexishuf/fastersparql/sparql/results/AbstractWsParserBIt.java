@@ -1,18 +1,19 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public abstract class AbstractWsParserBIt<R> extends SVParserBIt.Tsv<R> {
+public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBIt.Tsv<B> {
     protected final WsFrameSender frameSender;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
@@ -31,13 +32,14 @@ public abstract class AbstractWsParserBIt<R> extends SVParserBIt.Tsv<R> {
 
     /* --- --- --- constructors --- --- --- */
 
-    public AbstractWsParserBIt(WsFrameSender frameSender, RowType<R> rowType, Vars vars) {
-        super(rowType, vars);
+    public AbstractWsParserBIt(WsFrameSender frameSender, BatchType<B> batchType, Vars vars,
+                               int maxBatches) {
+        super(batchType, vars, maxBatches);
         this.frameSender = frameSender;
     }
 
-    public AbstractWsParserBIt(WsFrameSender frameSender, RowType<R> rowType, CallbackBIt<R> destination) {
-        super(rowType, destination);
+    public AbstractWsParserBIt(WsFrameSender frameSender, BatchType<B> batchType, CallbackBIt<B> destination) {
+        super(batchType, destination);
         this.frameSender = frameSender;
     }
 

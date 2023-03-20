@@ -1,22 +1,21 @@
 package com.github.alexishuf.fastersparql.client.util;
 
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -37,60 +36,26 @@ class MergerTest {
                 Vars.of(l.get(0).toString().split(",")),      // leftVars
                 Vars.of(l.get(1).toString().split(",")),      // rightVars
                 l.get(2),                                           // bindType
-                Term.array((Object[]) l.get(3).toString().split(",")), // left
-                Term.array((Object[]) (l.get(4).equals("") ? new String[0] : l.get(4).toString().split(","))), // right
-                Term.array((Object[]) l.get(5).toString().split(","))  // expected
+                termList((Object[]) l.get(3).toString().split(",")), // left
+                termList((Object[]) (l.get(4).equals("") ? new String[0] : l.get(4).toString().split(","))), // right
+                termList((Object[]) l.get(5).toString().split(","))  // expected
         ));
     }
 
     @ParameterizedTest @MethodSource
     void testMerge(Vars leftVars, Vars rightVars, BindType bindType,
-                   Term[] left, Term[] right, Term[] expected) {
+                   List<Term> left, List<Term> right, List<Term> expected) {
+        TermBatch lb = TermBatch.of(range(0, left.size()).mapToObj(i -> (Term)null).toList(), left);
+        int lr = 1;
+        TermBatch rb = TermBatch.of(right);
+        TermBatch eb = TermBatch.of(expected);
+
         Vars rightFreeVars = rightVars.minus(leftVars);
-        var merger = RowType.ARRAY.merger(bindType, leftVars, rightFreeVars);
-        assertArrayEquals(expected, merger.merge(left, right));
-    }
-
-    static Stream<Arguments> testProjection() {
-        return Stream.of(
-                arguments(Vars.of("x"), Vars.of("x"),
-                        singletonList(1), singletonList(1)),
-                arguments(Vars.of("x"), Vars.of("y"),
-                        singletonList(1), singletonList(null)),
-
-                arguments(Vars.of("x", "y"), Vars.of("x", "y"), asList(1, 2), asList(1, 2)),
-                arguments(Vars.of("x", "y"), Vars.of("x", "y"), asList(1, null), asList(1, null)),
-                arguments(Vars.of("x", "y"), Vars.of("x", "z"), asList(1, 2), asList(1, null)),
-                arguments(Vars.of("x", "y"), Vars.of("x", "z"), asList(null, 2), asList(null, null)),
-                arguments(Vars.of("x", "y"), Vars.of("x", "z"),
-                        asList(null, null), asList(null, null)),
-
-                arguments(Vars.of("x", "y"), Vars.of("z", "w"), asList(1, 2), asList(null, null)),
-                arguments(Vars.of("x", "y"), Vars.of("x"), singletonList(1), asList(1, null)),
-                arguments(Vars.of("x", "y"), Vars.of("y"), singletonList(1), asList(null, 1))
-        );
-    }
-
-    @ParameterizedTest @MethodSource("testProjection")
-    void testProjection(Vars outVars, Vars inVars, List<@Nullable Integer> inInts,
-                        List<@Nullable Integer> expectedInts) {
-        var in = Term.literalList(Term.XSD_INTEGER, inInts);
-        var expected = Term.literalList(Term.XSD_INTEGER, expectedInts);
-        var projector = RowType.LIST.projector(outVars, inVars);
-        var inCopy = new ArrayList<>(in);
-        var out = projector.merge(in, null);
-        assertEquals(expected, out);
-        assertEquals(inCopy, in);
-    }
-
-    @ParameterizedTest @MethodSource("testProjection")
-    void testProjectionArray(Vars outVars, Vars inVars, List<@Nullable Integer> inList,
-                             List<@Nullable Integer> expectedList) {
-        var in = Term.literalArray(Term.XSD_INTEGER, inList);
-        var expected = Term.literalArray(Term.XSD_INTEGER, expectedList);
-        var projector = RowType.ARRAY.projector(outVars, inVars);
-        var out = projector.merge(in, null);
-        assertArrayEquals(expected, out);
-        assertArrayEquals(Term.literalArray(Term.XSD_INTEGER, inList), in);
+        Vars outVars = bindType.resultVars(leftVars, rightVars);
+        var merger = TERM.merger(outVars, leftVars, rightFreeVars);
+        if (merger == null)
+            assertEquals(eb, TermBatch.of(left));
+        else
+            assertEquals(eb, merger.merge(null, lb, lr, rb));
     }
 }

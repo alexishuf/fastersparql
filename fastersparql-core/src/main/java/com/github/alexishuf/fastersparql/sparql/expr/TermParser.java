@@ -10,6 +10,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
+import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_string;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Range;
@@ -25,6 +26,8 @@ public final class TermParser {
     };
     private static final byte[] NT_QUOTE = QUOTE_BYTES[1][1];
     private static final int[] REL_IRI_ALLOWED = invert(alphabet("<>(){|", Rope.Range.WS));
+    private static final Term[] POS_INTEGERS = new Term[1_000];
+    private static final Term[] NEG_INTEGERS = new Term[1_000];
 
     private Rope in;
     private int begin, end;
@@ -327,12 +330,15 @@ public final class TermParser {
             }
             stopped = p;
             dtId = 0;
-            if (exp == 1)
+            if (exp == 1) {
                 dtId = RopeDict.DT_DOUBLE;
-            else if (dot >= 1)
+            } else if (dot >= 1) {
                 dtId = RopeDict.DT_decimal;
-            else if (exp == 0 && expSig == 0 && dot == 0)
+            } else if (exp == 0 && expSig == 0 && dot == 0) {
                 dtId = RopeDict.DT_integer;
+                if (stopped-begin <= 4)
+                    term = cachedInteger((int)in.parseLong(begin));
+            }
             return dtId == 0 ? Result.MALFORMED : Result.TTL;
         } else if (first == 't' && in.has(begin, TRUE_utf8) && (begin+4 == end || contains(BOOL_FOLLOW, in.get(begin+4)))) {
             stopped = begin+4;
@@ -345,6 +351,18 @@ public final class TermParser {
         } else {
             return Result.MALFORMED;
         }
+    }
+
+    private @Nullable Term cachedInteger(int value) {
+        Term[] cache = value < 0 ? NEG_INTEGERS : POS_INTEGERS;
+        int pos = Math.abs(value);
+        if (value < cache.length) {
+            Term term = cache[pos];
+            if (term == null)
+                cache[pos] = term = Term.typed(in, begin, stopped, DT_integer);
+            return term;
+        }
+        return null;
     }
 
     private byte[] escaped(int until) {

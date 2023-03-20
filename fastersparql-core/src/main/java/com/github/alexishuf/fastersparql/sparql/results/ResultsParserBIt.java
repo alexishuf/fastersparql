@@ -1,16 +1,25 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.*;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBufferedBIt;
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItIllegalStateException;
+import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.util.Arrays;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
@@ -22,22 +31,23 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * to block on {@link ResultsParserBIt#feedShared(Rope)}. See the {@link CallbackBIt}
  * methods for configuring the queue size.</p>
  *
- * @param <R> the row type
+ * @param <B> the row type
  */
-public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
-    /** The {@link RowType} for rows produced by this {@link BIt}. */
-    public final RowType<R> rowType;
+public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
+    /** The {@link BatchType} for rows produced by this {@link BIt}. */
+    public final BatchType<B> batchType;
 
-    /** Implementations should use this to instantiate the parsed rows */
-    protected final RowType.Builder<R> builder;
+    protected final Term[] row;
+    private final TermBatch rowBatch;
+    private B tmpBatch;
 
-    protected final @Nullable CallbackBIt<R> destination;
+    protected final @Nullable CallbackBIt<B> destination;
 
     /** Interface used via SPI to discover {@link ResultsParserBIt} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
         SparqlResultFormat name();
-        <R> ResultsParserBIt<R> create(RowType<R> rowType, Vars vars);
-        <R> ResultsParserBIt<R> create(RowType<R> rowType, CallbackBIt<R> destination);
+        <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches);
+        <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination);
     }
 
     private static final NamedServiceLoader<Factory, SparqlResultFormat> NSL = new NamedServiceLoader<>(Factory.class) {
@@ -46,7 +56,7 @@ public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
         }
     };
 
-    /** Whether {@link ResultsParserBIt#createFor(SparqlResultFormat, RowType, Vars)}
+    /** Whether {@link ResultsParserBIt#createFor(SparqlResultFormat, BatchType, Vars, int)}
      *  can create a {@link ResultsParserBIt} for the given format */
     public static boolean supports(SparqlResultFormat fmt) {
         return NSL.has(fmt);
@@ -64,28 +74,28 @@ public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
      * To add a new implementation, implement {@link Factory} and add the class name to an SPI
      * services file.</p>
      *
-     * @param format the format of the UTF-8 segments that will be fed via
-     *               {@link ResultsParserBIt#feedShared(Rope)}
-     * @param rowType basic operations for the type of row that will be created
-     * @param vars list of vars that will correspond to the columns in the produced rows
-     *
+     * @param format     the format of the UTF-8 segments that will be fed via
+     *                   {@link ResultsParserBIt#feedShared(Rope)}
+     * @param batchType  basic operations for the type of row that will be created
+     * @param vars       list of vars that will correspond to the columns in the produced rows
+     * @param maxBatches maximum number of queued batches ({@link CallbackBIt#maxReadyBatches()}
      * @throws NoParserException if there is no {@link ResultsParserBIt} implementation
-     * supporting  {@code format}.
+     *                           supporting  {@code format}.
      */
-    public static <R> ResultsParserBIt<R> createFor(SparqlResultFormat format,
-                                                    RowType<R> rowType, Vars vars) {
-        return NSL.get(format).create(rowType, vars);
+    public static <B extends Batch<B>> ResultsParserBIt<B>
+    createFor(SparqlResultFormat format, BatchType<B> batchType, Vars vars, int maxBatches) {
+        return NSL.get(format).create(batchType, vars, maxBatches);
     }
 
     /**
-     * Equivalent to {@link ResultsParserBIt#createFor(SparqlResultFormat, RowType, Vars)},
+     * Equivalent to {@link ResultsParserBIt#createFor(SparqlResultFormat, BatchType, Vars, int)},
      * but rows are delivered through {@code destination.feed(R)} and {@code this}
      * {@link ResultsParserBIt} will not produce any rows but will complete when parsing
      * completes (successfully or not).
      *
      * @param format the format of the UTF-8 segments that will be fed via
      *               {@link ResultsParserBIt#feedShared(Rope)}
-     * @param rowType basic operations for the type of row that will be created
+     * @param batchType basic operations for the type of row that will be created
      * @param destination rows will be sent only {@code destination.feed(R)} and this
      *                    {@link ResultsParserBIt} will never output the rows itself. However, the
      *                    {@link ResultsParserBIt} will complete (blocking any consumer) until
@@ -95,24 +105,31 @@ public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
      * @throws NoParserException if there is no {@link ResultsParserBIt} implementation
      *                           supporting  {@code format}.
      */
-    public static <R> ResultsParserBIt<R> createFor(SparqlResultFormat format,
-                                                    RowType<R> rowType,
-                                                    CallbackBIt<R> destination) {
-        return NSL.get(format).create(rowType, destination);
+    public static <B extends Batch<B>> ResultsParserBIt<B>
+    createFor(SparqlResultFormat format, BatchType<B> batchType, CallbackBIt<B> destination) {
+        return NSL.get(format).create(batchType, destination);
     }
 
-    protected ResultsParserBIt(RowType<R> rowType, Vars vars) {
-        super(rowType, vars);
-        this.rowType = rowType;
-        this.builder = rowType.builder(vars.size());
+    protected ResultsParserBIt(BatchType<B> batchType, Vars vars, int maxBatches) {
+        super(batchType, vars, maxBatches);
+        this.batchType = batchType;
         this.destination = null;
+        this.row = (this.rowBatch = makeRowBatch(vars.size())).arr();
     }
 
-    protected ResultsParserBIt(RowType<R> rowType, CallbackBIt<R> destination) {
-        super(rowType, destination.vars());
-        this.rowType = rowType;
-        this.builder = rowType.builder(destination.vars().size());
+    protected ResultsParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
+        super(batchType, destination.vars(), destination.maxReadyBatches());
+        this.batchType = batchType;
         this.destination = destination;
+        this.row = (this.rowBatch = makeRowBatch(vars.size())).arr();
+    }
+
+    private static TermBatch makeRowBatch(int cols) {
+        TermBatch b = Batch.TERM.create(1, cols, 0);
+        b.beginPut();
+        for (int c = 0; c < cols; c++) b.putTerm(null);
+        b.commitPut();
+        return b;
     }
 
     /**
@@ -165,14 +182,17 @@ public abstract class ResultsParserBIt<R> extends SPSCBufferedBIt<R> {
      */
     protected abstract void doFeedShared(Rope rope);
 
-    @Override public final void feed(Batch<R> batch) {
-        if (destination != null) destination.feed(batch);
-        super.feed(batch);
+    @Override public B offer(B batch) throws BItCompletedException {
+        return destination != null ? destination.offer(batch) : super.offer(batch);
     }
 
-    @Override public void feed(R item) {
-        if (destination != null) destination.feed(item);
-        super.feed(item);
+    protected final void emitRowKeep() {
+        tmpBatch = offer(getBatch(tmpBatch).putConverting(rowBatch));
+    }
+
+    protected final void emitRowClear() {
+        emitRowKeep();
+        Arrays.fill(row, null);
     }
 
     /**

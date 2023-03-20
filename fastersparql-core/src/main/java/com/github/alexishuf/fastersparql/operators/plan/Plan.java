@@ -2,10 +2,11 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -263,7 +264,7 @@ public abstract sealed class Plan implements SparqlQuery
     @Override public boolean isGraph() { return false; }
 
     /**
-     * The would-be value of {@link BIt#vars()} upon {@link Plan#execute(RowType, boolean)}.
+     * The would-be value of {@link BIt#vars()} upon {@link Plan#execute(BatchType, boolean)}.
      *
      * @return a non-null (but possibly empty) list of non-null and non-empty variable names
      *         (i.e., no leading {@code ?} or {@code $}).
@@ -352,7 +353,7 @@ public abstract sealed class Plan implements SparqlQuery
     /** Get read-only access to the list of listeners */
     public List<MetricsListener> listeners() { return listeners; }
 
-    /** Add {@code listener} to be notified when {@link Plan#execute(RowType, boolean)} executions complete. */
+    /** Add {@code listener} to be notified when {@link Plan#execute(BatchType, boolean)} executions complete. */
     @SuppressWarnings("unused")
     public void attach(MetricsListener listener) {
         (listeners.isEmpty() ? listeners = new ArrayList<>() : listeners).add(listener);
@@ -459,14 +460,8 @@ public abstract sealed class Plan implements SparqlQuery
                         }
                         m.projection = projection.minus(binding.vars);
                     }
-                    List<Expr> filters = m.filters, boundFilters = null;
-                    for (int i = 0, n = filters.size(); i < n; i++) {
-                        Expr e = filters.get(i), b = e.bound(binding);
-                        if (e == b) continue;
-                        if (boundFilters == null) boundFilters = new ArrayList<>(m.filters);
-                        boundFilters.set(i, b);
-                    }
-                    if (boundFilters != null) {
+                    List<Expr> boundFilters = m.boundFilters(binding);
+                    if (boundFilters != m.filters) {
                         if (!copied) m = m.copy(null);
                         m.filters = boundFilters;
                     }
@@ -528,11 +523,11 @@ public abstract sealed class Plan implements SparqlQuery
     /* --- --- --- pure abstract methods --- --- --- */
 
     /** Create a {@link BIt} over the results from this plan execution. */
-    public abstract <R> BIt<R> execute(RowType<R> rt, @Nullable Binding binding, boolean canDedup);
+    public abstract <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup);
 
-    public final  <R> BIt<R> execute(RowType<R> rt, boolean canDedup) { return execute(rt, null, canDedup); }
-    public final <R> BIt<R> execute(RowType<R> rt) { return execute(rt, false); }
-    public final <R> BIt<R> execute(RowType<R> rt, Binding binding) { return execute(rt, binding, false); }
+    public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, boolean canDedup) { return execute(bt, null, canDedup); }
+    public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt) { return execute(bt, false); }
+    public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, Binding binding) { return execute(bt, binding, false); }
 
     /* --- --- --- helpers --- --- --- */
 

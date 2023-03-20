@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -48,7 +48,7 @@ public class ProjectTest {
 
     @ParameterizedTest @MethodSource
     void test(Results in, Results expected) {
-        expected.check(FS.project(in.asPlan(), expected.vars()).execute(RowType.LIST));
+        expected.check(FS.project(in.asPlan(), expected.vars()).execute(Batch.TERM));
     }
 
 }

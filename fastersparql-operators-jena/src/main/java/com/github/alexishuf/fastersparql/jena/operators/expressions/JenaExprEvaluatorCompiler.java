@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.jena.operators.expressions;
 
-import com.github.alexishuf.fastersparql.model.row.RowType;
+
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluator;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprEvaluatorCompiler;
 import com.github.alexishuf.fastersparql.operators.expressions.ExprSyntaxException;
@@ -28,7 +28,7 @@ public class JenaExprEvaluatorCompiler implements ExprEvaluatorCompiler {
             "SELECT * WHERE {\n";
 
     @Override
-    public <R> ExprEvaluator<R> compile(RowType<R, ?> rowType, List<String> rowVarNames,
+    public <R> ExprEvaluator<R> compile(RowType<R, ?> batchType, List<String> rowVarNames,
                                         CharSequence inExpr) {
         String expr = inExpr.toString();
         StringBuilder b = new StringBuilder(HOST_SPARQL.length() + expr.length() + 16);
@@ -50,6 +50,6 @@ public class JenaExprEvaluatorCompiler implements ExprEvaluatorCompiler {
         });
         if (out[0] == null)
             throw new ExprSyntaxException(expr, "no expression found");
-        return new JenaExprEvaluator<>(expr, out[0], rowType, rowVarNames);
+        return new JenaExprEvaluator<>(expr, out[0], batchType, rowVarNames);
     }
 }

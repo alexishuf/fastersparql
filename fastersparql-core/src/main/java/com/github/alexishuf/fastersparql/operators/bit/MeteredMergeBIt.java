@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Batch;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
-import com.github.alexishuf.fastersparql.model.row.RowType;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -14,37 +14,40 @@ import java.util.Collection;
 import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
 
 
-public class MeteredMergeBIt<R> extends MergeBIt<R> {
+public class MeteredMergeBIt<B extends Batch<B>> extends MergeBIt<B> {
     protected final Plan namingPlan;
     protected final int namingIdx;
     protected final @Nullable Metrics metrics;
     protected final @Nullable JoinMetrics joinMetrics;
 
-    public MeteredMergeBIt(Collection<? extends BIt<R>> sources, Plan plan) {
-        super(sources, sources.iterator().next().rowType(), plan.publicVars());
+    public MeteredMergeBIt(Collection<? extends BIt<B>> sources, Plan plan) {
+        this(sources, plan, true);
+    }
+    protected MeteredMergeBIt(Collection<? extends BIt<B>> sources, Plan plan, boolean autoStart) {
+        super(sources, sources.iterator().next().batchType(), plan.publicVars(), autoStart);
         this.namingPlan = plan;
         this.namingIdx = 0;
         this.metrics = Metrics.createIf(plan);
         this.joinMetrics = null;
     }
 
-    public MeteredMergeBIt(Collection<? extends BIt<R>> sources, Plan join, int operandIdx,
+    public MeteredMergeBIt(Collection<? extends BIt<B>> sources, Plan join, int operandIdx,
                            @Nullable JoinMetrics joinMetrics) {
-        super(sources, sources.iterator().next().rowType(), join.publicVars());
+        this(sources, join, operandIdx, joinMetrics, true);
+    }
+    protected MeteredMergeBIt(Collection<? extends BIt<B>> sources, Plan join, int operandIdx,
+                           @Nullable JoinMetrics joinMetrics, boolean autoStart) {
+        super(sources, sources.iterator().next().batchType(), join.publicVars(), autoStart);
         this.namingPlan = join;
         this.namingIdx = operandIdx;
         this.metrics = null;
         this.joinMetrics = joinMetrics;
     }
 
-    @Override protected void process(Batch<R> batch, int sourceIdx,
-                                     RowType<R>.@Nullable Merger projector) {
-        if (metrics   != null) metrics.rowsEmitted(batch.size);
-        if (projector != null) projector.projectInPlace(batch);
-        feedLock.lock();
-        try {
-            feed(batch);
-        } finally { feedLock.unlock(); }
+    @Override protected B process(int i, B b, BatchProcessor<B> processor) {
+        b = super.process(i, b, processor);
+        if (metrics != null) metrics.rowsEmitted(b.rows);
+        return b;
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

@@ -1,43 +1,56 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
-import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
-import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.*;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.row.RowType;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.VarHandle;
 import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static java.lang.invoke.MethodHandles.lookup;
+
 /**
  * Implements trivial methods of {@link BIt} and open/closed state.
  */
-public abstract class AbstractBIt<T> implements BIt<T> {
+public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
     /** A value smaller than any {@link System#nanoTime()} call without overflow risks. */
     protected static final long ORIGIN_TIMESTAMP = System.nanoTime();
+    protected static final VarHandle RECYCLED;
+
+    static {
+        try {
+            RECYCLED = lookup().findVarHandle(AbstractBIt.class, "recycled", Batch.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
 
     protected long minWaitNs = 0;
     protected long maxWaitNs = 0;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
-    protected boolean needsStartTime = false, closed = false, terminated = false;
+    protected int rowsCapacity, bytesCapacity;
+    protected boolean needsStartTime = false, closed = false, terminated = false, eager = false;
     protected @MonotonicNonNull Throwable error;
-    protected final RowType<T> rowType;
+    protected final BatchType<B> batchType;
+    protected B recycled;
     protected final Vars vars;
 
-    public AbstractBIt(RowType<T> rowType, Vars vars) {
-        this.rowType = rowType;
+    public AbstractBIt(BatchType<B> batchType, Vars vars) {
+        this.batchType = batchType;
         this.vars = vars;
     }
 
@@ -62,7 +75,10 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      *              <i>error completion</i>, or a {@link BItClosedAtException} for {@code this}
      *              in case of <i>cancellation</i>
      */
-    protected void cleanup(@Nullable Throwable cause) { /* do nothing by default */ }
+    protected void cleanup(@Nullable Throwable cause) {
+        for (B b; (b = stealRecycled()) != null; )
+            batchType.recycle(b);
+    }
 
     protected BItCompletedException mkCompleted() {
         return new BItCompletedException("Previous complete("+error+") on "+this, this);
@@ -81,9 +97,8 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      * <p>This method should be called when one of the following happens:</p>
      * <ul>
      *     <li>The source that feeds this {@link BIt} has been exhausted (e.g., a thread calling
-     *         {@link CallbackBIt#feed(Object)} has completed or threw {@code cause})</li>
-     *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#hasNext()} {@code == false} and
-     *         empty {@link BIt#nextBatch()}</li>
+     *         {@link CallbackBIt#offer(Batch)} has completed or threw {@code cause})</li>
+     *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#nextBatch(B)} {@code == null}</li>
      *     <li>{@link BIt#close()} was called ({@code cause} will be
      *         a {@link BItClosedAtException})</li>
      * </ul>
@@ -116,7 +131,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         try {
             cleanup(cause);
         } catch (Throwable t) {
-            log.error("{}.cleanup() on exhaustion failed", this, t);
+            log.error("{}.cleanup() failed", this, t);
         }
     }
     private static final String ON_TERM_TPL_PREV = "{}.onTermination({}) ignored: previous onTermination({})";
@@ -126,39 +141,40 @@ public abstract class AbstractBIt<T> implements BIt<T> {
 
     public boolean isClosed() { return closed; }
 
+
     /**
-     * Tests whether a batch with {@code size} items started when {@link System#nanoTime()}
-     * was {@code start} is ready.
+     * Get how many nanoseconds to wait to check again whether a batch with {@code r} rows
+     * that started filling when {@link System#nanoTime()} was {@code start} is ready.
      *
-     * <p>A batch is ready when it is not empty and one of the following hold:</p>
+     * <p>If the batch is ready, this returns 0. If this iterator is not configured for time-based
+     * batch readiness ({@link BIt#minWait(long, TimeUnit)} and
+     * {@link BIt#maxWait(long, TimeUnit)}), returns {@link Long#MAX_VALUE}. </p>
      *
-     * <ol>
-     *     <li>The max size has been reached: {@code size >= maxBatch()}</li>
-     *     <li>The maximum wait time has been reached:
-     *         {@code nanoTime()-start >= maxWait(NANOSECONDS)}</li>
-     *     <li>The minimum size has been reached after the minimum wait:
-     *         {@code size >= minBatch() && nanoTime()-start >= minWait(NANOSECONDS}</li>
-     * </ol>
-     *
-     * @param size the current batch size.
-     * @param start when the batch started being built.
-     * @return {@code true} iff the batch is ready as {@link BIt#minBatch()},
-     *         {@link BIt#maxBatch()}, {@link BIt#minWait(TimeUnit)} and
-     *         {@link BIt#maxWait(TimeUnit)}.
+     * @param r current batch size
+     * @param start when the batch started filling (can be {@link AbstractBIt#ORIGIN_TIMESTAMP})
+     * @return Zero if batch is ready, {@link Long#MAX_VALUE} if the iterator does not have
+     *         time-based batch readiness, Else, nanoseconds until time until
+     *         {@link BIt#minWait(TimeUnit)} or {@link BIt#maxWait(TimeUnit)}.
      */
-    protected boolean ready(int size, long start) {
-        if (size >= maxBatch) return true;
-        else if (size == 0) return false;
-        else if ((minWaitNs == 0 && (size >= minBatch || maxWaitNs == 0))) return true;
+    protected long readyInNanos(int r, long start) {
+        if      (r == 0                  ) return Long.MAX_VALUE;
+        else if (r >= maxBatch   || eager) return 0;
+        else if (!needsStartTime         ) return r >= minBatch ? 0 : Long.MAX_VALUE;
+
         long elapsed = System.nanoTime() - start;
-        return (elapsed > minWaitNs && size >= minBatch) || (elapsed >= maxWaitNs);
+        if      (elapsed <  minWaitNs) return Math.max(0, minWaitNs-elapsed);
+        else if (r       >=  minBatch) return 0;
+        else if (elapsed <  maxWaitNs) return Math.max(0, maxWaitNs-elapsed);
+        else if (r       >          0) return 0;
+        else                           return Long.MAX_VALUE;
     }
+
 
     protected int id() { return id == 0 ? id = nextId.getAndIncrement() : id; }
 
     /* --- --- --- implementations --- --- --- */
 
-    @Override public RowType<T> rowType() { return rowType; }
+    @Override public BatchType<B> batchType() { return batchType; }
 
     @Override public Vars vars() { return vars; }
 
@@ -170,9 +186,48 @@ public abstract class AbstractBIt<T> implements BIt<T> {
      * <p>Implementations should use this to updated derived fields or to complete
      * filling but not yet ready batches.</p>
      */
-    protected void updatedBatchConstraints() {  }
+    protected void updatedBatchConstraints() {
+        int bound;
+        if (rowsCapacity  < (bound = minBatch)   ) rowsCapacity = bound;
+        if (bytesCapacity < (bound = 32*minBatch)) bytesCapacity = bound;
+        if (rowsCapacity  > (bound = maxBatch)   ) rowsCapacity = bound;
+    }
 
-    @Override public BIt<T> minWait(long time, TimeUnit unit) {
+    protected void adjustCapacity(@Nullable B b) {
+        if (b == null) return;
+        int delta = b.rows - rowsCapacity;
+        if (delta > 0) {
+            rowsCapacity += delta; // add missing capacity
+            bytesCapacity = Math.max(b.bytesUsed(), bytesCapacity);
+        } else if (delta < -64) {
+            rowsCapacity += delta>>2; // reduce capacity by 25% of excess capacity
+            delta = b.bytesUsed()-bytesCapacity;
+            if (delta > 0)
+                bytesCapacity += delta;
+            else if (delta < -128)
+                bytesCapacity += delta>>4;
+        }
+    }
+
+    @Override public BIt<B> preferred() {
+        needsStartTime = true;
+        minWaitNs = FSProperties.batchMinWait(TimeUnit.NANOSECONDS);
+        maxWaitNs = FSProperties.batchMaxWait(TimeUnit.NANOSECONDS);
+        minBatch  = FSProperties.batchMinSize();
+        maxBatch = Math.max(minBatch, DEF_MAX_BATCH);
+        updatedBatchConstraints();
+        return this;
+    }
+
+    @Override public @This BIt<B> eager() {
+        needsStartTime = false;
+        minWaitNs = maxWaitNs = 0;
+        minBatch = 1;
+        updatedBatchConstraints();
+        return this;
+    }
+
+    @Override public BIt<B> minWait(long time, TimeUnit unit) {
         if (time < 0) {
             assert false : "negative time";
             log.warn("{}.minWait({}, {}): treating negative as default (0)", this, time, unit);
@@ -191,7 +246,7 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         return unit.convert(minWaitNs, TimeUnit.NANOSECONDS);
     }
 
-    @Override public BIt<T> maxWait(long time, TimeUnit unit) {
+    @Override public BIt<B> maxWait(long time, TimeUnit unit) {
         if (time < 0) {
             assert false : "negative time";
             log.warn("{}.maxWait({}, {}): treating negative as default (0)", this, time, unit);
@@ -208,21 +263,19 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         return unit.convert(maxWaitNs, TimeUnit.NANOSECONDS);
     }
 
-    @Override public BIt<T> minBatch(int size) {
-        if (size < 0) {
-            log.warn("{}.minBatch({}): treating negative size as 0", this, size);
-            size = 0;
+    @Override public BIt<B> minBatch(int rows) {
+        if (rows < 0) {
+            log.warn("{}.minBatch({}): treating negative size as 0", this, rows);
+            rows = 0;
         }
-        minBatch = size;
+        minBatch = rows;
         updatedBatchConstraints();
         return this;
     }
 
-    @Override public int minBatch() {
-        return minBatch;
-    }
+    @Override public final int minBatch() { return minBatch; }
 
-    @Override public BIt<T> maxBatch(int size) {
+    @Override public BIt<B> maxBatch(int size) {
         if (size < 1)
             throw new IllegalArgumentException(this+".maxBatch("+size+"): expected > 0");
         maxBatch = size;
@@ -230,8 +283,35 @@ public abstract class AbstractBIt<T> implements BIt<T> {
         return this;
     }
 
-    @Override public int maxBatch() {
-        return maxBatch;
+    @Override public final int maxBatch() { return maxBatch; }
+
+    @Override public @This BIt<B> tempEager() {
+        eager = true;
+        updatedBatchConstraints();
+        return this;
+    }
+
+    @Override public @Nullable B recycle(@Nullable B batch) {
+        if (batch == null) return null;
+        if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null) return null;
+        return batch;
+    }
+
+    /** Get an empty batch using {@code offer}, {@link #stealRecycled()} or
+     *  {@link BatchType#create(int, int, int)}. */
+    protected final B getBatch(@Nullable B offer) {
+        if (offer == null) {
+            offer = stealRecycled();
+            if (offer == null)
+                return batchType().create(rowsCapacity, vars.size(), bytesCapacity);
+        }
+        offer.clear(vars.size());
+        return offer;
+    }
+
+    @Override public @Nullable B stealRecycled() {
+        //noinspection unchecked
+        return (B) RECYCLED.getAndSetAcquire(this, null);
     }
 
     @Override public void close() {
@@ -242,24 +322,28 @@ public abstract class AbstractBIt<T> implements BIt<T> {
     }
 
     protected String toStringNoArgs() {
-        String name = getClass().getSimpleName();
+        return toStringNoArgs(getClass())+'@'+id();
+    }
+
+    static String toStringNoArgs(Class<?> cls) {
+        String name = cls.getSimpleName();
         int suffixStart = name.length() - 3;
         if (name.regionMatches(suffixStart, "BIt", 0, 3))
             name = name.substring(0, suffixStart);
-        return name+'@'+id();
+        return name;
     }
 
     @Override public String toString() { return toStringNoArgs(); }
 
     protected String toStringWithOperands(Collection<?> operands) {
-        var sb = new StringBuilder(200).append(toStringNoArgs()).append('[');
+        var sb = new StringBuilder(200).append(toStringNoArgs()).append('(');
         int taken = 0, n = operands.size();
-        for (var i = operands.iterator(); sb.length() < 160 && i.hasNext(); ++taken)
+        for (var i = operands.iterator(); sb.length() < 60 && i.hasNext(); ++taken)
             sb.append(i.next()).append(", ");
         if (taken < n)
             sb.append("...");
         else if (taken > 0)
             sb.setLength(sb.length()-2);
-        return sb.append(']').toString();
+        return sb.append(')').toString();
     }
 }

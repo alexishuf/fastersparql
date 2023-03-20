@@ -238,6 +238,17 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
     @Override public final Spliterator<Rope> spliterator() { return super.spliterator(); }
 
+    @Override public boolean equals(Object o) {
+        if (o == this) return true;
+        if (!(o instanceof Collection<?> coll) || size != coll.size()) return false;
+        if (o instanceof Vars v && has != v.has) return false;
+        int i = 0;
+        for (Object item : coll) {
+            if (!array[i++].equals(item)) return false;
+        }
+        return true;
+    }
+
     /* --- --- --- mutable subclass --- --- --- */
 
     /** A Mutable {@link Vars} instance */

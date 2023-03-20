@@ -5,49 +5,74 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
-import com.github.alexishuf.fastersparql.operators.reorder.NoneJoinReorderStrategy;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @SuppressWarnings("unused")
 public class FSProperties {
-    private static final Map<String, Object> PROP_CACHE = new ConcurrentHashMap<>();
 
     /* --- --- --- property names --- --- --- */
-    public static final String CLIENT_MAX_QUERY_GET = "fastersparql.client.max-query-get";
-    public static final String CLIENT_CONN_RETRIES = "fastersparql.client.conn.retries";
-    public static final String CLIENT_CONN_TIMEOUT_MS = "fastersparql.client.conn.timeout-ms";
-    public static final String CLIENT_SO_TIMEOUT_MS = "fastersparql.client.so.timeout-ms";
+    public static final String CLIENT_MAX_QUERY_GET      = "fastersparql.client.max-query-get";
+    public static final String CLIENT_CONN_RETRIES       = "fastersparql.client.conn.retries";
+    public static final String CLIENT_CONN_TIMEOUT_MS    = "fastersparql.client.conn.timeout-ms";
+    public static final String CLIENT_SO_TIMEOUT_MS      = "fastersparql.client.so.timeout-ms";
     public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
-    public static final String CLIENT_CONS_BATCH_MIN_WAIT_MS = "fastersparql.client.batch.min-wait-ms";
-    public static final String OP_DISTINCT_CAPACITY = "fastersparql.op.distinct.capacity";
-    public static final String OP_REDUCED_CAPACITY = "fastersparql.op.reduced.capacity";
-    public static final String OP_DEDUP_CAPACITY = "fastersparql.op.dedup.capacity";
-    public static final String OP_JOIN_REORDER = "fastersparql.op.join.reorder";
-    public static final String OP_JOIN_REORDER_BIND = "fastersparql.op.join.reorder.bind";
-    public static final String OP_JOIN_REORDER_HASH = "fastersparql.op.join.reorder.hash";
-    public static final String OP_JOIN_REORDER_WCO = "fastersparql.op.join.reorder.wco";
-    public static final String FED_ASK_POS_CAP = "fastersparql.fed.ask.pos.cap";
-    public static final String FED_ASK_NEG_CAP = "fastersparql.fed.ask.neg.cap";
+    public static final String BATCH_MIN_SIZE            = "fastersparql.batch.min-size";
+    public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
+    public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
+    public static final String BATCH_QUEUE_BATCHES       = "fastersparql.batch.queue.batches";
+    public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
+    public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
+    public static final String OP_REDUCED_CAPACITY       = "fastersparql.op.reduced.capacity";
+    public static final String OP_DEDUP_CAPACITY         = "fastersparql.op.dedup.capacity";
+    public static final String OP_JOIN_REORDER           = "fastersparql.op.join.reorder";
+    public static final String OP_JOIN_REORDER_BIND      = "fastersparql.op.join.reorder.bind";
+    public static final String OP_JOIN_REORDER_HASH      = "fastersparql.op.join.reorder.hash";
+    public static final String OP_JOIN_REORDER_WCO       = "fastersparql.op.join.reorder.wco";
+    public static final String FED_ASK_POS_CAP           = "fastersparql.fed.ask.pos.cap";
+    public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
 
     /* --- --- --- default values --- --- --- */
-    public static final int DEF_CLIENT_MAX_QUERY_GET = 1024;
-    public static final int DEF_CLIENT_CONN_RETRIES = 3;
-    public static final int DEF_CLIENT_CONN_TIMEOUT_MS = 0;
-    public static final int DEF_CLIENT_SO_TIMEOUT_MS = 0;
+    public static final int DEF_CLIENT_MAX_QUERY_GET      = 1024;
+    public static final int DEF_CLIENT_CONN_RETRIES       = 3;
+    public static final int DEF_CLIENT_CONN_TIMEOUT_MS    = 0;
+    public static final int DEF_CLIENT_SO_TIMEOUT_MS      = 0;
     public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
-    public static final int DEF_CLIENT_CONS_BATCH_MIN_WAIT_MS = 10;
-    public static final int DEF_OP_DISTINCT_CAPACITY = 1<<20; // 1 Mi rows --> 8MiB
-    public static final int DEF_OP_REDUCED_CAPACITY = 1<<16; // 64 Ki rows --> 512KiB
-    public static final int DEF_OP_DEDUP_CAPACITY = 1<<8; // 256 rows --> 2KiB
-    public static final int DEF_FED_ASK_POS_CAP = 1<<14;
-    public static final int DEF_FED_ASK_NEG_CAP = 1<<12;
+    public static final int DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
+    public static final int DEF_BATCH_MIN_WAIT_US         = 500;
+    public static final int DEF_BATCH_MAX_WAIT_US         = 1000;
+    public static final int DEF_BATCH_QUEUE_BATCHES       = 8;
+    public static final int DEF_BATCH_QUEUE_ROWS          = Integer.MAX_VALUE;
+    public static final int DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
+    public static final int DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
+    public static final int DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
+    public static final int DEF_FED_ASK_POS_CAP           = 1<<14;
+    public static final int DEF_FED_ASK_NEG_CAP           = 1<<12;
+
+    /* --- --- --- cached values --- --- --- */
+    private static int CACHE_CLIENT_MAX_QUERY_GET      = -1;
+    private static int CACHE_CLIENT_CONN_RETRIES       = -1;
+    private static int CACHE_CLIENT_CONN_TIMEOUT_MS    = -1;
+    private static int CACHE_CLIENT_SO_TIMEOUT_MS      = -1;
+    private static int CACHE_CLIENT_CONN_RETRY_WAIT_MS = -1;
+    private static int CACHE_BATCH_MIN_SIZE            = -1;
+    private static int CACHE_BATCH_MIN_WAIT_US         = -1;
+    private static int CACHE_BATCH_MAX_WAIT_US         = -1;
+    private static int CACHE_BATCH_QUEUE_BATCHES       = -1;
+    private static int CACHE_BATCH_QUEUE_ROWS          = -1;
+    private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
+    private static int CACHE_OP_REDUCED_CAPACITY       = -1;
+    private static int CACHE_OP_DEDUP_CAPACITY         = -1;
+    private static int CACHE_FED_ASK_POS_CAP           = -1;
+    private static int CACHE_FED_ASK_NEG_CAP           = -1;
+    private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
+    private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_BIND = null;
+    private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_HASH = null;
+    private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_WCO  = null;
 
     /* --- --- --- internal use --- --- --- */
 
@@ -55,8 +80,8 @@ public class FSProperties {
         T parse(String source, String value) throws IllegalArgumentException;
     }
 
-    protected static <T> T readPropertyExternally(String propertyName, T defaultValue,
-                                                  Parser<T> parser) {
+    protected static <T> T readProperty(String propertyName, T defaultValue,
+                                        Parser<T> parser) {
         String source = "JVM property "+propertyName;
         String value = System.getProperty(propertyName);
         if (value == null) {
@@ -67,12 +92,6 @@ public class FSProperties {
         return value == null ? defaultValue : parser.parse(source, value);
     }
 
-    protected static <T> T readProperty(String propertyName, T defaultValue, Parser<T> parser) {
-        //noinspection unchecked
-        return (T) PROP_CACHE.computeIfAbsent(propertyName,
-                                              k -> readPropertyExternally(k, defaultValue, parser));
-
-    }
 
     private static final Pattern BOOL_RX =
             Pattern.compile("(?i)\\s*(?:(t|true|1|y|yes)|(f|false|0|n|no))\\s*");
@@ -102,7 +121,25 @@ public class FSProperties {
      * {@link System#getProperty(String)} and {@link System#getenv(String)}.
      */
     public static void refresh() {
-        PROP_CACHE.clear();
+        CACHE_CLIENT_MAX_QUERY_GET      = -1;
+        CACHE_CLIENT_CONN_RETRIES       = -1;
+        CACHE_CLIENT_CONN_TIMEOUT_MS    = -1;
+        CACHE_CLIENT_SO_TIMEOUT_MS      = -1;
+        CACHE_CLIENT_CONN_RETRY_WAIT_MS = -1;
+        CACHE_BATCH_MIN_SIZE            = -1;
+        CACHE_BATCH_MIN_WAIT_US         = -1;
+        CACHE_BATCH_MAX_WAIT_US         = -1;
+        CACHE_BATCH_QUEUE_BATCHES       = -1;
+        CACHE_BATCH_QUEUE_ROWS          = -1;
+        CACHE_OP_DISTINCT_CAPACITY      = -1;
+        CACHE_OP_REDUCED_CAPACITY       = -1;
+        CACHE_OP_DEDUP_CAPACITY         = -1;
+        CACHE_FED_ASK_POS_CAP           = -1;
+        CACHE_FED_ASK_NEG_CAP           = -1;
+        CACHE_OP_JOIN_REORDER           = null;
+        CACHE_OP_JOIN_REORDER_BIND      = null;
+        CACHE_OP_JOIN_REORDER_HASH      = null;
+        CACHE_OP_JOIN_REORDER_WCO       = null;
     }
 
     /* --- --- --- accessors --- --- --- */
@@ -117,7 +154,10 @@ public class FSProperties {
      * <p>The default value is {@link FSProperties#DEF_CLIENT_MAX_QUERY_GET}.</p>
      */
     public static @Positive int maxQueryByGet() {
-        return readPositiveInt(CLIENT_MAX_QUERY_GET, DEF_CLIENT_MAX_QUERY_GET);
+        int i = CACHE_CLIENT_MAX_QUERY_GET;
+        if (i < 0)
+            CACHE_CLIENT_MAX_QUERY_GET = i = readPositiveInt(CLIENT_MAX_QUERY_GET, DEF_CLIENT_MAX_QUERY_GET);
+        return i;
     }
 
     /**
@@ -128,7 +168,10 @@ public class FSProperties {
      *         there will be only the initial connection attempt.
      */
     public static @NonNegative int maxRetries() {
-        return readPositiveInt(CLIENT_CONN_RETRIES, DEF_CLIENT_CONN_RETRIES);
+        int i = CACHE_CLIENT_CONN_RETRIES;
+        if (i < 0)
+            CACHE_CLIENT_CONN_RETRIES = i = readPositiveInt(CLIENT_CONN_RETRIES, DEF_CLIENT_CONN_RETRIES);
+        return i;
     }
 
     /**
@@ -138,8 +181,11 @@ public class FSProperties {
      *         with the number of milliseconds after which TCP connections that failed to complete
      *         the handshake are to be considered failed.
      */
-    public static int connectTimeoutMs() {
-        return readPositiveInt(CLIENT_CONN_TIMEOUT_MS, DEF_CLIENT_CONN_TIMEOUT_MS);
+    public static @NonNegative int connectTimeoutMs() {
+        int i = CACHE_CLIENT_CONN_TIMEOUT_MS;
+        if (i < 0)
+            CACHE_CLIENT_CONN_TIMEOUT_MS = i = readPositiveInt(CLIENT_CONN_TIMEOUT_MS, DEF_CLIENT_CONN_TIMEOUT_MS);
+        return i;
     }
 
     /**
@@ -148,8 +194,11 @@ public class FSProperties {
      * @return Either {@code 0}, delegating the choice to the underlying OS, or a value {@code >0}
      *         with the timeout in milliseconds to be set for non-connect socket operations.
      */
-    public static int soTimeoutMs() {
-        return readPositiveInt(CLIENT_SO_TIMEOUT_MS, DEF_CLIENT_SO_TIMEOUT_MS);
+    public static @NonNegative int soTimeoutMs() {
+        int i = CACHE_CLIENT_SO_TIMEOUT_MS;
+        if (i < 0)
+            CACHE_CLIENT_SO_TIMEOUT_MS = i = readPositiveInt(CLIENT_SO_TIMEOUT_MS, DEF_CLIENT_SO_TIMEOUT_MS);
+        return i;
     }
 
     /**
@@ -160,29 +209,76 @@ public class FSProperties {
      * @return a non-negative number of timeunits to wait before each retry.
      */
     public static @NonNegative long retryWait(TimeUnit timeUnit) {
-        int ms = readPositiveInt(CLIENT_CONN_RETRY_WAIT_MS, DEF_CLIENT_CONN_RETRY_WAIT_MS);
+        int ms = CACHE_CLIENT_CONN_RETRY_WAIT_MS;
+        if (ms < 0)
+            CACHE_CLIENT_CONN_RETRY_WAIT_MS = ms = readPositiveInt(CLIENT_CONN_RETRY_WAIT_MS, DEF_CLIENT_CONN_RETRY_WAIT_MS);
         return timeUnit.convert(ms, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * The default value for {@link BIt#minWait(long, TimeUnit)} in iterators consumed by
-     * {@link SparqlClient}. This value will only be used if the configured
-     * {@link BIt#minWait(TimeUnit)} is smaller than the value of this property.
+     * The default value for {@link BIt#minBatch(int)} of iterators that knowingly receive data
+     * from an asynchronous source.
      *
-     * <p>The main use scenario where a {@link SparqlClient} <strong>consumes</strong> an
-     * iterator is in the implementation of bind join(-like) queries either over the standard
-     * SPARQL protocol (HTTP) or over the custom WebSocket protocol</p>.
-     *
-     * <p>The default is the median latency for global fixed broadband internet as published by
-     * <a href="https://www.speedtest.net/global-index">Ookla</a></p>.
+     * @return a size {@code >= 1}.
+     */
+    public static @Positive int batchMinSize() {
+        int i = CACHE_BATCH_MIN_SIZE;
+        if (i <= 0)
+            CACHE_BATCH_MIN_SIZE = i = readPositiveInt(BATCH_MIN_SIZE, DEF_BATCH_MIN_SIZE);
+        return i;
+    }
+
+    /**
+     * The default value for {@link BIt#minWait(long, TimeUnit)} in iterators that knowingly
+     * receive data from an asynchronous source and not from a intermediary processing step.
      *
      * @param timeUnit The desired unit of the duration value.
-     * @return a non-negative value to be passed to the {@link BIt#minWait(long, TimeUnit)}
-     *         method of iterators consumed by {@link SparqlClient}s.
+     * @return a non-negative value to be passed to {@link BIt#minWait(long, TimeUnit)}
      */
-    public static @NonNegative long consumedBatchMinWait(TimeUnit timeUnit) {
-        int ms = readPositiveInt(CLIENT_CONS_BATCH_MIN_WAIT_MS, DEF_CLIENT_CONS_BATCH_MIN_WAIT_MS);
-        return timeUnit.convert(ms, TimeUnit.MILLISECONDS);
+    public static @NonNegative long batchMinWait(TimeUnit timeUnit) {
+        int ms = CACHE_BATCH_MIN_WAIT_US;
+        if (ms < 0)
+            CACHE_BATCH_MIN_WAIT_US = ms = readPositiveInt(BATCH_MIN_WAIT_US, DEF_BATCH_MIN_WAIT_US);
+        return timeUnit.convert(ms, TimeUnit.MICROSECONDS);
+    }
+
+
+    /**
+     * Analogous to {@link FSProperties#batchMinWait(TimeUnit)}, but refers to
+     * {@link BIt#maxWait(long, TimeUnit)}
+     *
+     * @param timeUnit desired time unit of the wait duration
+     * @return a non-negative value to be passed to {@link BIt#maxWait(long, TimeUnit)}
+     */
+    public static @NonNegative long batchMaxWait(TimeUnit timeUnit) {
+        int ms = CACHE_BATCH_MAX_WAIT_US;
+        if (ms < 0)
+            CACHE_BATCH_MAX_WAIT_US = ms = readPositiveInt(BATCH_MAX_WAIT_US, DEF_BATCH_MAX_WAIT_US);
+        return timeUnit.convert(ms, TimeUnit.MICROSECONDS);
+    }
+
+    /**
+     * The default value for queue sizes in iterators that internally use bounded queues.
+     *
+     * @return a positive number of batches.
+     */
+    public static @Positive int queueMaxBatches() {
+        int i = CACHE_BATCH_QUEUE_BATCHES;
+        if (i <= 0) CACHE_BATCH_QUEUE_BATCHES = i = readPositiveInt(BATCH_QUEUE_BATCHES, DEF_BATCH_QUEUE_BATCHES);
+        return i;
+    }
+
+    /**
+     * The default maximum number of rows (distributed among all queued batches) that a
+     * queue-backed {@link BIt} may hold by default.
+     *
+     * @return a positive number of rows. {@link Integer#MAX_VALUE} represents no upper bound
+     */
+    public static @Positive int queueMaxRows() {
+        int i = CACHE_BATCH_QUEUE_ROWS;
+        if (i <= 0)
+            CACHE_BATCH_QUEUE_ROWS = i = readPositiveInt(BATCH_QUEUE_ROWS, DEF_BATCH_QUEUE_ROWS);
+        return i;
     }
 
     /**
@@ -200,8 +296,11 @@ public class FSProperties {
      *
      * @return a positive ({@code n > 0}) integer.
      */
-    public static @Positive int distinctCapacity() {
-        return readPositiveInt(OP_DISTINCT_CAPACITY, DEF_OP_DISTINCT_CAPACITY);
+    public static @NonNegative int distinctCapacity() {
+        int i = CACHE_OP_DISTINCT_CAPACITY;
+        if (i < 0)
+            CACHE_OP_DISTINCT_CAPACITY = i = readPositiveInt(OP_DISTINCT_CAPACITY, DEF_OP_DISTINCT_CAPACITY);
+        return i;
     }
 
     /**
@@ -217,8 +316,11 @@ public class FSProperties {
      *
      * @return a positive ({@code n > 0}) integer
      */
-    public static @Positive int reducedCapacity() {
-        return readPositiveInt(OP_REDUCED_CAPACITY, DEF_OP_REDUCED_CAPACITY);
+    public static @NonNegative int reducedCapacity() {
+        int i = CACHE_OP_REDUCED_CAPACITY;
+        if (i < 0)
+            CACHE_OP_REDUCED_CAPACITY = i =  readPositiveInt(OP_REDUCED_CAPACITY, DEF_OP_REDUCED_CAPACITY);
+        return i;
     }
 
     /**
@@ -242,8 +344,11 @@ public class FSProperties {
      * references, which can fit within a single page (linux uses 4KiB pages) and should not
      * cause large disturbances in the cache hit ratio for x86 systems.</p>
      */
-    public static @Positive int dedupCapacity() {
-        return readPositiveInt(OP_DEDUP_CAPACITY, DEF_OP_DEDUP_CAPACITY);
+    public static @NonNegative int dedupCapacity() {
+        int i = CACHE_OP_DEDUP_CAPACITY;
+        if (i < 0)
+            CACHE_OP_DEDUP_CAPACITY = i = readPositiveInt(OP_DEDUP_CAPACITY, DEF_OP_DEDUP_CAPACITY);
+        return i;
     }
 
     private static final class JoinReorderStrategyParser implements Parser<JoinReorderStrategy> {
@@ -258,6 +363,13 @@ public class FSProperties {
         }
     }
 
+    private static JoinReorderStrategy joinReorder() {
+        JoinReorderStrategy s = CACHE_OP_JOIN_REORDER;
+        if (s == null)
+            CACHE_OP_JOIN_REORDER = s = readProperty(OP_JOIN_REORDER, AvoidCartesianJoinReorderStrategy.INSTANCE, JoinReorderStrategyParser.INSTANCE);
+        return s;
+    }
+
     /**
      * The {@link JoinReorderStrategy} to use for joins implemented with bind.
      *
@@ -268,10 +380,13 @@ public class FSProperties {
      * @return a non-null {@link JoinReorderStrategy} implementation.
      */
     public static JoinReorderStrategy bindJoinReorder() {
-        JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
-        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_BIND, null, p);
-        if (s == null)
-            s = readProperty(OP_JOIN_REORDER, AvoidCartesianJoinReorderStrategy.INSTANCE, p);
+        JoinReorderStrategy s = CACHE_OP_JOIN_REORDER_BIND;
+        if (s == null) {
+            JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
+            s = readProperty(OP_JOIN_REORDER_BIND, null, p);
+            if (s == null) s = joinReorder();
+            CACHE_OP_JOIN_REORDER_BIND = s;
+        }
         return s;
     }
 
@@ -279,29 +394,47 @@ public class FSProperties {
      * Same as {@link FSProperties#bindJoinReorder()} but for hash-based joins.
      */
     public static JoinReorderStrategy hashJoinReorder() {
-        JoinReorderStrategyParser p = JoinReorderStrategyParser.INSTANCE;
-        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_HASH, null, p);
-        if (s == null)
-            s = readProperty(OP_JOIN_REORDER, AvoidCartesianJoinReorderStrategy.INSTANCE, p);
+        JoinReorderStrategy s = CACHE_OP_JOIN_REORDER_HASH;
+        if (s == null) {
+            s = readProperty(OP_JOIN_REORDER_HASH, null, JoinReorderStrategyParser.INSTANCE);
+            if (s == null)
+                s = joinReorder();
+            CACHE_OP_JOIN_REORDER_HASH = s;
+        }
         return s;
     }
 
     /**
      * Same as {@link FSProperties#bindJoinReorder()} but for worst-case optimal joins.
      */
+    @SuppressWarnings("UnusedReturnValue")
     public static JoinReorderStrategy wcoJoinReorder() {
-        var p = JoinReorderStrategyParser.INSTANCE;
-        JoinReorderStrategy s = readProperty(OP_JOIN_REORDER_WCO, null, p);
-        if (s == null)
-            s = readProperty(OP_JOIN_REORDER, NoneJoinReorderStrategy.INSTANCE, p);
+        var s = CACHE_OP_JOIN_REORDER_WCO;
+        if (s == null) {
+            var p = JoinReorderStrategyParser.INSTANCE;
+            s = readProperty(OP_JOIN_REORDER_WCO, null, p);
+            if (s == null)
+                s = joinReorder();
+            CACHE_OP_JOIN_REORDER_WCO = s;
+        }
         return s;
     }
 
     /** How many triple patterns {@link AskSelector} instances should remember
      *  for <strong>POSITIVE</strong> matches */
-    public static int askPositiveCapacity() { return readPositiveInt(FED_ASK_POS_CAP, DEF_FED_ASK_POS_CAP); }
+    public static @Positive int askPositiveCapacity() {
+        int i = CACHE_FED_ASK_POS_CAP;
+        if (i <= 0)
+            CACHE_FED_ASK_POS_CAP = i = readPositiveInt(FED_ASK_POS_CAP, DEF_FED_ASK_POS_CAP);
+        return i;
+    }
 
     /** How many triple patterns {@link AskSelector} instances should remember
      *  for <strong>NEGATIVE</strong> matches */
-    public static int askNegativeCapacity() { return readPositiveInt(FED_ASK_NEG_CAP, DEF_FED_ASK_NEG_CAP); }
+    public static @Positive int askNegativeCapacity() {
+        int i = CACHE_FED_ASK_NEG_CAP;
+        if (i <= 0)
+            CACHE_FED_ASK_NEG_CAP = i = readPositiveInt(FED_ASK_NEG_CAP, DEF_FED_ASK_NEG_CAP);
+        return i;
+    }
 }
