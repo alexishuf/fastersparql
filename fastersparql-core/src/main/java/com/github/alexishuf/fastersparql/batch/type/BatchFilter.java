@@ -22,7 +22,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     public abstract B filterInPlace(B in, @Nullable BatchMerger<B> projector);
 
-    public final B filterInPlace(B in) { return filterInPlace(in, projector); };
+    public final B filterInPlace(B in) { return filterInPlace(in, projector); }
 
     public B filter(@Nullable B dest, B in) {
         int rows = in.rows;

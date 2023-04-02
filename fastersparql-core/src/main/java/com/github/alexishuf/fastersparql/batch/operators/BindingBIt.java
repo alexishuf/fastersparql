@@ -22,11 +22,12 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     /* --- --- --- lifecycle --- --- --- */
 
-    public BindingBIt(BIt<B> left, BindType type, Vars leftPublicVars, Vars rightPublicVars,
+    public BindingBIt(BIt<B> left, BindType type, Vars rightPublicVars,
                       @Nullable Vars projection,
                       Metrics. @Nullable JoinMetrics metrics) {
         super(left.batchType(),
-              projection != null ? projection : type.resultVars(leftPublicVars, rightPublicVars));
+              projection != null ? projection : type.resultVars(left.vars(), rightPublicVars));
+        Vars leftPublicVars = left.vars();
         Vars rFree = rightPublicVars.minus(leftPublicVars);
         this.leftBatch   = batchType.createSingleton(leftPublicVars.size());
         this.left        = left;

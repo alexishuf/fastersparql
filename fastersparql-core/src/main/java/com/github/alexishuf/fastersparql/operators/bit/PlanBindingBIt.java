@@ -14,11 +14,10 @@ public final class PlanBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
     private final Plan right;
     private final boolean canDedup;
 
-    public PlanBindingBIt(BIt<B> left, BindType bindType,
-                          Vars leftPublicVars, Plan right,
+    public PlanBindingBIt(BIt<B> left, BindType bindType, Plan right,
                           boolean canDedup, @Nullable Vars projection,
                           Metrics.@Nullable JoinMetrics joinMetrics) {
-        super(left, bindType, leftPublicVars, right.publicVars(), projection, joinMetrics);
+        super(left, bindType, right.publicVars(), projection, joinMetrics);
         this.right = right;
         this.canDedup = canDedup;
     }

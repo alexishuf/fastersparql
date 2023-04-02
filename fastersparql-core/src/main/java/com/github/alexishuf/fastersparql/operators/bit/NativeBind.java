@@ -105,7 +105,7 @@ public class NativeBind {
                 left = multiBind(join, left, type, rUnion, i, binding, canDedup, jm);
             } else {
                 if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(left, type, left.vars(), r, canDedup, join.publicVars(), jm);
+                left = new PlanBindingBIt<>(left, type, r, canDedup, join.publicVars(), jm);
             }
         }
         return left;

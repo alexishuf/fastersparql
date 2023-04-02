@@ -17,7 +17,7 @@ public final class ClientBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
 
     public ClientBindingBIt(BIt<B> left, BindType bindType, SparqlClient client,
                             SparqlQuery sparql, @Nullable JoinMetrics metrics) {
-        super(left, bindType, left.vars(), sparql.publicVars(), null, metrics);
+        super(left, bindType, sparql.publicVars(), null, metrics);
         this.client        = client;
         this.sparql        = sparql;
     }
