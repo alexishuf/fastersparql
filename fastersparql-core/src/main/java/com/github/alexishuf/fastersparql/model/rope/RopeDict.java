@@ -2,13 +2,14 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.lang.invoke.VarHandle;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.System.arraycopy;
+import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.copyOf;
 
@@ -44,13 +45,23 @@ public class RopeDict {
 
     /** Number of spins on spinlock before parking. */
     private static final int SPINS = 128;
-    private static final AtomicInteger spinlock = new AtomicInteger(0);
+    private static final VarHandle LOCK, WAITERS_LOCK;
+    @SuppressWarnings("FieldMayBeFinal") // accessed through LOCK, LOCK_WAITERS_LOCK
+    private static int plainLock = 0, plainLockWaitersLock = 0;
     private static int nextId = 1;
     private static final ArrayDeque<Thread> lockWaitersQueue = new ArrayDeque<>();
-    private static final AtomicInteger lockWaitersSpinlock = new AtomicInteger();
     private static ByteRope[] strings = new ByteRope[1<<INIT_SIZE_BITS];
     private static int[] hashes = new int[1<<INIT_SIZE_BITS];
     private static int[][] buckets = new int[1<<INIT_BUCKET_BITS][];
+
+    static {
+        try {
+            LOCK = lookup().findStaticVarHandle(RopeDict.class, "plainLock", int.class);
+            WAITERS_LOCK = lookup().findStaticVarHandle(RopeDict.class, "plainLockWaitersLock", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
 
     private static final class InsertStats {
         /** How many intern calls were made. Only few such calls should lead to an insertion */
@@ -505,7 +516,7 @@ public class RopeDict {
      */
     private static int scan(ByteRope string, int[] bucket, int offset) {
         if (bucket.length-offset > SPINS)
-            spinlock.setOpaque(2); // park() now instead of spinning then parking
+            LOCK.setRelease(2); // park() now instead of spinning then parking
         for (; offset < bucket.length; ++offset) {
             int id = bucket[offset];
             if      (id == 0)                      return offset;
@@ -524,7 +535,7 @@ public class RopeDict {
      * @return the new bucket at {@code buckets[bucket]}.
      */
     private static int[] swapBucket(int bucket, int @Nullable [] biggerBucket) {
-        spinlock.setRelease(2);
+        LOCK.setRelease(2);
         int[] old = buckets[bucket];
         int required = old.length + (old.length >> 1);
         if (biggerBucket == null || biggerBucket.length < required)
@@ -534,29 +545,29 @@ public class RopeDict {
     }
 
     private static void lock() {
-        for (int i = 0, saw; (saw = spinlock.compareAndExchangeAcquire(0, 1)) != 0; ++i) {
+        for (int i = 0, saw; (saw = (int)LOCK.compareAndExchangeAcquire(0, 1)) != 0; ++i) {
             Thread.onSpinWait();
             if (saw == 2 || (i & SPINS) != 0) {
                 Thread me = Thread.currentThread();
-                while (!lockWaitersSpinlock.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
+                while (!WAITERS_LOCK.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
                 lockWaitersQueue.addLast(me);
-                lockWaitersSpinlock.setRelease(0);
+                WAITERS_LOCK.setRelease(0);
                 LockSupport.park(BLOCKER);
             }
         }
     }
 
     private static void unlock() {
-        spinlock.setRelease(0);
-        while (!lockWaitersSpinlock.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
+        LOCK.setRelease(0);
+        while (!WAITERS_LOCK.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
         LockSupport.unpark(lockWaitersQueue.pollFirst());
-        lockWaitersSpinlock.setRelease(0);
+        WAITERS_LOCK.setRelease(0);
     }
 
     private static void grow() {
         if (strings.length >= MAX_SIZE)
             throw new IllegalStateException("Cannot grow past MAX_SIZE");
-        spinlock.setRelease(2); // make spinning threads park()
+        LOCK.setRelease(2); // make spinning threads park()
         //grow arrays
         strings = copyOf(RopeDict.strings, RopeDict.strings.length<<1);
         hashes = copyOf(hashes, hashes.length<<1);
