@@ -269,7 +269,7 @@ public final class TermBatch extends Batch<TermBatch> {
             return b;
         }
 
-        @Override public TermBatch filterInPlace(TermBatch b) {
+        @Override public TermBatch filterInPlace(TermBatch b, BatchMerger<TermBatch> projector) {
             Term[] arr = b.arr;
             int r = 0, rows = b.rows, w = b.cols, out = 0;
             int @Nullable [] columns = projector == null ? null : projector.columns;

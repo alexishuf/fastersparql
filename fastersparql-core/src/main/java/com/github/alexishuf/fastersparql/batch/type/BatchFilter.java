@@ -5,7 +5,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Objects;
 
 public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> {
-    protected @Nullable BatchMerger<B> projector;
+    public final @Nullable BatchMerger<B> projector;
     public final RowFilter<B> rowFilter;
 
     public BatchFilter(BatchType<B> batchType, @Nullable BatchMerger<B> projector,
@@ -16,11 +16,13 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
 
-    @Override public final B processInPlace(B b) { return filterInPlace(b); }
+    @Override public final B processInPlace(B b) { return filterInPlace(b, projector); }
 
     @Override public final B process(B b) { return filter(null, b); }
 
-    public abstract B filterInPlace(B in);
+    public abstract B filterInPlace(B in, @Nullable BatchMerger<B> projector);
+
+    public final B filterInPlace(B in) { return filterInPlace(in, projector); };
 
     public B filter(@Nullable B dest, B in) {
         int rows = in.rows;
@@ -31,10 +33,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
         if (rowFilter.targetsProjection() && projector != null) {
             dest = projector.project(dest, in);
-            this.projector = null;
-            try {
-                return filterInPlace(dest);
-            } finally { this.projector = projector; }
+            return filterInPlace(dest, null);
         }
         if (projector == null) {
             for (int r = 0; r < rows; r++) {

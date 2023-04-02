@@ -667,7 +667,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             return in;
         }
 
-        @Override public CompressedBatch filterInPlace(CompressedBatch in) {
+        @Override public CompressedBatch filterInPlace(CompressedBatch in,
+                                                       BatchMerger<CompressedBatch> projector) {
             int @Nullable[] columns = projector == null ? null : projector.columns;
             int rows = in.rows, cols = columns == null ? in.cols : columns.length;
             if (cols == 0 || rows == 0)
