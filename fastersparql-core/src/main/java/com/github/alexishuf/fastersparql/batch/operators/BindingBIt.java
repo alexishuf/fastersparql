@@ -14,7 +14,7 @@ import java.util.List;
 public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     protected final BatchMerger<B> merger;
     protected final BindType bindType;
-    private @Nullable B leftBatch, rightBatch;
+    private @Nullable B lb, rb;
     private int leftRow = 0;
     private final BIt<B> left;
     private final BatchBinding<B> tempBinding;
@@ -29,7 +29,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
               projection != null ? projection : type.resultVars(left.vars(), rightPublicVars));
         Vars leftPublicVars = left.vars();
         Vars rFree = rightPublicVars.minus(leftPublicVars);
-        this.leftBatch   = batchType.createSingleton(leftPublicVars.size());
+        this.lb = batchType.createSingleton(leftPublicVars.size());
         this.left        = left;
         this.merger      = batchType.merger(vars(), leftPublicVars, rFree);
         this.bindType    = type;
@@ -39,8 +39,8 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        leftBatch = batchType.recycle(leftBatch);
-        rightBatch = batchType.recycle(rightBatch);
+        lb = batchType.recycle(lb);
+        rb = batchType.recycle(rb);
         if (metrics != null) metrics.completeAndDeliver(cause, this);
         if (cause != null)
             left.close();
@@ -50,33 +50,33 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     @Override public @Nullable B recycle(B batch) {
         if (batch == null || super.recycle(batch) == null) return null;
-        return left.recycle(batch);
+        if (left.recycle(batch) == null) return null;
+        if (inner != null && inner.recycle(batch) == null) return null;
+        return batch;
     }
 
     /* --- --- --- binding behavior --- --- --- */
     protected abstract BIt<B> bind(BatchBinding<B> binding);
 
     @Override public B nextBatch(@Nullable B b) {
-        B lb = leftBatch, rb = rightBatch;
         boolean re = false;
-        int lr = leftRow;
         if (lb == null) return null; // already exhausted
         try {
-            long startNs = needsStartTime ? System.nanoTime() : ORIGIN_TIMESTAMP;
+            long startNs = needsStartTime ? System.nanoTime() : ORIGIN;
             b = getBatch(b);
             do {
                 if (inner == null) {
-                    if (lr >= lb.rows) {
-                        leftRow = lr = 0;
-                        leftBatch = lb = left.nextBatch(lb);
+                    if (leftRow >= lb.rows) {
+                        leftRow = 0;
+                        lb = left.nextBatch(lb);
                         if (lb == null) break; // reached end
                     }
-                    inner = bind(tempBinding.setRow(lb, lr));
+                    inner = bind(tempBinding.setRow(lb, leftRow));
                     re = true;
                 }
                 if ((rb = inner.nextBatch(rb)) == null) {
                     inner = null;
-                    leftRow = ++lr;
+                    leftRow++;
                 }
                 boolean pub = switch (bindType) {
                     case JOIN,EXISTS      -> rb != null;
@@ -85,8 +85,8 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 };
                 if (pub) {
                     switch (bindType) {
-                        case JOIN,LEFT_JOIN          ->   merger.merge(b, lb, lr, rb);
-                        case EXISTS,NOT_EXISTS,MINUS -> { b.putRow(lb, lr); inner = null; }
+                        case JOIN,LEFT_JOIN          ->   b = merger.merge(b, lb, leftRow, rb);
+                        case EXISTS,NOT_EXISTS,MINUS -> { b.putRow(lb, leftRow); inner = null; }
                     }
                 }
             } while (readyInNanos(b.rows, startNs) > 0);
@@ -97,7 +97,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 if (metrics != null) metrics.rightRowsReceived(b.rows);
             }
         } catch (Throwable t) {
-            leftBatch = null; // signal exhaustion
+            lb = null; // signal exhaustion
             onTermination(t);
         }
         return b;
