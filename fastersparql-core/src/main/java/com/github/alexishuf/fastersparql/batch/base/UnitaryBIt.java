@@ -11,6 +11,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 /** Implements {@link BIt} methods around {@code hasNext()/next()}. */
 public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
     private @Nullable Throwable pendingError;
+    protected long fillingStart = ORIGIN;
 //    private DebugJournal.RoleJournal journal;
 
     public UnitaryBIt(BatchType<B> batchType, Vars vars) {
@@ -50,10 +51,13 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
         b = getBatch(b);
         //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
-        long start = needsStartTime ? System.nanoTime() : ORIGIN_TIMESTAMP;
+        long start = fillingStart;
+        if (needsStartTime && start == ORIGIN)
+            fillingStart = start = System.nanoTime();
         try {//noinspection StatementWithEmptyBody
             while (fetch(b) && readyInNanos(b.rows, start) > 0) {}
         } catch (Throwable t) { pendingError = t; }
+        fillingStart = ORIGIN;
         if (b.rows == 0) {
             batchType.recycle(b);
             if (pendingError != null) throwPending();

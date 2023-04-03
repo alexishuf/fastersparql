@@ -84,7 +84,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     private final B[] queue;
     private final int queueMask;
-    private long fillingStart = ORIGIN_TIMESTAMP;
+    private long fillingStart = ORIGIN;
     private int maxReadyItems = Integer.MAX_VALUE;
 //    private final DebugJournal.RoleJournal journal;
 
@@ -135,7 +135,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
      * @return {@code add} parameter for {@code setQS(qs, QS_WIDX_MASK, add)}.
      */
     private long wIdxDelta(int rows, int newWIdx) {
-        fillingStart = ORIGIN_TIMESTAMP;
+        fillingStart = ORIGIN;
         return (long)rows << QS_ITEMS_BIT | (long)newWIdx << QS_WIDX_BIT | 1L << QS_BATCHES_BIT;
     }
 
@@ -354,7 +354,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             B f = queue[wIdx];
             int fRows = f == null ? 0 : f.rows;
             if (fRows == 0) { //not filling (first call or stolen by nextBatch())
-                if (needsStartTime && fillingStart == ORIGIN_TIMESTAMP) fillingStart = nanoTime();
+                if (needsStartTime && fillingStart == ORIGIN) fillingStart = nanoTime();
                 queue[wIdx] = offer;
                 //journal.write("SPSCBIt.offer: store ref at wIdx=", wIdx, "[0][0]=", offer.get(0, 0));
             } else if (incCapacity == 0 || readyInNanos(fRows, fillingStart) > 0) { // filling not ready
@@ -367,6 +367,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 //journal.write("SPSCBIt.offer: offer() at wIdx=", wIdx, "[0][0]=", offer.get(0, 0));
                 recycled = offer;
             } else { // filling is ready, and we are not running low on incCapacity
+                fillingStart = ORIGIN;
                 queue[wIdx = wIdx + 1 & queueMask] = offer;
                 //journal.write("SPSCBIt.offer: inc wIdx=", wIdx, "[0][0]=", offer.get(0, 0));
                 wIdxDelta = wIdxDelta(fRows, wIdx);
@@ -402,6 +403,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     fillingStart = System.nanoTime(); // start counting time
                 } else if ((parkNs = readyInNanos(b.rows, fillingStart)) == 0) {
                     addBits = wIdxDelta(b.rows, wi + 1 & queueMask); // stole
+                    fillingStart = ORIGIN;
                     break; // stole filling batch
                 }
             } finally {

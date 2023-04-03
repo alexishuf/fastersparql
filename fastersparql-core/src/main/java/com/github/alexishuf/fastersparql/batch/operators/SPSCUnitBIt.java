@@ -131,6 +131,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
                             fillingStart = System.nanoTime(); // start counting time
                         } else if ((parkNs = readyInNanos(b.rows, fillingStart)) == 0) {
                             set = QS_READY; // stole ready, will not park
+                            fillingStart = ORIGIN;
                             break;
                         }
                     }
@@ -213,6 +214,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             if (readyInNanos(filling.rows, fillingStart) == 0) {
                 //journal.write("SPSCUnitBIt.offer: pub &f=", identityHashCode(filling), "f.rows=", filling.rows, filling==ready?"f==ready":"f!=ready");
                 setFlags = QS_READY;
+                fillingStart = ORIGIN;
             }
         } finally { // set ready, unlock and unpark consumer
             //journal.write("SPSCUnitBIt.offer: rls rows=", b.rows, "&offer=", bId, "[0][0]=", b.get(0, 0));
@@ -249,6 +251,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             if (readyInNanos(filling.rows, fillingStart) == 0) {
                 //journal.write("copy: publish filling.rows=", filling.rows, "[0][0]=", requireNonNull(filling.get(0, 0)).local[1]-'0');
                 setFlags = QS_READY;
+                fillingStart = ORIGIN;
             }
         } finally { // set ready, unlock and unpark consumer
             setQS(qs, setFlags, QS_WRITING|QS_PKD_CONS);

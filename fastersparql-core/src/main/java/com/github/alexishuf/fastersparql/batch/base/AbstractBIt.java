@@ -28,7 +28,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
     /** A value smaller than any {@link System#nanoTime()} call without overflow risks. */
-    protected static final long ORIGIN_TIMESTAMP = System.nanoTime();
+    protected static final long ORIGIN = System.nanoTime();
     protected static final VarHandle RECYCLED;
 
     static {
@@ -151,7 +151,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      * {@link BIt#maxWait(long, TimeUnit)}), returns {@link Long#MAX_VALUE}. </p>
      *
      * @param r current batch size
-     * @param start when the batch started filling (can be {@link AbstractBIt#ORIGIN_TIMESTAMP})
+     * @param start when the batch started filling (can be {@link AbstractBIt#ORIGIN})
      * @return Zero if batch is ready, {@link Long#MAX_VALUE} if the iterator does not have
      *         time-based batch readiness, Else, nanoseconds until time until
      *         {@link BIt#minWait(TimeUnit)} or {@link BIt#maxWait(TimeUnit)}.

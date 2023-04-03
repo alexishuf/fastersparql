@@ -15,5 +15,5 @@ public final class EmptyBIt<B extends Batch<B>> extends AbstractBIt<B> {
         return null;
     }
     @Override public @This BIt<B> tempEager() { return this; }
-    @Override public String       toString()  { return "EMPTY"; }
+    @Override public String        toString()  { return "EMPTY"; }
 }

@@ -39,6 +39,24 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      */
     int DEF_MAX_BATCH = 1<<16;
 
+    /**
+     * Value to use with {@link BIt#minWait(long, TimeUnit)} when one desires the lowest possible
+     * wait time without introducing wasteful overhead.
+     *
+     * <p>This was determined by benchmarking with JMH the average time of
+     * {@code LockSupport.parkNanos(blocker, 1_000)}. On an AMD Ryzen 7 5700U running linux
+     * this was 64_034.905 ns. Note that most of such time (50 us) is due to Linux <a href="https://hazelcast.com/blog/locksupport-parknanos-under-the-hood-and-the-curious-case-of-parking/">
+     * limits on precision of process wake-ups</a>.</p>
+     *
+     */
+    int QUICK_MIN_WAIT_NS = 70_000;
+
+    /**
+     * Value to use with {@link #maxWait(long, TimeUnit)} when the smallest practical value above
+     * zero is desired.
+     */
+    int QUICK_MAX_WAIT_NS = QUICK_MIN_WAIT_NS*2;
+
     /** Set of methods to manipulate elements produced by this iterator. */
     BatchType<B> batchType();
 

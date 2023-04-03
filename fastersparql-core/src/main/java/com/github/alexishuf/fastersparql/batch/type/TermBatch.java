@@ -113,7 +113,8 @@ public final class TermBatch extends Batch<TermBatch> {
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        if (row < 0 || col < 0 || row >= rows || col >= cols)
+            throw new IndexOutOfBoundsException();
         return arr[row * cols + col];
     }
 
