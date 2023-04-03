@@ -10,8 +10,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.Objects;
 
 public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
-    private final @Nullable B batch;
-    private boolean ended;
+    private @Nullable B batch;
 
     public SingletonBIt(@Nullable B batch, BatchType<B> batchType, Vars vars) {
         super(batchType, vars);
@@ -20,9 +19,9 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     @Override public B nextBatch(@Nullable B b) {
         if (b != null) batchType.recycle(b);
-        if (ended) return null;
-        ended = true;
-        return batch;
+        b = batch;
+        batch = null;
+        return b;
     }
 
     @Override public @This BIt<B> tempEager() { return this; }
