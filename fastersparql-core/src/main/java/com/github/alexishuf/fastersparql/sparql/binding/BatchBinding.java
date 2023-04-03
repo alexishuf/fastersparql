@@ -38,10 +38,10 @@ public final class BatchBinding<B extends Batch<B>> extends Binding {
     }
 
     @Override public @Nullable Term get(int i) {
-        if (batch == null) {
-            if (i != 0) throw new IndexOutOfBoundsException();
+        if (i < 0 || i >= vars.size())
+            throw new IndexOutOfBoundsException();
+        if (batch == null || (row == 0 && batch.rows == 0))
             return null;
-        }
         return batch.get(row, i);
     }
 }
