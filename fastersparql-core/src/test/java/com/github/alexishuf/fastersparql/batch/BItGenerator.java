@@ -88,8 +88,23 @@ public sealed interface BItGenerator {
     final class CallbackBItGenerator implements BItGenerator {
         static final class GeneratedSPSCBIt extends SPSCBIt<TermBatch> {
             private final int[] ints;
-            public GeneratedSPSCBIt(int[] ints, int maxBatches) { super(TERM, X, maxBatches);
+            private final @Nullable RuntimeException err;
+            private boolean started = false;
+            public GeneratedSPSCBIt(int[] ints, @Nullable RuntimeException err, int maxBatches) { super(TERM, X, maxBatches);
                 this.ints = ints;
+                this.err = err;
+            }
+
+            @Override public @Nullable TermBatch nextBatch(@Nullable TermBatch offer) {
+                if (!started) {
+                    started = true;
+                    Thread.startVirtualThread(() -> {
+                        for (int i : ints)
+                            TERM.recycle(offer(intsBatch(i)));
+                        complete(err);
+                    });
+                }
+                return super.nextBatch(offer);
             }
 
             @Override public String toString() {
@@ -99,13 +114,8 @@ public sealed interface BItGenerator {
 
         @Override public BIt<TermBatch> asBIt(Consumer<BIt<TermBatch>> batchingSetup,
                                               @Nullable RuntimeException err, int... ints) {
-            var cb = new GeneratedSPSCBIt(ints, 4);
+            var cb = new GeneratedSPSCBIt(ints, err, 4);
             batchingSetup.accept(cb);
-            Thread.startVirtualThread(() -> {
-                for (int i : ints)
-                    TERM.recycle(cb.offer(intsBatch(i)));
-                cb.complete(err);
-            });
             return cb;
         }
         @Override public String toString() { return getClass().getSimpleName(); }
