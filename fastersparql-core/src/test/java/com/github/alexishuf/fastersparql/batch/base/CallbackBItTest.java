@@ -31,7 +31,10 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
 import static java.lang.Runtime.getRuntime;
 import static java.lang.String.format;
+import static java.lang.System.nanoTime;
 import static java.util.concurrent.Executors.newFixedThreadPool;
+import static java.util.concurrent.TimeUnit.MICROSECONDS;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -244,6 +247,28 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                     throw t;
                 }
             }
+        }
+    }
+
+    @Test void testTightWaitProgress() {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+            it.minBatch(3).minWait(50, MICROSECONDS).maxWait(50, MICROSECONDS);
+            IntsBatch.offerAndInvalidate(it, 1, 2);
+            assertEquals(intsBatch(1, 2), it.nextBatch(null));
+        }
+    }
+
+    @Test void testTightWait() {
+        int wait = 50;
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+            it.minBatch(3).minWait(50, MILLISECONDS).maxWait(50, MILLISECONDS);
+            IntsBatch.offerAndInvalidate(it, 1, 2);
+            long start = nanoTime();
+            var b = it.nextBatch(null);
+            double ms = (nanoTime() - start) / 1_000_000.0;
+            assertEquals(intsBatch(1, 2), b);
+            assertTrue(ms < wait+10, "elapsed="+ms+"ms above "+wait+"+10 ms");
+            assertTrue(ms > wait-10, "elapsed="+ms+"ms below "+wait+"-10 ms");
         }
     }
 }

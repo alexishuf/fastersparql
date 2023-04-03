@@ -79,6 +79,10 @@ public final class LevelPool<T> {
         int level = Integer.numberOfLeadingZeros(capacity|1), base = level*width;
         int size = lockAndGetSize(level), cap = level == 31 ? singletonWidth : width;
         try {
+//            new Exception("&o="+System.identityHashCode(o)).printStackTrace();
+//            for (int i = 0; i < size; i++) {
+//                if (table[base+i] == o) throw new AssertionError();
+//            }
             if (size < cap) {
                 table[base+size++] = o;
                 o = null;

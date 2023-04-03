@@ -27,7 +27,6 @@ import java.util.concurrent.locks.LockSupport;
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
-import static java.lang.System.identityHashCode;
 import static java.lang.System.nanoTime;
 import static java.lang.Thread.ofVirtual;
 import static java.time.Duration.ofMillis;
@@ -71,6 +70,7 @@ class MergeBItTest extends AbstractMergeBItTest {
                 }
 
                 TermBatch batch = it.nextBatch(null);
+                assertNotNull(batch);
                 if (n <= 3)
                     assertEquals(1, batch.rows);
                 else
@@ -116,6 +116,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             long start = nanoTime();
             TermBatch batch = it.nextBatch(null);
             double ms = (nanoTime() - start) / 1_000_000.0;
+            assertNotNull(batch);
             assertEquals(new HashSet<>(intsBatch(11, 12, 13, 14).asList()),
                          new HashSet<>(batch.asList()));
             assertTrue(ms > wait-tol, "elapsed="+ms+" <= "+wait+"-"+tol);
