@@ -509,10 +509,10 @@ public final class ExprParser {
                 case SUBSTR -> new Expr.Substr(list);
                 case UCASE -> new Expr.UCase(l);
                 case UUID -> new Expr.Uuid();
-                case default ->
-                        throw new InvalidExprException(in, pos, s + " not supported (yet)");
                 case null ->
                         throw new InvalidExprException(in, pos, "Expected a symbol, found " + term);
+                default ->
+                        throw new InvalidExprException(in, pos, s + " not supported (yet)");
             };
         }
         return switch (unary) {
