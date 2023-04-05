@@ -1,6 +1,7 @@
-package com.github.alexishuf.fastersparql.batch.type;
+package com.github.alexishuf.fastersparql.hdt.batch;
 
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.RowBucket;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
@@ -10,11 +11,11 @@ import java.util.Objects;
 
 import static java.lang.System.arraycopy;
 
-public class ArrayRowBucket implements RowBucket<TermBatch> {
-    private final TermBatch b;
+public class HdtBatchBucket implements RowBucket<HdtBatch> {
+    private final HdtBatch b;
 
-    public ArrayRowBucket(int rowsCapacity, int cols) {
-        b = TermBatchType.INSTANCE.create(rowsCapacity, cols, 0);
+    public HdtBatchBucket(int rowsCapacity, int cols) {
+        b = HdtBatchType.INSTANCE.create(rowsCapacity, cols, 0);
         b.reserve(rowsCapacity, 0);
         b.rows = rowsCapacity;
     }
@@ -27,27 +28,27 @@ public class ArrayRowBucket implements RowBucket<TermBatch> {
     @Override public void clear(int rowsCapacity, int cols) {
         int required = rowsCapacity * cols, len = b.arr.length;
         if (len < required)
-            b.arr = new Term[len = required];
+            b.arr = new long[len = required];
         else
-            Arrays.fill(b.arr, null);
+            Arrays.fill(b.arr, 0L);
         b.cols = cols;
         b.rows = len/cols;
     }
 
     @Override public boolean has(int row) {
-        Term[] a = b.arr;
+        long[] a = b.arr;
         for (int cols = b.cols, i = row*cols, e = i+cols; i < e; i++)
-            if (a[i] != null) return true;
+            if (a[i] != 0) return true;
         return false;
     }
 
-    @Override public BatchType<TermBatch> batchType()            { return Batch.TERM; }
+    @Override public BatchType<HdtBatch> batchType()             { return HdtBatch.TYPE; }
     @Override public int                       cols()            { return b.cols; }
     @Override public int                   capacity()            { return b.rowsCapacity(); }
-    @Override public @Nullable TermBatch    batchOf(int rowSlot) { return b; }
+    @Override public @Nullable HdtBatch    batchOf(int rowSlot)  { return b; }
     @Override public int                   batchRow(int rowSlot) { return rowSlot; }
 
-    @Override public void set(int dst, TermBatch batch, int row) {
+    @Override public void set(int dst, HdtBatch batch, int row) {
         int cols = batch.cols;
         if (cols != b.cols)
             throw new IllegalArgumentException();
@@ -56,28 +57,28 @@ public class ArrayRowBucket implements RowBucket<TermBatch> {
 
     @Override public void set(int dst, int src) {
         if (src == dst) return;
-        Term[] a = b.arr;
+        long[] a = b.arr;
         int cols = b.cols;
         arraycopy(a, src*cols, a, dst*cols, cols);
     }
 
-    @Override public boolean equals(int row, TermBatch other, int otherRow) {
+    @Override public boolean equals(int row, HdtBatch other, int otherRow) {
         int cols = other.cols;
         if (cols != b.cols) throw new IllegalArgumentException();
-        Term[] la = b.arr, ra = other.arr;
+        long[] la = b.arr, ra = other.arr;
         for (int l = row*cols, r = otherRow*cols, e = l+cols; l < e; l++, r++)
             if (!Objects.equals(la[l], ra[r])) return false;
         return true;
     }
 
-    @Override public Iterator<TermBatch> iterator() {
+    @Override public Iterator<HdtBatch> iterator() {
         return new Iterator<>() {
             boolean has = true;
             @Override public boolean hasNext() {
                 return has;
             }
 
-            @Override public TermBatch next() {
+            @Override public HdtBatch next() {
                 if (!has) throw new NoSuchElementException();
                 has = false;
                 return b;
@@ -85,5 +86,5 @@ public class ArrayRowBucket implements RowBucket<TermBatch> {
         };
     }
 
-    @Override public String toString() { return "ArrayRowBucket{capacity="+capacity()+"}"; }
+    @Override public String toString() { return "HdtBatchBucket{capacity="+capacity()+"}"; }
 }

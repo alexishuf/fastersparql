@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
@@ -33,8 +34,11 @@ public final class Union extends Plan {
     }
 
     @Override public Union copy(@Nullable Plan[] ops) {
-        if (ops == null) ops = operandsArray;
-        if (ops == null) return new Union(crossDedupCapacity, left, right);
+        if (ops == null) {
+            if ((ops = operandsArray) != null) ops = Arrays.copyOf(ops, ops.length);
+        }
+        if (ops == null)
+            return new Union(crossDedupCapacity, left, right);
         return new Union(crossDedupCapacity, ops);
     }
 

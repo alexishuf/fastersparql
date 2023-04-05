@@ -91,23 +91,18 @@ public final class TermBatch extends Batch<TermBatch> {
         return new TermBatch(arr, rows, cols);
     }
 
-    @Override public int bytesUsed() { return (rows*cols)<<3; }
-
     @Override public int rowsCapacity() {
         return arr.length/Math.max(1, cols);
     }
 
     @Override public boolean hasCapacity(int rowsCapacity, int bytesCapacity) {
-        return arr.length >= rowsCapacity;
+        return arr.length >= rowsCapacity*cols;
     }
 
     @Override public boolean hasMoreCapacity(TermBatch o) {
         return arr.length > o.arr.length;
     }
 
-    /* --- --- --- row accessors --- --- --- */
-
-    @Override public int bytesUsed(int row) { return cols<<3; }
 
     /* --- --- --- term accessors --- --- --- */
 

@@ -28,6 +28,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.util.*;
+import java.util.function.Function;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static java.lang.Math.max;
@@ -414,13 +415,30 @@ public final class Results {
         }
     }
 
+    /**
+     * {@link Results#check(BIt)} on the result of querying {@link Results#query()}
+     * (with bindings, if {@link Results#hasBindings()})  against client and receiving rows
+     * using the given {@code rowType}.
+     */
+    public <B extends Batch<B>> void check(SparqlClient client,
+                                           BatchType<B> batchType,
+                                           Function<BIt<TermBatch>, BIt<B>> bindingsConverter) throws AssertionError {
+        if (query == null)
+            throw new IllegalStateException("No query defined, cannot check(SparqlClient)");
+        SparqlQuery query = this.query;
+        if (query instanceof Plan plan)
+            query = plan.transform(unboundTransformer, client);
+        if (bindingsList != null) {
+            check(client.query(batchType, query, bindingsConverter.apply(bindingsBIt()), bindType));
+        } else {
+            check(client.query(batchType, query));
+        }
+    }
+
     private static final Plan.Transformer<SparqlClient> unboundTransformer = new Plan.Transformer<>() {
         @Override public Plan before(Plan plan, SparqlClient client) {
-            if (plan instanceof Query q && q.client instanceof UnboundSparqlClient) {
+            if (plan instanceof Query q && q.client instanceof UnboundSparqlClient)
                 return new Query(q.sparql, client);
-            } else if (plan instanceof TriplePattern tp) {
-                return new Query(tp.copy(), client);
-            }
             return plan; // copy and transform operands
         }
     };

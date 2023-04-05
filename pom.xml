@@ -64,6 +64,7 @@
     <module>fastersparql-core</module>
     <module>fastersparql-netty</module>
     <module>fastersparql-hdt</module>
+<!--    <module>fastersparql-store</module>-->
 <!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-jcstress</module>
@@ -80,7 +81,7 @@
       <dependency> <!-- SLF4J implementation, not included on public lib jars -->
         <groupId>ch.qos.logback</groupId>
         <artifactId>logback-classic</artifactId>
-        <version>1.2.7</version>
+        <version>1.2.9</version>
       </dependency>
       <dependency> <!-- Annotations from checkerframework.org -->
         <groupId>org.checkerframework</groupId>

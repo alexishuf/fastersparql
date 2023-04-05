@@ -99,6 +99,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         } catch (Throwable t) {
             lb = null; // signal exhaustion
             onTermination(t);
+            throw t;
         }
         return b;
     }

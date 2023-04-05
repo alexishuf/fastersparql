@@ -9,8 +9,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public final class BatchBinding<B extends Batch<B>> extends Binding {
     static boolean SUPPRESS_SET_WARN = false;
     private final BatchType<B> batchType;
-    private @Nullable B batch;
-    private int row;
+    public @Nullable B batch;
+    public int row;
 
     public BatchBinding(BatchType<B> batchType, Vars vars) {
         super(vars);

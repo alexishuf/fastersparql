@@ -455,6 +455,7 @@ public class SparqlParser {
 
         private static final byte[] UNION_u8 = "UNION".getBytes(UTF_8);
         private Plan readBlock() {
+            ++pos; // consume '{'
             Plan plan = new GroupParser().read();
             require('}');
             if (poll(UNION_u8, GROUP_FOLLOW))

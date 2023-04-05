@@ -7,7 +7,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
     public final Vars outVars;
     protected final int[] sources;
-    protected final int @Nullable [] columns;
+    public final int @Nullable [] columns;
 
     public static int @Nullable [] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
         int[] sources = new int[out.size()];

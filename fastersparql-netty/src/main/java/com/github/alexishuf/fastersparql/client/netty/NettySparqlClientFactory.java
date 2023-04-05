@@ -6,13 +6,9 @@ import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 
 public class NettySparqlClientFactory implements SparqlClientFactory {
-    @Override public String tag() {
-        return "netty";
-    }
-
-    @Override public int order() {
-        return 100;
-    }
+    @Override public String      tag() { return "netty"; }
+    @Override public int       order() { return 100; }
+    @Override public String toString() { return "NettySparqlClientFactory"; }
 
     @Override public boolean supports(SparqlEndpoint endpoint) {
         return endpoint.protocol() != Protocol.FILE;
@@ -23,6 +19,4 @@ public class NettySparqlClientFactory implements SparqlClientFactory {
             return new NettyWsSparqlClient(endpoint);
         return new NettySparqlClient(endpoint);
     }
-
-    @Override public String toString() { return "NettySparqlClientFactory"; }
 }

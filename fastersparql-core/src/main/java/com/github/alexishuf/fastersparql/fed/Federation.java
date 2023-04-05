@@ -243,16 +243,11 @@ public class Federation extends AbstractSparqlClient {
         long entryNs = nanoTime();
         cdc = FSProperties.dedupCapacity();
 
-        // parse query or copy tree
+        // parse query or copy tree and sanitize
         var m = new FedMetrics(this, sparql);
-        Plan root = project(switch (sparql) {
-            case OpaqueSparqlQuery o -> {
-                Plan plan = new SparqlParser().parse(o.sparql);
-                yield mutateSanitize(plan);
-            }
-            case Plan p -> p.transform(sanitizeTransformer, null);
-            default -> throw new IllegalArgumentException("Unexpected SparqlQuery implementation");
-        }, sparql.publicVars());
+        Plan root = sparql instanceof Plan p
+                  ? p.deepCopy() : new SparqlParser().parse(((OpaqueSparqlQuery)sparql).sparql);
+        root = project(mutateSanitize(root), sparql.publicVars());
 
         // source selection & agglutination
         long last = nanoTime();
@@ -549,7 +544,7 @@ public class Federation extends AbstractSparqlClient {
 
     private Plan trivialPlan(Plan plan, FedMetrics metrics) {
         if (sources.size() == 0) return new Empty(plan);
-        trivialPlan(plan);
+        plan = trivialPlan(plan);
         return plan;
     }
 

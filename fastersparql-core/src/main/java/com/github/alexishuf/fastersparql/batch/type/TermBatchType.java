@@ -28,14 +28,6 @@ public final class TermBatchType extends BatchType<TermBatch> {
         return b;
     }
 
-    @Override public TermBatch createSingleton(int cols) {
-        TermBatch b = pool.get(1);
-        if (b == null)
-            return new TermBatch(1, cols);
-        b.clear(cols);
-        return b;
-    }
-
     @Override public @Nullable TermBatch recycle(@Nullable TermBatch batch) {
         if (batch == null) return null;
         Arrays.fill(batch.arr, null); // allow collection of Terms
@@ -45,7 +37,7 @@ public final class TermBatchType extends BatchType<TermBatch> {
     }
 
     @Override public RowBucket<TermBatch> createBucket(int rowsCapacity, int cols) {
-        return new ArrayRowBucket(rowsCapacity, cols);
+        return new TermBatchBucket(rowsCapacity, cols);
     }
 
     @Override

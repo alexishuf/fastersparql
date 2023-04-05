@@ -11,6 +11,10 @@ import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import javax.management.MBeanServerInvocationHandler;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -20,11 +24,22 @@ import java.util.concurrent.atomic.AtomicReference;
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
 import static java.lang.Long.MAX_VALUE;
 import static java.lang.Long.numberOfTrailingZeros;
+import static java.lang.invoke.MethodHandles.lookup;
 
 final class Optimizer extends CardinalityEstimator {
+    private static final VarHandle REC_STATE0, REC_STATE1;
+    static {
+        try {
+            REC_STATE0 = lookup().findVarHandle(Optimizer.class, "plainRecState0", State.class);
+            REC_STATE1 = lookup().findVarHandle(Optimizer.class, "plainRecState1", State.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private final Map<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
-    private final AtomicReference<State> recycledState1 = new AtomicReference<>();
-    private final AtomicReference<State> recycledState2 = new AtomicReference<>();
+    @SuppressWarnings("unused") // accessed through REC_STATE0 and REC_STATE1
+    private State plainRecState0, plainRecState1;
 
     public void estimator(SparqlClient client, CardinalityEstimator estimator) {
         client2estimator.put(client, estimator);
@@ -52,7 +67,6 @@ final class Optimizer extends CardinalityEstimator {
 
         private boolean isEmptyState() {
             return tmpFilters.isEmpty()
-                    && tmpBinding == null || tmpBinding.isUnbound()
                     && upFilterVars == Vars.EMPTY
                     && upFiltersCount == 0
                     && upFiltersTaken == 0
@@ -62,10 +76,12 @@ final class Optimizer extends CardinalityEstimator {
         }
 
         public void setup(Plan plan) {
+            assert isEmptyState();
             Vars allVars = plan.allVars();
             if (tmpBinding == null || !tmpBinding.vars.equals(allVars))
                 tmpBinding = new ArrayBinding(allVars);
-            assert isEmptyState();
+            else
+                tmpBinding.clear();
         }
 
         /**
@@ -349,16 +365,18 @@ final class Optimizer extends CardinalityEstimator {
      *         possibly mutated tree.
      */
     public Plan optimize(Plan plan) {
-        State state = recycledState1.getOpaque();
-        if (state == null || !recycledState1.compareAndSet(state, null)) {
-            state = recycledState2.getOpaque();
-            if (state == null || !recycledState2.compareAndSet(state, null))
+        State state = (State) REC_STATE0.getAndSetAcquire(this, null);
+        if (state == null) {
+            state = (State) REC_STATE1.getAndSetAcquire(this, null);
+            if (state == null)
                 state = new State();
         }
+
         state.setup(plan);
         plan = state.optimize(plan, true);
-        if (!recycledState1.compareAndSet(null, state))
-            recycledState2.compareAndSet(null, state);
+        if (REC_STATE0.compareAndExchangeRelease(this, null, state) == null)
+            REC_STATE1.compareAndExchangeRelease(this, null, state);
+
         return plan;
     }
 

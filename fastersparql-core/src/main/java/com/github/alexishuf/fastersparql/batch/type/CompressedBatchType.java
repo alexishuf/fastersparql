@@ -27,14 +27,6 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         return b;
     }
 
-    @Override public CompressedBatch createSingleton(int cols) {
-        CompressedBatch b = pool.get(1);
-        if (b == null)
-            return new CompressedBatch(1, cols, 0);
-        b.clear(cols);
-        return b;
-    }
-
     @Override public int bytesRequired(Batch<?> b) {
         if (b instanceof CompressedBatch cb) return cb.bytesUsed();
         int required = 0;

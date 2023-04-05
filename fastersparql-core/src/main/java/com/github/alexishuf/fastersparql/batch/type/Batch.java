@@ -44,7 +44,7 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @return how many bytes are being currently used.
      */
-    public abstract int bytesUsed();
+    public int bytesUsed() { return (rows*cols)<<3; }
 
     public abstract int rowsCapacity();
 
@@ -137,8 +137,7 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @param row the row index
      */
-    public abstract int bytesUsed(int row);
-
+    public int bytesUsed(int row) { return cols<<3; }
 
     /** Whether rows {@code row} in {@code this} and {@code oRow} in {@code other} have the
      *  same number of columns with equal {@link Term}s in them. */
@@ -380,7 +379,6 @@ public abstract class Batch<B extends Batch<B>> {
     public boolean offerRow(B other, int row) {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
-        reserve(1, other.bytesUsed(row));
         if (beginOffer()) {
             for (int c = 0; c < cols; c++) { if (!offerTerm(other, row, c)) return false; }
             return commitOffer();

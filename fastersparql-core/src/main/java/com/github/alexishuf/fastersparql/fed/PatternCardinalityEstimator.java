@@ -19,7 +19,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
 
     /* --- --- --- lifecycle --- --- --- */
 
-    private final int uncertaintyPenalty;
+    protected final int uncertaintyPenalty;
 
     public PatternCardinalityEstimator(int uncertaintyPenalty) {
         this.uncertaintyPenalty = uncertaintyPenalty;

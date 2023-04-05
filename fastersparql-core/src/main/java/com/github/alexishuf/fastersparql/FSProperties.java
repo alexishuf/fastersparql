@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -111,6 +112,17 @@ public class FSProperties {
             if (i < 1)
                 throw new IllegalArgumentException(src+"="+val+" is not a positive integer");
             return i;
+        });
+    }
+
+    protected static <E extends Enum<E>> E readEnum(String propertyName, E[] values, E defaultValue) {
+        return readProperty(propertyName, defaultValue, (src, val) -> {
+            val = val.trim();
+            for (E e : values) {
+                if (e.name().equalsIgnoreCase(val))
+                    return e;
+            }
+            throw new IllegalArgumentException(src+"="+val+" is not in"+ Arrays.toString(values));
         });
     }
 

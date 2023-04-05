@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 public final class Join extends Plan {
@@ -30,7 +31,9 @@ public final class Join extends Plan {
     }
 
     @Override public Join copy(@Nullable Plan[] ops) {
-        if (ops == null) ops = operandsArray;
+        if (ops == null) {
+            if ((ops = operandsArray) != null) ops = Arrays.copyOf(ops, ops.length);
+        }
         return ops == null ? new Join(projection, left, right) : new Join(projection, ops);
     }
 

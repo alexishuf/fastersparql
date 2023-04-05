@@ -50,7 +50,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @param cols number of columns for the new batch
      * @return a new empty batch that can hold @{code cols} columns.
      */
-    public abstract B createSingleton(int cols);
+    public B createSingleton(int cols) { return create(1, cols, 16); }
 
     /**
      * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
