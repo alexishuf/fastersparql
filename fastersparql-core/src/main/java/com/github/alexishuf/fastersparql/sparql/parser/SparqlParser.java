@@ -63,9 +63,10 @@ public class SparqlParser {
     public Plan parse(SparqlQuery q) {
         return q instanceof Plan p ? p : parse(q.sparql());
     }
-    public Plan parse(Rope query) {
+    public Plan parse(Rope query) { return parse(query, 0); }
+    public Plan parse(Rope query, int start) {
         end = (in = query).len();
-        pos = 0;
+        pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin();
         groupParser.reset();
         distinct = reduce = false;
@@ -214,7 +215,7 @@ public class SparqlParser {
                 require(ASK_u8);
                 limit = 1;
                 projection = Vars.EMPTY;
-                reduce = true;
+                reduce = false;
             }
             case 's', 'S' -> pSelect();
             default -> throw ex("SELECT or ASK", pos);
@@ -359,8 +360,8 @@ public class SparqlParser {
             if (!filtersList.isEmpty())
                 left = FS.filter(left, filtersList);
             if (existsList != null) {
-                for (Expr.Exists ex : existsList)
-                    left = FS.exists(left, ex.negate(), ex.filter());
+                for (Expr.Exists(var filter, var negate) : existsList)
+                        left = FS.exists(left, negate, filter);
             }
             return left;
         }

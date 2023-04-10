@@ -158,14 +158,7 @@ public final class Results {
                 break;
             }
         }
-        int columns;
-        if (vars.isEmpty() && varsAndTerms.length > 1) {
-            if (!(varsAndTerms[0] instanceof Integer n))
-                throw new IllegalArgumentException("No vars given. Expected no terms or a number of columns");
-            columns = n;
-        } else {
-            columns = vars.size();
-        }
+        int columns = vars.size();
         List<List<Term>> expected;
         var terms = Arrays.copyOfRange(varsAndTerms, start, varsAndTerms.length);
         if (terms.length == 1 && terms[0] instanceof Collection<?> coll) {
@@ -284,6 +277,7 @@ public final class Results {
         } else {
             ByteRope sparqlRope = new ByteRope().append("""
                     PREFIX     : <http://example.org/>
+                    PREFIX exns: <http://www.example.org/ns#>
                     PREFIX  xsd: <http://www.w3.org/2001/XMLSchema##>
                     PREFIX  rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
                     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -312,6 +306,12 @@ public final class Results {
         Results r = results(varsAndTerms);
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query,
                            r.vars(), r.expected(), bindType, context);
+    }
+
+    /** Create a copy of {@code this} with {@link #hasBindings()} returning false. */
+    public Results noBindings() {
+        return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query,
+                null, null, bindType, context);
     }
 
     /** Create a copy of {@code this} that will send {@code bindType} to
@@ -353,6 +353,7 @@ public final class Results {
     /* --- --- --- accessors & converters --- --- --- */
 
     public boolean          isEmpty()      { return expected.isEmpty(); }
+    public boolean          isAsk()        { return vars().size() == 0 && size() <= 1; }
     public int              size()         { return expected.size(); }
     public int              columns()      { return columns; }
     public SparqlQuery      query()        { return query; }
@@ -571,10 +572,11 @@ public final class Results {
     }
 
     private static String toString(List<Term> row) {
-        var sb = new StringBuilder().append('[');
+        var sb = new ByteRope().append('[');
         for (Term t : row)
             sb.append(t == null ? "null" : t.toSparql()).append(", ");
-        sb.setLength(Math.max(1, sb.length()-2));
+        if (!row.isEmpty())
+            sb.unAppend(2);
         return sb.append(']').toString();
 
     }

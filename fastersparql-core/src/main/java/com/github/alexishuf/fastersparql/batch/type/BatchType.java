@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchType<B extends Batch<B>> {
@@ -113,14 +114,14 @@ public abstract class BatchType<B extends Batch<B>> {
      * be done. If {@code leftVars.containsAll(out)}, this will be equivalent to
      * {@link BatchType#projector(Vars, Vars)}.</p>
      *
-     * @param out the variables of the result (merged) row
-     * @param left the variables present in {@code left} parameter of
-     *        {@link BatchMerger#merge(Batch, Batch, int, Batch)}
+     * @param out   the variables of the result (merged) row
+     * @param left  the variables present in {@code left} parameter of
+     *              {@link BatchMerger#merge(Batch, Batch, int, Batch)}
      * @param right the variables present in {@code right} parameter of
-     *        {@link BatchMerger#merge(Batch, Batch, int, Batch)}
+     *              {@link BatchMerger#merge(Batch, Batch, int, Batch)}
      * @return a new {@link BatchMerger}
      */
-    public abstract @Nullable BatchMerger<B> merger(Vars out, Vars left, Vars right);
+    public abstract @NonNull BatchMerger<B> merger(Vars out, Vars left, Vars right);
 
     /**
      * Creates a {@link BatchFilter} that removes all rows for which

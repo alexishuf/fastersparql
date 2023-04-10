@@ -14,17 +14,18 @@ import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBIt.Tsv<B> {
-    protected final WsFrameSender frameSender;
+    @SuppressWarnings("rawtypes") protected final WsFrameSender frameSender;
+    protected boolean serverSentTermination = false;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
 
     static final byte[] BIND_REQUEST     = "!bind-request ".getBytes(UTF_8);
-    static final byte[] ACTIVE_BINDING   = "!active-binding" .getBytes(UTF_8);
     static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
     static final byte[] PING             = "!ping".getBytes(UTF_8);
     static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);
     static final byte[] ERROR            = "!error".getBytes(UTF_8);
     static final byte[] CANCEL           = "!cancel".getBytes(UTF_8);
+    static final byte[] CANCEL_LF        = "!cancel\n".getBytes(UTF_8);
     static final byte[] CANCELLED        = "!cancelled".getBytes(UTF_8);
     static final byte[] END              = "!end".getBytes(UTF_8);
 
@@ -32,13 +33,13 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
 
     /* --- --- --- constructors --- --- --- */
 
-    public AbstractWsParserBIt(WsFrameSender frameSender, BatchType<B> batchType, Vars vars,
+    public AbstractWsParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, Vars vars,
                                int maxBatches) {
         super(batchType, vars, maxBatches);
         this.frameSender = frameSender;
     }
 
-    public AbstractWsParserBIt(WsFrameSender frameSender, BatchType<B> batchType, CallbackBIt<B> destination) {
+    public AbstractWsParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, CallbackBIt<B> destination) {
         super(batchType, destination);
         this.frameSender = frameSender;
     }
@@ -47,6 +48,11 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
 
     /** The remote peer sent a !ping-ack message in response to a !ping frame. */
     protected void onPingAck() { /* pass */ }
+
+    protected void onPing() {
+        //noinspection unchecked
+        frameSender.sendFrame(frameSender.createSink().append(PING_ACK_FRAME));
+    }
 
     /** The remote peer wants the processing to stop. It will not send any more input and
      *  any further input should be treated as an error. */
@@ -79,7 +85,7 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
             else if (first == 'p' && rope.has(begin, PING_ACK))
                 onPingAck();
             else if (first == 'p' && rope.has(begin, PING))
-                frameSender.sendFrame(PING_ACK_FRAME);
+                onPing();
             else if (!handleRoleSpecificControl(rope, begin, eol))
                 throw badControl(rope, begin, eol);
             ++line;
@@ -97,17 +103,20 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
     }
 
     private void handleCancelled() {
+        serverSentTermination = true;
         onCancelled();
         throw new FSCancelledException();
     }
 
     private void handleCancel() {
+        serverSentTermination = true;
         onCancel();
         throw new FSCancelledException();
     }
 
     private void handleError(Rope rope, int begin, int eol) {
-        throw(new FSServerException(rope.toString(begin+ERROR.length, eol)));
+        serverSentTermination = true;
+        throw new FSServerException(rope.toString(begin+ERROR.length, eol));
     }
 
     private void handleEnd(Rope rope, int eol) {
@@ -117,6 +126,7 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
                     rope.toString(eol + 1, rope.len()).replace("\r", "\\r").replace("\n", "\\n"));
             throw new InvalidSparqlResultsException(msg);
         }
+        serverSentTermination = true;
         complete(null);
     }
 

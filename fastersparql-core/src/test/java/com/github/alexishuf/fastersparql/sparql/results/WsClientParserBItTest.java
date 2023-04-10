@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -95,19 +96,23 @@ class WsClientParserBItTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(Results expected, String in) throws Exception {
-        WsFrameSender frameSender = content -> {};
+        WsFrameSender<ByteRope> frameSender = new WsFrameSender<>() {
+            @Override public void sendFrame(ByteRope content) { }
+            @Override public ByteRope createSink() { return new ByteRope(); }
+            @Override public void releaseSink(ByteRope sink) { }
+        };
         ResultsParserBIt.Factory fac;
         if (in.contains("!active-binding") || in.contains("!bind-request")) {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
                 @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, batchType, vars, expected.bindType(), (BIt<B>) expected.bindingsBIt(), null, null, maxBatches);
+                    return new WsClientParserBIt<>(frameSender, batchType, vars, (BIt<B>) expected.bindingsBIt(), null, null, maxBatches);
                 }
                 @Override
                 public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, batchType, destination, expected.bindType(), (BIt<B>) expected.bindingsBIt(), null, null);
+                    return new WsClientParserBIt<>(frameSender, batchType, destination, (BIt<B>) expected.bindingsBIt(), null, null);
                 }
             };
         } else {

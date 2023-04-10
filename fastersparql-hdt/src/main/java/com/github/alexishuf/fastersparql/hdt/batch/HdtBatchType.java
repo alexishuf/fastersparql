@@ -5,9 +5,11 @@ import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
+import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public class HdtBatchType extends BatchType<HdtBatch> {
     public static final HdtBatchType INSTANCE = new HdtBatchType(
@@ -52,13 +54,12 @@ public class HdtBatchType extends BatchType<HdtBatch> {
     }
 
     @Override public @Nullable BatchMerger<HdtBatch> projector(Vars out, Vars in) {
-        int[] sources = mergerSources(out, in, Vars.EMPTY);
+        int[] sources = projectorSources(out, in);
         return sources == null ? null : new HdtBatch.Merger(this, out, sources);
     }
 
-    @Override public @Nullable BatchMerger<HdtBatch> merger(Vars out, Vars left, Vars right) {
-        int[] sources = mergerSources(out, left, right);
-        return sources == null ? null : new HdtBatch.Merger(this, out, sources);
+    @Override public @NonNull BatchMerger<HdtBatch> merger(Vars out, Vars left, Vars right) {
+        return new HdtBatch.Merger(this, out, mergerSources(out, left, right));
     }
 
     @Override public BatchFilter<HdtBatch> filter(Vars out, Vars in, RowFilter<HdtBatch> filter) {

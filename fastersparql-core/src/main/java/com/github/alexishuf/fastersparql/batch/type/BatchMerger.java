@@ -9,16 +9,19 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     protected final int[] sources;
     public final int @Nullable [] columns;
 
-    public static int @Nullable [] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
+    public static int[] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
         int[] sources = new int[out.size()];
-        boolean trivial = out.size() == leftVars.size();
         for (int i = 0; i < sources.length; i++) {
             Rope var = out.get(i);
             int s = leftVars.indexOf(var);
-            trivial &= s == i;
             sources[i] = s >= 0 ? s+1 : -rightVars.indexOf(var)-1;
         }
-        return trivial ? null : sources;
+        return sources;
+    }
+
+    public static int @Nullable [] projectorSources(Vars out, Vars leftVars) {
+        if (out.equals(leftVars)) return null;
+        return mergerSources(out, leftVars, Vars.EMPTY);
     }
 
     public BatchMerger(BatchType<B> batchType, Vars outVars, int[] sources) {

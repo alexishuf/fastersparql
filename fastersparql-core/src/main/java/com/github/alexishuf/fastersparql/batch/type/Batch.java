@@ -1,7 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -88,16 +90,16 @@ public abstract class Batch<B extends Batch<B>> {
         if (cols == 0)
             return rows == 1 ? "[[]]" : "[... "+rows+" zero-column rows ...]";
         try {
-            var sb = new StringBuilder().append(rows == 1 ? "[[" : "[\n  [");
+            var sb = new ByteRope().append(rows == 1 ? "[[" : "[\n  [");
             for (int r = 0; r < rows; r++) {
                 for (int c = 0; c < cols; c++) {
                     var t = get(r, c);
                     sb.append(t == null ? "null" : t.toSparql()).append(", ");
                 }
-                sb.setLength(sb.length() - 2);
+                sb.unAppend(2);
                 sb.append("]\n  [");
             }
-            sb.setLength(sb.length() - 4);
+            sb.unAppend(4);
             return sb.append(rows == 1 ? "]" : "\n]").toString();
         } catch (IndexOutOfBoundsException e)  {
             return "[<batch clear()ed concurrently with toString()>]";
@@ -169,12 +171,12 @@ public abstract class Batch<B extends Batch<B>> {
     /** Get a string representation of the row at the given index. */
     public String toString(int row) {
         if (cols == 0) return "[]";
-        var sb = new StringBuilder().append('[');
+        var sb = new ByteRope().append('[');
         for (int i = 0, cols = this.cols; i < cols; i++) {
             var t = get(row, i);
             sb.append(t == null ? "null" : t.toSparql()).append(", ");
         }
-        sb.setLength(sb.length()-2);
+        sb.unAppend(2);
         return sb.append(']').toString();
     }
 
@@ -194,6 +196,22 @@ public abstract class Batch<B extends Batch<B>> {
     public int flaggedId(@NonNegative int row, @NonNegative int col) {
         Term term = get(row, col);
         return term == null ? 0 : term.flaggedDictId;
+    }
+
+    /** Null-safe equivalent to {@code get(row, col).len}. */
+    public int len(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        return t == null ? 0 : t.len;
+    }
+
+    /** If the term at {@code (row, col)} is a literal, return the index of the
+     * closing {@code "}-quote. Else, return zero. */
+    public int lexEnd(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        if (t == null || t.type() != Term.Type.LIT) return 0;
+        if (t.flaggedDictId == 0)
+            return RopeSupport.reverseSkip(t.local, 0, t.local.length, Rope.UNTIL_DQ);
+        return t.local.length;
     }
 
     public int localLen(@NonNegative int row, @NonNegative int col) {
@@ -237,7 +255,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param prefixAssigner Used to get prefix names for an IRI prefix that appears in an IRI
      *                       or on a datatype IRI and is likely to be shared.
      */
-    public void writeSparql(ByteRope dest, int row, int column, PrefixAssigner prefixAssigner) {
+    public void writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
         Term term = get(row, column);
         if (term != null)
             term.toSparql(dest, prefixAssigner);
@@ -249,9 +267,17 @@ public abstract class Batch<B extends Batch<B>> {
      * @param row see {@link Batch#get(int, int)}
      * @param col see {@link Batch#get(int, int)}
      */
-    public void writeNT(ByteRope dest, int row, int col) {
+    public void writeNT(ByteSink<?> dest, int row, int col) {
         Term t = get(row, col);
         if (t != null) dest.append(t);
+    }
+
+    /**
+     * Null-safe equivalent to {@code dest.append(get(row, col), begin, end)}.
+     */
+    public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
+        Term t = get(row, col);
+        if (t != null) dest.append(t, begin, end);
     }
 
     /** Get a hash code for the term at column {@code col} of row {@code row}. */

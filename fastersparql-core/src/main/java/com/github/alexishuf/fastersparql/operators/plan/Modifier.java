@@ -106,7 +106,7 @@ public final class Modifier extends Plan {
     }
 
     @Override public String toString() {
-        var sb = new StringBuilder();
+        var sb = new ByteRope();
         sb.append(algebraName()).append(left);
 
         if (!filters.isEmpty())                  sb.append(')');

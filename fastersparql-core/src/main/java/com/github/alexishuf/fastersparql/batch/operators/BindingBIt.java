@@ -15,7 +15,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     protected final BatchMerger<B> merger;
     protected final BindType bindType;
     private @Nullable B lb, rb;
-    private int leftRow = 0;
+    private int leftRow = -1;
     private final BIt<B> left;
     private final BatchBinding<B> tempBinding;
     protected final Metrics.@Nullable JoinMetrics metrics;
@@ -66,7 +66,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             b = getBatch(b);
             do {
                 if (inner == null) {
-                    if (leftRow >= lb.rows) {
+                    if (++leftRow >= lb.rows) {
                         leftRow = 0;
                         lb = left.nextBatch(lb);
                         if (lb == null) break; // reached end
@@ -76,7 +76,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 }
                 if ((rb = inner.nextBatch(rb)) == null) {
                     inner = null;
-                    leftRow++;
                 }
                 boolean pub = switch (bindType) {
                     case JOIN,EXISTS      -> rb != null;

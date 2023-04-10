@@ -1,0 +1,3 @@
+com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer$TsvFactory
+com.github.alexishuf.fastersparql.sparql.results.serializer.JsonSerializer$JsonFactory
+com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer$WsFactory

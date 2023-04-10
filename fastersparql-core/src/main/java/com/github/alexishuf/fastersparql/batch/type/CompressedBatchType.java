@@ -2,10 +2,12 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.FSProperties.DEF_OP_REDUCED_CAPACITY;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
+import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
     private static final int SINGLETON_CAPACITY = 8 * DEF_OP_REDUCED_CAPACITY;
@@ -40,14 +42,13 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
 
     @Override
     public @Nullable BatchMerger<CompressedBatch> projector(Vars out, Vars in) {
-        int[] sources = mergerSources(out, in, Vars.EMPTY);
+        int[] sources = projectorSources(out, in);
         return sources == null ? null : new CompressedBatch.Merger(this, out, sources);
     }
 
     @Override
-    public @Nullable BatchMerger<CompressedBatch> merger(Vars out, Vars left, Vars right) {
-        int[] sources = mergerSources(out, left, right);
-        return sources == null ? null : new CompressedBatch.Merger(this, out, sources);
+    public @NonNull BatchMerger<CompressedBatch> merger(Vars out, Vars left, Vars right) {
+        return new CompressedBatch.Merger(this, out, mergerSources(out, left, right));
     }
 
     @Override

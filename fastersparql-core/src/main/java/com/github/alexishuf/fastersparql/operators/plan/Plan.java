@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
@@ -76,7 +77,7 @@ public abstract sealed class Plan implements SparqlQuery
                 rb.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
                 Rope sparql = sparql();
                 yield  sparql.len() < 80
-                        ? rb.escapingLF(sparql).append(')')
+                        ? rb.appendEscapingLF(sparql).append(')')
                         : rb.append('\n').indented(2, sparql).append('\n').append(')');
             }
             case TRIPLE -> {
@@ -187,13 +188,13 @@ public abstract sealed class Plan implements SparqlQuery
      *
      * @param out where to write the SPARQL to.
      */
-    public final void groupGraphPattern(ByteRope out, int indent, PrefixAssigner assigner) {
+    public final void groupGraphPattern(ByteSink<?> out, int indent, PrefixAssigner assigner) {
         out.newline(indent++).append('{');
         groupGraphPatternInner(out, indent, assigner);
         out.newline(--indent).append('}');
     }
 
-    protected final void groupGraphPatternInnerOp(ByteRope out, int indent, PrefixAssigner assigner) {
+    protected final void groupGraphPatternInnerOp(ByteSink<?> out, int indent, PrefixAssigner assigner) {
         switch (type) {
             case JOIN,TRIPLE,VALUES -> groupGraphPatternInner(out, indent, assigner);
             default                 -> groupGraphPattern(out, indent, assigner);
@@ -204,7 +205,7 @@ public abstract sealed class Plan implements SparqlQuery
      * Equivalent to {@code groupGraphPattern(out, indent)} without the surrounding
      * {@code '{'} and {@code'}'}.
      */
-    public void groupGraphPatternInner(ByteRope out, int indent, PrefixAssigner assigner) {
+    public void groupGraphPatternInner(ByteSink<?> out, int indent, PrefixAssigner assigner) {
         switch (type) {
             case JOIN -> {
                 for (int i = 0, n = opCount(); i < n; i++)
@@ -259,6 +260,10 @@ public abstract sealed class Plan implements SparqlQuery
         }
     }
 
+    @Override public boolean isAsk() {
+        return this instanceof Modifier m
+                && m.offset == 0 && m.limit == 1 && m.publicVars().isEmpty();
+    }
 
     /** This algebra does not support graph queries */
     @Override public boolean isGraph() { return false; }
@@ -513,7 +518,7 @@ public abstract sealed class Plan implements SparqlQuery
     @Override public String toString() {
         if (left == null)
             return algebraName().toString();
-        StringBuilder sb = new StringBuilder().append(algebraName()).append("(\n");
+        var sb = new StringBuilder().append(algebraName()).append("(\n");
         for (int i = 0, n = opCount(); i < n; i++)
             indent(sb, op(i).toString()).append(",\n");
         sb.setLength(sb.length()-2);

@@ -40,12 +40,12 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     protected final Term[] row;
     private final TermBatch rowBatch;
     private B tmpBatch;
+    private long rowsEmitted;
 
     protected final @Nullable CallbackBIt<B> destination;
 
     /** Interface used via SPI to discover {@link ResultsParserBIt} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
-        SparqlResultFormat name();
         <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches);
         <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination);
     }
@@ -186,12 +186,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         return destination != null ? destination.offer(batch) : super.offer(batch);
     }
 
-    protected final void emitRowKeep() {
-        tmpBatch = offer(getBatch(tmpBatch).putConverting(rowBatch));
-    }
+    public long rowsEmitted() { return rowsEmitted; }
 
-    protected final void emitRowClear() {
-        emitRowKeep();
+    protected void emitRow() {
+        ++rowsEmitted;
+        tmpBatch = offer(getBatch(tmpBatch).putConverting(rowBatch));
         Arrays.fill(row, null);
     }
 

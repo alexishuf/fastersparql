@@ -44,9 +44,9 @@ class SparqlParserTest {
         ));
 
         // simplest ASK query
-        var ask0 = FS.limit(FS.reduced(FS.project(tp("?s", "?p", "?o"), Vars.EMPTY)), 1);
-        var ask1 = FS.limit(FS.reduced(FS.project(tp("?s", "?p", "$o"), Vars.EMPTY)), 1);
-        var ask2 = FS.limit(FS.reduced(FS.project(tp("$s", "?p", "?o"), Vars.EMPTY)), 1);
+        var ask0 = FS.limit(FS.project(tp("?s", "?p", "?o"), Vars.EMPTY), 1);
+        var ask1 = FS.limit(FS.project(tp("?s", "?p", "$o"), Vars.EMPTY), 1);
+        var ask2 = FS.limit(FS.project(tp("$s", "?p", "?o"), Vars.EMPTY), 1);
         list.addAll(List.of(
                 new D("ASK WHERE { ?s ?p ?o }", ask0),
                 new D("ASK { ?s ?p ?o }", ask0),

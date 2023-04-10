@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
@@ -256,6 +257,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public int bytesUsed(int row) {
+        if (cols == 0) return 0;
         int base = mdBase(row, 0), begin = rowLocalOff(base);
         return rowLocalEnd(base)-begin;
     }
@@ -286,6 +288,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public int flaggedId(@NonNegative int row, @NonNegative int col) {
         return md[mdBase(row, col)];
+    }
+
+    @Override public int lexEnd(@NonNegative int row, @NonNegative int col) {
+        int base = mdBase(row, col), fId = md[base], localLen = md[base+MD_LEN];
+        if (fId > 0 || localLen == 0) return 0;
+        if (fId < 0) return localLen;
+        int off = md[base+MD_OFF];
+        if (locals[off] != '"') return 0;
+        return RopeSupport.reverseSkip(locals, off, off+localLen, UNTIL_DQ)-off;
+    }
+
+    @Override public int len(@NonNegative int row, @NonNegative int col) {
+        int base = mdBase(row,  col), fId = md[base];
+        return (fId == 0 ? 0 : RopeDict.get(fId&0x7fffffff).len) + md[base+MD_LEN];
     }
 
     @Override public int localLen(@NonNegative int row, @NonNegative int col) {
@@ -355,17 +371,51 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void writeSparql(ByteRope dest, int row, int col, PrefixAssigner prefixAssigner) {
+    public void writeSparql(ByteSink<?> dest, int row, int col, PrefixAssigner prefixAssigner) {
         int base = mdBase(row, col);
         Term.toSparql(dest, prefixAssigner, md[base], locals, md[base+MD_OFF],
                       md[base+MD_LEN]);
     }
 
-    @Override public void writeNT(ByteRope dest, int row, int col) {
+    @Override public void writeNT(ByteSink<?> dest, int row, int col) {
         int base = mdBase(row, col), fId = md[base];
         if (fId > 0) dest.append(RopeDict.get(fId));
         dest.append(locals, md[base+MD_OFF], md[base+MD_LEN]);
         if (fId < 0) dest.append(RopeDict.get(fId&0x7fffffff));
+    }
+
+    @Override public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
+        if (begin < 0 || end < 0) throw new IndexOutOfBoundsException();
+        int base = mdBase(row, col), fId = md[base];
+        if (fId > 0) {
+            ByteRope prefix = RopeDict.get(fId);
+            int len = prefix.len;
+            if (begin < len) {
+                dest.append(prefix, begin, Math.min(end, len));
+                begin = 0;
+            } else {
+                begin -= len;
+            }
+            end -= len;
+            if (begin < end) {
+                if (end > md[base+MD_LEN]) throw new IndexOutOfBoundsException(end+len);
+                dest.append(locals, md[base+MD_OFF], end-begin);
+            }
+        } else {
+            int len = md[base+MD_LEN];
+            if (begin < len) {
+                int off = md[base + MD_OFF];
+                dest.append(locals, off+begin, Math.min(len, end)-begin);
+                begin = 0;
+            } else { begin -= len; }
+            end -= len;
+            if (begin < end) {
+                if (fId == 0) throw new IndexOutOfBoundsException();
+                ByteRope suffix = RopeDict.get(fId & 0x7fffffff);
+                if (end > suffix.len) throw new IndexOutOfBoundsException();
+                dest.append(suffix, begin, end);
+            }
+        }
     }
 
     @Override public int hash(int row, int col) {

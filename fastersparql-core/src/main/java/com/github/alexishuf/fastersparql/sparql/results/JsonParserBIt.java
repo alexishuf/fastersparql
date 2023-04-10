@@ -148,7 +148,6 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         return e;
     }
 
-    private void emit() { emitRowClear(); }
 
     /* --- --- --- SPARQL-level parsing --- --- --- */
 
@@ -278,7 +277,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                     };
                     p.row[p.column] = term;
                 }
-                case BINDING_ROW -> p.emit();
+                case BINDING_ROW -> p.emitRow();
                 case VARS, BOOLEAN, BINDINGS, BINDING_VALUE_TYPE,
                         BINDING_VALUE_DATATYPE, BINDING_VALUE_LANG, BINDING_VALUE_VALUE
                         -> throw ex(this, L_BRACE, 0, 1);
@@ -303,7 +302,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         public void onBool(JsonParserBIt<?> p, boolean value) {
             var r = value ? TRUE : FALSE;
             switch (this) {
-                case BOOLEAN -> { if (value) p.emit(); }
+                case BOOLEAN -> { if (value) p.emitRow(); }
                 case IGNORE -> {}
                 case BINDING_VALUE_VALUE
                         -> p.value.clear().append('<').append(r, 0, r.len).append('>');

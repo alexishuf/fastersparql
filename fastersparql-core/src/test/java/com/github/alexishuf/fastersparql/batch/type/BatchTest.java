@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.Objects;
@@ -586,6 +587,96 @@ class BatchTest {
                 assertBatchesEquals(inPlace, expected, ctx);
             }
         });
+    }
+
+
+    static Stream<Arguments> testWrite() {
+        Term i23 = Term.valueOf("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>");
+        return Stream.of(
+                arguments(Term.valueOf("\"bob\"@en"), 0, 1),
+                arguments(Term.valueOf("\"bob\"@en"), 0, 4),
+                arguments(Term.valueOf("\"bob\"@en"), 0, 8),
+                arguments(Term.valueOf("\"bob\""), 0, 5),
+                arguments(Term.valueOf("\"bob\""), 1, 4),
+                // <http://www.w3.org/2001/XMLSchema#string>
+                arguments(Term.XSD_STRING, 0, 1),
+                arguments(Term.XSD_STRING, 1, 33),
+                arguments(Term.XSD_STRING, 1, 34),
+                arguments(Term.XSD_STRING, 1, 35),
+                arguments(Term.XSD_STRING, 1, 40),
+                arguments(Term.XSD_STRING, 1, 41),
+                arguments(Term.XSD_STRING, 0, 41),
+                // "23"^^<http://www.w3.org/2001/XMLSchema#integer>
+                arguments(i23, 0, 48),
+                arguments(i23, 0, 3),
+                arguments(i23, 0, 4),
+                arguments(i23, 1, 3),
+                arguments(i23, 1, 2),
+                arguments(i23, 0, 7),
+                arguments(i23, 1, 7),
+                arguments(i23, 2, 7),
+                arguments(i23, 3, 48),
+                arguments(i23, 7, 47)
+        );
+    }
+
+    private static final Term[] DUMMY_ROW = Term.array("xsd:string", "\"bob\"@en", 23);
+
+    @ParameterizedTest @MethodSource void testWrite(Term term, int begin, int end) {
+        for (BatchType<?> type : TYPES) {
+            var b = type.create(2, 3, 0);
+            b.putRow(DUMMY_ROW);
+            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+
+            ByteRope dest = new ByteRope().append("@");
+            b.write(dest, 1, 1, begin, end);
+            assertEquals("@"+term.toString(begin, end), dest.toString(), "type="+type);
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {
+        "\"alice\"",
+        "\"\"",
+        "\"bob\"@en",
+        "\"\"@en",
+        "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+        "<http://www.w3.org/2001/XMLSchema#string>",
+    })
+    void testLen(String termString) {
+        Term term = termString.equals("null") ? null : Term.array(termString)[0];
+        for (BatchType<?> type : TYPES) {
+            var b = type.create(2, 3, 0);
+            b.putRow(DUMMY_ROW);
+            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            assertEquals(term == null ? 0 : term.len, b.len(1, 1));
+        }
+    }
+
+    static Stream<Arguments> testLexEnd() {
+
+        return Stream.of(
+                arguments(Term.valueOf("\"bob\""), 4),
+                arguments(Term.valueOf("\"bob\"@en"), 4),
+                arguments(Term.valueOf("\"bob\"@en-US"), 4),
+                arguments(Term.valueOf("\"\""), 1),
+                arguments(Term.valueOf("\"\"@en"), 1),
+                arguments(Term.valueOf("\"\"@en-US"), 1),
+                arguments(Term.valueOf(null), 0),
+                arguments(Term.valueOf("_:b"), 0),
+                arguments(Term.valueOf("?x"), 0),
+                arguments(Term.valueOf("<rel>"), 0),
+                arguments(Term.valueOf("<http://www.w3.org/2001/XMLSchema#string>"), 0)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testLexEnd(Term term, int expected) {
+        for (BatchType<?> type : TYPES) {
+            var b = type.create(2, 3, 0);
+            b.putRow(DUMMY_ROW);
+            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            assertEquals(expected, b.lexEnd(1, 1));
+        }
     }
 
 

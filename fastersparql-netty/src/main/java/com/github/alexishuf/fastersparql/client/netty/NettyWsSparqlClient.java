@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
 import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
@@ -29,6 +30,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
+import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
@@ -119,11 +121,17 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     /* --- --- --- helper methods --- --- --- */
 
-    private static final Rope QUERY_VERB = new ByteRope("!query ");
-    private static final Rope BIND_VERB = new ByteRope("!bind ");
-    private static Rope createRequest(Rope verb, Rope sparql) {
+    private static final byte[] QUERY_VERB = "!query ".getBytes(UTF_8);
+    private static final byte[][] BIND_VERB = {
+            "!join "      .getBytes(UTF_8),
+            "!left-join " .getBytes(UTF_8),
+            "!exists "    .getBytes(UTF_8),
+            "!not-exists ".getBytes(UTF_8),
+            "!minus "     .getBytes(UTF_8),
+    };
+    private static Rope createRequest(byte[] verb, Rope sparql) {
         int lfCount = sparql.get(sparql.len()-1) != '\n' ? 1 : 0;
-        ByteRope r = new ByteRope(verb.len() + sparql.len() + lfCount);
+        ByteRope r = new ByteRope(verb.length + sparql.len() + lfCount);
         r.append(verb).append(sparql);
         if (lfCount > 0) r.append('\n');
         return r;
@@ -131,12 +139,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     /* --- --- --- BIt implementations --- --- --- */
 
-    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> implements NettyWsClientHandler, WsFrameSender {
+    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> implements NettyWsClientHandler,
+            WsFrameSender<ByteBufSink> {
         private final Rope requestMessage;
         private final WsClientParserBIt<B> parser;
         private boolean gotFrames = false;
         private final BufferRope bufferRope = new BufferRope(ByteBuffer.wrap(ByteRope.EMPTY.utf8));
         protected @MonotonicNonNull ChannelRecycler recycler;
+        protected final ByteBufSink bbSink = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT);
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), FSProperties.queueMaxBatches());
@@ -148,25 +158,38 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         public WsBIt(BatchType<B> batchType, SparqlQuery query, Vars outVars, BindType bindType, BIt<B> bindings,
                      @Nullable JoinMetrics metrics) {
             super(batchType, outVars, FSProperties.queueMaxBatches());
-            this.requestMessage = createRequest(BIND_VERB, query.sparql());
+            this.requestMessage = createRequest(BIND_VERB[bindType.ordinal()], query.sparql());
             var usefulBindingVars = bindings.vars().intersection(query.allVars());
-            this.parser = new WsClientParserBIt<>(this, batchType, this, bindType, bindings, usefulBindingVars, metrics);
+            this.parser = new WsClientParserBIt<>(this, batchType, this, bindings, usefulBindingVars, metrics);
             request();
+        }
+
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            super.cleanup(cause);
+            bbSink.release();
+            bbSink.alloc(UnpooledByteBufAllocator.DEFAULT);
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
 
-        @Override public void sendFrame(Rope content) {
+        @Override public void sendFrame(ByteBufSink content) {
             if (terminated) {
                 //noinspection RedundantCast
                 log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, (Object)error);
+                content.release();
                 return;
             }
             final Channel ch = this.channel;
             if (ch == null)
                 throw new IllegalStateException("sendFrame() before attach()");
-            ch.writeAndFlush(NettyRopeUtils.wrap(content, UTF_8));
+            ch.writeAndFlush(new TextWebSocketFrame(content.take()));
         }
+
+        @Override public ByteBufSink createSink() {
+            return bbSink.touch();
+        }
+
+        @Override public void releaseSink(ByteBufSink sink) { sink.release(); }
 
         /* --- --- --- NettySPSCBIt methods --- --- --- */
 
@@ -184,6 +207,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             this.channel = ctx.channel();
+            bbSink.alloc(this.channel.alloc());
             ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
         }
 
@@ -204,7 +228,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void frame(WebSocketFrame frame) {
             gotFrames = true;
             if (frame instanceof TextWebSocketFrame t) {
-                bufferRope.buffer = t.content().nioBuffer();
+                bufferRope.buffer(t.content().nioBuffer());
                 parser.feedShared(bufferRope);
             } else if (!terminated && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();

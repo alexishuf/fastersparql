@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -336,14 +337,14 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     @Override public String toString() { return toStringNoArgs(); }
 
     protected String toStringWithOperands(Collection<?> operands) {
-        var sb = new StringBuilder(200).append(toStringNoArgs()).append('(');
+        var sb = new ByteRope(200).append(toStringNoArgs()).append('(');
         int taken = 0, n = operands.size();
         for (var i = operands.iterator(); sb.length() < 60 && i.hasNext(); ++taken)
             sb.append(i.next()).append(", ");
         if (taken < n)
             sb.append("...");
         else if (taken > 0)
-            sb.setLength(sb.length()-2);
+            sb.unAppend(2);
         return sb.append(')').toString();
     }
 }

@@ -8,7 +8,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -65,7 +65,7 @@ public final class Values extends Plan {
     }
 
     @Override public String toString() {
-        var sb = new StringBuilder();
+        var sb = new ByteRope();
         sb.append(algebraName()).append('(');
         if (values == null)
             return sb.append(')').toString();
@@ -82,19 +82,19 @@ public final class Values extends Plan {
         if (values.rows > displayed)
             sb.append("\n  ...");
         else if (displayed > 0)
-            sb.setLength(sb.length()-1);
+            sb.unAppend(1);
         return sb.append("\n)").toString();
     }
 
     private static final byte[] VALUES_u8 = "VALUES".getBytes(StandardCharsets.UTF_8);
     private static final byte[] UNDEF_u8 = "UNDEF".getBytes(StandardCharsets.UTF_8);
 
-    @Override public void groupGraphPatternInner(ByteRope out, int indent, PrefixAssigner assigner) {
+    @Override public void groupGraphPatternInner(ByteSink<?> out, int indent, PrefixAssigner assigner) {
         out.newline(indent++).append(VALUES_u8).append(' ').append('(');
-        for (Rope name : publicVars)
-            out.append('?').append(name).append(' ');
-        if (!publicVars.isEmpty())
-            out.unAppend(1);
+        for (int i = 0, n = publicVars.size(); i < n; i++) {
+            if (i > 0) out.append(' ');
+            out.append('?').append(publicVars.get(i));
+        }
         out.append(')').append(' ').append('{');
         if (values != null) {
             for (int r = 0, rows = values.rows, cols = values.cols; r < rows; r++) {

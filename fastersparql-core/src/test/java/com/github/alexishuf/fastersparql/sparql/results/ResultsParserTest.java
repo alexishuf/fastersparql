@@ -67,7 +67,7 @@ class ResultsParserTest {
         }
 
         @Override public void invalidate(Rope r) {
-            var buffer = ((BufferRope) r).buffer;
+            var buffer = ((BufferRope) r).buffer();
             byte[] filled = new byte[r.len() + 6];
             for (int i = 0; i < filled.length; i++) {
                 filled[i] = switch (i&3) {
@@ -159,12 +159,13 @@ class ResultsParserTest {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {
-                        j = input.skip(i + 1, len, Rope.UNTIL_WS);
-                        Rope r = ropeFac.create(input, i, j);
+                        j = input.skip(i, len, Rope.UNTIL_WS)+1;
+                        Rope r = ropeFac.create(input, i, Math.min(j, len));
                         parser.feedShared(r);
                         ropeFac.invalidate(r);
                     }
-                } catch (Throwable ignored) {
+                } catch (Throwable t) {
+                    parser.complete(t);
                 } finally {
                     if (!parser.isCompleted())
                         parser.complete(null);
@@ -181,8 +182,8 @@ class ResultsParserTest {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {
-                        j = input.skip(i + 1, len, Rope.UNTIL_WS);
-                        Rope r = ropeFac.create(input, i, j);
+                        j = input.skip(i, len, Rope.UNTIL_WS)+1;
+                        Rope r = ropeFac.create(input, i, Math.min(j, len));
                         parser.feedShared(r);
                         ropeFac.invalidate(r);
                     }

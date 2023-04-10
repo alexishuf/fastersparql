@@ -15,6 +15,7 @@ import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.ReferenceCounted;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.URI;
@@ -100,17 +101,18 @@ public final class NettyHttpClient implements AutoCloseable {
             pipeline.addLast("ssl", sslContext.newHandler(ch.alloc()));
         pipeline.addLast("http", new HttpClientCodec());
         pipeline.addLast("decompress", new HttpContentDecompressor());
-
+//        pipeline.addLast("log", new LoggingHandler(NettyHttpClient.class,
+//                                                         LogLevel.INFO, ByteBufFormat.SIMPLE));
         NettyHttpHandler handler = hFactory.get();
         pipeline.addLast(HANDLER_NAME, handler);
         return handler;
     }
 
 
-    public static HttpRequest makeRequest(HttpMethod method, String pathAndParams,
-                                          @Nullable String accept,
-                                          String contentType,
-                                          CharSequence body, Charset charset) {
+    public static FullHttpRequest makeRequest(HttpMethod method, String pathAndParams,
+                                              @Nullable String accept,
+                                              String contentType,
+                                              CharSequence body, Charset charset) {
         ByteBuf bb =  NettyRopeUtils.wrap(body, charset);
         var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, pathAndParams, bb);
         HttpHeaders headers = req.headers();
@@ -121,7 +123,7 @@ public final class NettyHttpClient implements AutoCloseable {
         return req;
     }
 
-    public static HttpRequest makeGet(String pathAndParams, @Nullable String accept) {
+    public static FullHttpRequest makeGet(String pathAndParams, @Nullable String accept) {
         var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, pathAndParams);
         if (accept != null)
             req.headers().set(ACCEPT, accept);
@@ -147,6 +149,9 @@ public final class NettyHttpClient implements AutoCloseable {
                 onConnected.accept(ch, handler);
                 ch.writeAndFlush(request);
             } catch (Throwable t) {
+                // caller expects a request to be release()ed
+                if (request instanceof ReferenceCounted r)
+                    r.release();
                 onError.accept(t instanceof ExecutionException ? t.getCause() : t);
             }
         });

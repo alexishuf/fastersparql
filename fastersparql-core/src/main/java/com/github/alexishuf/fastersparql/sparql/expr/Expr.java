@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -47,7 +48,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     default boolean isGround() { return this instanceof Term t && !t.isVar(); }
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
-    void toSparql(ByteRope out, PrefixAssigner prefixAssigner);
+    void toSparql(ByteSink<?> out, PrefixAssigner prefixAssigner);
 
     default Rope toSparql() {
         ByteRope r = new ByteRope();
@@ -94,14 +95,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         private static final byte[] NOT_EXISTS = "NOT EXISTS".getBytes(UTF_8);
         private static final byte[] EXISTS = "EXISTS".getBytes(UTF_8);
-        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
-            int indent;
-            if (out.len() == 0) {
-                indent = 0;
-            } else {
-                int lineBegin = out.reverseSkip(0, out.len, Rope.UNTIL_LF);
-                if (out.get(lineBegin) == '\n') lineBegin++;
-                indent = out.skip(lineBegin, out.len(), Rope.WS) - lineBegin;
+        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+            int indent = 0;
+            if (out instanceof ByteRope r) {
+                if (r.len() != 0) {
+                    int lineBegin = r.reverseSkip(0, r.len, Rope.UNTIL_LF);
+                    if (r.get(lineBegin) == '\n') lineBegin++;
+                    indent = r.skip(lineBegin, r.len(), Rope.WS) - lineBegin;
+                }
             }
             out.append(negate ? NOT_EXISTS : EXISTS);
             filter.groupGraphPattern(out, indent, assigner);
@@ -164,14 +165,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return hash;
         }
 
-        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
+        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
             out.append(sparqlName()).append('(');
             int n = argCount();
             for (int i = 0; i < n; i++) {
+                if (i > 0) out.append(',').append(' ');
                 arg(i).toSparql(out, assigner);
-                out.append(',').append(' ');
             }
-            if (n > 0) out.unAppend(2);
             out.append(')');
         }
 
@@ -197,7 +197,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class UnaryOperator extends UnaryFunction {
         public UnaryOperator(Expr in) { super(in); }
 
-        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
+        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
             in.toSparql(out.append(sparqlName()), assigner);
         }
     }
@@ -217,7 +217,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class BinaryOperator extends BinaryFunction {
         public BinaryOperator(Expr l, Expr r) { super(l, r); }
 
-        @Override public void toSparql(ByteRope out, PrefixAssigner assigner) {
+        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
             out.append('(');
             l.toSparql(out, assigner);
             out.append(' ').append(sparqlName()).append(' ');

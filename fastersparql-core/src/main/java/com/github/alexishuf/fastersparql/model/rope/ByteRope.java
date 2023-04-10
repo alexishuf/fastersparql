@@ -3,14 +3,16 @@ package com.github.alexishuf.fastersparql.model.rope;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -21,7 +23,7 @@ import static java.util.Arrays.copyOf;
 import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings("UnusedReturnValue")
-public final class ByteRope extends Rope {
+public final class ByteRope extends Rope implements ByteSink<ByteRope> {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     private static final int READLINE_CHUNK = 128;
@@ -118,6 +120,8 @@ public final class ByteRope extends Rope {
         return utf8[offset+i];
     }
 
+    @Override public boolean isEmpty() { return super.isEmpty(); }
+
     private void raiseImmutable() {
         throw new UnsupportedOperationException("Mutating ByteRope over shared byte[] utf8");
     }
@@ -134,7 +138,7 @@ public final class ByteRope extends Rope {
         return len;
     }
 
-    public @This ByteRope ensureFreeCapacity(int increment) {
+    @Override public @This ByteRope ensureFreeCapacity(int increment) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int len = this.len, required = len+increment;
         if (required > utf8.length) {
@@ -243,47 +247,73 @@ public final class ByteRope extends Rope {
         return got;
     }
 
+    public OutputStream asOutputStream() {
+        return new OutputStream() {
+            @Override public void write(int b) { append((byte) b); }
+            @Override public void write(byte @NonNull [] b) { append(b); }
+            @Override public void write(byte @NonNull [] b, int off, int len) { append(b, off, len); }
+        };
+    }
+
     public @This ByteRope fill(int value) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         Arrays.fill(utf8, offset, offset+len, (byte)value);
         return this;
     }
 
-    public @This ByteRope append(byte[] utf8, int offset, int len) {
+    @Override public @This ByteRope append(byte[] utf8, int offset, int len) {
         int out = postIncLen(len);
         arraycopy(utf8, offset, this.utf8, out, len);
         return this;
     }
 
-    public @This ByteRope append(byte[] utf8) { return append(utf8, 0, utf8.length); }
+    @Override public @This ByteRope append(byte[] utf8) { return append(utf8, 0, utf8.length); }
 
-    public @This ByteRope append(Rope r, int begin, int end) {
+    @Override public @This ByteRope append(Rope r, int begin, int end) {
         int out = postIncLen(max(0, end-begin));
         r.copy(begin, end, utf8, out);
         return this;
     }
 
-    public @This ByteRope append(Rope r) {
+    @Override public @This ByteRope append(Rope r) {
         int len = r.len();
         int out = postIncLen(len);
         r.copy(0, len, utf8, out);
         return this;
     }
 
-    public @This ByteRope append(char c) {
+    @Override public @This ByteRope append(char c) {
         ensureFreeCapacity(1);
         utf8[len++] = (byte)c;
         slice = null;
         return this;
     }
-    public @This ByteRope append(byte c) {
+    @Override public @This ByteRope append(byte c) {
         ensureFreeCapacity(1);
         utf8[len++] = c;
         slice = null;
         return this; }
 
-    public @This ByteRope append(CharSequence o) {
+    @Override public @This ByteRope append(CharSequence o) {
         return o instanceof Rope r ? append(r) : append(o.toString().getBytes(UTF_8));
+    }
+
+    @Override public @This ByteRope append(CharSequence cs, int begin, int end) {
+        if (cs instanceof Rope r) return append(r, begin, end);
+
+        ensureFreeCapacity(end-begin);
+        var enc = UTF_8.newEncoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE);
+        var cb = CharBuffer.wrap(cs, begin, end);
+        CoderResult result;
+        do {
+            ensureFreeCapacity(cb.remaining()*4);
+            var bb = ByteBuffer.wrap(utf8, len, utf8.length - len);
+            result = enc.encode(cb, bb, true);
+            len = bb.position();
+        } while (result.isOverflow());
+        return this;
     }
 
     public @This ByteRope append(Collection<?> coll) {
@@ -331,19 +361,12 @@ public final class ByteRope extends Rope {
         return this;
     }
 
-    public @This ByteRope repeat(byte c, int n) {
+    @Override public @This ByteRope repeat(byte c, int n) {
         for (int i = 0, out = postIncLen(n); i < n; i++) utf8[out++] = c;
         return this;
     }
 
-    public @This ByteRope newline(int spaces) {
-        int o = postIncLen(spaces + 1);
-        utf8[o++] = '\n';
-        while (spaces-- > 0) utf8[o++] = ' ';
-        return this;
-    }
-
-    public @This ByteRope escapingLF(Object o) {
+    public @This ByteRope appendEscapingLF(Object o) {
         Rope r = Rope.of(o);
         ensureFreeCapacity(r.len()+8);
         for (int consumed = 0, i, end = r.len(); consumed < end; consumed = i+1) {
@@ -352,19 +375,6 @@ public final class ByteRope extends Rope {
             if (i < end)
                 append('\\').append('n');
         }
-        return this;
-    }
-
-    public @This ByteRope indented(int spaces, Object o) {
-        Rope r = Rope.of(o);
-        int end = r.len();
-        ensureFreeCapacity(end+(spaces+1)<<3);
-        repeat((byte) ' ', spaces);
-        for (int i = 0, eol; i < end; i = eol+1) {
-            if (i > 0) newline(spaces);
-            append(r, i, eol = r.skipUntil(i, end, '\n'));
-        }
-        if (end > 0 && r.get(end-1) == '\n') append('\n');
         return this;
     }
 

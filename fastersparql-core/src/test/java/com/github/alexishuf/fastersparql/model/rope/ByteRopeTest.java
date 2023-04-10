@@ -13,6 +13,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class ByteRopeTest {
     public static Stream<Arguments> testAppendNumber() {
@@ -57,7 +58,7 @@ class ByteRopeTest {
         assertThrows(UnsupportedOperationException.class, () -> EMPTY.append(new byte[] {'0', '1', '2'}, 1, 1));
         assertThrows(UnsupportedOperationException.class, () -> EMPTY.newline(0));
         assertThrows(UnsupportedOperationException.class, () -> EMPTY.newline(2));
-        assertThrows(UnsupportedOperationException.class, () -> EMPTY.escapingLF("..\n++"));
+        assertThrows(UnsupportedOperationException.class, () -> EMPTY.appendEscapingLF("..\n++"));
         assertThrows(UnsupportedOperationException.class, () -> EMPTY.indented(2, "##"));
     }
 
@@ -71,9 +72,9 @@ class ByteRopeTest {
     }
 
     @Test void testEscapingLF() {
-        assertEquals("1\\n2", new ByteRope().escapingLF("1\n2").toString());
-        assertEquals("1\\n2", new ByteRope().escapingLF("1\\n2").toString());
-        assertEquals(".1\\n2", new ByteRope(".").escapingLF("1\n2").toString());
+        assertEquals("1\\n2", new ByteRope().appendEscapingLF("1\n2").toString());
+        assertEquals("1\\n2", new ByteRope().appendEscapingLF("1\\n2").toString());
+        assertEquals(".1\\n2", new ByteRope(".").appendEscapingLF("1\n2").toString());
     }
 
     @Test void testNewline() {
@@ -152,5 +153,27 @@ class ByteRopeTest {
             while (r.clear().readLine(stream)) actual.add(r.toString());
             assertEquals(expected, actual);
         }
+    }
+
+    static Stream<Arguments> testEncodeCharSubSequence() {
+        return Stream.of(
+                arguments("0123", 0, 4),
+                arguments("0123", 1, 3),
+                arguments("0ç2ã4", 0, 5),
+                arguments("0ç2ã4", 1, 2),
+                arguments("0ç2ã4", 1, 4),
+                arguments(".".repeat(64)+"0ç2ã4", 64, 64+5),
+                arguments("\uD83E\uDE02", 0, 2),
+                arguments("maçã\uD83E\uDE02", 2, 6)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testEncodeCharSubSequence(String string, int begin, int end) {
+        var r = new ByteRope(4);
+        r.append('@');
+        assertSame(r, r.append(string, begin, end));
+        r.append('#');
+        assertEquals("@"+string.substring(begin, end)+"#", r.toString());
     }
 }

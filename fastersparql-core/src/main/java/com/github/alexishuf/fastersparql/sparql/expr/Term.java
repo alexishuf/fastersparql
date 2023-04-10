@@ -1,10 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
-import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -758,11 +755,11 @@ public final class Term extends Rope implements Expr {
      * becomes "a" and literals typed as XSD integer, decimal double and boolean are replaced by
      * their lexical forms (without quotes and datatype suffix).
      */
-    @Override public void toSparql(ByteRope dest, PrefixAssigner assigner) {
+    @Override public void toSparql(ByteSink<?> dest, PrefixAssigner assigner) {
         toSparql(dest, assigner, flaggedDictId, local, 0, local.length);
     }
 
-    public static void toSparql(ByteRope dest, PrefixAssigner assigner,
+    public static void toSparql(ByteSink<?> dest, PrefixAssigner assigner,
                                 int flaggedDictId, byte[] local, int localOff, int localLen) {
         ByteRope shared = RopeDict.getTolerant(flaggedDictId);
         if (flaggedDictId < 0) {

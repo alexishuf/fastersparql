@@ -300,7 +300,7 @@ public final class SparqlEndpoint {
      */
     public @Nullable String user() {
         String raw = rawUser();
-        return raw == null ? null : UriUtils.unescape(new ByteRope(raw)).toString();
+        return raw == null ? null : UriUtils.unescape(raw);
     }
 
     /**
@@ -328,7 +328,7 @@ public final class SparqlEndpoint {
      */
     public @Nullable String password() {
         String raw = rawPassword();
-        return raw == null ? null : UriUtils.unescape(new ByteRope(raw)).toString();
+        return raw == null ? null : UriUtils.unescape(raw);
     }
 
     /* --- --- --- java.lang.Object methods --- --- --- */

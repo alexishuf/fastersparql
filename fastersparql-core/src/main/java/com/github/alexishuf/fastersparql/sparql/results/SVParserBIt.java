@@ -157,10 +157,6 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                 begin = handleControl(rope, begin);
             if (findEOL(rope, begin, end) >= end)
                 return suspend(rope, begin, end);
-            if (line == 2) {
-                log.debug("Ignoring unexpected rows in ASK query result");
-                return end;
-            }
             int termEnd = rope.skipUntil(begin, end, '\t', '\n');
             boolean positive = true;
             if (termEnd > begin) {
@@ -174,7 +170,6 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             ++line;
             if (positive)
                 emitRow();
-            complete(null);
             return end;
         }
 
@@ -204,12 +199,19 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     ++column;
                     if (column >= inputColumns) throw extraColumns();
                     ++begin;
-                } else if (c == '\r' && begin+1 < end && rope.get(begin+1) == '\n') {
-                    if (column != Math.max(0, inputColumns-1)) throw missingColumns();
-                    column = 0;
-                    ++line;
-                    begin += eol.len;
-                    emitRow();
+                } else if (c == '\r') {
+                    if (begin+1 >= end) {
+                        suspend(rope, begin, end);
+                        break;
+                    } else if (rope.get(begin+1) == '\n') {
+                        if (column != Math.max(0, inputColumns-1)) throw missingColumns();
+                        column = 0;
+                        ++line;
+                        begin += eol.len;
+                        emitRow();
+                    } else {
+                        throw badSep(rope.get(begin+1));
+                    }
                 } else if (c != 0) {
                     throw badSep(c);
                 }
@@ -395,8 +397,6 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         }
         return end;
     }
-
-    protected void emitRow() { emitRowClear(); }
 
     protected void set(int inputColumn, Term term) {
         int dest = inVar2outVar[inputColumn];

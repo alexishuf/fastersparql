@@ -2,8 +2,9 @@ package com.github.alexishuf.fastersparql.model;
 
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.InvalidMediaType;
+import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.checker.nullness.qual.PolyNull;
 
 import java.nio.charset.Charset;
 import java.util.Collection;
@@ -15,6 +16,7 @@ import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
+import static java.util.regex.Pattern.compile;
 
 @SuppressWarnings("unused")
 public final class MediaType {
@@ -31,15 +33,15 @@ public final class MediaType {
      * token in RFC 2616</a>.
      */
     public static final String TOKEN_STR = "[^()<>@,;:\\\\\"/\\[\\]?={}\\t\\n\\r ]+";
-    public static final Pattern TOKEN = Pattern.compile(TOKEN_STR);
-    private static final Pattern TYPE = Pattern.compile("^\\s*("+ TOKEN_STR+")");
-    private static final Pattern SUBTYPE = Pattern.compile("^\\s*/?\\s*("+TOKEN_STR+")");
+    public static final Pattern TOKEN = compile(TOKEN_STR);
+    private static final Pattern TYPE = compile("^\\s*("+ TOKEN_STR+")");
+    private static final Pattern SUBTYPE = compile("^\\s*/?\\s*("+TOKEN_STR+")");
     private static final String QUOTED_VAL = "[^\"\\\\]|\\\\[\"\\\\]";
-    private static final Pattern QUOTED = Pattern.compile("\"("+QUOTED_VAL+")*\"");
-    private static final Pattern MEDIA_TYPE_PARAM = Pattern.compile(
+    private static final Pattern QUOTED = compile("\"("+QUOTED_VAL+")*\"");
+    private static final Pattern MEDIA_TYPE_PARAM = compile(
             "\\s*;\\s*("+ TOKEN_STR+")\\s*=\\s*("+TOKEN_STR+"|\"(?:"+QUOTED_VAL+")*\")"
     );
-    private static final Pattern RESIDUAL = Pattern.compile("\\s*[;,]?\\s*");
+    private static final Pattern RESIDUAL = compile("\\s*[;,]?\\s*");
 
     /* --- --- --- builder --- --- --- */
 
@@ -173,19 +175,14 @@ public final class MediaType {
             throw new InvalidMediaType("No subtype in \""+mediaType+"\"");
         begin += subtypeM.end();
 
-        Matcher m = MEDIA_TYPE_PARAM.matcher(mediaType.subSequence(begin, length));
+        Matcher m = MEDIA_TYPE_PARAM.matcher(mediaType).region(begin, length);
         boolean ok = m.find();
         Map<String, String> params = ok ? new HashMap<>() : emptyMap();
         try {
             for (; ok; ok = m.find()) {
                 begin += m.end();
                 String name = checkToken(m.group(1), "Parameter name");
-                String value = m.group(2);
-                if (value.charAt(0) == '"')
-                    value = unquote(value.substring(1, value.length()-1));
-                else
-                    value = checkToken(value.toLowerCase(), "Parameter value");
-                params.put(name, value);
+                params.put(name, paramValue(mediaType, m.start(2), m.end(2)));
             }
         } catch (FSInvalidArgument e) {
             throw new InvalidMediaType(e.getMessage());
@@ -250,6 +247,8 @@ public final class MediaType {
      */
     public Map<String, String> params() { return params; }
 
+    /** Equivalent to {@code params().isEmpty()} */
+    public boolean noParams() { return params.isEmpty(); }
 
     /**
      * A normalized view of the media type:
@@ -289,10 +288,54 @@ public final class MediaType {
             return false;
         for (Map.Entry<String, String> e : params.entrySet()) {
             String offerValue = offer.params.getOrDefault(e.getKey(), null);
-            if (!Objects.equals(offerValue, e.getValue()))
+            if (offerValue != null && !offerValue.equals(e.getValue()))
                 return false;
         }
         return true;
+    }
+
+    public record AcceptedBy(@NonNegative int q, MediaType withParams) { }
+
+    /**
+     * If {@code acceptedBy(tryParse(str.substring(begin, end)))} returns a q-str
+     * {@code >= 0} and {@code <= 1_000}. Else {@code -1}.
+     *
+     * @param str a string containing a media type
+     * @param begin index where a media type spec starts within {@code str}
+     * @param end index where the media type spec ends ({@code str.length()} or first
+     *            index after the spec.
+     * @return {@code 1_000*q} where {@code q} is the str in {@code [0, 1]} set as a parameter
+     *         in the media type spec, if the spec accepts {@code this}. Else return {@code -1} to
+     *         signal the spec does not accept {@code this} as an offer.
+     */
+    public AcceptedBy acceptedBy(String str, int begin, int end) {
+        Matcher m = acceptedRx().matcher(str).region(begin, end);
+        if (!m.find())
+            return null; // type/subtype did not match
+        if (m.end() >= end)
+            return new AcceptedBy(1_000, this); // matched, no params, q=1 is the default
+        int q = 1_000;
+        m = MEDIA_TYPE_PARAM.matcher(str).region(m.end()-1, end);
+        Map<String, String> params = null;
+        while (m.find()) {
+            int b = m.start(1), e = m.end(1);
+            char c;
+            if (e-b == 1 && ((c = str.charAt(b)) == 'q' || c == 'Q')) {
+                q = qValue(str, m.start(2), m.end(2));
+            } else {
+                if (params == null) params = new HashMap<>(this.params);
+                String key = str.substring(b, e);
+                String value = paramValue(str, m.start(2), m.end(2));
+                String offer = this.params.getOrDefault(key, null);
+                if (offer != null && !value.equals(offer))
+                    return null; // conflicting parameter
+                params.put(key, value);
+            }
+        }
+        if (params == null)
+            return new AcceptedBy(q, this);
+        String normalized = normalize(type, subtype, params);
+        return new AcceptedBy(q, new MediaType(type, subtype, params, normalized));
     }
 
     /**
@@ -305,7 +348,7 @@ public final class MediaType {
         return request == null || request.accepts(this);
     }
 
-    public @PolyNull Charset charset(@PolyNull Charset fallback) {
+    public Charset charset(Charset fallback) {
         String name = params.getOrDefault("charset", fallback == null ? null : fallback.name());
         if (name == null)
             return null;
@@ -330,6 +373,29 @@ public final class MediaType {
 
     /* --- --- --- implementation details --- --- --- */
 
+    private void addComponentToRx(String component, StringBuilder rx) {
+        if (component.charAt(0) == '*')
+            rx.append("\\*");
+        else
+            rx.append("(?:\\*|").append(component.replace("+", "\\+")).append(')');
+    }
+
+
+    private @MonotonicNonNull Pattern acceptedRx;
+    private Pattern acceptedRx() {
+        Pattern rx = acceptedRx;
+        if (rx == null) {
+            var sb = new StringBuilder(40+type.length()+subtype.length());
+            sb.append("^\\s*");
+            addComponentToRx(type, sb);
+            sb.append('/');
+            addComponentToRx(subtype, sb);
+            sb.append("(?:\\s|[,;]|$)");
+            acceptedRx = rx = compile(sb.toString());
+        }
+        return rx;
+    }
+
     private static String checkToken(@Nullable String token, String role) {
         token = (token == null ? "" : token.trim().toLowerCase());
         if (token.isEmpty())
@@ -349,6 +415,39 @@ public final class MediaType {
             b.append("; ").append(e.getKey()).append('=').append(quote(e.getValue()));
         }
         return b.toString();
+    }
+
+    static int qValue(String s, int b, int e) {
+        if (e <= b) return -1;
+        char c = s.charAt(b);
+        if (c == '"') {
+            if  (++b >= e) return -1;
+            else                 c = s.charAt(b);
+        }
+        int q = 0;
+        switch (c) {
+            case '0' -> {
+                if (++b >= e) return 0;
+                if      ((c = s.charAt(b++)) == '"' || b >= e) return 0;
+                else if ( c                  != '.'          ) return -1;
+                c = s.charAt(b);
+            }
+            case '1' -> { return 1_000; }
+            default  -> { return -1;    }
+        }
+        if (          c              >= '0' && c <= '9') q += 100 * (s.charAt(b++)-'0');
+        if (b < e && (c=s.charAt(b)) >= '0' && c <= '9') q +=  10 * (s.charAt(b++)-'0');
+        if (b < e && (c=s.charAt(b)) >= '0' && c <= '9') q +=        s.charAt(b  )-'0' ;
+        return q;
+    }
+
+    static String paramValue(CharSequence string, int begin, int end) {
+        if (string.charAt(begin) == '"') {
+            return unquote(string.subSequence(begin+1, end-1).toString());
+        } else {
+            var token = string.subSequence(begin, end).toString().toLowerCase();
+            return checkToken(token, "Parameter value");
+        }
     }
 
     static String quote(CharSequence cs) {

@@ -48,7 +48,12 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         this.aliasVars = s.aliasVars;
     }
 
-    @Override public Rope      sparql() { return sparql; }
+    @Override public boolean isAsk() {
+        byte c = verbBegin < sparql.len ? sparql.get(verbBegin) : 0;
+        return c == 'a' || c == 'A';
+    }
+
+    @Override public Rope        sparql() { return sparql; }
     @Override public boolean    isGraph() { return isGraph; }
     @Override public Vars    publicVars() { return publicVars; }
     @Override public Vars       allVars() { return allVars; }

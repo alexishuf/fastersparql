@@ -574,10 +574,6 @@ class SparqlConfigurationTest {
                 ),
                 arguments(
                         builder().rdfAccept(JSONLD_COMPACTED).build(),
-                        builder().rdfAccept(JSONLD).build()
-                ),
-                arguments(
-                        builder().rdfAccept(JSONLD_COMPACTED).build(),
                         builder().rdfAccept(JSONLD_FLATTENED).build()
                 )
         );

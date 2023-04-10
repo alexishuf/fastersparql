@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -122,10 +123,10 @@ public class RopeArrayMap {
     }
 
     @Override public String toString() {
-        StringBuilder sb = new StringBuilder().append('{');
+        var sb = new ByteRope().append('{');
         for (int i = 0; i < keys; i++)
             sb.append(data[i]).append('=').append(data[(data.length>>1) + i]).append(", ");
-        if (keys > 0) sb.setLength(sb.length()-2);
+        if (keys > 0) sb.unAppend(2);
         return sb.toString();
     }
 

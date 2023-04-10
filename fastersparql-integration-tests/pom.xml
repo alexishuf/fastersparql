@@ -40,6 +40,11 @@
       <artifactId>fastersparql-netty</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <dependency>
+      <groupId>com.github.alexishuf.fastersparql</groupId>
+      <artifactId>fastersparql-hdt</artifactId>
+      <version>${project.version}</version>
+    </dependency>
 
     <!--  test stuff  -->
     <dependency>

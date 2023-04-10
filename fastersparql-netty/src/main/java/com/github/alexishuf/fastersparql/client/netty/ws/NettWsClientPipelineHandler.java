@@ -39,7 +39,6 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
         this.recycler = releaser;
     }
 
-    @SuppressWarnings("resource")
     public void delegate(NettyWsClientHandler delegate) {
         if (ctx == null || ctx.executor().inEventLoop()) {
             if (this.delegate != null && this.delegate != delegate) {
@@ -67,7 +66,6 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     }
 
     private void check(boolean ok) {
-        //noinspection resource
         if (ctx != null && !ctx.executor().inEventLoop())
             throw new IllegalStateException(this+" not running in event loop!");
         if (!ok)

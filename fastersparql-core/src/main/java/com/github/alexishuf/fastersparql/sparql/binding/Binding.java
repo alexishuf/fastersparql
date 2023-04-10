@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -101,12 +102,14 @@ public abstract class Binding {
     /* --- --- java.lang.Object methods --- --- --- */
 
     @Override public final String toString() {
-        var sb = new StringBuilder().append('{');
-        for (int i = 0; i < vars.size(); i++) {
+        var sb = new ByteRope().append('{');
+        int n = vars.size();
+        for (int i = 0; i < n; i++) {
             Term t = get(i);
             sb.append(vars.get(i)).append('=').append(t==null ? "null" : t.toSparql()).append(", ");
         }
-        sb.setLength(Math.max(1, sb.length()-2));
+        if (n > 0)
+            sb.unAppend(2);
         return sb.append('}').toString();
     }
 

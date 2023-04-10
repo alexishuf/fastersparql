@@ -7,12 +7,11 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.MediaType.qValue;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonMap;
 import static org.junit.jupiter.api.Assertions.*;
@@ -175,29 +174,50 @@ class MediaTypeTest {
             "text/*                  | text/csv",
             "*/*                     | text/csv",
             "*/csv                   | text/csv",
+            "text/csv; charset=utf-8 | text/csv",
             "text/*; charset=utf-8   | text/csv; charset=utf-8",
             "*/*; charset=utf-8      | text/csv; charset=utf-8",
             "*/csv; charset=utf-8    | text/csv; charset=utf-8"
     })
     void testAccepts(String testData) {
         String[] segments = testData.split(" *\\| *");
-        assertTrue(MediaType.parse(segments[0]).accepts(MediaType.parse(segments[1])));
-        assertTrue(MediaType.parse(segments[1]).acceptedBy(MediaType.parse(segments[0])));
+        String requestStr = segments[0];
+        MediaType request = MediaType.parse(requestStr);
+        MediaType offer = MediaType.parse(segments[1]);
+        assertTrue(request.accepts(offer));
+        assertTrue(offer.acceptedBy(request));
+
+        for (String prefix : List.of("", " text/tsv; charset=iso-8859-1, ")) {
+            var wrapped = prefix+requestStr+"; charset=iso-8859-2";
+            var r = offer.acceptedBy(wrapped, prefix.length(), prefix.length()+requestStr.length());
+            assertNotNull(r);
+            assertEquals(r.q(), 1_000);
+            if (requestStr.contains("utf-8"))
+                assertEquals(UTF_8, r.withParams().charset(null));
+        }
     }
 
     @ParameterizedTest @ValueSource(strings = {
             "text/csv                | text/*",
             "text/csv                | */*",
             "text/csv                | */csv",
-            "text/csv; charset=utf-8 | text/csv",
             "text/csv; charset=utf-8 | text/*",
             "text/csv; charset=utf-8 | text/*; charset=utf-8",
             "text/csv; charset=utf-8 | */csv; charset=utf-8"
     })
     void testNotAccepts(String testData) {
         String[] segments = testData.split(" *\\| *");
-        assertFalse(MediaType.parse(segments[0]).accepts(MediaType.parse(segments[1])));
-        assertFalse(MediaType.parse(segments[1]).acceptedBy(MediaType.parse(segments[0])));
+        String requestStr = segments[0];
+        MediaType spec = MediaType.parse(requestStr);
+        MediaType offer = MediaType.parse(segments[1]);
+        assertFalse(spec.accepts(offer));
+        assertFalse(offer.acceptedBy(spec));
+
+        for (String prefix : List.of("", " text/tsv; charset=iso-8859-1, ")) {
+            var w = prefix+requestStr+"; charset=iso-8859-2";
+            int end = prefix.length() + requestStr.length();
+            assertNull(offer.acceptedBy(w, prefix.length(), end));
+        }
     }
 
     @ParameterizedTest @ValueSource(strings = {
@@ -332,5 +352,42 @@ class MediaTypeTest {
         assertEquals(data[1], actual);
         if (data[1].equals(data[0]))
             assertSame(data[0], actual);
+    }
+
+    static Stream<Arguments> testQValue() {
+        record D(String in, int ex) {}
+        List<D> list = new ArrayList<>(List.of(
+                new D(".", -1),
+                new D("", -1),
+                new D("2", -1),
+                new D("-0", -1),
+                new D("-1", -1),
+                new D("1", 1_000),
+                new D("1.", 1_000),
+                new D("1.0", 1_000),
+                new D("1.123", 1_000),
+                new D("0", 0),
+                new D("0.", 0),
+                new D("0.0", 0),
+                new D("0.00", 0),
+                new D("0.000", 0),
+                new D("0.9", 900),
+                new D("0.92", 920),
+                new D("0.923", 923)
+        ));
+        List<Arguments> args = new ArrayList<>();
+        for (D(var in,  var ex) : list) {
+            args.add(arguments(in, ex));
+            args.add(arguments('"'+in+'"', ex));
+        }
+        return args.stream();
+    }
+
+    @ParameterizedTest @MethodSource
+    void testQValue(String value, int expected) {
+        int len = value.length();
+        assertEquals(expected, qValue(value, 0, len));
+        assertEquals(expected, qValue("; q="+value, 4, 4+len));
+        assertEquals(expected, qValue(value+value, len, 2*len));
     }
 }

@@ -182,16 +182,16 @@ public class UriUtils {
      * @param string the string to have %-escapes decoded
      * @return a new string with escapes decoded or the same instance there are no escapes.
      */
-    public static @PolyNull Rope unescape(@PolyNull Rope string) {
+    public static @PolyNull Rope unescape(@PolyNull Rope string, int begin, int end) {
         if (string == null)
             return null;
-        int begin = 0, len = string.len(), i = string.skipUntil(0, len, '%');
-        if (i == len)
+        int i = string.skipUntil(begin, end, '%');
+        if (i == end)
             return string;
-        ByteRope b = new ByteRope(len);
-        while (i < len) {
+        ByteRope b = new ByteRope(end);
+        while (i < end) {
             b.append(string, begin, i);
-            if (i + 2 < len) {
+            if (i + 2 < end) {
                 try {
                     b.append((char) Integer.parseInt(string.toString(i+1, i+3), 16));
                 } catch (NumberFormatException e) {
@@ -201,7 +201,31 @@ public class UriUtils {
             } else {
                 log.debug("Truncated %-escape on string end: \"{}\"", string);
             }
-            i = string.skipUntil(begin = i+3, len, '%');
+            i = string.skipUntil(begin = i+3, end, '%');
+        }
+        return b.append(string, begin, end);
+    }
+
+    public static @PolyNull ByteRope unescapeToRope(@PolyNull String string) {
+        if (string == null)
+            return null;
+        int begin = 0, len = string.length(), i = string.indexOf('%');
+        if (i == -1)
+            return new ByteRope(string);
+        var b = new ByteRope(len);
+        while (i != -1) {
+            b.append(string, begin, i);
+            if (i + 2 < len) {
+                try {
+                    b.append((char) Integer.parseInt(string.substring(i+1, i+3), 16));
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid %-escape {}, will not decode", string.substring(i, i+3));
+                    b.append(string, i, i + 3);
+                }
+            } else {
+                log.debug("Truncated %-escape on string end: \"{}\"", string);
+            }
+            i = string.indexOf('%', begin = i+3);
         }
         return b.append(string, begin, len);
     }

@@ -28,7 +28,7 @@ public final class ClientBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
 
     @Override protected Object rightUnbound() {
         return new ByteRope().append("Query[").append(client.endpoint().uri())
-                .append(']').append('(').escapingLF(sparql.sparql()).append(')')
+                .append(']').append('(').appendEscapingLF(sparql.sparql()).append(')')
                 .toString();
     }
 }

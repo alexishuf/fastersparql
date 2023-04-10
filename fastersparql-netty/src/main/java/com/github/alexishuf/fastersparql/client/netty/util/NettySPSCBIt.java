@@ -6,19 +6,15 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.util.ClientRetry;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 
 public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
-    private static final Logger log = LoggerFactory.getLogger(NettySPSCBIt.class);
 
     private int retries;
     protected @MonotonicNonNull Channel channel;
@@ -37,20 +33,17 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
         assert ch == null || ch.eventLoop().inEventLoop() : "complete() outside event loop";
         //noinspection resource
         error = FSException.wrap(client().endpoint(), error);
-        if (!terminated && error instanceof FSServerException se && se.shouldRetry()) {
-            if (ClientRetry.retry(++retries, error, this::request, this::complete))
-                log.debug("{}: retry {} after {}", this, retries, error.toString());
-        } else {
-            if (ch != null) {
-                if (error == null) ch.config().setAutoRead(true);
-                else ch.close();
-            }
-            boolean first = !terminated;
-            super.complete(error);
-            if (error == null && first)
-                afterNormalComplete();
-            channel = null;
+        if (!terminated && ClientRetry.retry(++retries, error, this::request))
+            return; //will retry request
+        if (ch != null) {
+            if (error == null) ch.config().setAutoRead(true);
+            else ch.close();
         }
+        boolean first = !terminated;
+        super.complete(error);
+        if (error == null && first)
+            afterNormalComplete();
+        channel = null;
     }
 
     @Override protected boolean blocksOnNoCapacity() {

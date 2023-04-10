@@ -41,6 +41,7 @@ public class NettyWsClient implements AutoCloseable {
                     pipe.addLast("ssl", sslContext.newHandler(ch.alloc()));
                 pipe.addLast("http", new HttpClientCodec());
                 pipe.addLast("aggregator", new HttpObjectAggregator(maxHttp));
+//                pipe.addLast("log", new LoggingHandler(NettyWsClient.class, LogLevel.INFO, ByteBufFormat.SIMPLE));
                 pipe.addLast("comp", WebSocketClientCompressionHandler.INSTANCE);
                 pipe.addLast("ws", new NettWsClientPipelineHandler(uri, headers, recycler));
                 activeChs.add(ch);

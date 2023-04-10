@@ -8,6 +8,9 @@ public interface SparqlQuery {
     /** Gets the SPARQL representation of this query. The representation may use prefixed IRIs. */
     Rope sparql();
 
+    /** Whether this is an ASK query */
+    boolean isAsk();
+
     /** Whether this is a {@code CONSTRUCT} or {@code DESCRIBE} query */
     boolean isGraph();
 

@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -30,6 +31,7 @@ import static com.github.alexishuf.fastersparql.util.Results.results;
  */
 public class ResultsSparqlClient extends AbstractSparqlClient {
     private final Map<SparqlQuery, Results> qry2results = new HashMap<>();
+    private final Map<SparqlQuery, RuntimeException> qry2err = new HashMap<>();
     private final List<Throwable> errors = new ArrayList<>();
 
     public ResultsSparqlClient(boolean nativeBind) {
@@ -46,7 +48,12 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     }
 
     public @This ResultsSparqlClient answerWith(SparqlQuery query, Results results) {
-        qry2results.put(query, results);
+        qry2results.put(new SparqlParser().parse(query), results);
+        return this;
+    }
+
+    public @This ResultsSparqlClient answerWith(SparqlQuery query, RuntimeException t) {
+        qry2err.put(new SparqlParser().parse(query), t);
         return this;
     }
 
@@ -83,11 +90,15 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             this.boundQuery = boundQuery;
         }
 
-        public BoundAnswersStage1 with(CharSequence... terms) {
+        public BoundAnswersStage1 withEmpty() {//noinspection resource
+            answerWith(boundQuery, results(stage1.unboundVars));
+            return stage1;
+        }
+        public BoundAnswersStage1 with(Object... terms) {
             if (terms.length%stage1.unboundVars.size() != 0)
                 throw new IllegalArgumentException("#terms not divisible by #unbound vars");
             //noinspection resource
-            answerWith(boundQuery, results(stage1.unboundVars, (Object[]) terms));
+            answerWith(boundQuery, results(stage1.unboundVars, terms));
             return stage1;
         }
     }
@@ -111,9 +122,14 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     public <B extends Batch<B>>
     BIt<B> query(BatchType<B> batchType, SparqlQuery sparql, @Nullable BIt<B> bindings,
                  @Nullable BindType type, @Nullable JoinMetrics metrics) {
+        sparql = new SparqlParser().parse(sparql);
         Results expected = qry2results.get(sparql);
-        if (expected == null)
-            throw new AssertionError("Unexpected query "+sparql);
+        if (expected == null) {
+            RuntimeException err = qry2err.get(sparql);
+            if (err != null)
+                throw err;
+            throw new AssertionError("Unexpected query " + sparql);
+        }
         Results exBindings = expected.hasBindings() ? expected.bindingsAsResults()
                                                     : negativeResult();
         if (bindings == null) {
@@ -130,6 +146,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         if (usesBindingAwareProtocol()) {
             var cb = new SPSCBIt<>(batchType, expected.vars(), FSProperties.queueMaxBatches());
             Thread.startVirtualThread(() -> {
+                Thread.currentThread().setName("feeder-"+endpoint+"-"+cb);
                 try {
                     exBindings.check(bindings);
                     try (BIt<B> it = batchType.convert(expected.asBIt())) {

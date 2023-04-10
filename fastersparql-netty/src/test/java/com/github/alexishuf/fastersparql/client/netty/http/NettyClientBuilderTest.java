@@ -10,7 +10,6 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,7 +110,6 @@ class NettyClientBuilderTest {
                 ctx.writeAndFlush(new DefaultLastHttpContent(bb));
             } else {
                 ctx.writeAndFlush(new DefaultHttpContent(bb));
-                //noinspection resource
                 ctx.executor().schedule(() -> sendChunk(ctx, from + 16, totalSize),
                         1, TimeUnit.MILLISECONDS);
             }
@@ -137,9 +135,10 @@ class NettyClientBuilderTest {
             assertEquals(-1, this.expectSize, "already setup");
             this.expectNumber = expectNumber;
             this.expectSize = expectSize;
+            super.expectResponse();
         }
 
-        @Override protected void response(HttpResponse response) {
+        @Override protected void successResponse(HttpResponse response) {
             assertFalse(hadResponse, "not the fist handleResponse()!");
             assertEquals(0, responseBuilder.length());
             hadResponse = true;
@@ -154,41 +153,43 @@ class NettyClientBuilderTest {
             String string = content.content().toString(UTF_8);
             if (string.isEmpty()) {
                 assertTrue(content instanceof LastHttpContent, "if empty, chunk must be last");
-                return;
-            }
-            assertTrue(string.length() <= 16,
-                    "chunk is too long ("+string.length()+")");
-            assertTrue(string.matches("^[0-9a-f]+$"), "Invalid chars in "+string);
-            if (responseBuilder.length() > 0) {
-                char lastChar = responseBuilder.charAt(responseBuilder.length() - 1);
-                int lastValue = Integer.parseInt("" + lastChar, 16);
-                int first = Integer.parseInt("" + string.charAt(0), 16);
-                assertEquals((lastValue+1) % 16, first,
-                        "chunk is not contiguous with previous");
             } else {
-                assertEquals('0', string.charAt(0),
-                        "First chunk must start with 0");
+                assertTrue(string.length() <= 16,
+                        "chunk is too long (" + string.length() + ")");
+                assertTrue(string.matches("^[0-9a-f]+$"), "Invalid chars in " + string);
+                if (responseBuilder.length() > 0) {
+                    char lastChar = responseBuilder.charAt(responseBuilder.length() - 1);
+                    int lastValue = Integer.parseInt(String.valueOf(lastChar), 16);
+                    int first = Integer.parseInt(String.valueOf(string.charAt(0)), 16);
+                    assertEquals((lastValue + 1) % 16, first,
+                            "chunk is not contiguous with previous");
+                } else {
+                    assertEquals('0', string.charAt(0),
+                            "First chunk must start with 0");
+                }
+                for (int i = 1; i < string.length(); i++) {
+                    int prev = Integer.parseInt(String.valueOf(string.charAt(i - 1)), 16);
+                    int curr = Integer.parseInt(String.valueOf(string.charAt(i)), 16);
+                    assertEquals((prev + 1) % 16, curr,
+                            "char " + i + " not contiguous in " + string);
+                }
+                responseBuilder.append(string);
             }
-            for (int i = 1; i < string.length(); i++) {
-                int prev = Integer.parseInt("" + string.charAt(i - 1), 16);
-                int curr = Integer.parseInt("" + string.charAt(i    ), 16);
-                assertEquals((prev+1) % 16, curr,
-                        "char "+i+" not contiguous in "+string);
-            }
-            responseBuilder.append(string);
-        }
 
-        @Override protected void responseEnd(@Nullable Throwable error) {
-            assertTrue(hadResponse, "LastHttpContent before HttpResponse");
-            assertEquals(expectSize, responseBuilder.length());
-            if (error == null) {
+            if (content instanceof LastHttpContent) {
+                assertEquals(expectSize, responseBuilder.length());
                 assertTrue(future.complete(responseBuilder.toString()),
                         "future already complete");
-                recycle();
-            } else {
-                future.completeExceptionally(error);
-                clientHandlerExceptions.add(error);
+                this.future = null;
+                expectNumber = expectSize = -1;
+                hadResponse = false;
+                responseBuilder.setLength(0);
             }
+        }
+
+        @Override protected void error(Throwable cause) {
+            future.completeExceptionally(cause);
+            clientHandlerExceptions.add(cause);
             this.future = null;
             expectNumber = expectSize = -1;
             hadResponse = false;
@@ -243,7 +244,7 @@ class NettyClientBuilderTest {
                         var req = makeRequest(HttpMethod.POST, "/endpoint?x=" + id,
                                              "text/x.payload+res",
                                              "text/x.payload+req",
-                                             "" + payloadSize, UTF_8);
+                                String.valueOf(payloadSize), UTF_8);
                         var response = new CompletableFuture<String>();
                         c.request(req, (BiConsumer<Channel, ClientHandler>)
                                   (ch, h) -> h.setup(response, id, payloadSize),

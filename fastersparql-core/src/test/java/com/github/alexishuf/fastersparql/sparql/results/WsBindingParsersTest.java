@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -26,7 +27,7 @@ import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
-import static com.github.alexishuf.fastersparql.util.Results.*;
+import static com.github.alexishuf.fastersparql.util.Results.results;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.synchronizedList;
 import static org.junit.jupiter.api.Assertions.*;
@@ -37,7 +38,7 @@ public class WsBindingParsersTest {
     private static final List<Throwable> threadErrors = synchronizedList(new ArrayList<>());
     private int byteOrBuf = 0;
 
-    private final class Mailbox {
+    private final class Mailbox implements WsFrameSender<ByteRope> {
         private final String name;
         private final BlockingQueue<Rope> queue = new LinkedBlockingDeque<>();
 
@@ -45,9 +46,19 @@ public class WsBindingParsersTest {
             this.name = name;
         }
 
+        @Override public void sendFrame(ByteRope content) {
+            send(content);
+        }
+
+        @Override public ByteRope createSink() {
+            return new ByteRope();
+        }
+
+        @Override public void releaseSink(ByteRope sink) { }
+
         public void send(CharSequence frame) {
             Rope rope;
-            if      (frame == DIE)           rope = DIE;
+            if      (frame.equals(DIE))      rope = DIE;
             else if ((byteOrBuf++ & 1) == 0) rope = new ByteRope(frame);
             else                             rope = new BufferRope(ByteBuffer.wrap(frame.toString().getBytes(UTF_8)));
             try {
@@ -100,7 +111,7 @@ public class WsBindingParsersTest {
                 if (frame == DIE) break;
                 parser.feedShared(frame);
                 if (frame instanceof ByteRope b) b.fill(0);
-                else if (frame instanceof BufferRope b) b.buffer.clear().limit(0);
+                else if (frame instanceof BufferRope b) b.buffer().clear().limit(0);
             }
         } catch (Throwable t) {
             parser.complete(t);
@@ -117,22 +128,27 @@ public class WsBindingParsersTest {
         var serverVars = bRow2Res.values().stream().map(Results::vars).distinct().findFirst()
                                  .orElse(ex.vars().minus(ex.bindingsVars()));
 
-        var serializer = new WsSerializer<TermBatch>(serverVars);
-//        int requested = ex.bindingsList().size() < 4 ? 23 : 2;
+        ByteRope buffer = clientMBox.createSink();
+        var serializer = new WsSerializer();
+        serializer.init(serverVars, serverVars, false, buffer);
+        int requested = ex.bindingsList().size() < 4 ? 23 : 2;
         int activeBinding = 0;
-//        clientMBox.send("!bind-request "+requested+"\n");
+        clientMBox.send("!bind-request "+requested+"\n");
         for (TermBatch b = null; (b = serverIt.nextBatch(b)) != null;) {
             for (int r = 0; r < b.rows; r++, ++activeBinding) {
-//                if (--requested == 0)
-//                    clientMBox.send("!bind-request "+(++requested)+"\n");
+                if (--requested == 0)
+                    clientMBox.send("!bind-request "+(++requested)+"\n");
                 var bResults = bRow2Res.get(b.asList(r));
                 assertNotNull(bResults, "no results defined for row " + b.asList(r));
-                if (!bResults.isEmpty())
-                    clientMBox.send("!active-binding "+activeBinding+"\n");
+//                if (!bResults.isEmpty())
+//                    clientMBox.send("!active-binding "+activeBinding+"\n");
                 try (var bIt = bResults.asPlan().execute(TERM)) {
                     assertEquals(serverVars, bIt.vars());
-                    for (TermBatch bb = null; (bb = bIt.nextBatch(bb)) != null; )
-                        clientMBox.send(serializer.serialize(bb));
+                    for (TermBatch bb = null; (bb = bIt.nextBatch(bb)) != null; ) {
+                        serializer.serialize(bb, buffer);
+                        clientMBox.sendFrame(buffer);
+                        buffer = clientMBox.createSink();
+                    }
                 }
             }
         }
@@ -140,11 +156,12 @@ public class WsBindingParsersTest {
         // by LEFT_JOIN/NOT_EXISTS/MINUS. For JOIN/EXISTS, this is unnecessary, but harmless.
         // However, if the last binding yielded non-empty results, this will be an echo of the last
         // !active-binding frame, which clients must tolerate.
-        clientMBox.send("!active-binding "+(activeBinding-1)+"\n");
+//        clientMBox.send("!active-binding "+(activeBinding-1)+"\n");
         //client must ignore !bind-request after it finished sending bindings
 
-//        clientMBox.send("!bind-request 997\n");
-        clientMBox.send("!end\n");
+        clientMBox.send("!bind-request 997\n");
+        serializer.serializeTrailer(buffer);
+        clientMBox.sendFrame(buffer); // sends !end
         return null;
     }
 
@@ -162,10 +179,9 @@ public class WsBindingParsersTest {
         try (var stuff = new AutoCloseableSet<>();
              var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxBatches()));
              var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxBatches()));
-             var clientParser = new WsClientParserBIt<>(serverMB::send, TERM,
-                                                        clientCb, ex.bindType(),
-                                                        ex.bindingsBIt(), null, null);
-             var serverParser = new WsServerParserBIt<>(clientMB::send, TERM, serverCb)) {
+             var clientParser = new WsClientParserBIt<>(serverMB, TERM,
+                                                        clientCb, ex.bindingsBIt(), null, null);
+             var serverParser = new WsServerParserBIt<>(clientMB, TERM, serverCb)) {
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
             server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));
@@ -194,7 +210,7 @@ public class WsBindingParsersTest {
 
     @Test public void testSingleBindingSingleResult() {
         test(results("?x ?y", ":x1", ":y1").bindings("?x", ":x1"),
-             termList(":x1"), results("?y", ":y1"));
+             termList(":x1"), results("?x ?y", ":x1", ":y1"));
     }
 
     @Test public void testEmptyBindings() {
@@ -210,10 +226,10 @@ public class WsBindingParsersTest {
                      "_:42", ":x4",
                      "_:43", ":x4"
                 ).bindings("?x", ":x1", ":x2", ":x3", ":x4"),
-             termList(":x1"), results("?y"),
-             termList(":x2"), results("?y", ":y21"),
-             termList(":x3"), results("?y", "31", "32"),
-             termList(":x4"), results("?y", "_:41", "_:42", "_:43")
+             termList(":x1"), results("?x ?y"),
+             termList(":x2"), results("?x ?y", ":x2", ":y21"),
+             termList(":x3"), results("?x ?y", ":x3", "31", ":x3", "32"),
+             termList(":x4"), results("?x ?y", ":x4", "_:41", ":x4", "_:42", ":x4", "_:43")
         );
     }
 
@@ -226,10 +242,10 @@ public class WsBindingParsersTest {
                      2,  22,
                      3,  31
                 ).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?y", 11, 12, 13),
-             termList(2), results("?y", 21, 22),
-             termList(3), results("?y", 31),
-             termList(4), results("?y")
+             termList(1), results("?x ?y", 1, 11, 1, 12, 1, 13),
+             termList(2), results("?x ?y", 2, 21, 2, 22),
+             termList(3), results("?x ?y", 3, 31),
+             termList(4), results("?x ?y")
         );
     }
 
@@ -240,65 +256,65 @@ public class WsBindingParsersTest {
                      3, 31,
                      3, 32,
                      4, null).bindType(LEFT_JOIN).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?y", 12),
-             termList(2), results("?y"),
-             termList(3), results("?y", 31, 32),
-             termList(4), results("?y")
+             termList(1), results("?x ?y", 1, 12),
+             termList(2), results("?x ?y", 2, null),
+             termList(3), results("?x ?y", 3, 31, 3, 32),
+             termList(4), results("?x ?y", 4, null)
         );
     }
 
     @Test public void testBindToAsk() {
         test(results("?x", 1, 3).bindings("?x", 1, 2, 3, 4),
-             termList(1), positiveResult(),
-             termList(2), negativeResult(),
-             termList(3), positiveResult(),
-             termList(4), negativeResult()
+             termList(1), results("?x", 1),
+             termList(2), results("?x"),
+             termList(3), results("?x", 3),
+             termList(4), results("?x")
         );
     }
 
 
     @Test public void testLeftJoinBindToAsk() {
         test(results("?x", 1, 2, 3, 4).bindType(LEFT_JOIN).bindings("?x", 1, 2, 3, 4),
-             termList(1), positiveResult(),
-             termList(2), negativeResult(),
-             termList(3), positiveResult(),
-             termList(4), negativeResult()
+             termList(1), results("?x", 1),
+             termList(2), results("?x", 2),
+             termList(3), results("?x", 3),
+             termList(4), results("?x", 4)
         );
     }
 
     @Test public void testExistsAnsweredWithAsk() {
         test(results("?x", 1, 3).bindType(EXISTS).bindings("?x", 1, 2, 3, 4),
-             termList(1), positiveResult(),
-             termList(2), negativeResult(),
-             termList(3), positiveResult(),
-             termList(4), negativeResult()
+             termList(1), results("?x", 1),
+             termList(2), results("?x"),
+             termList(3), results("?x", 3),
+             termList(4), results("?x")
         );
     }
 
     @Test public void testExistsAnsweredWithValues() {
         test(results("?x", 1, 3).bindType(EXISTS).bindings("?x", 1, 2, 3, 4),
-                termList(1), results("?y", 11),
-                termList(2), results("?y"),
-                termList(3), results("?y", 31, 32, 33, 34),
-                termList(4), results("?y")
+                termList(1), results("?x", 1),
+                termList(2), results("?x"),
+                termList(3), results("?x", 3),
+                termList(4), results("?x")
         );
     }
 
     @Test public void testNotExists() {
         test(results("?x", 2, 4).bindType(NOT_EXISTS).bindings("?x", 1, 2, 3, 4),
-             termList(1), positiveResult(),
-             termList(2), negativeResult(),
-             termList(3), positiveResult(),
-             termList(4), negativeResult()
+             termList(1), results("?x"),
+             termList(2), results("?x", 2),
+             termList(3), results("?x"),
+             termList(4), results("?x", 4)
         );
     }
 
     @Test public void testMinusAnswerWithValues() {
         test(results("?x", 2, 4).bindType(MINUS).bindings("?x", 1, 2, 3, 4),
-                termList(1), results("?y", 11, 12),
-                termList(2), results("?y"),
-                termList(3), results("?y", 31),
-                termList(4), results("?y")
+                termList(1), results("?x"),
+                termList(2), results("?x", 2),
+                termList(3), results("?x"),
+                termList(4), results("?x", 4)
         );
     }
 }
