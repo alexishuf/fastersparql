@@ -193,7 +193,7 @@ public final class Results {
 
     private static List<List<Term>> groupRows(int columns, Object[] terms) {
         List<List<Term>> rows = new ArrayList<>();
-        TermParser termParser = new TermParser();
+        TermParser termParser = new TermParser().eager();
         termParser.prefixMap = PREFIX_MAP;
         List<Term> row = new ArrayList<>();
         for (Object term : terms) {
@@ -215,7 +215,7 @@ public final class Results {
     public static Results positiveResult() { return results(List.of(List.of())); }
 
     public static TriplePattern parseTP(CharSequence cs) {
-        TermParser parser = new TermParser();
+        TermParser parser = new TermParser().eager();
         parser.prefixMap = Results.PREFIX_MAP;
         Rope r = Rope.of(cs);
         int len = r.len();
@@ -534,7 +534,7 @@ public final class Results {
     }
 
     public static List<Term> normalizeRow(Object row) {
-        TermParser p = new TermParser();
+        TermParser p = new TermParser().eager();
         p.prefixMap = PREFIX_MAP;
         return switch (row) {
             case Collection<?> l -> {

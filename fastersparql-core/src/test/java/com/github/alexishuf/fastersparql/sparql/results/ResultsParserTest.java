@@ -101,11 +101,13 @@ class ResultsParserTest {
 
     protected void doTest(ResultsParserBIt.Factory factory, Results expected,
                           Rope input) throws Exception {
-        for (RopeFac ropeFac : ROPE_FACTORIES) {
-            singleFeed(factory, expected, input, ropeFac);
-            byteFeed(factory, expected, input, ropeFac);
-            wsFeed(factory, expected, input, ropeFac);
-            lineFeed(factory, expected, input, ropeFac);
+        for (int i = 0; i < 2; i++) {
+            for (RopeFac ropeFac : ROPE_FACTORIES) {
+                singleFeed(factory, expected, input, ropeFac);
+                byteFeed(factory, expected, input, ropeFac);
+                wsFeed(factory, expected, input, ropeFac);
+                lineFeed(factory, expected, input, ropeFac);
+            }
         }
         try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
             for (RopeFac ropeFac : ROPE_FACTORIES) {

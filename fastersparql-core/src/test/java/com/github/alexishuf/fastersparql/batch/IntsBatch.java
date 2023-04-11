@@ -71,7 +71,7 @@ public class IntsBatch {
     public static TermBatch fill(TermBatch dest, int... ints) {
         for (int i : ints) {
             dest.beginPut();
-            dest.putTerm(term(i));
+            dest.putTerm(0, term(i));
             dest.commitPut();
         }
         return dest;
@@ -94,7 +94,7 @@ public class IntsBatch {
         if (retained != null) {
             retained.clear(1 + (retained.cols&1));
             retained.beginPut();
-            for (int c = 0; c < retained.cols; c++) retained.putTerm(INVALID_MARKER);
+            for (int c = 0; c < retained.cols; c++) retained.putTerm(c, INVALID_MARKER);
             retained.commitPut();
         }
     }

@@ -16,7 +16,7 @@ public class RopeSupport {
     public static boolean arraysEqual(byte[] l, byte[] r) {
         if (l.length != r.length) return false;
         int i = 0;
-        for (int e = B_SP.loopBound(l.length); i < e; e += B_SP.length()) {
+        for (int e = B_SP.loopBound(l.length); i < e; i += B_SP.length()) {
             if (!fromArray(B_SP, l, i).eq(fromArray(B_SP, r, i)).allTrue()) return false;
         }
         while (i < l.length && l[i] == r[i]) ++i;

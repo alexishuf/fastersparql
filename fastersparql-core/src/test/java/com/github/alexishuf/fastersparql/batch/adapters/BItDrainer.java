@@ -136,7 +136,7 @@ public sealed abstract class BItDrainer {
     protected static <B extends Batch<B>> void invalidate(B b) {
         b.clear(b.cols + 1);
         b.beginPut();
-        for (int c = 0; c < b.cols; c++) b.putTerm(IntsBatch.INVALID_MARKER);
+        for (int c = 0; c < b.cols; c++) b.putTerm(c, IntsBatch.INVALID_MARKER);
         b.commitPut();
     }
 

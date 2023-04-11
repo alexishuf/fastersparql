@@ -42,9 +42,9 @@ public class AskSelector extends Selector {
         TermBatch b = TRIPLE_POOL.get();
         if (b == null) b = TERM.createSingleton(3);
         b.beginPut();
-        b.putTerm(s);
-        b.putTerm(p);
-        b.putTerm(o);
+        b.putTerm(0, s);
+        b.putTerm(1, p);
+        b.putTerm(2, o);
         b.commitPut();
         return b;
     }

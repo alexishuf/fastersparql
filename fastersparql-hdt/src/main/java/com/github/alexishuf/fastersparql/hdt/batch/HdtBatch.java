@@ -28,7 +28,7 @@ public class HdtBatch extends Batch<HdtBatch> {
     }
 
     long[] arr;
-    private int offerIdx = Integer.MAX_VALUE, offerEnd = 0;
+    private int offerRowBase = -1;
     @SuppressWarnings("unused") // access through CACHED_LOCK
     private int plainCachedLock;
     private int cachedAddr = -1;
@@ -103,41 +103,41 @@ public class HdtBatch extends Batch<HdtBatch> {
     }
 
     @Override public boolean beginOffer() {
-        int required = (rows + 1) * cols;
+        int base = rows*cols, required = base+cols;
         if (arr.length < required) return false;
-        for (int i = required-cols; i < required; i++) arr[i] = 0;
-        offerEnd = required;
-        offerIdx = required-cols;
+        Arrays.fill(arr, base, required, 0);
+        offerRowBase = base;
         return true;
     }
 
-    public boolean offerTerm(long sourcedId) {
-        if (offerIdx >= offerEnd) throw new IllegalStateException();
-        arr[offerIdx++] = sourcedId;
+    @SuppressWarnings("UnusedReturnValue")
+    public boolean offerTerm(int col, long sourcedId) {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        if (col < 0 || col > cols) throw new IndexOutOfBoundsException();
+        arr[offerRowBase+col] = sourcedId;
         return true;
     }
 
-    @Override public boolean offerTerm(Term t) {
-        if (offerIdx >= offerEnd) throw new IllegalStateException();
-        ++offerIdx;
-        return t == null;
+    @Override public boolean offerTerm(int col, Term t) {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        if (t == null) return true;
+        offerRowBase = -1;
+        return false;
     }
 
-    @Override public boolean offerTerm(HdtBatch o, int row, int col) {
-        if (offerIdx >= offerEnd) throw new IllegalStateException();
+    @Override public boolean offerTerm(int destCol, HdtBatch o, int row, int col) {
+        if (offerRowBase < 0) throw new IllegalStateException();
         int oCols = o.cols;
-        if (row < 0 || col < 0 || row >= o.rows || col >= oCols)
+        if (row < 0 || col < 0 || row >= o.rows || col >= oCols || destCol < 0 || destCol >= cols)
             throw new IndexOutOfBoundsException();
-        arr[offerIdx++] = o.arr[row*oCols + col];
+        arr[offerRowBase+col] = o.arr[row*oCols + col];
         return true;
     }
 
     @Override public boolean commitOffer() {
-        if (offerIdx != offerEnd)
-            throw new IllegalStateException();
+        if (offerRowBase < 0) throw new IllegalStateException();
         ++rows;
-        offerEnd = 0;
-        offerIdx = Integer.MAX_VALUE;
+        offerRowBase = -1;
         return true;
     }
 
@@ -146,10 +146,9 @@ public class HdtBatch extends Batch<HdtBatch> {
         if (cols != this.cols) throw new IllegalArgumentException();
         if (row < 0 || row >= other.rows) throw new IndexOutOfBoundsException();
         if (beginOffer()) {
-            arraycopy(other.arr, row*cols, arr, offerIdx, cols);
+            arraycopy(other.arr, row*cols, arr, offerRowBase, cols);
             ++rows;
-            offerEnd = 0;
-            offerIdx = Integer.MAX_VALUE;
+            offerRowBase = -1;
             return true;
         }
         return false;
@@ -179,13 +178,13 @@ public class HdtBatch extends Batch<HdtBatch> {
         beginOffer();
     }
 
-    @Override public void putTerm(Term t) {
-        if (!offerTerm(t))
+    @Override public void putTerm(int destCol, Term t) {
+        if (!offerTerm(destCol, t))
             throw new UnsupportedOperationException("Cannot put non-null terms. Use putConverting(Batch, int) instead");
     }
-    @Override public void putTerm(HdtBatch batch, int row, int col) { offerTerm(batch, row, col); }
-              public void putTerm(long sourcedId)                   { offerTerm(sourcedId); }
-    @Override public void commitPut()                               { commitOffer(); }
+    @Override public void putTerm(int d, HdtBatch b, int r, int c) { offerTerm(d, b, r, c); }
+              public void putTerm(int col, long sourcedId)         { offerTerm(col, sourcedId); }
+    @Override public void commitPut()                              { commitOffer(); }
 
     @Override public void putRow(HdtBatch other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException();
@@ -220,7 +219,7 @@ public class HdtBatch extends Batch<HdtBatch> {
             for (int r = 0; r < rows; r++) {
                 beginPut();
                 for (int c = 0; c < cols; c++)
-                    putTerm(IdAccess.encode(dictId, dict, other.get(r, c)));
+                    putTerm(c, IdAccess.encode(dictId, dict, other.get(r, c)));
                 commitPut();
             }
         }
@@ -273,7 +272,6 @@ public class HdtBatch extends Batch<HdtBatch> {
             if (projector != null)
                 b.cols = requireNonNull(projector.columns).length;
             b.rows = survivors;
-            b.offerIdx = Integer.MAX_VALUE;
             Arrays.fill(b.arr, 0L);
             return b;
         }

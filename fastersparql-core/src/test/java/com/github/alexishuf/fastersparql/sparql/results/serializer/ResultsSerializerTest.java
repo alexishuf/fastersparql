@@ -152,12 +152,13 @@ class ResultsSerializerTest {
         //serialize again with a single batch but skipping fir column and first row
         b.clear(results.vars().size()+1);
         b.beginPut();
-        for (int i = 0; i < b.cols; i++) b.putTerm(Term.RDF_SEQ);
+        for (int i = 0; i < b.cols; i++) b.putTerm(i, Term.RDF_SEQ);
         b.commitPut();
         for (List<Term> row : results.expected()) {
             b.beginPut();
-            b.putTerm(Term.XSD_ANYURI);
-            for (Term t : row)  b.putTerm(t);
+            int c = 0;
+            b.putTerm(c++, Term.XSD_ANYURI);
+            for (Term t : row)  b.putTerm(c++, t);
             b.commitPut();
         }
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
@@ -182,11 +183,12 @@ class ResultsSerializerTest {
         for (List<Term> row : results.expected()) {
             b.clear(row.size()+1);
             b.beginPut();
-            for (int i = 0; i < b.cols; i++)  b.putTerm(Term.XSD_SHORT);
+            for (int i = 0; i < b.cols; i++)  b.putTerm(i, Term.XSD_SHORT);
             b.commitPut();
             b.beginPut();
-            b.putTerm(Term.XSD_BOOLEAN);
-            for (Term t : row) b.putTerm(t);
+            int c = 0;
+            b.putTerm(c++, Term.XSD_BOOLEAN);
+            for (Term t : row) b.putTerm(c++, t);
             b.commitPut();
             serializer.serialize(b, 1, 1, out);
         }

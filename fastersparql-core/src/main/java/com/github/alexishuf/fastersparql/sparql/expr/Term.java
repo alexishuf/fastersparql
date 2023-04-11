@@ -705,7 +705,7 @@ public final class Term extends Rope implements Expr {
         if (terms.length == 1 && terms[0] instanceof Object[] arr)
             terms = arr;
         Term[] a = new Term[terms.length];
-        TermParser termParser = new TermParser();
+        TermParser termParser = new TermParser().eager();
         termParser.prefixMap.add(Rope.of("owl"), Term.iri("http://www.w3.org/2002/07/owl#"));
         termParser.prefixMap.add(Rope.of("foaf"), Term.iri("http://xmlns.com/foaf/0.1/"));
         termParser.prefixMap.add(Rope.of(""), Term.iri("http://example.org/"));

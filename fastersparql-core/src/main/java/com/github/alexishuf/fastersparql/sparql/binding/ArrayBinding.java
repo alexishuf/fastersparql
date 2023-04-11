@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
@@ -45,7 +44,6 @@ public class ArrayBinding extends Binding {
             throw new IllegalArgumentException("Expected even length for varAndValues");
         var vars = new Vars.Mutable(varAndValues.length >> 1);
         var terms = new Term[varAndValues.length>>1];
-        TermParser parser = new TermParser();
         for (int i = 0; i < varAndValues.length; i += 2) {
             Rope name = Rope.of(varAndValues[i]);
             if (name.len() > 0 && (name.get(0) == '?' || name.get(0) == '$'))
@@ -53,7 +51,7 @@ public class ArrayBinding extends Binding {
             if (name.len() == 0)
                 throw new IllegalArgumentException("Empty string is not a valid var name");
             vars.add(name);
-            terms[i>>1] = parser.parseTerm(Rope.of(varAndValues[i+1]));
+            terms[i>>1] = Term.array(varAndValues[i+1])[0];
         }
         return new ArrayBinding(vars, terms);
     }

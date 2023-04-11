@@ -7,9 +7,9 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayDeque;
@@ -21,12 +21,10 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
     private @Nullable ByteRope partial = null, allocPartial = null;
     private final ArrayDeque<JsonState> jsonStack = new ArrayDeque<>();
     private final ArrayDeque<SparqlState> sparqlStack = new ArrayDeque<>();
-    private final TermParser termParser = new TermParser();
     private boolean hadSparqlProperties = false;
     private int column;
-    private @Nullable Term datatype;
     private final ByteRope value = new ByteRope(), lang = new ByteRope();
-    private final ByteRope datatypeTmp = new ByteRope();
+    private final ByteRope dtSuffix = new ByteRope();
     private Term. @Nullable Type type;
 
     public static final class JsonFactory implements Factory {
@@ -121,8 +119,9 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
 
     private InvalidSparqlResultsException noType() {
         var msg = format("No \"type\" property given for RDF value \"%s\" with " +
-                         "datatype=%s and xml:lang=%s",
-                         value, datatype==null ? "null" : datatype, lang.len>0 ? lang : "null");
+                         "datatype=%s and xml:lang=%s", value,
+                         dtSuffix.isEmpty() ? "null" : dtSuffix.sub(3, dtSuffix.len-1),
+                         lang.len > 0 ? lang : "null");
         return new InvalidSparqlResultsException(msg);
     }
 
@@ -200,7 +199,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                 case HEAD    -> l==4 && r.hasAnyCase(b, P_VARS.utf8)     ? VARS     : IGNORE;
                 case RESULTS -> l==8 && r.hasAnyCase(b, P_BINDINGS.utf8) ? BINDINGS : IGNORE;
                 case BINDING_ROW -> {
-                    p.datatype = null;
+                    p.dtSuffix.clear();
                     p.type = null;
                     p.value.clear();
                     p.lang.clear();
@@ -243,39 +242,39 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                 case IGNORE, HEAD, RESULTS -> {}
                 case BINDING_VALUE -> {
                     final ByteRope v = p.value;
-                    Term term = switch (p.type) {
+                    Batch<?> rb = p.rowBatch;
+                    int col = p.column;
+                    switch (p.type) {
                         case null -> {
-                            if (p.value.len > 0 || p.lang.len > 0 || p.datatype != null)
+                            if (p.value.len > 0 || p.lang.len > 0 || p.dtSuffix.len > 0)
                                 throw p.noType();
-                            yield null;
                         }
-                        case IRI -> Term.valueOf(v);
+                        case IRI -> {
+                            long localAndId = RopeDict.internIri(v, 0, v.len);
+                            rb.putTerm(col, (int)localAndId, v, (int)(localAndId>>>32), v.len);
+                        }
                         case LIT -> {
-                            v.utf8[0] = v.utf8[v.len-1] = '"'; //replace <> with ""
-                            if (p.lang.len > 0) {
-                                p.lang.replace('_', '-');
-                                yield Term.wrap(v.append('@').append(p.lang).toArray(0, v.len));
-                            } else if (p.datatype == null) {
-                                yield Term.wrap(v.toArray(0, v.len));
-                            } else  {
-                                int id = p.datatype.asDatatypeId();
-                                if (id > 0) {
-                                    byte[] openLex = v.toArray(0, v.len - 1);
-                                    yield Term.typed(openLex, 0, openLex.length, id);
+                            v.utf8[0] = '"';  v.utf8[v.len-1] = '"'; //replace <> with ""
+                            if (p.dtSuffix.len == 0) {
+                                if (p.lang.len > 0) {
+                                    p.lang.replace('_', '-');
+                                    v.append('@').append(p.lang);
                                 }
-                                yield Term.valueOf(v.append(p.datatype));
+                                rb.putTerm(col, 0, v, 0, v.len);
+                            } else  {
+                                int fId = RopeDict.internDatatype(p.dtSuffix, 0, p.dtSuffix.len);
+                                if (fId == 0) p.value.append(p.dtSuffix);
+                                else          fId |= 0x80000000;
+                                rb.putTerm(col, fId, v, 0, v.len-1);
                             }
                         }
                         case BLANK -> {
-                            byte[] prefixed = new byte[v.len];
-                            prefixed[0] = '_';
-                            prefixed[1] = ':';
-                            v.copy(1, v.len-1, prefixed, 2);
-                            yield Term.wrap(prefixed);
+                            p.dtSuffix.clear().append('_').append(':')
+                                    .append(v, 1, v.len-1);
+                            rb.putTerm(col, 0, p.dtSuffix, 0, p.dtSuffix.len);
                         }
                         default -> throw new UnsupportedOperationException();
-                    };
-                    p.row[p.column] = term;
+                    }
                 }
                 case BINDING_ROW -> p.emitRow();
                 case VARS, BOOLEAN, BINDINGS, BINDING_VALUE_TYPE,
@@ -348,10 +347,8 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                         throw ex(this, r, b, e);
                     }
                 }
-                case BINDING_VALUE_DATATYPE -> {
-                    ByteRope iri = p.datatypeTmp.clear().append('<').append(r, b, e).append('>');
-                    p.datatype = p.termParser.parseTerm(iri);
-                }
+                case BINDING_VALUE_DATATYPE ->
+                    p.dtSuffix.clear().append(ByteRope.DT_MID_LT).append(r, b, e).append('>');
                 case BINDING_VALUE_VALUE -> p.value.clear().append('<').append(r, b, e).append('>');
                 case BINDING_VALUE_LANG  -> p.lang.clear().append(r, b, e);
                 default -> throw ex(this, r, b, e);

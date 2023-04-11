@@ -54,12 +54,12 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
             case Collection<?> coll -> dest.putRow(coll);
             case Integer i when dest.cols == 1 -> { // test cases compatibility
                 dest.beginPut();
-                dest.putTerm(Term.typed(i, RopeDict.DT_integer));
+                dest.putTerm(0, Term.typed(i, RopeDict.DT_integer));
                 dest.commitPut();
             }
             case Term term -> {
                 dest.beginPut();
-                dest.putTerm(term);
+                dest.putTerm(0, term);
                 dest.commitPut();
             }
             case null, default ->

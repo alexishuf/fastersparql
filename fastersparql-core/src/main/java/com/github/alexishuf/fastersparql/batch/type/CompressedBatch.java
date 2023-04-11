@@ -1,13 +1,11 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
-import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -22,6 +20,7 @@ import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.Arrays.copyOf;
+import static java.util.Arrays.fill;
 import static java.util.Objects.requireNonNull;
 import static jdk.incubator.vector.ByteVector.fromArray;
 import static jdk.incubator.vector.VectorOperators.XOR;
@@ -59,8 +58,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private int lastLocalsCol;
     /** Number of {@code int}s per metadata row */
     private int mdRowInts;
-    /** Where column where {@link Batch#offerTerm(Term)} will place the next term */
-    private int offerCol;
+    /** {@link #mdBase(int, int)} for column zoer of the row being built or -1 */
+    private int mdOfferRowBase = -1;
     /** Whether hash() and equals() can be vectorized */
     private boolean vectorSafe;
     /** Whether the range {@code [bytesUsed(), locals.length)} is zero-filled. */
@@ -107,36 +106,37 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * @param localLen length (in bytes) of the term local part.
      * @return true iff the term was written.
      */
-    private boolean setTerm(boolean forbidGrow, int flaggedId, byte[] local,
+    private boolean setTerm(boolean forbidGrow, int destCol, int flaggedId,
+                            byte @Nullable [] local, @Nullable Rope localRope,
                             int localOff, int localLen) {
-        if (offerCol >= cols) throw new IllegalStateException();
+        if (mdOfferRowBase < 0) throw new IllegalStateException();
+        if (destCol < 0 || destCol >= cols) throw new IndexOutOfBoundsException();
         // find write location in md and grow if needed
-        int mdBase = rows * mdRowInts + offerCol * MD_COL_INTS, dest = 0;
+        int mdBase = mdOfferRowBase + destCol * MD_COL_INTS, dest = 0;
+        if (md[mdBase+MD_OFF] != 0)
+            throw new IllegalStateException("Column already set");
         if (localLen > 0) {
-            if (lastLocalsRow < rows) {
-                dest = bytesUsed(); // returns B_SP_LEN-aligned value
-            } else {
-                int lastBase = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
-                dest = md[lastBase+MD_OFF] + md[lastBase+MD_LEN];
-            }
-            int end  = vecCeil(dest+localLen);
-            if (end > locals.length) {
+            int lastBase = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
+            dest = md[lastBase+MD_OFF] + md[lastBase+MD_LEN];
+            if (lastLocalsRow < rows) //first non-empty setTerm() of beginOffer()/beginPut()
+                dest = vecCeil(dest);
+            if (lastLocalsCol > destCol)
+                vectorSafe = false; // out-of-order locals breaks vectorized row equals/hash
+            int required  = vecCeil(dest+localLen);
+            if (required > locals.length) {
                 if (forbidGrow) return false;
-                if (!localsTailClear) {
-                    Arrays.fill(locals, dest, locals.length, (byte)0);
-                    localsTailClear = true;
-                }
-                locals = copyOf(locals, max(end, vecCeil(locals.length+(locals.length>>1))));
-
+                locals = copyOf(locals, max(required, vecCeil(locals.length+(locals.length>>1))));
             }
-            arraycopy(local, localOff, locals, dest, localLen);
+            if (local != null)
+                arraycopy(local, localOff, locals, dest, localLen);
+            else if (localRope != null)
+                localRope.copy(localOff, localOff+localLen, locals, dest);
             lastLocalsRow = rows;
-            lastLocalsCol = offerCol;
+            lastLocalsCol = destCol;
         }
         md[mdBase+MD_FID] = flaggedId;
         md[mdBase+MD_OFF] = dest;
         md[mdBase+MD_LEN] = localLen;
-        ++offerCol;
         return true;
     }
 
@@ -146,11 +146,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      */
     private void rollbackOffer() {
         int b = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
-        Arrays.fill(locals, findLastLocal(lastLocalsRow),
-                md[b+ MD_OFF]+md[b+ MD_LEN], (byte)0);
-        b = rows*mdRowInts;
-        Arrays.fill(md, b, b+mdRowInts, 0);
-        offerCol = Integer.MAX_VALUE;
+        fill(locals, findLastLocal(lastLocalsRow), md[b+MD_OFF]+md[b+MD_LEN], (byte)0);
+        mdOfferRowBase = -1;
     }
 
     /**
@@ -164,16 +161,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      */
     private int findLastLocal(int lastLocalsRow) {
         if (rows > 0 && lastLocalsRow > 0) {
-            int cols = this.cols, r = lastLocalsRow;
-            int mdi = r * mdRowInts + (cols-1)*MD_COL_INTS + MD_LEN;
-            int mdGap = mdRowInts - cols*MD_COL_INTS;
-            for (int c, len = 0; r >= 0; r--, mdi -= mdGap) {
-                for (c = cols - 1; c >= 0 && (len = md[mdi]) == 0; mdi -= MD_COL_INTS)
-                    --c;
-                if (len > 0) {
-                    this.lastLocalsRow = r;
-                    this.lastLocalsCol = c;
-                    return len + md[mdi + (MD_OFF-MD_LEN)];
+            int cols = this.cols, base = lastLocalsRow*mdRowInts;
+            int lastRow = 0, lastCol = 0, lastEnd = 0;
+            for (int r = lastLocalsRow; r >= 0; r--, base -= mdRowInts<<1) {
+                for (int c = 0, len, end; c < cols; c++, base += MD_COL_INTS) {
+                    if ((len = md[base+MD_LEN]) > 0 && (end = len + md[base+MD_OFF]) > lastEnd) {
+                        lastEnd = end;
+                        lastRow = r;
+                        lastCol = c;
+                    }
+                }
+                if (lastEnd > 0) {
+                    this.lastLocalsRow = lastRow;
+                    this.lastLocalsCol = lastCol;
+                    return lastEnd;
                 }
             }
         }
@@ -193,7 +194,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.lastLocalsCol = 0;
         this.vectorSafe = true;
         this.localsTailClear = true;
-        this.offerCol = Integer.MAX_VALUE;
     }
 
     private CompressedBatch(CompressedBatch o) {
@@ -205,7 +205,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.mdRowInts = o.mdRowInts;
         this.vectorSafe = o.vectorSafe;
         this.localsTailClear = o.localsTailClear;
-        this.offerCol = o.offerCol;
+        this.mdOfferRowBase = o.mdOfferRowBase;
     }
 
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
@@ -472,7 +472,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         lastLocalsCol   = 0;
         md[MD_OFF]      = 0;
         md[MD_LEN]      = 0;
-        offerCol        = Integer.MAX_VALUE;
+        mdOfferRowBase  = -1;
         vectorSafe      = true;
         localsTailClear = false;
     }
@@ -481,7 +481,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         rows            = 0;
         lastLocalsRow   = 0;
         lastLocalsCol   = 0;
-        offerCol        = Integer.MAX_VALUE;
+        mdOfferRowBase  = -1;
         vectorSafe      = true;
         localsTailClear = false;
         cols            = newColumns;
@@ -497,67 +497,101 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public boolean beginOffer() {
         if (rowsCapacity() <= rows) return false;
-        offerCol = 0;
+        int base = rows * mdRowInts;
+        mdOfferRowBase = base;
+        fill(md, base, base+mdRowInts, 0);
+        if (!localsTailClear) {
+            Arrays.fill(locals, base, locals.length, (byte)0);
+            localsTailClear = true;
+        }
         return true;
     }
 
-    @Override public boolean offerTerm(Term t) {
+    @Override public boolean offerTerm(int col, Term t) {
         int fId = t == null ? 0 : t.flaggedDictId;
         byte[] local = t == null ? ByteRope.EMPTY.utf8 : t.local;
-        return setTerm(true, fId, local, 0, local.length);
+        return setTerm(true, col, fId, local, null, 0, local.length);
     }
 
-    @Override public boolean offerTerm(CompressedBatch other, int oRow, int oCol) {
+    @Override public boolean offerTerm(int destCol, CompressedBatch other, int oRow, int oCol) {
         int oBase = other.mdBase(oRow, oCol);
         int[] omd = other.md;
-        boolean ok = setTerm(true, omd[oBase], other.locals,
+        boolean ok = setTerm(true, destCol, omd[oBase], other.locals, null,
                              omd[oBase+MD_OFF], omd[oBase+MD_LEN]);
         if (!ok) rollbackOffer();
         return ok;
     }
 
+    @Override public boolean offerTerm(int col, TermParser parser) {
+        return setTerm(true, col, parser.flaggedId(), null, parser.localBuf(),
+                       parser.localBegin, parser.localEnd);
+    }
+
+    @Override
+    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+        return setTerm(true, col, flaggedId, null, localRope, localOff, localEnd);
+    }
+
     @Override public boolean commitOffer() {
-        if (offerCol != cols) throw new IllegalStateException();
-        int i = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
-        i = md[i+MD_OFF] + md[i+MD_LEN];
-        if (!localsTailClear)
-            Arrays.fill(locals, i, vecCeil(i), (byte) 0);
+        if (mdOfferRowBase < 0) throw new IllegalStateException();
         ++rows;
-        offerCol = Integer.MAX_VALUE;
+        mdOfferRowBase = -1;
         return true;
     }
 
     @Override public boolean offerRow(CompressedBatch other, int row) {
-        if (other.cols != cols) throw new IllegalArgumentException();
-        int omdBase = other.mdBase(row, 0), mdDest = rows*mdRowInts;
-        if (mdDest+mdRowInts > md.length) return false;
+        if (!other.vectorSafe || other.cols != cols)
+            return super.offerRow(other, row);
 
-        int oOff = other.rowLocalOff(omdBase), alignedRowLen = vecCeil(other.rowLocalOff(omdBase))-oOff;
-        int off = bytesUsed();
-        if (off + alignedRowLen < locals.length) return false;
+        int omdBase = other.mdBase(row, 0), mdDest = rows*mdRowInts;
+        if (mdDest+mdRowInts > md.length)
+            return false; // no space in this.md
+
+        int oOff = other.rowLocalOff(omdBase);
+        int rowLen = vecCeil(other.rowLocalEnd(omdBase)-oOff); // ceil gives cheap zero-fill
+        int off = bytesUsed(); // returns rowLocalEnd(rows-1) but aligned
+        if (off + rowLen >= locals.length)
+            return false; // no space in this.locals
 
         arraycopy(other.md, omdBase, md, mdDest, cols*MD_COL_INTS);
-        arraycopy(other.locals, oOff, locals, off, alignedRowLen);
+        arraycopy(other.locals, oOff, locals, off, rowLen);
         return true;
     }
 
     @Override public void beginPut() {
-        offerCol = 0;
-        if ((rows+1)*mdRowInts > md.length)
-            md = copyOf(md, md.length + mdRowInts*(2|(rowsCapacity()>>1)));
+        int base = rows * mdRowInts, required = base + mdRowInts;
+        mdOfferRowBase = base;
+        if (required > md.length)  // grow capacity by 50% + 2 so that md fits at least 2 rows
+            md = copyOf(md, mdRowInts*(rows + 2 + (rows>>1)));
+        else
+            fill(md, base, required, 0);
+        if (!localsTailClear) {
+            Arrays.fill(locals, base, locals.length, (byte)0);
+            localsTailClear = true;
+        }
     }
 
-    @Override public void putTerm(Term t) {
+    @Override public void putTerm(int col, Term t) {
         int fId = t == null ? 0 : t.flaggedDictId;
         byte[] local = t == null ? ByteRope.EMPTY.utf8 : t.local;
-        setTerm(false, fId, local, 0, local.length);
+        setTerm(false, col, fId, local, null, 0, local.length);
     }
 
-    @Override public void putTerm(CompressedBatch other, int row, int col) {
+    @Override public void putTerm(int destCol, CompressedBatch other, int row, int col) {
         int base = other.mdBase(row, col);
         int[] omd = other.md;
-        setTerm(false, other.flaggedId(row, col), other.locals,
+        setTerm(false, destCol, other.flaggedId(row, col), other.locals, null,
                 omd[base+MD_OFF], omd[base+MD_LEN]);
+    }
+
+    @Override public void putTerm(int col, TermParser parser) {
+        setTerm(false, col, parser.flaggedId(), null, parser.localBuf(),
+                parser.localBegin, parser.localEnd);
+    }
+
+    @Override
+    public void putTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+        setTerm(false, col, flaggedId, null, localRope, localOff, localEnd);
     }
 
     @Override public void commitPut() { commitOffer(); }

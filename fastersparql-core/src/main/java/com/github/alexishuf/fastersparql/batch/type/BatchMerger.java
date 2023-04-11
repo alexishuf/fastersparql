@@ -65,9 +65,9 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
             dest = getBatch(rows, sources.length, in.bytesUsed());
         for (int r = 0; r < rows; r++) {
             dest.beginPut();
-            for (int c : columns) {
-                if (c < 0) dest.putTerm(null);
-                else       dest.putTerm(in, r, c);
+            for (int c = 0; c < columns.length; c++) {
+                int src = columns[c];
+                if (src >= 0) dest.putTerm(c, in, r, src);
             }
             dest.commitPut();
         }
@@ -96,10 +96,10 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
             throw new IllegalArgumentException("dest.cols != sources.length");
         for (int i = 0; i < rows; i++) {
             dest.beginPut();
-            for (int s : sources) {
-                if (s > 0) dest.putTerm(left, leftRow, s - 1);
-                else if (s < 0) dest.putTerm(right, i, -s - 1);
-                else dest.putTerm(null);
+            for (int c = 0; c < sources.length; c++) {
+                int s = sources[c];
+                if      (s > 0) dest.putTerm(c, left, leftRow, s - 1);
+                else if (s < 0) dest.putTerm(c, right, i, -s - 1);
             }
             dest.commitPut();
         }
@@ -119,9 +119,9 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         if (dest == null)
             dest = getBatch(1, sources.length, left.bytesUsed(leftRow));
         dest.beginPut();
-        for (int s : sources) {
-            if   (s > 0) dest.putTerm(left, leftRow, s-1);
-            else         dest.putTerm(null);
+        for (int c = 0; c < sources.length; c++) {
+            int s = sources[c];
+            if   (s > 0) dest.putTerm(c, left, leftRow, s-1);
         }
         dest.commitPut();
         return dest;

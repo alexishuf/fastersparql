@@ -186,12 +186,12 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             else                                    v2Role = 0;
         }
 
-        private static void putRole(HdtBatch dest, byte role, TripleID triple, int dictId) {
+        private static void putRole(int col, HdtBatch dest, byte role, TripleID triple, int dictId) {
             switch (role) {
                 case 0 -> {}
-                case 1 -> dest.putTerm(encode(triple.getSubject(),   dictId,   SUBJECT));
-                case 2 -> dest.putTerm(encode(triple.getPredicate(), dictId, PREDICATE));
-                case 3 -> dest.putTerm(encode(triple.getObject(),    dictId,    OBJECT));
+                case 1 -> dest.putTerm(col, encode(triple.getSubject(),   dictId,   SUBJECT));
+                case 2 -> dest.putTerm(col, encode(triple.getPredicate(), dictId, PREDICATE));
+                case 3 -> dest.putTerm(col, encode(triple.getObject(),    dictId,    OBJECT));
                 default -> throw new IllegalArgumentException();
             }
         }
@@ -201,9 +201,9 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             TripleID t = it.next();
             dest.beginPut();
             int dictId = HdtSparqlClient.this.dictId;
-            putRole(dest, v0Role, t, dictId);
-            putRole(dest, v1Role, t, dictId);
-            putRole(dest, v2Role, t, dictId);
+            putRole(0, dest, v0Role, t, dictId);
+            putRole(1, dest, v1Role, t, dictId);
+            putRole(2, dest, v2Role, t, dictId);
             dest.commitPut();
             return true;
         }

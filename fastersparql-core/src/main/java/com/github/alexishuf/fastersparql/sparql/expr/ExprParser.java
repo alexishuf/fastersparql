@@ -15,7 +15,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public final class ExprParser {
     private Rope in;
     private int consumedPos, pos, len;
-    public final TermParser termParser = new TermParser();
+    public final TermParser termParser = new TermParser().eager();
     private @Nullable Symbol symbol;
     private @Nullable Expr term;
     private @Nullable SparqlParser spParser;

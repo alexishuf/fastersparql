@@ -45,7 +45,7 @@ public class BItCTest {
     static TermBatch batch(int i) {
         TermBatch b = Batch.TERM.createSingleton(1);
         b.beginPut();
-        b.putTerm(INTS[i]);
+        b.putTerm(0, INTS[i]);
         b.commitPut();
         return b;
     }
@@ -55,7 +55,7 @@ public class BItCTest {
         if (mine != null) {
             mine.clear();
             mine.beginPut();
-            mine.putTerm(INTS[999]);
+            mine.putTerm(0, INTS[999]);
             mine.commitPut();
         }
     }

@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -41,7 +42,7 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract Batch<B> copy();
 
     /**
-     * How many bytes should be given to {@link Batch#reserve(int, int)} {@code bytes}
+     * How many bytes should be given to {@link #reserve(int, int)} {@code bytes}
      * parameter so that {@code putRows(this, 0, rows)} does not trigger an allocation.
      *
      * @return how many bytes are being currently used.
@@ -50,7 +51,7 @@ public abstract class Batch<B extends Batch<B>> {
 
     public abstract int rowsCapacity();
 
-    /** Whether this batch can reach {@code rowsCapacity} and  a {@link Batch#bytesUsed()} value
+    /** Whether this batch can reach {@code rowsCapacity} and  a {@link #bytesUsed()} value
      *  of {@code bytes} before requiring a new allocation. */
     public abstract boolean hasCapacity(int rowsCapacity, int bytesCapacity);
 
@@ -134,7 +135,7 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /**
-     * How many bytes should be given to {@link Batch#reserve(int, int)} {@code bytes}
+     * How many bytes should be given to {@link #reserve(int, int)} {@code bytes}
      * parameter so that {@code putRows(this, row, row+1)} does not trigger an allocation.
      *
      * @param row the row index
@@ -264,8 +265,8 @@ public abstract class Batch<B extends Batch<B>> {
     /**
      * Appends {@code get(row, col)} to {@code dest} if the {@link Term} is not null.
      * @param dest destination where the term will be appended, in NT-syntax
-     * @param row see {@link Batch#get(int, int)}
-     * @param col see {@link Batch#get(int, int)}
+     * @param row see {@link #get(int, int)}
+     * @param col see {@link #get(int, int)}
      */
     public void writeNT(ByteSink<?> dest, int row, int col) {
         Term t = get(row, col);
@@ -302,9 +303,9 @@ public abstract class Batch<B extends Batch<B>> {
 
     /**
      * Hints that an implementation SHOULD perform allocation for an incoming sequence of
-     * {@code rows} row offers/puts (see {@link Batch#beginOffer()} and {@link Batch#beginPut()}).
+     * {@code rows} row offers/puts (see {@link #beginOffer()} and {@link #beginPut()}).
      *
-     * <p>This method is a hint and thus subsequent {@link Batch#beginOffer()} and related
+     * <p>This method is a hint and thus subsequent {@link #beginOffer()} and related
      * methods may still reject a row by returning {@code false}.</p>
      *
      * @param additionalRows expected number of subsequent row offers/puts. Implementations may
@@ -329,12 +330,12 @@ public abstract class Batch<B extends Batch<B>> {
     /**
      * Starts adding a new row to this batch.
      *
-     * <p>Columns for the new row will be set through {@link Batch#offerTerm(Term)} calls
-     * following this call, with the {@code i-th} {@link Batch#offerTerm(Term)} call setting
+     * <p>Columns for the new row will be set through {@link #offerTerm(int, Term)} calls
+     * following this call, with the {@code i-th} {@link #offerTerm(int, Term)} call setting
      * the {@code i}-th column of the new row. The row will only be visible to other methods
-     * of this batch once {@link Batch#commitOffer()} returns {@code true}./p>
+     * of this batch once {@link #commitOffer()} returns {@code true}./p>
      *
-     * <p>This method, {@link Batch#offerTerm(Term)} and {@link Batch#commitOffer()}
+     * <p>This method, {@link #offerTerm(int, Term)} and {@link #commitOffer()}
      * return whether the operation may continue ({@code true}) or if the row will not be
      * accepted ({@code false}). Addition of a row will be rejected if memory allocation and/or
      * extensive copying would be required.</p>
@@ -363,28 +364,58 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract boolean beginOffer();
 
     /**
-     * Offer {@code t} as the value of the next column after a {@link Batch#beginOffer()}.
+     * Offer {@code t} as the value of the next column after a {@link #beginOffer()}.
      *
      * @return {@code true} iff the row offer may continue.
      * @throws IllegalStateException if there is no previously uncommitted {@code true}
-     *                               {@link Batch#beginOffer()} call.
+     *                               {@link #beginOffer()} call.
      */
-    public abstract boolean offerTerm(Term t);
+    public abstract boolean offerTerm(int col, Term t);
 
-    /** Equivalent to {@code offer(batch.get(row, col))}. */
-    public boolean offerTerm(B batch, int row, int col) {
-        return offerTerm(batch.get(row, col));
+    /** Equivalent to {@code offer(destCol, batch.get(row, col))}. */
+    public boolean offerTerm(int destCol, B batch, int row, int col) {
+        return offerTerm(destCol, batch.get(row, col));
     }
 
     /**
-     * Try to commit the current {@link Batch#beginOffer()}.
+     * Equivalent to {@code offerTerm(col, termParser.asTerm())}, but faster.
+     *
+     * @param col destination column of {@link TermParser#asTerm()}
+     * @param termParser A {@link TermParser} that just parsed some input.
+     * @return {@code true} iff the row offer may continue.
+     */
+    public boolean offerTerm(int col, TermParser termParser) {
+        return offerTerm(col, termParser.asTerm());
+    }
+
+    /**
+     * Equivalent offering a term built with {@code flaggedId}, and
+     * {@code localRope.sub(localOff, localEnd)}
+     *
+     * @param col destination column of the term
+     * @param flaggedId Value for {@link Term#flaggedDictId} of the built term
+     * @param localRope Rope that contains bytes that shall constitute {@link Term#local}
+     * @param localOff Index of first byte in {@code localRope} that goes into {@link Term#local}
+     * @param localEnd {@code localOff + term.local.length}
+     * @return {@code true} iff the row offer may continue
+     */
+    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+        Term term;
+        if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
+        else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);
+        else                    term = Term. valueOf(localRope, localOff,  localEnd);
+        return offerTerm(col, term);
+    }
+
+    /**
+     * Try to commit the current {@link #beginOffer()}.
      *
      * @return {@code true} iff the row was added. If {@code false}, there will be no trace of
      *         the attempted row offer.
      * @throws IllegalStateException if there is no uncommitted and {@code true}
-     *                               {@link Batch#beginOffer()} call or if any
-     *                               {@link Batch#offerTerm(Term)} after
-     *                               {@link Batch#beginOffer()} returned {@code false}.
+     *                               {@link #beginOffer()} call or if any
+     *                               {@link #offerTerm(int, Term)} after
+     *                               {@link #beginOffer()} returned {@code false}.
      */
     public abstract boolean commitOffer();
 
@@ -406,14 +437,14 @@ public abstract class Batch<B extends Batch<B>> {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
         if (beginOffer()) {
-            for (int c = 0; c < cols; c++) { if (!offerTerm(other, row, c)) return false; }
+            for (int c = 0; c < cols; c++) { if (!offerTerm(c, other, row, c)) return false; }
             return commitOffer();
         }
         return false;
     }
 
     /**
-     * Version of {@link Batch#beginOffer()} that never rejects addition.
+     * Version of {@link #beginOffer()} that never rejects addition.
      *
      * <p>Example usage:</p>
      *
@@ -427,24 +458,54 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public abstract void beginPut();
 
-    /** Version of {@link Batch#offerTerm(Term)} that never rejects. For use with
-     *  {@link Batch#beginPut()} and {@link Batch#commitPut()} */
-    public abstract void putTerm(Term t);
+    /** Version of {@link #offerTerm(int, Term)} that never rejects. For use with
+     *  {@link #beginPut()} and {@link #commitPut()} */
+    public abstract void putTerm(int col, Term t);
 
-    /** Equivalent to {@code putTerm(batch.get(row, col))}. */
-    public void putTerm(B batch, int row, int col) { putTerm(batch.get(row, col)); }
+    /** Equivalent to {@code putTerm(destCol, batch.get(row, col))}. */
+    public void putTerm(int destCol, B batch, int row, int col) {
+        putTerm(destCol, batch.get(row, col));
+    }
 
-    /** Version of {@link Batch#commitOffer()} that never rejects. For use with
-     *  {@link Batch#beginPut()} and {@link Batch#putTerm(Term)} */
+    /**
+     * Equivalent to {@code putTerm(col, termParser.asTerm())}, but faster.
+     *
+     * @param col destination column of {@link TermParser#asTerm()}
+     * @param termParser A {@link TermParser} that just parsed some input.
+     */
+    public void putTerm(int col, TermParser termParser) {
+        putTerm(col, termParser.asTerm());
+    }
+
+    /**
+     * Equivalent offering a term built with {@code flaggedId}, and
+     * {@code localRope.sub(localOff, localEnd)}
+     *
+     * @param col destination column of the term
+     * @param flaggedId Value for {@link Term#flaggedDictId} of the built term
+     * @param localRope Rope that contains bytes that shall constitute {@link Term#local}
+     * @param localOff Index of first byte in {@code localRope} that goes into {@link Term#local}
+     * @param localEnd {@code localOff + term.local.length}
+     */
+    public void putTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+        Term term;
+        if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
+        else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);
+        else                    term = Term. valueOf(localRope, localOff,  localEnd);
+        putTerm(col, term);
+    }
+
+    /** Version of {@link #commitOffer()} that never rejects. For use with
+     *  {@link #beginPut()} and {@link #putTerm(int, Term)} */
     public abstract void commitPut();
 
-    /** Version of {@link Batch#offerRow(Batch, int)} that always add the row. */
+    /** Version of {@link #offerRow(Batch, int)} that always add the row. */
     public void putRow(B other, int row) {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
         reserve(1, other.bytesUsed(row));
         beginPut();
-        for (int c = 0; c < cols; c++) putTerm(other, row, c);
+        for (int c = 0; c < cols; c++) putTerm(c, other, row, c);
         commitPut();
     }
 
@@ -467,12 +528,13 @@ public abstract class Batch<B extends Batch<B>> {
             bytes += t == null ? 0 : t.local.length;
         reserve(1, bytes);
         beginPut();
-        for (Term t : row) putTerm(t);
+        for (int c = 0; c < row.length; c++)
+            putTerm(c, row[c]);
         commitPut();
     }
 
     /**
-     * Equivalent to {@link Batch#putRow(Term[])}, but with a {@link Collection}
+     * Equivalent to {@link #putRow(Term[])}, but with a {@link Collection}
      *
      * <p>If collection items are non-null and non-{@link Term}, they will be converted using
      * {@link Rope#of(Object)} and {@link Term#valueOf(Rope)}.</p>
@@ -487,7 +549,9 @@ public abstract class Batch<B extends Batch<B>> {
             throw new IllegalArgumentException();
         reserve(1, 0);
         beginPut();
-        for (Object o : row)  putTerm(o instanceof Term t ? t : Term.valueOf(Rope.of(o)));
+        int c = 0;
+        for (Object o : row)
+            putTerm(c++, o instanceof Term t ? t : Term.valueOf(Rope.of(o)));
         commitPut();
     }
 
@@ -509,7 +573,7 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract void put(B other) ;
 
     /**
-     * Equivalent to {@link Batch#put(Batch)} but accepts {@link Batch} implementations
+     * Equivalent to {@link #put(Batch)} but accepts {@link Batch} implementations
      * other than this.
      *
      * @param other source of rows
@@ -525,7 +589,7 @@ public abstract class Batch<B extends Batch<B>> {
             reserve(rows, other.bytesUsed());
             for (int r = 0; r < rows; r++) {
                 beginPut();
-                for (int c = 0; c < cols; c++) putTerm(other.get(r, c));
+                for (int c = 0; c < cols; c++) putTerm(c, other.get(r, c));
                 commitPut();
             }
         }

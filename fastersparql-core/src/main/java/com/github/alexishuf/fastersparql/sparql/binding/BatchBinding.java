@@ -28,9 +28,9 @@ public final class BatchBinding<B extends Batch<B>> extends Binding {
         int n = vars.size();
         B next = batchType.createSingleton(n);
         next.beginPut();
-        for (int c = 0; c < column; c++) next.putTerm(batch == null ? null : batch.get(row, c));
-        next.putTerm(value);
-        for (int c = column+1; c < n; c++) next.putTerm(batch == null ? null : batch.get(row, c));
+        for (int c = 0; c < column; c++) next.putTerm(c, batch == null ? null : batch.get(row, c));
+        next.putTerm(column, value);
+        for (int c = column+1; c < n; c++) next.putTerm(c, batch == null ? null : batch.get(row, c));
         next.commitPut();
         batch = next;
         row = 0;

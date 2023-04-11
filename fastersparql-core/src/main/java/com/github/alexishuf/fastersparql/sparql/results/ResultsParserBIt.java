@@ -8,18 +8,14 @@ import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import org.checkerframework.checker.nullness.qual.Nullable;
-
-import java.util.Arrays;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
@@ -37,9 +33,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     /** The {@link BatchType} for rows produced by this {@link BIt}. */
     public final BatchType<B> batchType;
 
-    protected final Term[] row;
-    private final TermBatch rowBatch;
-    private B tmpBatch;
+    protected B rowBatch;
     private long rowsEmitted;
 
     protected final @Nullable CallbackBIt<B> destination;
@@ -114,22 +108,14 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         super(batchType, vars, maxBatches);
         this.batchType = batchType;
         this.destination = null;
-        this.row = (this.rowBatch = makeRowBatch(vars.size())).arr();
+        (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
     }
 
     protected ResultsParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
         super(batchType, destination.vars(), destination.maxReadyBatches());
         this.batchType = batchType;
         this.destination = destination;
-        this.row = (this.rowBatch = makeRowBatch(vars.size())).arr();
-    }
-
-    private static TermBatch makeRowBatch(int cols) {
-        TermBatch b = Batch.TERM.create(1, cols, 0);
-        b.beginPut();
-        for (int c = 0; c < cols; c++) b.putTerm(null);
-        b.commitPut();
-        return b;
+        (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
     }
 
     /**
@@ -190,8 +176,12 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     protected void emitRow() {
         ++rowsEmitted;
-        tmpBatch = offer(getBatch(tmpBatch).putConverting(rowBatch));
-        Arrays.fill(row, null);
+        rowBatch.commitPut();
+        if ((rowBatch = offer(rowBatch)) == null)
+            rowBatch = getBatch(null);
+        else
+            rowBatch.clear();
+        rowBatch.beginPut();
     }
 
     /**

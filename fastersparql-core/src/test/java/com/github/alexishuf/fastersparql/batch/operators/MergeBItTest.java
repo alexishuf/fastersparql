@@ -249,7 +249,7 @@ class MergeBItTest extends AbstractMergeBItTest {
                 }
                 b.clear();
                 b.beginPut();
-                b.putTerm(IntsBatch.term(val));
+                b.putTerm(0, IntsBatch.term(val));
                 b.commitPut();
                 //journal.write("&batches[i]=", System.identityHashCode(batches[i]), "val=", val, "[0][0]=", batches[i].get(0, 0));
             }

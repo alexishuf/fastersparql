@@ -17,7 +17,7 @@ import static java.util.Objects.requireNonNull;
 
 public final class TermBatch extends Batch<TermBatch> {
     Term[] arr;
-    private int offerIdx = Integer.MAX_VALUE, offerEnd = 0;
+    private int offerRowBase = -1;
 
     public Term[] arr() { return arr; }
 
@@ -127,27 +127,24 @@ public final class TermBatch extends Batch<TermBatch> {
     }
 
     @Override public boolean beginOffer() {
-        int required = (rows + 1) * cols;
+        int base = rows*cols, required = base + cols;
         if (arr.length < required) return false;
-        for (int i = required-cols; i < required; i++) arr[i] = null;
-        offerEnd = required;
-        offerIdx = required-cols;
+        Arrays.fill(arr, base, required, null);
+        offerRowBase = base;
         return true;
     }
 
-    @Override public boolean offerTerm(Term t) {
-        if (offerIdx >= offerEnd) throw new IllegalStateException();
-        arr[offerIdx] = t;
-        ++offerIdx;
+    @Override public boolean offerTerm(int col, Term t) {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        if (col < 0 || col >= cols) throw new IndexOutOfBoundsException();
+        arr[offerRowBase+col] = t;
         return true;
     }
 
     @Override public boolean commitOffer() {
-        if (offerIdx != offerEnd)
-            throw new IllegalStateException();
+        if (offerRowBase < 0) throw new IllegalStateException();
         ++rows;
-        offerEnd = 0;
-        offerIdx = Integer.MAX_VALUE;
+        offerRowBase = -1;
         return true;
     }
 
@@ -174,7 +171,7 @@ public final class TermBatch extends Batch<TermBatch> {
         beginOffer();
     }
 
-    @Override public void putTerm(Term t) { offerTerm(t); }
+    @Override public void putTerm(int col, Term t) { offerTerm(col, t); }
 
     @Override public void commitPut() { commitOffer(); }
 
@@ -260,7 +257,6 @@ public final class TermBatch extends Batch<TermBatch> {
             if (projector != null)
                 b.cols = requireNonNull(projector.columns).length;
             b.rows = survivors;
-            b.offerIdx = Integer.MAX_VALUE;
             Arrays.fill(b.arr, null);
             return b;
         }

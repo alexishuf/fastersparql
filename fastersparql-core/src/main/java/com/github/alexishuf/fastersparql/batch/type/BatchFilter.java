@@ -44,9 +44,9 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
             for (int r = 0; r < rows; r++) {
                 if (rowFilter.drop(in, r)) continue;
                 dest.beginPut();
-                for (int c : columns) {
-                    if   (c < 0) dest.putTerm(null);
-                    else         dest.putTerm(in, r, c);
+                for (int c = 0, s; c < columns.length; c++) {
+                    if ((s = columns[c]) >= 0)
+                        dest.putTerm(c, in, r, s);
                 }
                 dest.commitPut();
             }

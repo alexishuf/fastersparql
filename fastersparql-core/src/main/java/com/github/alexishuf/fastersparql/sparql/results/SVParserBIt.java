@@ -7,7 +7,6 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
@@ -122,7 +121,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     return;
                 } else if (c != '\t' && c != '\n') { //only parse if column is not empty
                     switch (termParser.parse(rope, begin, end)) {
-                        case NT, TTL   -> set(column, termParser.asTerm());
+                        case NT, TTL   -> setTerm();
                         case VAR       -> throw varAsValue(termParser.asTerm());
                         case MALFORMED -> throw badTerm(rope, begin, termParser.explain());
                         case EOF       -> { suspend(rope, begin, end); return; }
@@ -157,10 +156,10 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                 begin = handleControl(rope, begin);
             if (findEOL(rope, begin, end) >= end)
                 return suspend(rope, begin, end);
-            int termEnd = rope.skipUntil(begin, end, '\t', '\n');
+            byte c = rope.get(begin);
             boolean positive = true;
-            if (termEnd > begin) {
-                positive = switch (termParser.parse(rope, begin, termEnd)) {
+            if (c != '\t' && c != '\n') {
+                positive = switch (termParser.parse(rope, begin, end)) {
                     case NT, TTL   -> !termParser.asTerm().equals(Term.FALSE);
                     case EOF       -> true;
                     case VAR       -> throw varAsValue(termParser.asTerm());
@@ -179,8 +178,14 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     public final static class Csv<B extends Batch<B>> extends SVParserBIt<B> {
         private static final ByteRope EOL = new ByteRope("\r\n");
 
-        public Csv(BatchType<B> batchType, Vars vars, int maxBatches) { super(batchType, EOL, vars, maxBatches); }
-        public Csv(BatchType<B> batchType, CallbackBIt<B> destination) { super(batchType, EOL, destination); }
+        public Csv(BatchType<B> batchType, Vars vars, int maxBatches) {
+            super(batchType, EOL, vars, maxBatches);
+            termParser.eager();
+        }
+        public Csv(BatchType<B> batchType, CallbackBIt<B> destination) {
+            super(batchType, EOL, destination);
+            termParser.eager();
+        }
 
         @Override protected void doFeedShared(Rope rope) {
             if (partialLine != null && partialLine.len != 0) {
@@ -280,9 +285,10 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     else esc.append('"');
                     nt = esc;
                 }
-                try {
-                    set(column, Term.valueOf(nt));
-                } catch (InvalidTermException e) { throw badTerm(rope, begin, e); }
+                switch (termParser.parse(nt, 0, nt.len)) {
+                    case NT, TTL -> setTerm();
+                    default -> throw badTerm(rope, begin, termParser.explain());
+                }
             }
             begin = first == '"' ? lexEnd+1 : lexEnd;
             while (begin != end && ((first = rope.get(begin)) == ' ' || first == '\t')) ++begin;
@@ -398,10 +404,10 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         return end;
     }
 
-    protected void set(int inputColumn, Term term) {
-        int dest = inVar2outVar[inputColumn];
+    protected void setTerm() {
+        int dest = inVar2outVar[column];
         if (dest >= 0)
-            row[dest] = term;
+            rowBatch.putTerm(dest, termParser);
     }
 
     protected InvalidSparqlResultsException varAsValue(Term var) {

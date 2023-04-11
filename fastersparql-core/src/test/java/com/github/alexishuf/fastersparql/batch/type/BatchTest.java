@@ -77,7 +77,7 @@ class BatchTest {
         public <B extends Batch<B>> B fill(B batch) {
             for (int r = 0; r < rows; r++) {
                 batch.beginPut();
-                for (int c = 0; c < cols; c++) batch.putTerm(terms[r][c]);
+                for (int c = 0; c < cols; c++) batch.putTerm(c, terms[r][c]);
                 batch.commitPut();
             }
             return batch;
@@ -86,7 +86,7 @@ class BatchTest {
         public <B extends Batch<B>> B reverseFill(B batch) {
             for (int r = 0; r < rows; r++) {
                 batch.beginPut();
-                for (int c = 0; c < cols; c++) batch.putTerm(terms[rows-1-r][cols-1-c]);
+                for (int c = 0; c < cols; c++) batch.putTerm(c, terms[rows-1-r][cols-1-c]);
                 batch.commitPut();
             }
             return batch;
@@ -127,6 +127,8 @@ class BatchTest {
     private interface ForEachSizeTest {
         <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx);
     }
+
+    static Stream<Arguments> types() { return TYPES.stream().map(Arguments::arguments); }
 
     private void forEachSize(ForEachSizeTest test) {
         for (BatchType<?> type : TYPES) {
@@ -264,19 +266,19 @@ class BatchTest {
                 b5.clear(size.cols);
                 for (int r = 0; r < size.rows; r++) {
                     b1.beginPut();
-                    for (int c = 0; c < size.cols; c++) b1.putTerm(size.terms[r][c]);
+                    for (int c = 0; c < size.cols; c++) b1.putTerm(c, size.terms[r][c]);
                     b1.commitPut();
 
                     b2.beginPut();
-                    for (int c = 0; c < size.cols; c++) b2.putTerm(b1, r, c);
+                    for (int c = 0; c < size.cols; c++) b2.putTerm(c, b1, r, c);
                     b2.commitPut();
 
                     b4.beginPut();
-                    for (int c = 0; c < size.cols; c++) b4.putTerm(size.terms[r][c]);
+                    for (int c = 0; c < size.cols; c++) b4.putTerm(c, size.terms[r][c]);
                     b4.commitPut();
 
                     b5.beginPut();
-                    for (int c = 0; c < size.cols; c++) b5.putTerm(size.terms[r][c]);
+                    for (int c = 0; c < size.cols; c++) b5.putTerm(c, size.terms[r][c]);
                     b5.commitPut();
                 }
                 b3.put(b1);
@@ -320,20 +322,20 @@ class BatchTest {
                 for (int r = 0; r < size.rows; r++) {
                     assertTrue(b1.beginOffer());
                     for (int c = 0; c < size.cols; c++)
-                        assertTrue(b1.offerTerm(size.terms[r][c]), "r=, "+r+"c="+c);
+                        assertTrue(b1.offerTerm(c, size.terms[r][c]), "r=, "+r+"c="+c);
                     assertTrue(b1.commitOffer());
                     assertTrue(b2.beginOffer());
                     for (int c = 0; c < size.cols; c++)
-                        assertTrue(b2.offerTerm(b1, r, c), "r= "+r+",c="+c);
+                        assertTrue(b2.offerTerm(c, b1, r, c), "r= "+r+",c="+c);
                     assertTrue(b2.commitOffer());
 
                     assertTrue(b4.beginOffer());
                     for (int c = 0; c < size.cols; c++)
-                        assertTrue(b4.offerTerm(size.terms[r][c]), "r=, "+r+"c="+c);
+                        assertTrue(b4.offerTerm(c, size.terms[r][c]), "r=, "+r+"c="+c);
                     assertTrue(b4.commitOffer());
                     assertTrue(b5.beginOffer());
                     for (int c = 0; c < size.cols; c++)
-                        assertTrue(b5.offerTerm(b1, r, c), "r= "+r+",c="+c);
+                        assertTrue(b5.offerTerm(c, b1, r, c), "r= "+r+",c="+c);
                     assertTrue(b5.commitOffer());
                 }
                 assertTrue(b3.offer(b1), ctx);
@@ -361,8 +363,8 @@ class BatchTest {
         return Stream.of(
                 arguments("prepend null column",
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            ex.putTerm(null);
-                            for (Term term : row) ex.putTerm(term);
+                            int c = 1;
+                            for (Term term : row) ex.putTerm(c++, term);
                         },
                         (Function<Vars, Vars>)in -> {
                             var set = new Vars.Mutable(in.size() + 1);
@@ -373,9 +375,10 @@ class BatchTest {
                 ),
                 arguments("interleave null column",
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
+                            int c = 0;
                             for (Term t : row) {
-                                ex.putTerm(t);
-                                ex.putTerm(null);
+                                ex.putTerm(c, t);
+                                c += 2;
                             }
                         },
                         (Function<Vars, Vars>)in -> {
@@ -388,7 +391,7 @@ class BatchTest {
                         }),
                 arguments("leftHalf",
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = 0; i < row.length/2; i++) ex.putTerm(row[i]);
+                            for (int i = 0; i < row.length/2; i++) ex.putTerm(i, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             var out = new Vars.Mutable(10);
@@ -398,7 +401,8 @@ class BatchTest {
                         }),
                 arguments("rightHalf",
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = row.length/2; i < row.length; ++i) ex.putTerm(row[i]);
+                            int c = 0;
+                            for (int i = row.length/2; i < row.length; ++i) ex.putTerm(c++, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             var out = new Vars.Mutable(10);
@@ -446,32 +450,41 @@ class BatchTest {
                 arguments("drop-even",
                         (Function<Size, List<Integer>>)s -> range(0, s.rows).filter(i -> (i%2)==1)
                                                                             .boxed().toList(),
-                        (BiConsumer<Term[], Batch<?>>)(row, ex)
-                                -> { for (Term t : row) ex.putTerm(t); },
+                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
+                            for (int c = 0; c < row.length; c++)
+                                ex.putTerm(c, row[c]);
+                        },
                         (Function<Vars, Vars>)in -> in
                 ),
                 arguments("drop-odd",
                         (Function<Size, List<Integer>>)s -> range(0, s.rows).filter(i -> (i%2)==0)
                                 .boxed().toList(),
-                        (BiConsumer<Term[], Batch<?>>)(row, ex)
-                                -> { for (Term t : row) ex.putTerm(t); },
+                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
+                            for (int c = 0; c < row.length; c++)
+                                ex.putTerm(c, row[c]);
+                        },
                         (Function<Vars, Vars>)in -> in
                 ),
                 arguments("drop-first-half",
                         (Function<Size, List<Integer>>)s -> range(s.rows/2, s.rows).boxed().toList(),
-                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> { for (Term t : row) ex.putTerm(t); },
+                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
+                            for (int c = 0; c < row.length; c++) ex.putTerm(c, row[c]);
+                        },
                         (Function<Vars, Vars>)in -> in
                 ),
                 arguments("drop-second-half",
                         (Function<Size, List<Integer>>)s -> range(0, s.rows/2).boxed().toList(),
-                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> { for (Term t : row) ex.putTerm(t); },
+                        (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
+                            for (int c = 0; c < row.length; c++)
+                                ex.putTerm(c, row[c]);
+                        },
                         (Function<Vars, Vars>)in -> in
                 ),
 
                 arguments("top-left",
                         (Function<Size, List<Integer>>)s -> range(0, s.rows/2).boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = 0; i < row.length/2; i++) ex.putTerm(row[i]);
+                            for (int i = 0; i < row.length/2; i++) ex.putTerm(i, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -482,7 +495,8 @@ class BatchTest {
                 arguments("top-right",
                         (Function<Size, List<Integer>>)s -> range(0, s.rows/2).boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = row.length/2; i < row.length; i++) ex.putTerm(row[i]);
+                            for (int i = row.length/2, c = 0; i < row.length; i++)
+                                ex.putTerm(c++, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -493,7 +507,7 @@ class BatchTest {
                 arguments("bottom-left",
                         (Function<Size, List<Integer>>)s -> range(s.rows/2, s.rows).boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = 0; i < row.length/2; i++) ex.putTerm(row[i]);
+                            for (int i = 0; i < row.length/2; i++) ex.putTerm(i, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -504,7 +518,8 @@ class BatchTest {
                 arguments("bottom-right",
                         (Function<Size, List<Integer>>)s -> range(s.rows, s.rows/2).boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = row.length/2; i < row.length; i++) ex.putTerm(row[i]);
+                            for (int i = row.length/2, c = 0; i < row.length; i++)
+                                ex.putTerm(c++, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -517,7 +532,7 @@ class BatchTest {
                         (Function<Size, List<Integer>>)s -> range(0, s.rows).filter(i -> i%2 ==1)
                                                                             .boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = 0; i < row.length / 2; i++) ex.putTerm(row[i]);
+                            for (int i = 0; i < row.length / 2; i++) ex.putTerm(i, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -530,7 +545,8 @@ class BatchTest {
                         (Function<Size, List<Integer>>)s -> range(0, s.rows).filter(i -> i%2==0)
                                                                             .boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = row.length / 2; i < row.length; i++) ex.putTerm(row[i]);
+                            for (int i = row.length/2, c = 0; i < row.length; i++)
+                                ex.putTerm(c++, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -543,8 +559,9 @@ class BatchTest {
                         (Function<Size, List<Integer>>)s -> range(0, s.rows).filter(i -> i%2==0)
                                 .boxed().toList(),
                         (BiConsumer<Term[], Batch<?>>)(row, ex) -> {
-                            for (int i = row.length / 2; i < row.length; i++) ex.putTerm(row[i]);
-                            ex.putTerm(null);
+                            int c = 0;
+                            for (int i = row.length / 2; i < row.length; i++)
+                                ex.putTerm(c++, row[i]);
                         },
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
@@ -679,5 +696,57 @@ class BatchTest {
         }
     }
 
+    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
 
+    @SuppressWarnings({"unchecked", "rawtypes"}) @ParameterizedTest @MethodSource("types")
+    void testOutOfOrderOffer(BatchType<?> type) {
+        Batch<?> ex1 = type.create(1, 3, 0);
+        Batch<?> ex2 = type.create(2, 3, 0);
+        Batch<?> ex3 = type.create(4, 3, 0);
+        ex1.putRow(DUMMY_ROW);
+        for (int i = 0; i < 2; i++) ex2.putRow(DUMMY_ROW);
+        for (int i = 0; i < 4; i++) ex3.putRow(DUMMY_ROW);
+
+        for (var permutation : List.of(List.of(2, 1, 0), List.of(1, 2, 0), List.of(0, 2, 1))) {
+            Batch<?> b1 = type.create(1, 3, B_SP_LEN);
+            Batch<?> b2 = type.create(2, 3, 2*B_SP_LEN);
+            Batch<?> b3 = type.create(4, 3, 4*B_SP_LEN);
+            b1.reserve(1, B_SP_LEN);
+            b2.reserve(2, 2*B_SP_LEN);
+            b3.reserve(4, 4*B_SP_LEN);
+            assertTrue(b1.beginOffer());
+            for (int c : permutation)
+                assertTrue(b1.offerTerm(c, DUMMY_ROW[c]));
+            assertTrue(b1.commitOffer());
+
+            assertTrue(((Batch)b2).offerRow(b1, 0));
+            ((Batch)b2).putRow(b1, 0);
+
+            // put by term
+            b3.beginPut();
+            for (int c = 0; c < 3; c++)
+                b3.putTerm(c, b1.get(0, c));
+            b3.commitPut();
+            assertTrue(b3.beginOffer());
+            // offer by term
+            for (int c = 0; c < 3; c++)
+                assertTrue(b3.offerTerm(c, b1.get(0, c)));
+            assertTrue(b3.commitOffer());
+            // offer by term from b1
+            assertTrue(b3.beginOffer());
+            for (int c = 0; c < 3; c++)
+                assertTrue(((Batch)b3).offerTerm(c, b1, 0, c));
+            assertTrue(b3.commitOffer());
+            // put by term from b1
+            b3.beginPut();
+            for (int c = 0; c < 3; c++)
+                ((Batch)b3).putTerm(c, b1, 0, c);
+            b3.commitPut();
+
+            String ctx = "permutation="+permutation;
+            assertBatchesEquals((Batch)ex1, (Batch)b1, ctx);
+            assertBatchesEquals((Batch)ex2, (Batch)b2, ctx);
+            assertBatchesEquals((Batch)ex3, (Batch)b3, ctx);
+        }
+    }
 }

@@ -424,8 +424,8 @@ public class SparqlParser {
             var batch = TERM.create(8, n, 0);
             while (poll('(')) {
                 batch.beginPut();
-                for (int i = 0; i < n; i++)
-                    batch.putTerm(pTerm());
+                for (int c = 0; c < n; c++)
+                    batch.putTerm(c, pTerm());
                 batch.commitPut();
                 require(')');
             }
