@@ -15,10 +15,6 @@ import static java.lang.Integer.numberOfLeadingZeros;
 import static java.util.Arrays.copyOf;
 
 public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
-    /** Used to create {@link RowBucket} instances when needed */
-    private final BatchType<B> bt;
-    /** All rows in this set have this number of columns. */
-    private int cols;
     /** How many items are stored across all buckets */
     private int tableSize = 0;
     /** When new additions will have weak semantics (instead of re-hashing, another
@@ -36,8 +32,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     private final ReentrantLock lock = new ReentrantLock();
 
     private StrongDedup(BatchType<B> bt, int initialCapacity, int weakenAt, int cols) {
-        this.bt = bt;
-        this.cols      = cols;
+        super(bt, cols);
         this.weakenAt  = weakenAt;
         if (initialCapacity < 0)
             throw new IllegalArgumentException("Negative initialCapacity");
@@ -60,10 +55,6 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
         for (Bucket<B> b : buckets) {
             if (b != null) b.clear(cols);
         }
-    }
-
-    @Override public BatchType<B> batchType() {
-        return bt;
     }
 
     @Override public int capacity() {

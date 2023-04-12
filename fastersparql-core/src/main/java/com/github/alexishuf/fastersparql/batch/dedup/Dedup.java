@@ -7,7 +7,17 @@ import com.github.alexishuf.fastersparql.batch.type.RowFilter;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 
 public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
+    protected final BatchType<B> bt;
+    protected int cols;
+
+    public Dedup(BatchType<B> batchType, int cols) {
+        this.bt = batchType;
+        this.cols = cols;
+    }
+
     public abstract int capacity();
+
+    public final int cols() { return cols; }
 
     /**
      * Remove all rows from this {@link Dedup} and set it to receive rows with {@code cols} columns
@@ -16,7 +26,7 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
      */
     public abstract void clear(int cols);
 
-    public abstract BatchType<B> batchType();
+    public final BatchType<B> batchType() { return bt; }
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public abstract boolean isWeak();

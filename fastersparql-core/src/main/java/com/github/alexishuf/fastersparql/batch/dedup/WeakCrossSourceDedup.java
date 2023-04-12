@@ -17,6 +17,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     private final Lock lock = new ReentrantLock();
 
     public WeakCrossSourceDedup(BatchType<B> batchType, int capacity, int cols) {
+        super(batchType, cols);
         if (capacity <= 0 || cols <= 0) throw new IllegalArgumentException();
         // round capacity up to the nearest power-of-2
         capacity = 1 + (-1 >>> Integer.numberOfLeadingZeros(Math.max(8, capacity)-1));
@@ -31,10 +32,6 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
         Arrays.fill(hashesAndSources, 0);
         Arrays.fill(bucketInsertion, (byte) 0);
         table.clear(table.capacity(), cols);
-    }
-
-    @Override public BatchType<B> batchType() {
-        return table.batchType();
     }
 
     @Override public int capacity() { return table.capacity(); }

@@ -21,6 +21,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     private final int bitsetMask;
 
     public WeakDedup(BatchType<B> batchType, int capacity, int cols) {
+        super(batchType, cols);
         if (capacity <= 0) throw new IllegalArgumentException();
         capacity = 1+(mask = capacity < 8 ? 7 : -1 >>> numberOfLeadingZeros(capacity-1));
         // allocated bucket above capacity to avoid range checking of bucket+1 accesses
@@ -34,10 +35,6 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public void clear(int cols) {
         Arrays.fill(bitset, 0);
         rows.clear(rows.capacity(), cols);
-    }
-
-    @Override public BatchType<B> batchType() {
-        return rows.batchType();
     }
 
     @Override public int capacity() { return rows.capacity(); }
