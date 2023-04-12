@@ -267,36 +267,17 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         return this;
     }
 
-    @Override public @This ByteRope append(byte[] utf8) { return append(utf8, 0, utf8.length); }
-
     @Override public @This ByteRope append(Rope r, int begin, int end) {
         int out = postIncLen(max(0, end-begin));
         r.copy(begin, end, utf8, out);
         return this;
     }
 
-    @Override public @This ByteRope append(Rope r) {
-        int len = r.len();
-        int out = postIncLen(len);
-        r.copy(0, len, utf8, out);
-        return this;
-    }
-
-    @Override public @This ByteRope append(char c) {
-        ensureFreeCapacity(1);
-        utf8[len++] = (byte)c;
-        slice = null;
-        return this;
-    }
     @Override public @This ByteRope append(byte c) {
         ensureFreeCapacity(1);
         utf8[len++] = c;
         slice = null;
         return this; }
-
-    @Override public @This ByteRope append(CharSequence o) {
-        return o instanceof Rope r ? append(r) : append(o.toString().getBytes(UTF_8));
-    }
 
     @Override public @This ByteRope append(CharSequence cs, int begin, int end) {
         if (cs instanceof Rope r) return append(r, begin, end);

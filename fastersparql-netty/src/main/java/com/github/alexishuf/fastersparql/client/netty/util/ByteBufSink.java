@@ -52,11 +52,6 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         return this;
     }
 
-    @Override public @This ByteBufSink append(byte[] arr) {
-        bb.writeBytes(arr);
-        return this;
-    }
-
     @Override public @This ByteBufSink append(char c) {
         if (c > 127) throw new IllegalArgumentException();
         bb.writeByte(c);
@@ -119,12 +114,6 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
     @Override public @This ByteBufSink append(CharSequence cs, int begin, int end) {
         if (cs instanceof Rope r) return append(r);
         bb.writeCharSequence(cs.subSequence(begin, end), UTF_8);
-        return this;
-    }
-
-    @Override public @This ByteBufSink repeat(byte c, int n) {
-        bb.ensureWritable(n);
-        while (n-- > 0) bb.writeByte(c);
         return this;
     }
 

@@ -2,18 +2,23 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+@SuppressWarnings("unchecked")
 public interface ByteSink<B extends ByteSink<B>> {
     boolean isEmpty();
 
     @This B append(byte[] arr, int begin, int len);
-    @This B append(byte[] arr);
-    @This B append(char c);
+    default @This B append(byte[] arr) { return append(arr, 0, arr.length); }
+    default @This B append(char c) {
+        if (c > 127) throw new IllegalArgumentException();
+        append((byte)c);
+        return (B) this;
+    }
     @This B append(byte c);
 
-    @This B append(Rope rope);
+    default @This B append(Rope rope) { return append(rope, 0, rope.len); }
     @This B append(Rope rope, int begin, int end);
 
-    @This B append(CharSequence cs);
+    default @This B append(CharSequence cs) { return append(cs, 0, cs.length()); }
 
     @This B append(CharSequence cs, int begin, int end);
 
@@ -26,17 +31,18 @@ public interface ByteSink<B extends ByteSink<B>> {
             if (i < end)
                 append('\\').append('n');
         }
-        //noinspection unchecked
         return (B)this;
     }
 
-    @This B repeat(byte c, int n);
+    default @This B repeat(byte c, int n) {
+        ensureFreeCapacity(n);
+        while (n-- > 0) append(c);
+        return (B)this;
+    }
 
     @This B ensureFreeCapacity(int increment);
 
-    default @This B newline(int spaces) {
-        return append('\n').repeat((byte) ' ', spaces);
-    }
+    default @This B newline(int spaces) { return append('\n').repeat((byte) ' ', spaces); }
 
     default @This B indented(int spaces, Object o) {
         Rope r = Rope.of(o);
@@ -48,7 +54,6 @@ public interface ByteSink<B extends ByteSink<B>> {
             append(r, i, eol = r.skipUntil(i, end, '\n'));
         }
         if (end > 0 && r.get(end-1) == '\n') append('\n');
-        //noinspection unchecked
         return (B)this;
     }
 }
