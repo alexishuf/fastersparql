@@ -8,7 +8,7 @@ import java.io.OutputStream;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class OutputStreamSink implements ByteSink<OutputStreamSink> {
-    public final OutputStream os;
+    public OutputStream os;
     private boolean empty = true;
 
     public OutputStreamSink(OutputStream os) {

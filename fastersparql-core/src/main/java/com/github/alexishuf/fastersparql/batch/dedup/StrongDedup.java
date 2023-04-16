@@ -168,6 +168,16 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
         }
     }
 
+    @SuppressWarnings("unused") // used only when debugging
+    public String dump() {
+        var sb = new StringBuilder();
+        forEach(b -> {
+            for (int r = 0; r < b.rows; r++) sb.append(b.toString(r)).append('\n');
+        });
+        sb.setLength(Math.max(1, sb.length()-1));
+        return sb.toString();
+    }
+
     private static final class Bucket<B extends Batch<B>> {
         int size, weakBegin;
         int[] hashes;

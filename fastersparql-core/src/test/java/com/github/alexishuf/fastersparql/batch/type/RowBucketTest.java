@@ -12,8 +12,7 @@ import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.IntStream.range;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class RowBucketTest {
     private static final Term i1 = Term.typed("1", RopeDict.DT_integer);
@@ -60,6 +59,9 @@ class RowBucketTest {
         bucket.set(1, b__12, 0);
         assertTrue(bucket.equals(0, b12, 0));
         assertTrue(bucket.equals(1, b__12, 0));
+        assertFalse(bucket.equals(0, b__12, 0));
+        assertFalse(bucket.equals(31, b__12, 0)); // ambiguous: row of nulls or unset?
+        assertFalse(bucket.equals(31, b__12, 0)); // ambiguous: row of nulls or unset?
     }
 
 }

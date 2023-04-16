@@ -177,6 +177,7 @@ public final class TermBatch extends Batch<TermBatch> {
 
     @Override public void putRow(TermBatch other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException();
+        if (row >= other.rows) throw new IndexOutOfBoundsException();
         reserve(1, 0);
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
     }

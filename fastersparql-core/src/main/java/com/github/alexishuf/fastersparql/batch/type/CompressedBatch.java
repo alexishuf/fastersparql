@@ -7,6 +7,8 @@ import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -23,12 +25,24 @@ import static java.util.Arrays.copyOf;
 import static java.util.Arrays.fill;
 import static java.util.Objects.requireNonNull;
 import static jdk.incubator.vector.ByteVector.fromArray;
+import static jdk.incubator.vector.IntVector.SPECIES_256;
+import static jdk.incubator.vector.IntVector.fromArray;
 import static jdk.incubator.vector.VectorOperators.XOR;
 
 public class CompressedBatch extends Batch<CompressedBatch> {
+    /** Number of {@code int}s per metadata column for a single row. */
+    private static final int MD_COL_INTS = 3;
+    private static final int MD_FID = 0;
+    private static final int MD_OFF = 1;
+    private static final int MD_LEN = 2;
+
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_SP_LEN = B_SP.length();
     private static final int B_SP_MASK = B_SP_LEN-1;
+    private static final VectorSpecies<Integer> I_SP = IntVector.SPECIES_PREFERRED;
+    private static final int I_SP_LEN = I_SP.length();
+    private static final int PUT_SLACK = I_SP_LEN == 8 ? 24 : 0;
+    private static final int I_SP_MASK = I_SP_LEN-1;
 
     /** Storage for local parts of terms. */
     private byte[] locals;
@@ -52,26 +66,65 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      */
     private int[] md;
 
-    /** Index of last row with values on locals */
-    private int lastLocalsRow;
-    /** Index of last column of last row with values on locals */
-    private int lastLocalsCol;
+    /** Aligned index in {@code locals} where locals of a new row shall be placed. */
+    private int bytesUsed;
     /** Number of {@code int}s per metadata row */
     private int mdRowInts;
-    /** {@link #mdBase(int, int)} for column zoer of the row being built or -1 */
-    private int mdOfferRowBase = -1;
+    /** {@code -1} if not in a {@link #beginOffer()}/{@link #beginPut()}. Else this is the index
+     * into {@code locals} where local bytes for the next column shall be written to. */
+    private int offerNextLocals = -1;
+    /** {@code col} in last {@code offerTerm}/{@code putTerm} call in the current
+     *  {@link #beginOffer()}/{@link #beginPut()}, else {@code -1}. */
+    private int offerLastCol = -1;
     /** Whether hash() and equals() can be vectorized */
     private boolean vectorSafe;
     /** Whether the range {@code [bytesUsed(), locals.length)} is zero-filled. */
     private boolean localsTailClear;
-    /** Number of {@code int}s per metadata column for a single row. */
-    private static final int MD_COL_INTS = 3;
-    private static final int MD_FID = 0;
-    private static final int MD_OFF = 1;
-    private static final int MD_LEN = 2;
 
 
     /* --- --- --- helpers --- --- --- */
+
+    boolean corrupted() {
+        if (cols == 0) return false;
+        if (rows < 0 || cols < 0)
+            return true;
+        int lastRowAlignedEnd = 0;
+        for (int r = 0; r < rows; r++) {
+            int rOff = rowLocalOff(mdBase(r, 0));
+            int rEnd = rowLocalEnd(mdBase(r, 0));
+            if (rEnd > rOff && rOff < lastRowAlignedEnd)
+                return true; // put/offer broke alignment
+            if ((bytesUsed(r) & B_SP_MASK) != 0)
+                return true; // unaligned bytesUsed
+            int rowAlignedEnd = lastRowAlignedEnd + bytesUsed(r);
+            if (rEnd > rowAlignedEnd)
+                return true; // bytesUsed() is too low
+            if (rEnd > rOff) {
+                for (int i = rEnd; i < rowAlignedEnd; i++)
+                    if (locals[i] != 0)
+                        return true; // non-zero right padding
+            }
+            for (int c = 0; c < cols; c++) {
+                int off = md[r * mdRowInts + c * MD_COL_INTS + MD_OFF];
+                int len = md[r * mdRowInts + c * MD_COL_INTS + MD_LEN];
+                if (len > 0 && off < lastRowAlignedEnd)
+                    return true; // offset in another row
+                if (len > 0 && off >= rowAlignedEnd)
+                    return true; // offset in next row
+                try {get(r, c);} catch (Throwable t) {return true;}
+                if (!equals(r, c, this, r, c))
+                    return true;
+            }
+            if (!equals(r, this, r))
+                return true;
+            lastRowAlignedEnd = Math.max(lastRowAlignedEnd, rowAlignedEnd);
+        }
+        if (localsTailClear) {
+            for (int i = lastRowAlignedEnd; i < locals.length; i++) 
+                if (locals[i] != 0) return true;
+        }
+        return false;
+    }
 
     private int mdBase(int row, int col) {
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
@@ -79,21 +132,54 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     private int rowLocalOff(int mdBase) {
-        int len = 0, end = mdBase + mdRowInts;
-        int lenIdx = mdBase + MD_LEN;
-        while (lenIdx < end && (len = md[lenIdx]) == 0) lenIdx += MD_COL_INTS;
-        return len == 0 ? 0 : md[lenIdx+(MD_OFF-MD_LEN)];
+        if (cols == 0) return 0;
+        if (vectorSafe) {
+            for (; mdBase >= 0; mdBase -= mdRowInts) {
+                int i = mdBase+MD_LEN, end = mdBase+MD_COL_INTS*cols;
+                for (; i < end; i+=MD_COL_INTS)
+                    if (md[i] > 0) return md[i+(MD_OFF-MD_LEN)];
+            }
+        } else {
+            for (; mdBase >= 0; mdBase -= mdRowInts) {
+                int min = Integer.MAX_VALUE, i = mdBase+MD_LEN, end = mdBase+MD_COL_INTS*cols;
+                for (; i < end; i += MD_COL_INTS)
+                    if (md[i] > 0) min = Math.min(min, md[i+(MD_OFF-MD_LEN)]);
+                if (min != Integer.MAX_VALUE) return min;
+            }
+        }
+        return 0;
     }
 
-    static int vecCeil(int value) {
-        int floor = value &~B_SP_MASK;
-        return floor == value ? floor : floor + B_SP_LEN;
-    }
     private int rowLocalEnd(int mdBase) {
-        int len = 0, i = mdBase + mdRowInts - (MD_COL_INTS - MD_LEN);
-        while (i > mdBase && (len = md[i]) == 0) i -= MD_COL_INTS;
-        return len + (len == 0 ? 0 : md[i+(MD_OFF-MD_LEN)]);
+        if (cols == 0) return 0;
+        if (vectorSafe) {
+            int i = mdBase+MD_COL_INTS*(cols-1)+MD_LEN;
+            for (int len; i >= mdBase; i-=MD_COL_INTS)
+                if ((len=md[i]) > 0) return len + md[i+(MD_OFF-MD_LEN)];
+        } else {
+            int max = 0, i = mdBase+MD_LEN, end = mdBase+MD_COL_INTS*cols;
+            for (int len; i < end; i += MD_COL_INTS)
+                if ((len=md[i]) > 0) max = Math.max(max, len+md[i+(MD_OFF-MD_LEN)]);
+            if (max > 0) return max;
+        }
+        return rowLocalOff(mdBase);
     }
+
+    /** Get a copy of {@code md} that is at least 50% bigger, can contain at least
+     *  {@code additionalInts} more integers and is aligned to {@code I_SP_LEN}. */
+    private static int[] mdGrow(int[] md, int additionalInts) {
+        int ints = md.length + max(md.length >> 1, additionalInts); // grow at least 50%
+        return Arrays.copyOf(md, mdCeil(ints));
+    }
+
+    /** Align ints to {@code I_SP_LEN}. */
+    private static int mdCeil(int ints) {
+        if (ints == 0) return I_SP_LEN; // never return 0
+        return ints + ((I_SP_LEN-ints)&I_SP_MASK); // align size to I_SP_LEN
+    }
+
+    /** Increase {@code bytes} until it is aligned to {@code B_SP_LEN} */
+    static int localsCeil(int bytes) { return  bytes + ((B_SP_LEN-bytes)&B_SP_MASK); }
 
     /**
      * Tries to set a term at (rows, offerCol) and if succeeds increments {@code offerCol}.
@@ -109,30 +195,26 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private boolean setTerm(boolean forbidGrow, int destCol, int flaggedId,
                             byte @Nullable [] local, @Nullable Rope localRope,
                             int localOff, int localLen) {
-        if (mdOfferRowBase < 0) throw new IllegalStateException();
+        if (offerNextLocals < 0) throw new IllegalStateException();
         if (destCol < 0 || destCol >= cols) throw new IndexOutOfBoundsException();
         // find write location in md and grow if needed
-        int mdBase = mdOfferRowBase + destCol * MD_COL_INTS, dest = 0;
+        int mdBase = rows*mdRowInts + destCol * MD_COL_INTS, dest = offerNextLocals;
         if (md[mdBase+MD_OFF] != 0)
             throw new IllegalStateException("Column already set");
         if (localLen > 0) {
-            int lastBase = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
-            dest = md[lastBase+MD_OFF] + md[lastBase+MD_LEN];
-            if (lastLocalsRow < rows) //first non-empty setTerm() of beginOffer()/beginPut()
-                dest = vecCeil(dest);
-            if (lastLocalsCol > destCol)
+            if (offerLastCol > destCol)
                 vectorSafe = false; // out-of-order locals breaks vectorized row equals/hash
-            int required  = vecCeil(dest+localLen);
+            offerLastCol = destCol;
+            int required  = localsCeil(dest+localLen);
             if (required > locals.length) {
                 if (forbidGrow) return false;
-                locals = copyOf(locals, max(required, vecCeil(locals.length+(locals.length>>1))));
+                locals = copyOf(locals, max(required, localsCeil(locals.length+(locals.length>>1))));
             }
             if (local != null)
                 arraycopy(local, localOff, locals, dest, localLen);
             else if (localRope != null)
                 localRope.copy(localOff, localOff+localLen, locals, dest);
-            lastLocalsRow = rows;
-            lastLocalsCol = destCol;
+            offerNextLocals = dest+localLen;
         }
         md[mdBase+MD_FID] = flaggedId;
         md[mdBase+MD_OFF] = dest;
@@ -145,41 +227,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * {@code commitOffer} sequence.
      */
     private void rollbackOffer() {
-        int b = lastLocalsRow * mdRowInts + lastLocalsCol * MD_COL_INTS;
-        fill(locals, findLastLocal(lastLocalsRow), md[b+MD_OFF]+md[b+MD_LEN], (byte)0);
-        mdOfferRowBase = -1;
-    }
-
-    /**
-     * Sets {@code lastLocalRow} and {@code lastLocalCol} and returns the end index of the
-     * local for such term in {@code locals}.
-     *
-     * @param lastLocalsRow start the search from this row. The search direction is
-     *                      downwards (towards zero).
-     * @return the end index (off+len) of the local bytes that term at {@code lastLocalRow},
-     *         {@code lastLocalCol} stores at values or zero if this batch is deemed empty.
-     */
-    private int findLastLocal(int lastLocalsRow) {
-        if (rows > 0 && lastLocalsRow > 0) {
-            int cols = this.cols, base = lastLocalsRow*mdRowInts;
-            int lastRow = 0, lastCol = 0, lastEnd = 0;
-            for (int r = lastLocalsRow; r >= 0; r--, base -= mdRowInts<<1) {
-                for (int c = 0, len, end; c < cols; c++, base += MD_COL_INTS) {
-                    if ((len = md[base+MD_LEN]) > 0 && (end = len + md[base+MD_OFF]) > lastEnd) {
-                        lastEnd = end;
-                        lastRow = r;
-                        lastCol = c;
-                    }
-                }
-                if (lastEnd > 0) {
-                    this.lastLocalsRow = lastRow;
-                    this.lastLocalsCol = lastCol;
-                    return lastEnd;
-                }
-            }
-        }
-        this.lastLocalsRow = this.lastLocalsCol = 0;
-        return 0;
+        fill(locals, bytesUsed, offerNextLocals, (byte)0);
+        offerLastCol = -1;
+        offerNextLocals = -1;
     }
 
     /* --- --- --- lifecycle --- --- --- */
@@ -188,35 +238,28 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         super(0, cols);
         this.locals = new byte[max(B_SP_LEN, bytesCapacity)];
         this.mdRowInts = MD_COL_INTS* max(1, cols);
-        int mdCapacity = max(1, rowsCapacity)*mdRowInts;
-        this.md = new int[mdCapacity];
-        this.lastLocalsRow = 0;
-        this.lastLocalsCol = 0;
+        this.md = new int[mdCeil(max(1, rowsCapacity)*mdRowInts+PUT_SLACK)];
         this.vectorSafe = true;
         this.localsTailClear = true;
     }
 
     private CompressedBatch(CompressedBatch o) {
         super(o.rows, o.cols);
+        this.bytesUsed = o.bytesUsed;
         this.locals = copyOf(o.locals, o.locals.length);
         this.md = copyOf(o.md, o.md.length);
-        this.lastLocalsRow = o.lastLocalsRow;
-        this.lastLocalsCol = o.lastLocalsCol;
+        this.offerNextLocals = o.offerNextLocals;
+        this.offerLastCol = o.offerLastCol;
         this.mdRowInts = o.mdRowInts;
         this.vectorSafe = o.vectorSafe;
         this.localsTailClear = o.localsTailClear;
-        this.mdOfferRowBase = o.mdOfferRowBase;
     }
 
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
 
     /* --- --- --- batch-level accessors --- --- --- */
 
-    @Override public int bytesUsed() {
-        int base = lastLocalsRow*mdRowInts + lastLocalsCol* MD_COL_INTS;
-        int unaligned = md[base+ MD_OFF] + md[base+ MD_LEN];
-        return vecCeil(unaligned);
-    }
+    @Override public int bytesUsed() { return bytesUsed; }
 
     @Override public int rowsCapacity() {
         return md.length/mdRowInts;
@@ -241,7 +284,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         for (int i = mdb; i < mde; i += MD_COL_INTS) h ^= md[i];
         if (vectorSafe) {
             // there is no gap between locals and (ve-i) % B_SP_LEN == 0
-            int ve = vecCeil(rowLocalEnd(mdb));
+            int ve = localsCeil(rowLocalEnd(mdb));
             for (int i = rowLocalOff(mdb); i < ve; i += B_SP.length())
                 h ^= fromArray(B_SP, locals, i).reinterpretAsInts().reduceLanes(XOR);
         } else {
@@ -259,7 +302,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public int bytesUsed(int row) {
         if (cols == 0) return 0;
         int base = mdBase(row, 0), begin = rowLocalOff(base);
-        return rowLocalEnd(base)-begin;
+        return localsCeil(rowLocalEnd(base)-begin);
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
@@ -272,7 +315,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int oOff = other.rowLocalOff(oBase), oEnd = other.rowLocalEnd(oBase);
         if (end-off != oEnd-oOff) return false;
         byte[] oLocals = other.locals;
-        for (int e = vecCeil(end); off < e; off += B_SP.length(), oOff += B_SP.length()) {
+        for (int e = localsCeil(end); off < e; off += B_SP.length(), oOff += B_SP.length()) {
             if (!fromArray(B_SP, locals, off).eq(fromArray(B_SP, oLocals, oOff)).allTrue())
                 return false;
         }
@@ -459,37 +502,32 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     /* --- --- --- mutators --- --- --- */
 
     @Override public void reserve(int additionalRows, int additionalBytes) {
-        int deficit = additionalRows - (md.length/mdRowInts - rows);
-        if (deficit > 0)
-            md = copyOf(md, md.length + max(deficit*mdRowInts, md.length>>1));
-        if ((deficit = additionalBytes - (locals.length - bytesUsed())) > 0)
-            locals = copyOf(locals, locals.length + max(deficit, locals.length>>1));
+        if ((rows+additionalRows)*mdRowInts > md.length)
+            md = mdGrow(md, additionalRows*mdRowInts + PUT_SLACK);
+        int required = bytesUsed()+additionalBytes;
+        if (required > locals.length)
+            locals = copyOf(locals, localsCeil(required));
     }
 
     @Override public void clear() {
         rows            = 0;
-        lastLocalsRow   = 0;
-        lastLocalsCol   = 0;
+        bytesUsed       = 0;
+        offerNextLocals = -1;
+        offerLastCol    = -1;
         md[MD_OFF]      = 0;
         md[MD_LEN]      = 0;
-        mdOfferRowBase  = -1;
         vectorSafe      = true;
         localsTailClear = false;
     }
 
     @Override public void clear(int newColumns) {
-        rows            = 0;
-        lastLocalsRow   = 0;
-        lastLocalsCol   = 0;
-        mdOfferRowBase  = -1;
-        vectorSafe      = true;
-        localsTailClear = false;
+        clear();
         cols            = newColumns;
         mdRowInts       = newColumns == 0 ? MD_COL_INTS : newColumns*MD_COL_INTS;
-        int twice       = mdRowInts<<1;
-        if (md.length < twice) {
-            md = new int[twice];
-        } else {
+        int required = mdCeil(newColumns<<2);
+        if (md.length < required) {
+            md = new int[required];
+        } else { // set off, len to make bytesUsed() return 0
             md[MD_OFF]      = 0;
             md[MD_LEN]      = 0;
         }
@@ -497,13 +535,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public boolean beginOffer() {
         if (rowsCapacity() <= rows) return false;
-        int base = rows * mdRowInts;
-        mdOfferRowBase = base;
-        fill(md, base, base+mdRowInts, 0);
-        if (!localsTailClear) {
-            Arrays.fill(locals, base, locals.length, (byte)0);
-            localsTailClear = true;
-        }
+        beginPut();
         return true;
     }
 
@@ -524,45 +556,44 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public boolean offerTerm(int col, TermParser parser) {
         return setTerm(true, col, parser.flaggedId(), null, parser.localBuf(),
-                       parser.localBegin, parser.localEnd);
+                       parser.localBegin(), parser.localEnd-parser.localBegin);
     }
 
     @Override
-    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
-        return setTerm(true, col, flaggedId, null, localRope, localOff, localEnd);
+    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localLen) {
+        return setTerm(true, col, flaggedId, null, localRope, localOff, localLen);
     }
 
     @Override public boolean commitOffer() {
-        if (mdOfferRowBase < 0) throw new IllegalStateException();
+        if (offerNextLocals < 0) throw new IllegalStateException();
         ++rows;
-        mdOfferRowBase = -1;
+        bytesUsed = localsCeil(offerNextLocals);
+        offerNextLocals = -1;
+        offerLastCol = -1;
+        assert !corrupted() : "corrupted";
         return true;
     }
 
     @Override public boolean offerRow(CompressedBatch other, int row) {
-        if (!other.vectorSafe || other.cols != cols)
-            return super.offerRow(other, row);
+        if (mdCeil((rows+1)*mdRowInts)       > md.length    ) return false;
+        if (other.bytesUsed(row)+bytesUsed() > locals.length) return false;
+        putRow(other, row);
+        return true;
+    }
 
-        int omdBase = other.mdBase(row, 0), mdDest = rows*mdRowInts;
-        if (mdDest+mdRowInts > md.length)
-            return false; // no space in this.md
-
-        int oOff = other.rowLocalOff(omdBase);
-        int rowLen = vecCeil(other.rowLocalEnd(omdBase)-oOff); // ceil gives cheap zero-fill
-        int off = bytesUsed(); // returns rowLocalEnd(rows-1) but aligned
-        if (off + rowLen >= locals.length)
-            return false; // no space in this.locals
-
-        arraycopy(other.md, omdBase, md, mdDest, cols*MD_COL_INTS);
-        arraycopy(other.locals, oOff, locals, off, rowLen);
+    @Override public boolean offer(CompressedBatch o) {
+        if (rows+o.rows*mdRowInts     > md.length    ) return false;
+        if (bytesUsed()+o.bytesUsed() > locals.length) return false;
+        put(o);
         return true;
     }
 
     @Override public void beginPut() {
+        offerLastCol = -1;
+        offerNextLocals = bytesUsed;
         int base = rows * mdRowInts, required = base + mdRowInts;
-        mdOfferRowBase = base;
         if (required > md.length)  // grow capacity by 50% + 2 so that md fits at least 2 rows
-            md = copyOf(md, mdRowInts*(rows + 2 + (rows>>1)));
+            md = mdGrow(md, mdRowInts);
         else
             fill(md, base, required, 0);
         if (!localsTailClear) {
@@ -586,7 +617,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void putTerm(int col, TermParser parser) {
         setTerm(false, col, parser.flaggedId(), null, parser.localBuf(),
-                parser.localBegin, parser.localEnd);
+                parser.localBegin(), parser.localEnd-parser.localBegin);
     }
 
     @Override
@@ -596,44 +627,110 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void commitPut() { commitOffer(); }
 
-    @Override public boolean offer(CompressedBatch o) {
-        if (o.cols != cols) throw new IllegalArgumentException();
-        int mdRowInts = this.mdRowInts, mdDest = rows * mdRowInts;
-        if (mdDest + rows*mdRowInts > md.length) return false;
 
-        int bytesDest = bytesUsed(), oBytes = o.bytesUsed();
-        if (bytesDest+oBytes > locals.length) return false;
+    // FOLFOLFOLFOLFOLFOLFOLFOL
+    // _1__1__1                 // MASK0
+    //         __1__1__         // MASK1
+    //                 1__1__1_ // MASK2
+    private static final VectorMask<Integer> PUT_MASK0 =
+            VectorMask.fromValues(SPECIES_256, false, true, false, false, true, false, false, true);
+    private static final VectorMask<Integer> PUT_MASK1 =
+            VectorMask.fromValues(SPECIES_256, false, false, true, false, false, true, false, false);
+    private static final VectorMask<Integer> PUT_MASK2 =
+            VectorMask.fromValues(SPECIES_256, true, false, false, true, false, false, true, false);
 
-        int[] md = this.md, omd = o.md;
-        int omdRowInts = o.mdRowInts, omdEnd = o.rows * omdRowInts;
-        if (mdRowInts == omdRowInts) {
-            arraycopy(omd, 0, md, mdDest, omdEnd);
-        } else {
-            int rowLen = cols*MD_COL_INTS;
-            for (int in = 0, out = 0; in < omdEnd; in += omdRowInts, out += rowLen)
-                arraycopy(omd, in, md, out, rowLen);
+    public void put(CompressedBatch o) {
+        // handle special cases
+        int oRows = o.rows;
+        if (mdRowInts != o.mdRowInts || o.cols != cols || oRows == 0 || I_SP_LEN != 8) { scalarPut(o); return; }
+
+        int dst = mdRowInts*rows, mdLen = oRows*mdRowInts;
+        int lDst = bytesUsed, lLen = o.bytesUsed;
+
+        int required = mdCeil(dst + mdLen + 24);
+        if (required > md.length)
+            md = mdGrow(md, required);
+        if ((required=localsCeil(bytesUsed+lLen)) > locals.length) {
+            localsTailClear = true;
+            locals = copyOf(locals, required);
         }
-        arraycopy(o.locals, bytesDest, locals, 0, oBytes);
-        rows += o.rows;
-        return true;
+
+        // vectorized copy of md, shifting MD_OFF entries by lDst
+        // Since MD_COL_INTS=3, the lanes containing offsets change for every vector, this change
+        // is cyclical, thus there are only 3 possible lane assignments:
+        // _1__1__1 (MASK0), __1__1__ (MASK1) and 1__1__1_ (MASK2)
+        int[] md = this.md, omd = o.md;
+        int src = 0;
+        if (mdLen >= 24) {
+            IntVector delta0 = IntVector.zero(I_SP).blend(lDst, PUT_MASK0);
+            IntVector delta1 = IntVector.zero(I_SP).blend(lDst, PUT_MASK1);
+            IntVector delta2 = IntVector.zero(I_SP).blend(lDst, PUT_MASK2);
+            // md has a slack of 24 ints, but omd may not have this slack
+            for (; src < mdLen &&  src+24 < omd.length; src += 24, dst += 24) {
+                fromArray(I_SP, omd, src   ).add(delta0).intoArray(md, dst);
+                fromArray(I_SP, omd, src+ 8).add(delta1).intoArray(md, dst+ 8);
+                fromArray(I_SP, omd, src+16).add(delta2).intoArray(md, dst+16);
+            }
+        }
+        // copy/offset leftovers. arraycopy()+for is faster than a fused copy/offset loop
+        if ((mdLen -=src) > 0) {
+            arraycopy(omd, src, md, dst, mdLen);
+            for (int i = dst + MD_OFF, e = dst + mdLen; i < e; i += 3)
+                md[i] += lDst;
+        }
+
+        //copy locals. arraycopy() is faster than vectorized copy
+        arraycopy(o.locals, 0, locals, lDst, lLen);
+
+        // update batch-level data
+        vectorSafe &= o.vectorSafe; // copied any out-of-order locals and gaps from o.locals
+        bytesUsed += lLen;
+        rows += oRows;
+        assert !corrupted() : "corrupted";
     }
 
-    @Override public void put(CompressedBatch o) {
-        int mdRowInts = this.mdRowInts, mdDest = rows*mdRowInts, oRows = o.rows;
+    private void scalarPut(CompressedBatch o) {
+        if (o.cols != cols)   throw new IllegalArgumentException("cols != o.cols");
         int localsLen = o.bytesUsed(), localsDest = bytesUsed();
-        reserve(oRows, localsLen);
+        reserve(o.rows, localsLen);
 
+        //copy md, offsetting MD_OFF by localsDest
         int[] md = this.md, omd = o.md;
-        int omdRowInts = o.mdRowInts, omdEnd = oRows*omdRowInts;
-        if (mdRowInts == omdRowInts) {
-            arraycopy(omd, 0, md, mdDest, omdEnd);
-        } else {
-            int rowLen = cols*MD_COL_INTS;
-            for (int in = 0; in < omdEnd; in += omdRowInts, mdDest += mdRowInts)
-                arraycopy(omd, in, md, mdDest, rowLen);
+        int rInts = this.mdRowInts, orInts = o.mdRowInts;
+        int src = 0, dst = rows*rInts, eob = o.rows*orInts, width = cols*MD_COL_INTS;
+        for (; src < eob; src += orInts-width, dst += rInts-width) {
+            for (int eoc = src+width; src < eoc; src += MD_COL_INTS, dst+=MD_COL_INTS) {
+                md[dst+MD_FID] = omd[src+MD_FID];
+                md[dst+MD_OFF] = omd[src+MD_OFF] + localsDest;
+                md[dst+MD_LEN] = omd[src+MD_LEN];
+            }
         }
+        // copy locals
         arraycopy(o.locals, 0, locals, localsDest, localsLen);
-        rows += oRows;
+
+        //update batch-level metadata
+        vectorSafe &= o.vectorSafe; // out-of-order columns and gaps were copied
+        rows += o.rows;
+        assert !corrupted() : "corrupted";
+    }
+
+    @Override public void putRow(CompressedBatch o, int row) {
+        if (!o.vectorSafe || row >= o.rows || cols != o.cols) { super.putRow(o, row); return; }
+        int base = rows * mdRowInts, oBase = row*o.mdRowInts;
+        int lLen = o.bytesUsed(row), lSrc = o.rowLocalOff(oBase), lDst = bytesUsed;
+        reserve(1, lLen);
+        int[] md = this.md, omd = o.md;
+        for (int e = base+cols*MD_COL_INTS; base < e; base+=MD_COL_INTS, oBase+=MD_COL_INTS) {
+            md[base+MD_FID] = omd[oBase+MD_FID];
+            md[base+MD_OFF] = omd[oBase+MD_OFF] - lSrc + lDst;
+            md[base+MD_LEN] = omd[oBase+MD_LEN];
+        }
+        arraycopy(o.locals, lSrc, locals, lDst, lLen);
+        if (lDst+lLen == locals.length && !localsTailClear)
+            localsTailClear = true;
+        bytesUsed += lLen;
+        ++rows;
+        assert !corrupted() : "corrupted";
     }
 
     /* --- --- --- operation objects --- --- --- */
@@ -656,6 +753,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * @return a {@code int[]} that may not be zero-filled.
      */
     private static int[] getTMd(int required) {
+        required = mdCeil(required);
         int[] a = (int[]) REC_TMD.getAcquire();
         if (a != null) {
             if (a.length < required || !REC_TMD.compareAndSet(a, null))
@@ -727,8 +825,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             // any projection breaks hash/equals vector-safety as there is unexpected data
             // between or after local strings.
             b.vectorSafe = false;
-            //update last (row,col) with local part
-            b.findLastLocal(b.lastLocalsRow);
             return b;
         }
     }
@@ -805,9 +901,16 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 in.vectorSafe = false;
                 in.cols = columns.length;
             }
-            // update rows, lastLocalsRow, lastLocalsCol and localsTailClear
+            // update rows, bytesUsed and localsTailClear
             in.rows = rows = out/tmdRowInts;
-            if (in.findLastLocal(rows-1) != oldBytesUsed)
+            for (int base = (rows-1)*tmdRowInts; base >= 0; base -= tmdRowInts) {
+                int b = in.rowLocalOff(base), e = in.rowLocalEnd(base);
+                if (e > b) {
+                    in.bytesUsed = localsCeil(e);
+                    break;
+                }
+            }
+            if (in.bytesUsed != oldBytesUsed)
                 in.localsTailClear = false;
             return in;
         }

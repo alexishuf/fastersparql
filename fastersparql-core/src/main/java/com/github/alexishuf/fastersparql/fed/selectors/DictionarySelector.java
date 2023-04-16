@@ -23,6 +23,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class DictionarySelector extends Selector {
     public static final String NAME = "dictionary";
     private static final byte[] TYPE_LINE_U8 = (NAME+'\n').getBytes(UTF_8);
+    public static final String FETCH_PREDICATES = "fetch-predicates";
+    public static final String FETCH_CLASSES = "fetch-classes";
 
     private IriImmutableSet predicates;
     private IriImmutableSet classes;
@@ -45,8 +47,8 @@ public class DictionarySelector extends Selector {
     public DictionarySelector(SparqlClient client, Spec spec) {
         super(client.endpoint(), spec);
         this.predicates = this.classes = EMPTY;
-        boolean fetchPredicates = spec.getOr("fetch-predicates", true);
-        boolean fetchClasses = spec.getBool("fetch-classes");
+        boolean fetchPredicates = spec.getOr(FETCH_PREDICATES, true);
+        boolean fetchClasses = spec.getBool(FETCH_CLASSES);
         Thread.startVirtualThread(() -> init(client, fetchPredicates, fetchClasses));
     }
 

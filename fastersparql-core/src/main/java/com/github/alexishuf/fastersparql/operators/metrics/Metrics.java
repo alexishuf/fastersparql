@@ -21,8 +21,9 @@ public class Metrics {
     public long batches;
     /** {@link System#nanoTime()} when execution started */
     public long startNanos;
-    /** {@link System#nanoTime()} when execution completed (cancel or completion) */
-    public long endNanos;
+    /** Nanoseconds elapsed between {@link #startNanos} and the termination (by exhaustion or
+     *  failure) of the {@link BIt}.*/
+    public long allRowsNanos;
     /** If execution ended due to an error, this is the {@link Throwable} instance. */
     public @Nullable Throwable error;
     /** Whether execution was cancelled by a downstream consumer (and not due to an error).
@@ -190,25 +191,25 @@ public class Metrics {
     }
 
     public long time(TimeUnit unit) {
-        return unit.convert(endNanos - startNanos, TimeUnit.NANOSECONDS);
+        return unit.convert(allRowsNanos, TimeUnit.NANOSECONDS);
     }
 
     public long avgBatchDelay(TimeUnit unit) {
-        return unit.convert((endNanos-startNanos)/batches, TimeUnit.NANOSECONDS);
+        return unit.convert(allRowsNanos/batches, TimeUnit.NANOSECONDS);
     }
     public long avgRowDelay(TimeUnit unit) {
-        return unit.convert((endNanos-startNanos)/rows, TimeUnit.NANOSECONDS);
+        return unit.convert(allRowsNanos/rows, TimeUnit.NANOSECONDS);
     }
 
 
     @Override public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof Metrics metrics)) return false;
-        return rows == metrics.rows && batches == metrics.batches && startNanos == metrics.startNanos && endNanos == metrics.endNanos && cancelled == metrics.cancelled && firstRowNanos == metrics.firstRowNanos && minNanosBetweenBatches == metrics.minNanosBetweenBatches && maxNanosBetweenBatches == metrics.maxNanosBetweenBatches && terminalNanos == metrics.terminalNanos && plan.equals(metrics.plan) && Objects.equals(error, metrics.error) && Arrays.equals(joinMetrics, metrics.joinMetrics);
+        return rows == metrics.rows && batches == metrics.batches && startNanos == metrics.startNanos && allRowsNanos == metrics.allRowsNanos && cancelled == metrics.cancelled && firstRowNanos == metrics.firstRowNanos && minNanosBetweenBatches == metrics.minNanosBetweenBatches && maxNanosBetweenBatches == metrics.maxNanosBetweenBatches && terminalNanos == metrics.terminalNanos && plan.equals(metrics.plan) && Objects.equals(error, metrics.error) && Arrays.equals(joinMetrics, metrics.joinMetrics);
     }
 
     @Override public int hashCode() {
-        int result = Objects.hash(plan, rows, batches, startNanos, endNanos, error, cancelled, firstRowNanos, minNanosBetweenBatches, maxNanosBetweenBatches, terminalNanos);
+        int result = Objects.hash(plan, rows, batches, startNanos, allRowsNanos, error, cancelled, firstRowNanos, minNanosBetweenBatches, maxNanosBetweenBatches, terminalNanos);
         result = 31 * result + Arrays.hashCode(joinMetrics);
         return result;
     }
@@ -218,7 +219,7 @@ public class Metrics {
                 ", rows=" + rows +
                 ", batches=" + batches +
                 ", startNanos=" + startNanos +
-                ", endNanos=" + endNanos +
+                ", allRowsNanos=" + allRowsNanos +
                 ", error=" + error +
                 ", cancelled=" + cancelled +
                 ", firstRowNanos=" + firstRowNanos +

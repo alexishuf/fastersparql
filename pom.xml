@@ -68,6 +68,8 @@
 <!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-jcstress</module>
+    <module>fastersparql-bench</module>
+    <module>fastersparql-microbench</module>
     <module>fastersparql-bom</module>
   </modules>
 

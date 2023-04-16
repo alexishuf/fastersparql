@@ -44,7 +44,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused")
 public class Federation extends AbstractSparqlClient {
-    private static final String SOURCES = "sources";
+    public static final String SOURCES = "sources";
 
     private final List<Source> sources = new ArrayList<>();
     private final Optimizer optimizer = new Optimizer();
@@ -160,15 +160,16 @@ public class Federation extends AbstractSparqlClient {
      */
     public CompletionStage<Void> init() {  return init; }
 
-    interface SourceTaskHandler<V> extends BiFunction<V, Throwable, Void> {}
+    public interface SourceTaskHandler<V> extends BiFunction<V, Throwable, Void> {
+        @Override Void apply(V ignored, Throwable error);
+    }
 
     @FunctionalInterface
-    interface SourceTaskLauncher<V> {
+    public interface SourceTaskLauncher<V> {
         void launch(Source source, SourceTaskHandler<V> callback);
     }
 
-    private <V> CompletionStage<Void>
-    forEachSource(SourceTaskLauncher<V> launcher) {
+    public <V> CompletionStage<Void> forEachSource(SourceTaskLauncher<V> launcher) {
         var future = new CompletableFuture<Void>();
         var err = new ExceptionCondenser<>(RuntimeException.class, RuntimeException::new);
         lock.lock();

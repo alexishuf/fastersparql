@@ -74,7 +74,7 @@ public class SingletonsRowBucket<B extends Batch<B>> implements RowBucket<B> {
             @Override public B next() {
                 if (!hasNext()) throw new NoSuchElementException();
                 int i = this.i;
-                this.i = findNext(i);
+                this.i = findNext(i+1);
                 return rows[i];
             }
         };

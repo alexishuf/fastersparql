@@ -12,16 +12,20 @@ import java.util.Objects;
 import static java.lang.System.arraycopy;
 
 public class HdtBatchBucket implements RowBucket<HdtBatch> {
+    private final long NULL = IdAccess.NOT_FOUND;
     private final HdtBatch b;
 
     public HdtBatchBucket(int rowsCapacity, int cols) {
         b = HdtBatchType.INSTANCE.create(rowsCapacity, cols, 0);
         b.reserve(rowsCapacity, 0);
+        Arrays.fill(b.arr, NULL);
         b.rows = rowsCapacity;
     }
 
     @Override public void grow(int additionalRows) {
-        b.arr = Arrays.copyOf(b.arr, b.arr.length+(additionalRows*b.cols));
+        int oldLen = b.arr.length;
+        b.arr = Arrays.copyOf(b.arr, oldLen +(additionalRows*b.cols));
+        Arrays.fill(b.arr, oldLen, b.arr.length, NULL);
         b.rows += additionalRows;
     }
 
@@ -29,8 +33,7 @@ public class HdtBatchBucket implements RowBucket<HdtBatch> {
         int required = rowsCapacity * cols, len = b.arr.length;
         if (len < required)
             b.arr = new long[len = required];
-        else
-            Arrays.fill(b.arr, 0L);
+        Arrays.fill(b.arr, NULL);
         b.cols = cols;
         b.rows = len/cols;
     }
@@ -38,7 +41,7 @@ public class HdtBatchBucket implements RowBucket<HdtBatch> {
     @Override public boolean has(int row) {
         long[] a = b.arr;
         for (int cols = b.cols, i = row*cols, e = i+cols; i < e; i++)
-            if (a[i] != 0) return true;
+            if (a[i] != NULL) return true;
         return false;
     }
 

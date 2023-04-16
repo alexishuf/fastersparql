@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -11,16 +12,20 @@ import java.util.Objects;
 import static java.lang.System.arraycopy;
 
 public class TermBatchBucket implements RowBucket<TermBatch> {
+    private static final Term NULL = Term.iri(Rope.of("urn:fastersparql:null"));
     private final TermBatch b;
 
     public TermBatchBucket(int rowsCapacity, int cols) {
         b = TermBatchType.INSTANCE.create(rowsCapacity, cols, 0);
         b.reserve(rowsCapacity, 0);
         b.rows = rowsCapacity;
+        Arrays.fill(b.arr, NULL);
     }
 
     @Override public void grow(int additionalRows) {
-        b.arr = Arrays.copyOf(b.arr, b.arr.length+(additionalRows*b.cols));
+        int oldLength = b.arr.length;
+        b.arr = Arrays.copyOf(b.arr, oldLength+(additionalRows*b.cols));
+        Arrays.fill(b.arr, oldLength, b.arr.length, NULL);
         b.rows += additionalRows;
     }
 
@@ -28,8 +33,7 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
         int required = rowsCapacity * cols, len = b.arr.length;
         if (len < required)
             b.arr = new Term[len = required];
-        else
-            Arrays.fill(b.arr, null);
+        Arrays.fill(b.arr, NULL);
         b.cols = cols;
         b.rows = len/cols;
     }
@@ -37,7 +41,7 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
     @Override public boolean has(int row) {
         Term[] a = b.arr;
         for (int cols = b.cols, i = row*cols, e = i+cols; i < e; i++)
-            if (a[i] != null) return true;
+            if (a[i] != NULL) return true;
         return false;
     }
 
@@ -72,18 +76,31 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
 
     @Override public Iterator<TermBatch> iterator() {
         return new Iterator<>() {
-            boolean has = true;
+            private TermBatch tmp = Batch.TERM.createSingleton(cols());
+            private int row = skipEmpty(0);
+
+            private int skipEmpty(int row) {
+                while (row < b.rows && !has(row)) ++row;
+                return row;
+            }
+
             @Override public boolean hasNext() {
+                boolean has = row < b.rows;
+                if (!has && tmp != null)
+                    tmp = Batch.TERM.recycle(tmp);
                 return has;
             }
 
             @Override public TermBatch next() {
-                if (!has) throw new NoSuchElementException();
-                has = false;
-                return b;
+                if (!hasNext()) throw new NoSuchElementException();
+                tmp.clear();
+                tmp.putRow(b, row);
+                if ((row = skipEmpty(++row)) >= b.rows)
+                    row = Integer.MAX_VALUE;
+                return tmp;
             }
         };
     }
 
-    @Override public String toString() { return "ArrayRowBucket{capacity="+capacity()+"}"; }
+    @Override public String toString() { return "TermBatchBucket{capacity="+capacity()+"}"; }
 }

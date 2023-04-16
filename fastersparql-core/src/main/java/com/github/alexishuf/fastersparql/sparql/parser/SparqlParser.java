@@ -30,7 +30,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class SparqlParser {
 
     private Rope in;
-    private int pos, end;
+    private int start, pos, end;
     private final ExprParser exprParser = new ExprParser();
     private final GroupParser groupParser = new GroupParser();
     private boolean distinct, reduce;
@@ -66,6 +66,7 @@ public class SparqlParser {
     public Plan parse(Rope query) { return parse(query, 0); }
     public Plan parse(Rope query, int start) {
         end = (in = query).len();
+        this.start = start;
         pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin();
         groupParser.reset();
@@ -88,7 +89,7 @@ public class SparqlParser {
         int acBegin = in.skipWS(where, end), acEnd = in.skip(acBegin, end, UNTIL_WS);
         String actual = acBegin >= end ? "EOF" : "\""+in.sub(acBegin, acEnd)+"\"";
         String ex = (expected instanceof byte[] ? new ByteRope(expected) : expected).toString();
-        throw new InvalidSparqlException("Expected "+ex+" at position "+where+", got "+actual);
+        throw new InvalidSparqlException("Expected "+ex+" at position "+(where-start)+", got "+actual+" Full query: "+in.sub(start, end));
     }
 
     private Term pTerm() {
@@ -306,7 +307,7 @@ public class SparqlParser {
                     case ',' -> { ++pos; c = skipWS();               } // next TP shares s & p
                     case ';' -> { ++pos; c = skipWS(); p = null;     } // next TP shares s
                     case '.' -> { ++pos; c = skipWS(); s = p = null; } // consume '.'
-                    default  ->                        s = p = null;   // no '.' (yet)
+                    default  ->                        s = p = null;   // no triple (yet)
                 }
             }
 
@@ -461,8 +462,7 @@ public class SparqlParser {
             require('}');
             if (poll(UNION_u8, GROUP_FOLLOW))
                 return FS.union(plan, new GroupParser().read());
-            else if (skipWS() == '{')
-                 return FS.join(plan, new GroupParser().read());
+            poll('.');
             return plan;
         }
     }

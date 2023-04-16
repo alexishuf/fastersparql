@@ -188,6 +188,7 @@ public class HdtBatch extends Batch<HdtBatch> {
 
     @Override public void putRow(HdtBatch other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException();
+        if (row >= other.rows) throw new IndexOutOfBoundsException();
         reserve(1, 0);
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
     }

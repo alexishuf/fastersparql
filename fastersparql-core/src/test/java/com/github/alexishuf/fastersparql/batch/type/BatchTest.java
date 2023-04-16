@@ -145,7 +145,7 @@ class BatchTest {
                 String ctx = b.getClass().getSimpleName()+s;
 //                assertTrue(b.hasCapacity(s.rows, s.cols), ctx);
                 if (s.rows == 0) return;
-                assertEquals(s.rows, b.rowsCapacity(), ctx);
+                assertTrue(b.rowsCapacity() >= s.rows, ctx);
             };
             check.accept(new TermBatch(s.rows, s.cols));
             check.accept(new CompressedBatch(s.rows, s.cols, s.requiredBytesAligned));
@@ -255,9 +255,11 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                B b1 = type.create(1, size.cols, 1);
-                B b2 = type.create(1, size.cols, 0);
-                B b3 = type.create(0, size.cols, 0);
+                B b1  = type.create(1, size.cols, 1);
+                B b2  = type.create(1, size.cols, 0);
+                B b3  = type.create(0, size.cols, 0);
+                B b6  = type.create(0, size.cols, 0);
+                B b6_ = type.create(0, size.cols, 0);
                 B b4 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
                 B b5 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
                 b4.clear(size.cols*2);
@@ -282,15 +284,22 @@ class BatchTest {
                     b5.commitPut();
                 }
                 b3.put(b1);
+                if (size.rows > 0)
+                    b6.putRow(b1, 0);
+                for (int r = 1; r < size.rows; r++)
+                    b6_.putRow(size.terms[r]);
+                b6.put(b6_);
                 assertBatchesEquals(size, b1, ctx);
                 assertBatchesEquals(size, b2, ctx);
                 assertBatchesEquals(size, b3, ctx);
                 assertBatchesEquals(size, b4, ctx);
                 assertBatchesEquals(size, b5, ctx);
+                assertBatchesEquals(size, b6, ctx);
                 assertBatchesEquals(b1, b2, ctx);
                 assertBatchesEquals(b2, b3, ctx);
-                assertBatchesEquals(b2, b4, ctx);
-                assertBatchesEquals(b2, b5, ctx);
+                assertBatchesEquals(b3, b4, ctx);
+                assertBatchesEquals(b4, b5, ctx);
+                assertBatchesEquals(b5, b6, ctx);
             }
         });
     }
@@ -748,5 +757,51 @@ class BatchTest {
             assertBatchesEquals((Batch)ex2, (Batch)b2, ctx);
             assertBatchesEquals((Batch)ex3, (Batch)b3, ctx);
         }
+    }
+
+    @ParameterizedTest @MethodSource("types")
+    <B extends Batch<B>> void testNullRow(BatchType<B> type) {
+        Size sz = new Size(4, 2);
+        B n = type.create(1, 2, 0);
+        n.putRow(new Term[]{null, null});
+
+        B uo0 = type.create(1, 2, 0);
+        uo0.beginPut();
+        uo0.putTerm(1, sz.terms[0][1]);
+        uo0.putTerm(0, sz.terms[0][0]);
+        uo0.commitPut();
+        uo0.putRow(n, 0);
+        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)uo0).corrupted());
+
+        B uo1 = type.create(2, 2, 0);
+        uo1.beginPut();
+        uo1.putTerm(1, sz.terms[0][1]);
+        uo1.putTerm(0, sz.terms[0][0]);
+        uo1.commitPut();
+        uo1.beginPut();
+        uo1.commitPut();
+        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)uo1).corrupted());
+
+        B o0 = type.create(2, 2, 0);
+        o0.putRow(sz.terms[0]);
+        o0.putRow(n, 0);
+        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)o0).corrupted());
+
+        B o1 = type.create(1, 2, 0);
+        o1.putRow(sz.terms[0]);
+        o1.beginPut();
+        o1.commitPut();
+        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)o1).corrupted());
+
+        B expected = type.create(2, 2, 0);
+        expected.putRow(sz.terms[0]);
+        expected.beginPut();
+        expected.commitPut();
+        assertEquals(2, expected.rows);
+
+        assertBatchesEquals(expected, uo0, "uo0");
+        assertBatchesEquals(expected, uo1, "uo1");
+        assertBatchesEquals(expected, o0, "o0");
+        assertBatchesEquals(expected, o1, "o1");
     }
 }

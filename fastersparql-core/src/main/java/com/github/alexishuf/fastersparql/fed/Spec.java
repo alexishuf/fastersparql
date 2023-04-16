@@ -55,6 +55,14 @@ public final class Spec {
             return (T) (o instanceof File f ? f : new File(o.toString())).toPath();
         } else if (MediaType.class.equals(cls)) {
             return (T) MediaType.parse(o.toString());
+        } else if (Spec.class.equals(cls)) {
+            if (o instanceof Map<?,?> m) return (T) new Spec((Map<String, Object>)m);
+            if (o instanceof TomlTable t) return (T) new Spec(t);
+            try {
+                return (T) Spec.parseToml(o);
+            } catch (IOException e) {
+                throw new IllegalArgumentException(e);
+            }
         } else if (o instanceof Collection<?> coll) {
             if (List.class.equals(cls)) return (T) new ArrayList<>(coll);
             if (Set.class.equals(cls)) return (T) new HashSet<>(coll);
