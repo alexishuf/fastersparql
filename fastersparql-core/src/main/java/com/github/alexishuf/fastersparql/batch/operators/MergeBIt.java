@@ -28,15 +28,12 @@ import static java.lang.Thread.*;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
-    private static final int FS_FEEDING         = 0x80000000;
-    private static final int FS_PARKING         = 0x40000000;
-    private static final int FS_FST_PARKED_MASK = 0x0fffffff;
-    private static final VarHandle FS;
+    private static final VarHandle N_WAITERS;
     private static final VarHandle ACTIVE_SOURCES;
 
     static {
         try {
-            FS = lookup().findVarHandle(MergeBIt.class, "feedState", int.class);
+            N_WAITERS = lookup().findVarHandle(MergeBIt.class, "nWaiters", int.class);
             ACTIVE_SOURCES = lookup().findVarHandle(MergeBIt.class, "activeSources", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
@@ -46,34 +43,24 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     protected final List<? extends BIt<B>> sources;
     private final Thread[] feedWaiters;
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through VarHandles
-    private int feedState, activeSources;
+    private int nWaiters, activeSources;
 
 
-//    private DebugJournal.RoleJournal journals[];
+    //private DebugJournal.RoleJournal journals[];
 
     public MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
                     Vars vars) {
         this(sources, batchType, vars, true);
     }
-    public MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
-                    Vars vars, int maxBatches) {
-        this(sources, batchType, vars, maxBatches, true);
-    }
     protected MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
                        Vars vars, boolean autoStart) {
-        this(sources, batchType, vars, FSProperties.queueMaxBatches()+sources.size(), autoStart);
-    }
-    protected MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
-                       Vars vars, int maxBatches, boolean autoStart) {
-        super(batchType, vars, maxBatches);
+        super(batchType, vars, FSProperties.queueMaxRows());
         //noinspection unchecked
         int n = (this.sources = sources instanceof List<?> list
                 ? (List<? extends BIt<B>>) list : new ArrayList<>(sources)).size();
-        if (n > FS_FST_PARKED_MASK)
-            throw new IllegalArgumentException("too many sources");
         feedWaiters      = new Thread[n];
         activeSources    = 0;
-        FS.setRelease(this, 0); // also publishes other fields
+        N_WAITERS.setRelease(this, 0); // also publishes other fields
         //journals = new DebugJournal.RoleJournal[n];
         if (autoStart)
             start();
@@ -103,60 +90,28 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     /* --- --- helper methods --- --- --- */
 
-    private int acquire(int s, int flag) {
-        return (int)FS.compareAndExchangeAcquire(this, s&=~flag, s|flag);
-    }
-
-    private int release(int s, int clear, int set) {
-        int n;
-        for (int o; (o=(int)FS.compareAndExchangeRelease(this, s, n=(s&~clear)|set)) != s; s=o)
-            onSpinWait();
-        return n;
-    }
-
     protected final @Nullable B syncOffer(int source, B batch) {
-//        var journal = journals[source];
-        int fs;
-        Thread me = null;
-        while (( (fs=acquire((int)FS.getOpaque(this), FS_FEEDING)) &FS_FEEDING ) != 0) {
-            // try locking PARKING, if it fails, retry FEEDING
-            if (( (fs=acquire(fs, FS_PARKING)) & FS_PARKING ) != 0) continue;
-            // locked PARKING. publish our thread as parked and update lowest-index parked
-            int fstParked = Math.min((fs & FS_FST_PARKED_MASK), source);
-            try {
-                feedWaiters[source] = me == null ? me = currentThread() : me;
-                // before we park, we must ensure there is some feeder that will wake us
-                if ((fs = acquire(fs, FS_FEEDING) & FS_FEEDING) == 0) { // no feeder
-                    feedWaiters[source] = null; // do not self-unpark!
-                    break;                      // we are the feeder now
-                } // else: there is a feeder working or spinning on PARKING
-            } finally {
-                fs = release(fs|FS_PARKING, FS_PARKING|FS_FST_PARKED_MASK, fstParked);
-            }
-//            journal.write("syncOffer: src=", source, "park");
-            LockSupport.park();
-        }
-
+        //var journal = journals[source];
+        //journal.write("syncOffer: WAIT source=", source, "[0][0]=", batch.get(0, 0));
+        feedWaiters[source] = Thread.currentThread();
+        //  this thread has exclusive access to offer()
+        while ((int) N_WAITERS.getAndAdd(this, 1) != 0)
+            LockSupport.park(this);
         try {
-            //journals[source].write("syncOffer: src=", source, "b[0][0]=", batch.get(0, 0));
+            //journal.write("syncOffer: EXCL source=", source, "rows=", batch.rows);
+            feedWaiters[source] = null;
             return offer(batch);
         } finally {
-            release(fs|FS_FEEDING, FS_FEEDING, 0);
-            for (int e; (fs = (int)FS.compareAndExchangeAcquire(this, e=fs&~FS_PARKING, fs|FS_PARKING)) != e; )
-                Thread.onSpinWait();
-            try { // locked FS_PARKING
-                for (int i = fs&FS_FST_PARKED_MASK; i < feedWaiters.length; i++) {
-                    Thread thread = feedWaiters[i];
-                    if (thread != null) {
-                        //journal.write("syncOffer: unpark i=", i);
-                        LockSupport.unpark(thread);
-                        feedWaiters[i] = null;
-                        break;
-                    }
+            //journal.write("syncOffer: RLS source=", source);
+            N_WAITERS.setVolatile(this, 0); // release mutex
+            for (int i = source+1; i != source; i++) { // wake one waiter
+                if (i == feedWaiters.length) i = 0;
+                if (i == source) break;
+                Thread waiter = feedWaiters[i];
+                if (waiter != null) {
+                    LockSupport.unpark(waiter);
+                    break;
                 }
-            } finally { //release PARKING and set incremented parked index
-                //journal.write("syncOffer: exit");
-                release(fs|FS_PARKING, FS_PARKING|FS_FST_PARKED_MASK, 0);
             }
         }
     }
