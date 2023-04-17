@@ -14,7 +14,7 @@ class WatchdogTest {
     }
 
     @RepeatedTest(20) void test() {
-        int shortNanos = 1_000_000, longNanos = 10_000_000;
+        int shortNanos = 500_000, longNanos = 10_000_000;
         AtomicInteger triggers = new AtomicInteger(0);
         try (Watchdog w = new Watchdog(triggers::getAndIncrement)) {
             sleep(longNanos);

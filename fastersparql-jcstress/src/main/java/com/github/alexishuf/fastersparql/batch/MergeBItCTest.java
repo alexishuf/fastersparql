@@ -62,7 +62,9 @@ public class MergeBItCTest extends BItCTest {
                 new SPSCBIt<>(TERM, X, 2),
                 new SPSCUnitBIt<>(TERM, X)
         );
-        return new MergeBIt<>(sources, TERM, X, 2);
+        MergeBIt<TermBatch> it = new MergeBIt<>(sources, TERM, X);
+        it.maxReadyItems(2);
+        return it;
     }
 
     public MergeBItCTest() {

@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResultsParserTest {
@@ -120,7 +121,7 @@ class ResultsParserTest {
     }
 
     private void singleFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxRows());
              var parser = factory.create(Batch.TERM, dst)) {
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
@@ -136,7 +137,7 @@ class ResultsParserTest {
     }
 
     private void byteFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
              var parser = factory.create(Batch.TERM, dst)) {
             Thread.startVirtualThread(() -> {
                 try {
@@ -179,7 +180,7 @@ class ResultsParserTest {
 
     private void lineFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxBatches());
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
              var parser = factory.create(Batch.TERM, dst)) {
             Thread.startVirtualThread(() -> {
                 try {

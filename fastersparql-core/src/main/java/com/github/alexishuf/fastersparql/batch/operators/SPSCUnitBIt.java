@@ -108,6 +108,14 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
         setQS(qs, (qs^QS_UBC)&QS_UBC, QS_PKD);
     }
 
+    @Override public boolean isCompleted() {
+        return ((int)QS.getAcquire(this)&QS_TERM) != 0;
+    }
+
+    @Override public boolean isFailed() {
+        return ((int)QS.getAcquire(this)&QS_TERM) != 0 && error != null;
+    }
+
     /* --- --- --- consumer methods --- --- --- */
 
     @Override public B nextBatch(@Nullable B offer) {

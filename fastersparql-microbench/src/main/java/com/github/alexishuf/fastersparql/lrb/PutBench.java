@@ -24,25 +24,15 @@ public class PutBench {
 //    private List<CompressedBatch> outC;
 
     @Param({"COMPRESSED"})
-    public String type;
+    public String typeName;
     @Param({"MID_AND_SMALL"}) //@Param({"SMALL", "MID", "BIG"})
-    public String size;
+    public String sizeName;
 
     @Setup
     public void setup() {
-        BatchType<?> bt = switch (type) {
-            case "TERM" -> Batch.TERM;
-            case "COMPRESSED" -> Batch.COMPRESSED;
-            default -> throw new IllegalArgumentException();
-        };
+        BatchType<?> bt = Workloads.parseBatchType(typeName);
         assert bt != null;
-        in = switch (size) {
-            case "SMALL" -> Workloads.small(bt);
-            case "MID" -> Workloads.mid(bt);
-            case "MID_AND_SMALL" -> Workloads.midAndSmall(bt);
-            case "BIG" -> Workloads.big(bt);
-            default -> throw new IllegalArgumentException();
-        };
+        in = Workloads.fromName(bt, sizeName);
         out = new ArrayList<>();
         for (Batch batch : in)
             out.add(bt.create(BIt.PREFERRED_MIN_BATCH, batch.cols, 0));

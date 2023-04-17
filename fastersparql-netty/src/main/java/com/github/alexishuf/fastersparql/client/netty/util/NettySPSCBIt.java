@@ -46,19 +46,21 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
         channel = null;
     }
 
-    @Override protected boolean blocksOnNoCapacity() {
-        Channel ch = this.channel;
-        assert ch == null || ch.eventLoop().inEventLoop() : "offer() outside channel event loop";
-        if (!backPressured && ch != null) {
-            backPressured = true;
-            ch.config().setAutoRead(false);
+    @Override protected boolean mustPark(int offerRows, int queuedRows) {
+        if (super.mustPark(offerRows, queuedRows)) {
+            Channel ch = this.channel;
+            assert ch == null || ch.eventLoop().inEventLoop() : "offer() outside channel event loop";
+            if (!backPressured && ch != null) {
+                backPressured = true;
+                ch.config().setAutoRead(false);
+            }
         }
-        return false; // do not block, force a put() into last queued batch
+        return false;
     }
 
     @Override public @Nullable B nextBatch(@Nullable B b) {
         b = super.nextBatch(b);
-        if (backPressured && hasCapacity()) {
+        if (backPressured) {
             final Channel ch = channel;
             if (ch != null)
                 ch.config().setAutoRead(true);

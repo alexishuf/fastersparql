@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -23,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.util.Results.negativeResult;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 
@@ -144,7 +144,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var cb = new SPSCBIt<>(batchType, expected.vars(), FSProperties.queueMaxBatches());
+            var cb = new SPSCBIt<>(batchType, expected.vars(), queueMaxRows());
             Thread.startVirtualThread(() -> {
                 Thread.currentThread().setName("feeder-"+endpoint+"-"+cb);
                 try {

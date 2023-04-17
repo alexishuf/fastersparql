@@ -112,7 +112,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     protected ResultsParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
-        super(batchType, destination.vars(), destination.maxReadyBatches());
+        super(batchType, destination.vars(), destination.maxReadyItems());
         this.batchType = batchType;
         this.destination = destination;
         (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();

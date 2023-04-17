@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 
@@ -90,7 +91,7 @@ public sealed interface BItGenerator {
             private final int[] ints;
             private final @Nullable RuntimeException err;
             private boolean started = false;
-            public GeneratedSPSCBIt(int[] ints, @Nullable RuntimeException err, int maxBatches) { super(TERM, X, maxBatches);
+            public GeneratedSPSCBIt(int[] ints, @Nullable RuntimeException err, int maxRows) { super(TERM, X, maxRows);
                 this.ints = ints;
                 this.err = err;
             }
@@ -114,7 +115,7 @@ public sealed interface BItGenerator {
 
         @Override public BIt<TermBatch> asBIt(Consumer<BIt<TermBatch>> batchingSetup,
                                               @Nullable RuntimeException err, int... ints) {
-            var cb = new GeneratedSPSCBIt(ints, err, 4);
+            var cb = new GeneratedSPSCBIt(ints, err, queueMaxRows());
             batchingSetup.accept(cb);
             return cb;
         }

@@ -23,7 +23,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingDeque;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
@@ -177,8 +177,8 @@ public class WsBindingParsersTest {
         Mailbox serverMB = new Mailbox("server"), clientMB = new Mailbox("client");
         Thread serverFeeder = null, clientFeeder = null, server = null;
         try (var stuff = new AutoCloseableSet<>();
-             var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxBatches()));
-             var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxBatches()));
+             var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxRows()));
+             var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxRows()));
              var clientParser = new WsClientParserBIt<>(serverMB, TERM,
                                                         clientCb, ex.bindingsBIt(), null, null);
              var serverParser = new WsServerParserBIt<>(clientMB, TERM, serverCb)) {

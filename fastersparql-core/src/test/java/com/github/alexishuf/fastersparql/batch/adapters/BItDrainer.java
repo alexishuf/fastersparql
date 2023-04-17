@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
+import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -87,12 +88,12 @@ public sealed abstract class BItDrainer {
             this.ints = new int[sizeHint];
         }
 
-        public int[] cropped() { return size == ints.length ? ints : Arrays.copyOf(ints, size); }
+        public int[] cropped() { return size == ints.length ? ints : copyOf(ints, size); }
 
         @Override public void accept(TermBatch batch) {
             for (int r = 0; r < batch.rows; r++) {
                 if (size == ints.length)
-                    ints = Arrays.copyOf(ints, ints.length + (ints.length>>1));
+                    ints = copyOf(ints, ints.length + Math.max(1, ints.length>>1));
                 ints[size++] = IntsBatch.parse(batch.get(r, 0));
             }
         }

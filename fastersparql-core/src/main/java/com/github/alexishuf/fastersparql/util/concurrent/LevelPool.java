@@ -81,7 +81,8 @@ public final class LevelPool<T> {
         try {
 //            new Exception("&o="+System.identityHashCode(o)).printStackTrace();
 //            for (int i = 0; i < size; i++) {
-//                if (table[base+i] == o) throw new AssertionError();
+//                if (table[base+i] == o)
+//                    throw new AssertionError();
 //            }
             if (size < cap) {
                 table[base+size++] = o;

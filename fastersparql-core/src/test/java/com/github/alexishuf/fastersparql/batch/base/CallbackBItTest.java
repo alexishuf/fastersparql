@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -25,6 +24,7 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.BItGenerator.GENERATORS;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
@@ -85,7 +85,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
         var stop = new AtomicBoolean();
         var prematureExhaust = new AtomicBoolean(false);
         var suffix = format("{round=%d, min=%d, wait=%d}", round, minBatch, waitBatches);
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxRows())) {
             it.maxReadyItems(Math.max(65_536, 2*minBatch)).minBatch(minBatch);
             var batchDrained = new Semaphore(0);
             Thread.ofVirtual().name("Feeder"+suffix).start(() -> {
@@ -242,16 +242,13 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                     }
                     drainer.drainUnordered(cb, ints(nSources*2), null);
                     tasks.await();
-                } catch (Throwable t) {
-                    DebugJournal.SHARED.dump(40);
-                    throw t;
                 }
             }
         }
     }
 
     @Test void testTightWaitProgress() {
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxRows())) {
             it.minBatch(3).minWait(50, MICROSECONDS).maxWait(50, MICROSECONDS);
             IntsBatch.offerAndInvalidate(it, 1, 2);
             assertEquals(intsBatch(1, 2), it.nextBatch(null));
@@ -260,7 +257,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
 
     @Test void testTightWait() {
         int wait = 50;
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxRows())) {
             it.minBatch(3).minWait(50, MILLISECONDS).maxWait(50, MILLISECONDS);
             IntsBatch.offerAndInvalidate(it, 1, 2);
             long start = nanoTime();

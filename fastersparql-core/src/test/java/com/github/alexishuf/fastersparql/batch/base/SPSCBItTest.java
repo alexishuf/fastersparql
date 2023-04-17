@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static java.lang.System.nanoTime;
@@ -27,8 +28,9 @@ import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 
-class SPSCBitTest extends CallbackBItTest {
-    private static final Logger log = LoggerFactory.getLogger(SPSCBitTest.class);
+class SPSCBItTest extends CallbackBItTest {
+    private static final int maxItems = 8;
+    private static final Logger log = LoggerFactory.getLogger(SPSCBItTest.class);
     private final AtomicInteger nextId = new AtomicInteger(1);
 
     @Override protected CallbackBIt<TermBatch> create(int capacity) {
@@ -38,10 +40,11 @@ class SPSCBitTest extends CallbackBItTest {
     @Override protected void run(Scenario genericScenario) {
         if (!(genericScenario instanceof BoundedScenario s))
             throw new IllegalArgumentException("Expected BoundedScenario");
-         var cb = new SPSCBIt<>(TERM, Vars.of("x"), s.maxReadyBatches());
+         var cb = new SPSCBIt<>(TERM, Vars.of("x"), s.maxReadyItems());
         cb.maxReadyItems(s.maxReadyItems());
         cb.minBatch(s.minBatch()).maxBatch(s.maxBatch());
         int id = nextId.getAndIncrement();
+        String oldName = Thread.currentThread().getName();
         Thread.currentThread().setName("CallbackBItTest.run-"+id);
         Thread feeder = Thread.ofVirtual().name("feeder-"+id).start(() -> {
             for (int i = 0; i < s.size(); i++) cb.offer(intsBatch(i));
@@ -52,6 +55,8 @@ class SPSCBitTest extends CallbackBItTest {
             assertTrue(feeder.join(ofSeconds(2)));
         } catch (InterruptedException e) {
             fail(e);
+        } finally {
+            Thread.currentThread().setName(oldName);
         }
     }
 
@@ -115,7 +120,7 @@ class SPSCBitTest extends CallbackBItTest {
     }
 
     @Test void testOfferToFilling() {
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 2)) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), maxItems)) {
             TermBatch b1 = tightIntsBatch(1), b2 = tightIntsBatch(2, 3), b3 = tightIntsBatch(4, 5);
             assertEquals(2, b2.rowsCapacity());
             b2.reserve(2, 0);
@@ -178,89 +183,34 @@ class SPSCBitTest extends CallbackBItTest {
         }
     }
 
-    @Test void testRingBuffer() {
+    @Test void testMaxReadyItems() throws InterruptedException, ExecutionException {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 2)) {
-            it.maxBatch(3);
-            TermBatch b1 = tightIntsBatch(1), b2 = tightIntsBatch(2);
-            TermBatch b3 = tightIntsBatch(3), b4 = tightIntsBatch(4);
-            TermBatch b5 = tightIntsBatch(5), b6 = tightIntsBatch(6);
-            assertEquals(1, b1.rowsCapacity());
-            assertEquals(1, b2.rowsCapacity());
-            assertEquals(1, b3.rowsCapacity());
-            assertEquals(1, b4.rowsCapacity());
-            assertNull(it.offer(b1)); // after: [[1]], items=0, wIdx=0, batches=0
-            assertNull(it.offer(b2)); // after: [[1], [2]], items=1, wIdx=1, batches=1
-            assertSame(b3, it.offer(b3)); // after: [[1], [2, 3]], items=1, wIdx=0, batches=1
-            assertSame(b4, it.offer(b4)); // after: [[1], [2, 3, 4]], items=1, wIdx=0, batches=1
+            TermBatch b1 = intsBatch(1), b2 = intsBatch(2, 3);
+            TermBatch b3 = intsBatch(4, 5), b4 = intsBatch(5, 6);
+            assertTimeout(Duration.ofMillis(5), () -> {
+                assertNull(it.offer(b1));
+                assertNull(it.offer(b2));
+            });
+            // start a offer(), which will block
+            CompletableFuture<TermBatch> f3 = new CompletableFuture<>();
+            Thread.startVirtualThread(() -> f3.complete(it.offer(b3)));
+            assertThrows(TimeoutException.class, () -> f3.get(5, MILLISECONDS));
 
-            // next offer will block due to maxBatch(3)
-            var f5 = new CompletableFuture<TermBatch>();
-            Thread.startVirtualThread(() -> f5.complete(it.offer(b5)));
-            assertThrows(TimeoutException.class, () -> f5.get(5, MILLISECONDS));
-
-            assertSame(b1, it.nextBatch(null)); // unblocks offer(b5)
-            assertTimeout(ofMillis(20), () -> assertNull(f5.get()));
-            // [[5], [2, 3, 4]], items=3, wIdx=0, batches=1
-            assertSame(b6, it.offer(b6)); // after: [[5, 6], [2, 3, 4]], items=3, wIdx=0, batches=1
-
-            assertSame(b2, it.nextBatch(null));
-            assertEquals(intsBatch(2, 3, 4), b2);
-
-            assertSame(b5, it.nextBatch(null));
-            assertEquals(intsBatch(5, 6), b5);
-
-            it.complete(null);
-            assertNull(it.nextBatch(null));
-        }
-    }
-
-    @Test void testMaxReadyItems() {
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 4).maxReadyItems(2)) {
-            TermBatch b1 = tightIntsBatch(1, 2), b2 = tightIntsBatch(3);
-            b1.reserve(1, 0);
-            assertNull(it.offer(b1));
-
-            CompletableFuture<TermBatch> f2 = new CompletableFuture<>();
-            Thread.startVirtualThread(() -> f2.complete(it.offer(b2)));
-            assertThrows(TimeoutException.class, () -> f2.get(5, MILLISECONDS));
-
+            // consuming will unblock offer()
             assertSame(b1, it.nextBatch(null));
-            assertTimeout(ofMillis(20), () -> f2.get());
-            assertSame(b2, it.nextBatch(b1));
+            assertNull(f3.get()); // offer() was unblocked
 
-            TermBatch b3 = tightIntsBatch(4, 5, 6);
-            assertSame(b1, it.offer(b3)); // violates maxReadyItems bcs queue is empty
+            // copy() must block() since b3 on filling has 2 items
+            Thread t4 = Thread.startVirtualThread(() -> it.copy(b4));
+            assertFalse(t4.join(ofMillis(5)));
 
-            TermBatch b4 = tightIntsBatch(4, 5, 6);
-            CompletableFuture<TermBatch> f4 = new CompletableFuture<>();
-            Thread.startVirtualThread(() -> f4.complete(it.offer(b4)));
-            assertThrows(TimeoutException.class, () -> f4.get(5, MILLISECONDS));
+            // consuming will unblock() copy
+            assertSame(b2, it.nextBatch(null));
+            assertTrue(t4.join(ofMillis(5)));
 
-            assertSame(b3, it.nextBatch(b2)); // allows offer(b4) to complete
-
-            assertTimeout(ofMillis(20), () -> assertSame(b2, f4.get()));
-            assertSame(b4, it.nextBatch(b3));
-        }
-    }
-
-    @Test void testDirectRecycling() {
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 4)) {
-            TermBatch b1 = intsBatch(1), b2 = intsBatch(2), b3 = intsBatch(3);
-            TermBatch b4 = intsBatch(4), b5 = intsBatch(5), b6 = intsBatch(6);
-
-            assertNull(it.recycle(b1));
-            assertNull(it.recycle(b2));
-            assertNull(it.recycle(b3));
-            assertNull(it.recycle(b4));
-            assertNull(it.recycle(b5)); // sent to AbstractBit.recycled
-            assertSame(b6, it.recycle(b6)); // rejected
-
-            assertSame(b1, it.stealRecycled());
-            assertSame(b2, it.stealRecycled());
-            assertSame(b3, it.stealRecycled());
-            assertSame(b4, it.stealRecycled());
-            assertSame(b5, it.stealRecycled());
-            assertNull(it.stealRecycled());
+            // offer() and copy() are visible with order retained
+            assertSame(b3, it.nextBatch(null));
+            assertEquals(b4, it.nextBatch(null));
         }
     }
 
@@ -313,7 +263,7 @@ class SPSCBitTest extends CallbackBItTest {
 
     @Test void testMinWait() {
         int delay = 20;
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), maxItems)) {
             it.minBatch(2).minWait(delay, MILLISECONDS);
 
             TermBatch b1 = intsBatch(1); // before nanoTime() to avoid measuring class init
@@ -346,7 +296,7 @@ class SPSCBitTest extends CallbackBItTest {
 
     @Test void testMaxWait() throws Exception {
         int delay = 20, tolerance = 5;
-        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), queueMaxBatches())) {
+        try (var it = new SPSCBIt<>(TERM, Vars.of("x"), maxItems)) {
             it.minBatch(2).maxWait(delay, MILLISECONDS);
             List<TermBatch> batches = Collections.synchronizedList(new ArrayList<>());
             IntsBatch.offerAndInvalidate(it, intsBatch(1));
@@ -367,16 +317,4 @@ class SPSCBitTest extends CallbackBItTest {
             assertEquals(3, batches.size());
         }
     }
-
-    public static void main(String[] args) {
-        var test = new SPSCBitTest();
-        try {
-            long start = nanoTime();
-            while (nanoTime()-start < 10_000_000_000L)
-                test.testRaceFeedNextAndClose(2, 4);
-        } catch (Throwable ex) {
-            throw ex instanceof RuntimeException re ? re : new RuntimeException(ex);
-        }
-    }
-
 }

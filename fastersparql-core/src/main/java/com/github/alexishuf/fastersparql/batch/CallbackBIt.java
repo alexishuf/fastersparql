@@ -25,6 +25,15 @@ public interface CallbackBIt<B extends Batch<B>> extends BIt<B> {
     @Nullable B offer(B batch) throws BItCompletedException;
 
     /**
+     * Copies the content of {@code batch} into internal storage managed by {@code this} so that
+     * the rows can later by consumed via {@link #nextBatch(Batch)}
+     * @param batch batch whose rows will be copied. It will not be modified and caller ALWAYS
+     *              retains ownership
+     * @throws BItCompletedException if {@link #complete(Throwable)} has been previously called.
+     */
+    void copy(B batch) throws BItCompletedException;
+
+    /**
      * How many batches this iterator can internally queue before the next
      * {@link CallbackBIt#offer(Batch)} call blocks. Note that an {@code offer(b)} might not
      * queue {@code b} and rather add its contents to an already queued batch.
@@ -51,4 +60,10 @@ public interface CallbackBIt<B extends Batch<B>> extends BIt<B> {
     @This CallbackBIt<B> maxReadyItems(int items);
 
     void complete(@Nullable Throwable error);
+
+    /** Whether there was a previous call to {@link #complete(Throwable)} */
+    boolean isCompleted();
+
+    /** Whether there was a previous call to {@link #complete(Throwable)} with non-null error. */
+    boolean isFailed();
 }

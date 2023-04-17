@@ -47,7 +47,7 @@ public class FSProperties {
     public static final int DEF_BATCH_MIN_WAIT_US         = 500;
     public static final int DEF_BATCH_MAX_WAIT_US         = 1000;
     public static final int DEF_BATCH_QUEUE_BATCHES       = 8;
-    public static final int DEF_BATCH_QUEUE_ROWS          = Integer.MAX_VALUE;
+    public static final int DEF_BATCH_QUEUE_ROWS          = 1<<14;
     public static final int DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
     public static final int DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
