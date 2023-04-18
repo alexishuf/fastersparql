@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Arrays;
-
 import static java.lang.System.arraycopy;
 import static java.util.Arrays.binarySearch;
 

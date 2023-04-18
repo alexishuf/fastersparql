@@ -12,7 +12,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
@@ -53,8 +52,9 @@ public class QueueBench {
         System.out.println("trialSetup(): loading first invocation batches...");
         seedInputs = uniformCols(Workloads.<Batch>fromName(bt, sizeName), bt);
         System.out.printf("trialSetup(): loaded first invocation batches in %.3fms\n", (nanoTime()-setupStart)/1_000_000.0);
-        vars = new Vars.Mutable(seedInputs.get(0).cols);
-        for (int i = 0; i < vars.size(); i++)
+        int cols = seedInputs.get(0).cols;
+        vars = new Vars.Mutable(cols);
+        for (int i = 0; i < cols; i++)
             vars.add(Rope.of("x", i));
         feederThread = Thread.ofPlatform().name("feeder").start(this::feeder);
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}
@@ -72,20 +72,9 @@ public class QueueBench {
     @Setup(Level.Iteration) public void setup() {
         warnedNoInputs = false;
         invocations = 0;
-        for (int i = 0; i < expectedInvocations; i++) {
-            List<Batch> copy = new ArrayList<>();
-            for (Batch b : seedInputs) {
-                Batch bCopy = bt.create(b.rows+1, b.cols, b.bytesUsed());
-                bCopy.put(b);
-                copy.add(bCopy);
-            }
-            inputsQueue.add(copy);
-        }
+        Workloads.repeat(seedInputs, bt, expectedInvocations, inputsQueue);
         System.gc();
-        int cols = requireNonNull(inputsQueue.peekFirst()).get(0).cols;
-        vars = new Vars.Mutable(cols);
-        for (int i = 0; i < cols; i++)
-            vars.add(Rope.of("x", i));
+        vars = Workloads.makeVars(requireNonNull(inputsQueue.peekFirst()));
         invocations = 0;
         feederThread = Thread.ofVirtual().name("feeder").start(this::feeder);
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}

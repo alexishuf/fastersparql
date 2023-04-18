@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -47,6 +48,13 @@ public class Workloads {
         return list;
     }
 
+    public static <B extends Batch<B>> Vars makeVars(List<B> batches) {
+        int cols = batches.get(0).cols;
+        Vars vars = new Vars.Mutable(cols);
+        for (int i = 0; i < cols; i++) vars.add(Rope.of("x", i));
+        return vars;
+    }
+
     public static <B extends Batch<B>> List<B> uniformCols(List<B> batches, BatchType<B> bt) {
         int maxCols = 0;
         for (B b : batches)
@@ -63,6 +71,25 @@ public class Workloads {
             result.add(b);
         }
         return result;
+    }
+
+    public static <B extends Batch<B>> void
+    repeat(List<B> seed, BatchType<B> bt, int n, Collection<List<B>> dest) {
+        long last = System.nanoTime();
+        for (int i = 0; i < n; i++) {
+            if (System.nanoTime()-last > 10_000_000_000L) {
+                System.out.printf("Creating duplicates of %d batches: %d/%d...\n",
+                        seed.size(), i, n);
+                last = System.nanoTime();
+            }
+            List<B> copy = new ArrayList<>();
+            for (B b : seed) {
+                var bCopy = bt.create(b.rows+1, b.cols, b.bytesUsed());
+                bCopy.put(b);
+                copy.add(bCopy);
+            }
+            dest.add(copy);
+        }
     }
 
     public static BatchType<?> parseBatchType(String name) {
