@@ -68,7 +68,7 @@ class RopeArrayMapTest {
     void testAdd(List<Integer> ids) {
         RopeArrayMap map = new RopeArrayMap();
         for (int i = 0; i < ids.size(); i++) {
-            Rope k = Rope.of("k" + ids.get(i)), v = Rope.of("k" + ids.get(i));
+            Rope k = Rope.of("k" + ids.get(i)), v = Rope.of("v" + ids.get(i));
             assertEquals(i, map.size());
             assertNull(map.get(k));
 
@@ -77,7 +77,7 @@ class RopeArrayMapTest {
             assertEquals(i+1, map.size());
         }
         for (Integer id : ids) {
-            Rope k = Rope.of("k" + id), v = Rope.of("k" + id);
+            Rope k = Rope.of("k" + id), v = Rope.of("v" + id);
             assertEquals(v, map.get(k));
         }
     }

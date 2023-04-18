@@ -27,9 +27,10 @@ public class RopeArrayMap {
             int i = 0, half = data.length>>1;
             while (i < size && !key.equals(data[i])) ++i;
             if (i == size) { // key not found
-                if (i == SORT_THRESHOLD) { // must sort, use this opportunity to also grow
-                    half = data.length; // new data.length will be 2*data.length
-                    i = sortAndGrow(key); // insertion position will change due to sort
+                if (i == SORT_THRESHOLD) { // must sort
+                    sort();
+                    putSorted(key, value);
+                    return;
                 } else if (size == half) { // must grow
                     half = data.length;
                     grow();
@@ -130,19 +131,20 @@ public class RopeArrayMap {
         return sb.toString();
     }
 
-    private int sortAndGrow(Rope addKey) {
-        int keys = this.keys;
-        Rope[] copy =  new Rope[data.length*2];
-        arraycopy(data, 0, copy, 0, keys);
-        copy[keys++] = addKey;
-        Arrays.sort(copy, 0, keys);
-        for (int i = 0, old = 0, oldMid = data.length>>1; i < keys; i++, old = 0) {
-            Rope k = copy[i];
-            if (k == addKey) continue;
-            while (old != keys && !k.equals(data[old])) ++old;
-            copy[data.length+i] = data[oldMid+old];
-        }
-        return binarySearch(data = copy, 0, keys, addKey);
+    private void sort() {
+        int half = data.length>>1;
+        Rope[] next = data.length < SORT_THRESHOLD<<2 ? new Rope[SORT_THRESHOLD<<2] : data;
+        arraycopy(data, 0, next, SORT_THRESHOLD, SORT_THRESHOLD);
+        arraycopy(data, half, next, (next.length>>1) + SORT_THRESHOLD, SORT_THRESHOLD);
+        half = (data = next).length>>1;
+        // At this point data looks like this (SORT_THRESHOLD=4, for simplicity):
+        // data:  __ __ __ __ k0 k1 k2 k3     __ __ __ __ v0 v1 v2 v3
+        // index: 0  1  2  3  4  5  6  7      8  9  10 11 12 13 14 15
+        //        |           ↳ unsorted keys |           ↳ unsorted values:
+        //        ↳ sorted keys dest          ↳ sorted values destination: data.length>>1:
+        keys = 0;
+        for (int i = SORT_THRESHOLD, end = SORT_THRESHOLD<<1; i < end; i++)
+            putSorted(data[i], data[half+i]);
     }
 
     private void grow() {
