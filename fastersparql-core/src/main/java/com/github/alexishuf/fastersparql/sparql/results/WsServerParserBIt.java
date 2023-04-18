@@ -12,9 +12,9 @@ public class WsServerParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
         super(frameSender, batchType, vars, maxBatches);
     }
 
-    public WsServerParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType,
+    public WsServerParserBIt(WsFrameSender<?> frameSender,
                              CallbackBIt<B> destination) {
-        super(frameSender, batchType, destination);
+        super(frameSender, destination);
     }
 
 

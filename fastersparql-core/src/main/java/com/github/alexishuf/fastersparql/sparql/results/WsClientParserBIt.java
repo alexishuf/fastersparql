@@ -53,11 +53,10 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      * request.
      *
      * @param frameSender object to be used when sending WebSocket frames
-     * @param batchType set of operations on {@code R} instances
-     * @param destination See {@link ResultsParserBIt#ResultsParserBIt(BatchType, com.github.alexishuf.fastersparql.batch.CallbackBIt)}
+     * @param destination See {@link ResultsParserBIt#ResultsParserBIt(BatchType, CallbackBIt)}
      */
-    public WsClientParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, CallbackBIt<B> destination) {
-        super(frameSender, batchType, destination);
+    public WsClientParserBIt(WsFrameSender<?> frameSender, CallbackBIt<B> destination) {
+        super(frameSender, destination);
         usefulBindingsVars = Vars.EMPTY;
         bindings = null;
         metrics = null;
@@ -95,14 +94,14 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      *                          {@code bindings} just during the sending phase: for
      *                          {@link BindType#JOIN} and {@link BindType#LEFT_JOIN},
      *                          dropped vars will still be visible in the output rows.
-     @param maxBatches          See {@link SPSCBIt#SPSCBIt(BatchType, Vars, int)}
+     @param maxItems          See {@link SPSCBIt#SPSCBIt(BatchType, Vars, int)}
      */
     public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
                              @NonNull BatchType<B> batchType, @NonNull Vars vars,
                              @NonNull BIt<B> bindings,
                              @Nullable Vars usefulBindingVars,
-                             @Nullable JoinMetrics metrics, int maxBatches) {
-        super(frameSender, batchType, vars, maxBatches);
+                             @Nullable JoinMetrics metrics, int maxItems) {
+        super(frameSender, batchType, vars, maxItems);
         this.bindings = bindings;
         this.usefulBindingsVars = usefulBindingVars == null ? bindings.vars() : usefulBindingVars;
         assert bindings.vars().containsAll(this.usefulBindingsVars);
@@ -114,7 +113,6 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      * that will redirect all rows and the results completion to {@code destination}
      *
      * @param frameSender object to be used when sending WebSocket frames
-     * @param batchType the {@link BatchType} with operations for {@code R}
      * @param destination See {@link ResultsParserBIt#ResultsParserBIt(BatchType, CallbackBIt)}
      * @param bindings a {@link BIt} of bindings that will be sent in to the server as TSV
      *                 chunks in WebSocket frames in parallel to the consumption of this
@@ -127,12 +125,11 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      *                          dropped vars will still be visible in the output rows.
      */
     public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
-                             @NonNull BatchType<B> batchType,
                              @NonNull CallbackBIt<B> destination,
                              @NonNull BIt<B> bindings,
                              @Nullable Vars usefulBindingVars,
                              @Nullable JoinMetrics metrics) {
-        super(frameSender, batchType, destination);
+        super(frameSender, destination);
         this.bindings = bindings;
         this.usefulBindingsVars = usefulBindingVars == null ? bindings.vars() : usefulBindingVars;
         assert bindings.vars().containsAll(this.usefulBindingsVars);

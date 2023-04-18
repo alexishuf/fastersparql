@@ -31,8 +31,8 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     protected int inputColumns = -1, column, line;
     protected int[] inVar2outVar;
 
-    private SVParserBIt(BatchType<B> batchType, ByteRope eol, Vars vars, int maxBatches) {
-        super(batchType, vars, maxBatches);
+    private SVParserBIt(BatchType<B> batchType, ByteRope eol, Vars vars, int maxItems) {
+        super(batchType, vars, maxItems);
         this.nVars = vars.size();
         this.eol = eol;
     }
@@ -67,32 +67,32 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     public final static class TsvFactory implements ResultsParserBIt.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.TSV; }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
-            return new Tsv<>(batchType, vars, maxBatches);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
+            return new Tsv<>(batchType, vars, maxItems);
         }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
-            return new Tsv<>(batchType, destination);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
+            return new Tsv<>(destination);
         }
     }
 
     public final static class CsvFactory implements ResultsParserBIt.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.CSV; }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
-            return new Csv<>(batchType, vars, maxBatches);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
+            return new Csv<>(batchType, vars, maxItems);
         }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
-            return new Csv<>(batchType, destination);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
+            return new Csv<>(destination);
         }
     }
 
     public static class Tsv<B extends Batch<B>> extends SVParserBIt<B> {
         private static final ByteRope EOL = new ByteRope("\n");
 
-        public Tsv(BatchType<B> batchType, Vars vars, int maxBatches) { super(batchType, EOL, vars, maxBatches); }
-        public Tsv(BatchType<B> batchType, CallbackBIt<B> destination) { super(batchType, EOL, destination); }
+        public Tsv(BatchType<B> batchType, Vars vars, int maxItems) { super(batchType, EOL, vars, maxItems); }
+        public Tsv(CallbackBIt<B> destination) { super(destination.batchType(), EOL, destination); }
 
         @Override protected final void doFeedShared(Rope rope) {
             int begin = 0, end = rope.len();
@@ -178,12 +178,12 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     public final static class Csv<B extends Batch<B>> extends SVParserBIt<B> {
         private static final ByteRope EOL = new ByteRope("\r\n");
 
-        public Csv(BatchType<B> batchType, Vars vars, int maxBatches) {
-            super(batchType, EOL, vars, maxBatches);
+        public Csv(BatchType<B> batchType, Vars vars, int maxItems) {
+            super(batchType, EOL, vars, maxItems);
             termParser.eager();
         }
-        public Csv(BatchType<B> batchType, CallbackBIt<B> destination) {
-            super(batchType, EOL, destination);
+        public Csv(CallbackBIt<B> destination) {
+            super(destination.batchType(), EOL, destination);
             termParser.eager();
         }
 

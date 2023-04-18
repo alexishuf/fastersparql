@@ -40,8 +40,8 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     /** Interface used via SPI to discover {@link ResultsParserBIt} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
-        <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches);
-        <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination);
+        <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems);
+        <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination);
     }
 
     private static final NamedServiceLoader<Factory, SparqlResultFormat> NSL = new NamedServiceLoader<>(Factory.class) {
@@ -72,13 +72,13 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      *                   {@link ResultsParserBIt#feedShared(Rope)}
      * @param batchType  basic operations for the type of row that will be created
      * @param vars       list of vars that will correspond to the columns in the produced rows
-     * @param maxBatches maximum number of queued batches ({@link CallbackBIt#maxReadyBatches()}
+     * @param maxItems maximum number of queued batches ({@link CallbackBIt#maxReadyBatches()}
      * @throws NoParserException if there is no {@link ResultsParserBIt} implementation
      *                           supporting  {@code format}.
      */
     public static <B extends Batch<B>> ResultsParserBIt<B>
-    createFor(SparqlResultFormat format, BatchType<B> batchType, Vars vars, int maxBatches) {
-        return NSL.get(format).create(batchType, vars, maxBatches);
+    createFor(SparqlResultFormat format, BatchType<B> batchType, Vars vars, int maxItems) {
+        return NSL.get(format).create(batchType, vars, maxItems);
     }
 
     /**
@@ -87,25 +87,23 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * {@link ResultsParserBIt} will not produce any rows but will complete when parsing
      * completes (successfully or not).
      *
-     * @param format the format of the UTF-8 segments that will be fed via
-     *               {@link ResultsParserBIt#feedShared(Rope)}
-     * @param batchType basic operations for the type of row that will be created
+     * @param format      the format of the UTF-8 segments that will be fed via
+     *                    {@link ResultsParserBIt#feedShared(Rope)}
      * @param destination rows will be sent only {@code destination.feed(R)} and this
      *                    {@link ResultsParserBIt} will never output the rows itself. However, the
      *                    {@link ResultsParserBIt} will complete (blocking any consumer) until
      *                    {@code destination.complete(Throwable)} has been called due to
      *                    completion of parsing or an error.
-     *
      * @throws NoParserException if there is no {@link ResultsParserBIt} implementation
      *                           supporting  {@code format}.
      */
     public static <B extends Batch<B>> ResultsParserBIt<B>
-    createFor(SparqlResultFormat format, BatchType<B> batchType, CallbackBIt<B> destination) {
-        return NSL.get(format).create(batchType, destination);
+    createFor(SparqlResultFormat format, CallbackBIt<B> destination) {
+        return NSL.get(format).create(destination);
     }
 
-    protected ResultsParserBIt(BatchType<B> batchType, Vars vars, int maxBatches) {
-        super(batchType, vars, maxBatches);
+    protected ResultsParserBIt(BatchType<B> batchType, Vars vars, int maxItems) {
+        super(batchType, vars, maxItems);
         this.batchType = batchType;
         this.destination = null;
         (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();

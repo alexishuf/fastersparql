@@ -105,24 +105,24 @@ class WsClientParserBItTest extends ResultsParserTest {
         if (in.contains("!active-binding") || in.contains("!bind-request")) {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, batchType, vars, (BIt<B>) expected.bindingsBIt(), null, null, maxBatches);
+                    return new WsClientParserBIt<>(frameSender, batchType, vars, (BIt<B>) expected.bindingsBIt(), null, null, maxItems);
                 }
                 @Override
-                public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
+                public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
                     //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, batchType, destination, (BIt<B>) expected.bindingsBIt(), null, null);
+                    return new WsClientParserBIt<>(frameSender, destination, (BIt<B>) expected.bindingsBIt(), null, null);
                 }
             };
         } else {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
-                    return new WsClientParserBIt<>(frameSender, batchType, vars, maxBatches);
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
+                    return new WsClientParserBIt<>(frameSender, batchType, vars, maxItems);
                 }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
-                    return new WsClientParserBIt<>(frameSender, batchType, destination);
+                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
+                    return new WsClientParserBIt<>(frameSender, destination);
                 }
             };
         }

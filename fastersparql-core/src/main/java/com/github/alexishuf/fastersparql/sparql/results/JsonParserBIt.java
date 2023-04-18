@@ -30,22 +30,22 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
     public static final class JsonFactory implements Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.JSON; }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxBatches) {
-            return new JsonParserBIt<>(batchType, vars, maxBatches);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
+            return new JsonParserBIt<>(batchType, vars, maxItems);
         }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, CallbackBIt<B> destination) {
-            return new JsonParserBIt<>(batchType, destination);
+        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
+            return new JsonParserBIt<>(destination);
         }
     }
 
-    public JsonParserBIt(BatchType<B> batchType, Vars vars, int maxBatches) {
-        super(batchType, vars, maxBatches);
+    public JsonParserBIt(BatchType<B> batchType, Vars vars, int maxItems) {
+        super(batchType, vars, maxItems);
         push(SparqlState.ROOT);
     }
 
-    public JsonParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
-        super(batchType, destination);
+    public JsonParserBIt(CallbackBIt<B> destination) {
+        super(destination.batchType(), destination);
         push(SparqlState.ROOT);
     }
 

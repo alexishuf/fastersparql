@@ -122,7 +122,7 @@ class ResultsParserTest {
 
     private void singleFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
         try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxRows());
-             var parser = factory.create(Batch.TERM, dst)) {
+             var parser = factory.create(dst)) {
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
                 parser.feedShared(input);
@@ -138,7 +138,7 @@ class ResultsParserTest {
 
     private void byteFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
         try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
-             var parser = factory.create(Batch.TERM, dst)) {
+             var parser = factory.create(dst)) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, len = input.len(); i < len; i++) {
@@ -181,7 +181,7 @@ class ResultsParserTest {
     private void lineFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
         try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
-             var parser = factory.create(Batch.TERM, dst)) {
+             var parser = factory.create(dst)) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {

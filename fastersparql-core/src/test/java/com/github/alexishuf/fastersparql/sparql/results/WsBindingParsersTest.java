@@ -179,9 +179,9 @@ public class WsBindingParsersTest {
         try (var stuff = new AutoCloseableSet<>();
              var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxRows()));
              var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxRows()));
-             var clientParser = new WsClientParserBIt<>(serverMB, TERM,
+             var clientParser = new WsClientParserBIt<>(serverMB,
                                                         clientCb, ex.bindingsBIt(), null, null);
-             var serverParser = new WsServerParserBIt<>(clientMB, TERM, serverCb)) {
+             var serverParser = new WsServerParserBIt<>(clientMB, serverCb)) {
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
             server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));

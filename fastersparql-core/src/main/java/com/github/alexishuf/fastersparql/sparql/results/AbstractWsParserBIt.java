@@ -34,13 +34,13 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
     /* --- --- --- constructors --- --- --- */
 
     public AbstractWsParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, Vars vars,
-                               int maxBatches) {
-        super(batchType, vars, maxBatches);
+                               int maxItems) {
+        super(batchType, vars, maxItems);
         this.frameSender = frameSender;
     }
 
-    public AbstractWsParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, CallbackBIt<B> destination) {
-        super(batchType, destination);
+    public AbstractWsParserBIt(WsFrameSender<?> frameSender, CallbackBIt<B> destination) {
+        super(destination);
         this.frameSender = frameSender;
     }
 

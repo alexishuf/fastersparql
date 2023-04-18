@@ -149,7 +149,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         public void startResponse(MediaType mt, Charset cs) {
             if (!cs.equals(UTF_8) && !cs.equals(US_ASCII))
                 decodeCharset = cs;
-            parser = ResultsParserBIt.createFor(fromMediaType(mt), batchType, this);
+            parser = ResultsParserBIt.createFor(fromMediaType(mt), this);
         }
 
         /** Called for every {@link HttpContent}, which includes a {@link FullHttpResponse} */
