@@ -620,7 +620,7 @@ public final class Term extends Rope implements Expr {
     /**
      * Create a {@link Term} holding the IRI obtained by concatenating
      * {@code RopeDict.get(prefixId)} with {@code suffix.sub(begin, end)} and '>'
-     * (if the suffix slice does not already end in @{code >}).
+     * (if the suffix slice does not already end in {@code >}).
      *
      * <p>Unlike {@link Term#prefixed(int, byte[])}, suffix is not held by reference, thus it
      * can be safely mutated after this call returns. Also note that this method is preferred
@@ -629,7 +629,7 @@ public final class Term extends Rope implements Expr {
      *
      *
      * @param prefixId An id such that {@link RopeDict#get(int)} yields the prefix of the IRI.
-     *                 Such prefix must start with {@code <} and must not end with @{code >}
+     *                 Such prefix must start with {@code <} and must not end with {@code >}
      * @param suffix Rope holding the local portion of the IRI
      * @param begin where the local portion of the IRI starts (inclusive) in {@code suffix}
      * @param end where the local portion of the IRI ends (non-inclusive) in {@code suffix}
@@ -637,7 +637,7 @@ public final class Term extends Rope implements Expr {
      */
     public static Term prefixed(int prefixId, Rope suffix, int begin, int end) {
         if (prefixId == P_XSD || prefixId == P_RDF)
-            return intern(prefixId, new ByteRope(suffix), begin, end-begin);
+            return intern(prefixId, suffix, begin, end-begin);
         return new Term(prefixId, internIriLocal(suffix, begin, end));
     }
 
