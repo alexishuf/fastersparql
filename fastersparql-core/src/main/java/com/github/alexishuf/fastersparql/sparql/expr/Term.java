@@ -16,6 +16,7 @@ import java.util.*;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.DT_MID;
 import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.copyOfRange;
@@ -795,6 +796,14 @@ public final class Term extends Rope implements Expr {
                 } else {
                     dest.append(name).append(':');
                     --localLen; // do not write trailing >
+                    int last = localOff + localLen - 1;
+                    if (localLen > 0 && !Rope.contains(PN_LOCAL_LAST, local[last])) {
+                        if (!Rope.isEscaped(local, localOff, last)) {
+                            dest.append(local, localOff, localLen - 1)
+                                    .append('\\').append(local[last]);
+                            localLen = 0;
+                        }
+                    }
                 }
             }
         }

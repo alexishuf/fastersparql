@@ -216,6 +216,7 @@ public final class TermParser {
      * {@link TermParser}</p>
      */
     public Rope localBuf() {
+        if (localBegin == -1) postParse();
         return ntBuf == null || ntBuf.len == 0 ? in : ntBuf;
     }
 
@@ -301,7 +302,7 @@ public final class TermParser {
                             throw new InvalidTermException(in, begin, "Unresolved prefix");
                         if ((flaggedId = term.flaggedDictId) == 0)
                             buf.append(term.local, 0, term.local.length-1);
-                        buf.append(in, colon+1, stopped).append('>');
+                        unescapePrefixedLocal(buf, colon+1);
                     }
                     default -> throw new IllegalStateException("corrupted");
                 }
@@ -364,7 +365,10 @@ public final class TermParser {
                 case TTL_KIND_FALSE    -> FALSE;
                 case TTL_KIND_TYPE     -> RDF_TYPE;
                 case TTL_KIND_BNODE    -> Term.valueOf(in, begin, end);
-                case TTL_KIND_PREFIXED -> prefixMap.expand(in, begin, stopped);
+                case TTL_KIND_PREFIXED -> {
+                    Rope buf = localBuf();
+                    yield  Term.make(flaggedId, buf.toArray(0, buf.len), 0, buf.len);
+                }
                 default -> throw new IllegalStateException("corrupted");
             };
         };
@@ -550,5 +554,15 @@ public final class TermParser {
             if ((flaggedId = iri.asKnownDatatypeId() | 0x80000000) == 0x80000000)
                 esc.append('^').append('^').append(iri);
         } // else: plain string
+    }
+
+    private void unescapePrefixedLocal(ByteRope out, int begin) {
+        var in = this.in;
+        for (int i, end = stopped; begin < end; begin = i) {
+            out.append(in, begin, i = in.skipUntil(begin, end, '\\'));
+            if (++i >= end) break;
+            out.append(in.get(i++));
+        }
+        out.append('>');
     }
 }

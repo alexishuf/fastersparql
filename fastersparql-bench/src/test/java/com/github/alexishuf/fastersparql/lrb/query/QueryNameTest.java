@@ -2,8 +2,18 @@ package com.github.alexishuf.fastersparql.lrb.query;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -12,8 +22,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -69,6 +82,82 @@ class QueryNameTest {
             Batch<?> expected = name.expected((BatchType) type);
             assertNotNull(expected);
             assertTrue(expected.rows > 0);
+        }
+    }
+
+    static Stream<Arguments> testParseResultsSerializeAndParse() {
+        List<Arguments> list = new ArrayList<>();
+        for (var fmt : List.of(TSV, WS, JSON)) {
+            testParseResults().map(Arguments::get)
+                    .forEach(a -> list.add(arguments(a[0], a[1], fmt)));
+        }
+        return list.stream();
+    }
+
+    @ParameterizedTest @MethodSource
+    public <B extends Batch<B>>
+    void testParseResultsSerializeAndParse(QueryName name, BatchType<B> type,
+                                           SparqlResultFormat format) {
+        Vars vars = name.parsed().publicVars();
+        B expected = name.expected(type);
+        if (expected == null)
+            return;
+//        if (format == WS)
+//            expected = prepareExpectedForWS(expected, type);
+
+        // serialize
+        var serializer = ResultsSerializer.create(format);
+        ByteRope sink = new ByteRope();
+        serializer.init(vars, vars, false, sink);
+        serializer.serialize(expected, sink);
+        serializer.serializeTrailer(sink);
+
+        //parse
+        try (var parse = createParser(format, type, vars)) {
+            parse.feedShared(sink);
+            parse.complete(null);
+            B acc = type.create(expected.rows, expected.cols, expected.bytesUsed());
+            for (B b = null; (b = parse.nextBatch(b)) != null; )
+                acc.put(b);
+            assertEquals(expected, acc);
+        }
+    }
+
+//    private <B extends Batch<B>> B prepareExpectedForWS(B expected, BatchType<B> type) {
+//        ByteRope tmp = new ByteRope();
+//        B fix = type.create(expected.rows, expected.cols, expected.bytesUsed());
+//        for (int r = 0, rows = expected.rows, cols = expected.cols; r < rows; r++) {
+//            fix.beginPut();
+//            for (int c = 0; c < cols; c++) {
+//                if (expected.termType(r, c) == Term.Type.IRI) {
+//                    Term term = Objects.requireNonNull(expected.get(r, c));
+//                    int len = term.local.length;
+//                    byte last = len < 2 ? (byte)'a' : term.local[len - 2];
+//                    if (!Rope.contains(PN_LOCAL_LAST, last)) {
+//                        tmp.clear().append(term.local, 0, len-2)
+//                                .append('\\').append(last);
+//                        fix.putTerm(c, term.flaggedDictId, tmp, 0, tmp.len);
+//                        continue;
+//                    }
+//                }
+//                fix.putTerm(c, expected, r, c);
+//            }
+//            fix.commitPut();
+//        }
+//        return fix;
+//    }
+
+    private <B extends Batch<B>, S extends ByteSink<S>> ResultsParserBIt<B>
+    createParser(SparqlResultFormat format, BatchType<B> type, Vars vars) {
+        if (format == WS) {
+            WsFrameSender<?> frameSender = new WsFrameSender<S>() {
+                @Override public void sendFrame(S content) {}
+                @Override public S createSink() {return null;}
+                @Override public void releaseSink(S sink) {}
+            };
+            return new WsClientParserBIt<>(frameSender, type, vars, 1<<16);
+        } else {
+            return ResultsParserBIt.createFor(format, type, vars, 1<<16);
         }
     }
 }
