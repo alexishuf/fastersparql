@@ -88,7 +88,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
      * Create a ByteRope backed by {@code len} bytes starting at {@code utf8[offset]}.
      *
      * <p>{@code utf8} is kept by reference. Therefore, changes to its content will be
-     * visible in the {@link ByteRope} instance. Use {@link ByteRope(Object)}
+     * visible in the {@link ByteRope} instance. Use {@link #ByteRope(Object)}
      * for a copying constructor.</p>
      *
      * @param utf8 backing array (kept by reference) with the UTF-8 string
@@ -127,12 +127,8 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
     }
 
     private int postIncLen(int increment) {
-        if (offset != 0 || this == EMPTY) raiseImmutable();
-        int len = this.len, required = len+increment;
-        if (required > utf8.length) {
-            utf8 = copyOf(utf8, max(utf8.length+32, required));
-            segment = null;
-        }
+        ensureFreeCapacity(increment);
+        int len = this.len;
         this.len += increment;
         slice = null;
         return len;
@@ -142,7 +138,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int len = this.len, required = len+increment;
         if (required > utf8.length) {
-            utf8 = copyOf(utf8, max(utf8.length + 32, required));
+            utf8 = copyOf(utf8, max(utf8.length+(utf8.length>>1), required));
             segment = null;
             slice = null;
 
@@ -233,7 +229,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
             int sum = 0, c;
             for (int free = utf8.length-len; (c = in.read()) != -1 && c != '\n'; --free, ++sum) {
                 if (free-- == 0) {
-                    int newLength = utf8.length + max(32, utf8.length >> 1);
+                    int newLength = utf8.length + (utf8.length >> 1);
                     free = (utf8 = copyOf(utf8, newLength)).length - len;
                     segment = null;
                 }
