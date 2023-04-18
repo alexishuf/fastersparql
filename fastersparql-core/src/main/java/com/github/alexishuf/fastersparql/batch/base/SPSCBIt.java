@@ -108,29 +108,37 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         return offerRows+queuedRows > maxItems && queuedRows > 0;
     }
 
-    /* --- --- --- producer methods --- --- --- */
+    /* --- --- --- termination methods --- --- --- */
 
-
-    @Override public void complete(@Nullable Throwable error) { onTermination(error); }
-
-    @Override protected void cleanup(@Nullable Throwable cause) {
-        Thread producer, consumer;
-        lock(); // terminating mid-nextBatch/offer()/copy() could leave them parked forever
+    @Override public void complete(@Nullable Throwable error) {
+        lock();
         try {
-            producer = this.producer;
-            consumer = this.consumer;
-            //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
-            if (READY.getOpaque(this) == null && filling != null) {
-                if      (filling.rows > 0)         READY.setRelease(this, filling);
-                else if (recycle(filling) != null) batchType.recycle(filling);
-                filling = null;
-            }
-        } finally { LOCK.setRelease(this, 0); } // publishes terminated = true
-        // unpark after release prevents spinning (and Thread.yield()) after park() return
+            onTermination(error);
+        } finally { LOCK.setRelease(this, 0); }
         unpark(producer);
         unpark(consumer);
+    }
+
+    @Override public void close() {
+        lock();
+        try {
+            super.close();
+        } finally { LOCK.setRelease(this, 0); }
+        unpark(producer);
+        unpark(consumer);
+    }
+
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
+        if (READY.getOpaque(this) == null && filling != null) {
+            if   (filling.rows > 0) READY.setRelease(this, filling);
+            else                    batchType.recycle(filling);
+            filling = null;
+        }
         super.cleanup(cause);
     }
+
+    /* --- --- --- producer methods --- --- --- */
 
     @Override public @Nullable B offer(B b) throws BItCompletedException {
         lock();
@@ -293,7 +301,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             return null;
         }
         adjustCapacity(b); // guides getBatch() allocations
-        //dbg.write("nextBatch RET &b=", identityHashCode(b), "rows=", b.rows);
+        //dbg.write("nextBatch RET &b=", System.identityHashCode(b), "rows=", b.rows);
         return b;
     }
 }
