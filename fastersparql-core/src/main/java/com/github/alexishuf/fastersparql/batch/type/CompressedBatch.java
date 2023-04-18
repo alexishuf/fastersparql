@@ -594,8 +594,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int base = rows * mdRowInts, required = base + mdRowInts;
         if (required > md.length)  // grow capacity by 50% + 2 so that md fits at least 2 rows
             md = mdGrow(md, mdRowInts);
-        else
-            fill(md, base, required, 0);
+        fill(md, base, required, 0);
         if (!localsTailClear) {
             Arrays.fill(locals, base, locals.length, (byte)0);
             localsTailClear = true;
