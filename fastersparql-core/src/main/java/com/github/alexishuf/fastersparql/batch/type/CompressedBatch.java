@@ -422,44 +422,39 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void writeNT(ByteSink<?> dest, int row, int col) {
         int base = mdBase(row, col), fId = md[base];
-        if (fId > 0) dest.append(RopeDict.get(fId));
+        byte[] shared = fId == 0 ? null : RopeDict.get(fId & 0x7fffffff).utf8;
+        if (fId > 0) dest.append(shared, 0, shared.length);
         dest.append(locals, md[base+MD_OFF], md[base+MD_LEN]);
-        if (fId < 0) dest.append(RopeDict.get(fId&0x7fffffff));
+        if (fId < 0) dest.append(shared, 0, shared.length);
     }
-
     @Override public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
-        if (begin < 0 || end < 0) throw new IndexOutOfBoundsException();
-        int base = mdBase(row, col), fId = md[base];
+        int base = mdBase(row, col), len = end-begin, fId = md[base], lLen = md[base+MD_LEN];
+        byte[] shared = fId == 0 ? ByteRope.EMPTY.utf8 : RopeDict.get(fId&0x7fffffff).utf8;
+        if (begin < 0 || len > shared.length+lLen) throw new IndexOutOfBoundsException();
+
+        int written;
         if (fId > 0) {
-            ByteRope prefix = RopeDict.get(fId);
-            int len = prefix.len;
-            if (begin < len) {
-                dest.append(prefix, begin, Math.min(end, len));
+            written = Math.min(len, shared.length-begin);
+            if (written > 0) {
+                dest.append(shared, begin, written);
+                len -= written;
                 begin = 0;
             } else {
-                begin -= len;
-            }
-            end -= len;
-            if (begin < end) {
-                if (end > md[base+MD_LEN]) throw new IndexOutOfBoundsException(end+len);
-                dest.append(locals, md[base+MD_OFF], end-begin);
-            }
-        } else {
-            int len = md[base+MD_LEN];
-            if (begin < len) {
-                int off = md[base + MD_OFF];
-                dest.append(locals, off+begin, Math.min(len, end)-begin);
-                begin = 0;
-            } else { begin -= len; }
-            end -= len;
-            if (begin < end) {
-                if (fId == 0) throw new IndexOutOfBoundsException();
-                ByteRope suffix = RopeDict.get(fId & 0x7fffffff);
-                if (end > suffix.len) throw new IndexOutOfBoundsException();
-                dest.append(suffix, begin, end);
+                begin -= shared.length;
             }
         }
+        written = Math.min(len, lLen-begin);
+        if (written > 0) {
+            dest.append(locals, md[base + MD_OFF]+begin, written);
+            len -= written;
+            begin = 0;
+        } else {
+            begin -= lLen;
+        }
+        if (fId < 0 && len > 0)
+            dest.append(shared, begin, len);
     }
+
 
     @Override public int hash(int row, int col) {
         int b = mdBase(row, col);
