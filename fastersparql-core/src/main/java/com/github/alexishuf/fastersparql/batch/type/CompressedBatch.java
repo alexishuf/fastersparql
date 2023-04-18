@@ -616,7 +616,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override
     public void putTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
-        setTerm(false, col, flaggedId, null, localRope, localOff, localEnd);
+        setTerm(false, col, flaggedId, null, localRope, localOff,
+                localEnd-localOff);
     }
 
     @Override public void commitPut() { commitOffer(); }
