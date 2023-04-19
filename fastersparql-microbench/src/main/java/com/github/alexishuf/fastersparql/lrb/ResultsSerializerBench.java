@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @Threads(1)
 @Fork(value = 1, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
-@Measurement(iterations = 8, time = 250, timeUnit = TimeUnit.MILLISECONDS)
-@Warmup(iterations = 4, time = 250, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Warmup(iterations = 4, time = 500, timeUnit = TimeUnit.MILLISECONDS)
 @BenchmarkMode({Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class ResultsSerializerBench {

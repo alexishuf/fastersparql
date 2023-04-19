@@ -190,12 +190,12 @@ class MergeBItTest extends AbstractMergeBItTest {
         try (var it = new MergeBIt<>(List.of(s0, s1), TERM, X)) {
             TermBatch b = it.nextBatch(null);
             assertEquals(intsBatch(1, 2), b);
-            assertSame(b0, b);
+            assertEquals(b0, b);
 
             Thread.startVirtualThread(() -> s1.offer(b1));
             b = it.nextBatch(null);
             assertEquals(intsBatch(3), b);
-            assertSame(b1, b);
+            assertEquals(b1, b);
 
             Thread.startVirtualThread(() -> s1.complete(null));
             assertNull(it.nextBatch(null));

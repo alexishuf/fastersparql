@@ -240,13 +240,12 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- consumer methods --- --- --- */
 
     @Override public @Nullable B nextBatch(@Nullable B offer) {
+        offer = recycle(offer);
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
         B b = lockOrTakeReady();
         boolean locked = b == null;
         try {
-            if (!locked) {
-                return b;
-            }
+            if (!locked) return b; // fast path
             long parkNs;
             while (true) {
                 B filling = this.filling;
@@ -255,15 +254,12 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     break;
                 } else if (filling != null) { // steal or determine nanos until re-check
                     if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || terminated) {
-                        if (filling.rows > 0)
-                            b = filling;
-                        else
-                            if (recycle(filling) != null) batchType.recycle(filling);
+                        if (filling.rows > 0) b = filling;
+                        else                  batchType.recycle(filling);
                         this.filling = null;
                         fillingStart = ORIGIN;
                         break;
                     }
-                    offer = recycle(offer);
                 } else if (terminated) { // also: READY and filling are null
                     break;
                 } else {   // start a filling batch using offer
@@ -285,16 +281,14 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 if ((b = lockOrTakeReady()) != null) {
                     break;
                 }
-
                 locked = true;
             }
         } finally {
             if (locked) LOCK.setRelease(this, 0);
+            // recycle offer if we did not already
+            if (offer != null && recycle(offer) != null) batchType.recycle(offer);
             unpark(producer);
         }
-
-        // recycle offer if we did not already
-        if (offer != null && recycle(offer) != null) batchType.recycle(offer);
 
         if (b == null) {  // terminal batch
             checkError(); // throw if failed
