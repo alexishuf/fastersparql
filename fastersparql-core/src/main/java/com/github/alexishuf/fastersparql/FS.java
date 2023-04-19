@@ -394,7 +394,7 @@ public class FS {
             if (o instanceof Expr e)
                 parsed.add(e);
             else if (o != null)
-                parsed.add(p.parse(new ByteRope(o)));
+                parsed.add(p.parse(Rope.of(o)));
         }
         return parsed;
     }
