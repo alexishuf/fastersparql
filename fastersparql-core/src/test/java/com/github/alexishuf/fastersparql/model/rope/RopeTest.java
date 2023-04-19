@@ -331,8 +331,8 @@ class RopeTest {
         List<Rope> ropes = fac.create(sb.toString());
         for (Rope rope : ropes) {
             for (int i = 0; i < 127; i++) {
-                int[] alphabet = Rope.alphabet("" + (char) i);
-                int[] until = Rope.invert(Rope.alphabet("" + (char) i));
+                int[] alphabet = Rope.alphabet(String.valueOf((char) i));
+                int[] until = Rope.invert(Rope.alphabet(String.valueOf((char) i)));
                 int end = sb.length() - 1, idx = i + 1;
                 assertEquals(idx + 1, rope.skip(idx, end, alphabet));
                 assertEquals(idx, rope.skip(1, end, until));
@@ -467,18 +467,18 @@ class RopeTest {
                 new D("908706543021", 908706543021L),
                 new D("-908706543021", -908706543021L)
         );
-        for (D d : data) {
-            var errCls = d.in.isEmpty() ? IndexOutOfBoundsException.class
+        for (D(var in, var ex) : data) {
+            var errCls = in.isEmpty() ? IndexOutOfBoundsException.class
                                         : NumberFormatException.class;
-            for (Rope rope : fac.create(d.in)) {
-                if (d.ex != null)
-                    assertEquals(rope.parseLong(0), d.ex);
+            for (Rope rope : fac.create(in)) {
+                if (ex != null)
+                    assertEquals(rope.parseLong(0), ex);
                 else
                     assertThrows(errCls, () -> rope.parseLong(0));
             }
-            for (Rope rope : fac.create(" "+d.in)) {
-                if (d.ex != null)
-                    assertEquals(rope.parseLong(1), d.ex);
+            for (Rope rope : fac.create(" "+in)) {
+                if (ex != null)
+                    assertEquals(rope.parseLong(1), ex);
                 else
                     assertThrows(errCls, () -> rope.parseLong(1));
             }
@@ -611,6 +611,11 @@ class RopeTest {
                         assertEquals( expected, lr.compareTo(rr), ctx);
                         assertEquals(-expected, rr.compareTo(lr), ctx);
                         assertEquals(expected == 0, lr.equals(rr));
+                    }
+                    for (String rString : List.of(" " + right + " ", "~" + right + "~")) {
+                        for (Rope rr : f.create(rString)) {
+                            assertEquals(expected, lr.compareTo(rr, 1, rr.len - 1), ctx);
+                        }
                     }
                 }
             }

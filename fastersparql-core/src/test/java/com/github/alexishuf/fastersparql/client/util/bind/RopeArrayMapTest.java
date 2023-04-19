@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.util.bind;
 
 
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -26,7 +27,8 @@ class RopeArrayMapTest {
     void testAddSorted(int n) {
         RopeArrayMap map = new RopeArrayMap();
         for (int i = 0; i < n; i++) {
-            Rope k = Rope.of("k"+i), v = Rope.of("v"+i), x = Rope.of("x"+i);
+            ByteRope k = new ByteRope("k"+i);
+            Rope v = Rope.of("v"+i), x = Rope.of("x"+i);
             assertNull(map.get(k), "for k="+k);
             assertEquals(i, map.size());
 
@@ -42,8 +44,13 @@ class RopeArrayMapTest {
             assertEquals(i+1, map.size());
             assertEquals(v, map.get(k));
 
-            for (int j = 0; j < i; j++)
-                assertEquals(Rope.of('v',j), map.get(Rope.of('k',j)), "i="+i+", j="+j);
+            for (int j = 0; j < i; j++) {
+                String ctx = "i=" + i + ", j=" + j;
+                ByteRope ex = Rope.of('v', j), key = Rope.of('k', j);
+                assertEquals(ex, map.get(key), ctx);
+                assertEquals(ex, map.get(Rope.of(" k",j), 1,1+key.len));
+                assertEquals(ex, map.get(Rope.of("~k",j," "), 1,1+key.len));
+            }
         }
 
     }
@@ -68,7 +75,8 @@ class RopeArrayMapTest {
     void testAdd(List<Integer> ids) {
         RopeArrayMap map = new RopeArrayMap();
         for (int i = 0; i < ids.size(); i++) {
-            Rope k = Rope.of("k" + ids.get(i)), v = Rope.of("v" + ids.get(i));
+            ByteRope k = new ByteRope("k" + ids.get(i));
+            Rope v = Rope.of("v" + ids.get(i));
             assertEquals(i, map.size());
             assertNull(map.get(k));
 
@@ -79,6 +87,8 @@ class RopeArrayMapTest {
         for (Integer id : ids) {
             Rope k = Rope.of("k" + id), v = Rope.of("v" + id);
             assertEquals(v, map.get(k));
+            assertEquals(v, map.get(Rope.of(' ', k), 1, 1+k.len));
+            assertEquals(v, map.get(Rope.of('~', k, ' '), 1, 1+k.len));
         }
     }
 }

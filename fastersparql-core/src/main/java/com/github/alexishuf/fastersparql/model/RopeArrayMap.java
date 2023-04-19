@@ -17,7 +17,7 @@ public class RopeArrayMap {
 
     public int size() { return keys; }
 
-    public void put(Rope key, @Nullable Rope value) {
+    public void put(ByteRope key, @Nullable Rope value) {
         int size = this.keys;
         if (size > SORT_THRESHOLD) {
             putSorted(key, value);
@@ -62,7 +62,7 @@ public class RopeArrayMap {
     public void putAll(RopeArrayMap other) {
         Rope[] d = other.data;
         for (int i = 0, half = d.length>>1, n = other.keys; i < n; i++)
-            put(d[i], d[half+i]);
+            put((ByteRope)d[i], d[half+i]);
     }
 
     public void clear() {
@@ -89,10 +89,12 @@ public class RopeArrayMap {
     }
 
     public @Nullable Rope get(Rope key, int begin, int end) {
-        int keys = this.keys, len = end - begin;
-        if (keys > SORT_THRESHOLD)
-            return get(key.sub(begin, end));
-        for (int i = 0; i < keys; i++) {
+        int len = end - begin;
+        if (keys > SORT_THRESHOLD) {
+            int i = subKeyBinarySearch(key, begin, end);
+            return i >= 0 ? data[(data.length>>1) + i] : null;
+        }
+        for (int i = 0, keys = this.keys; i < keys; i++) {
             Rope candidate = data[i];
             if (candidate.len() == len && key.has(begin, candidate))
                 return data[i+(data.length>>1)];
@@ -127,6 +129,19 @@ public class RopeArrayMap {
             sb.append(data[i]).append('=').append(data[(data.length>>1) + i]).append(", ");
         if (keys > 0) sb.unAppend(2);
         return sb.toString();
+    }
+
+    /** Equivalent to {@code binarySearch(data, 0, keys, key.sub(keyBegin, keyEnd))} but
+     *  without causing instantiations. */
+    private int subKeyBinarySearch(Rope key, int keyBegin, int keyEnd) {
+        int low = 0, high = keys-1;
+        while (low <= high) {
+            int i = (low+high)>>>1, diff = data[i].compareTo(key, keyBegin, keyEnd);
+            if      (diff < 0) low = i+1;
+            else if (diff > 0) high = i-1;
+            else               return i;
+        }
+        return -low-1;
     }
 
     private void sort() {

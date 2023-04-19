@@ -443,10 +443,10 @@ class TermTest {
         if (id == 0) {
             assertEquals(local, expected.toString());
         } else if (id == DT_string) {
-            assertEquals(local+"\"", term.toString());
+            assertEquals(local+"\"", requireNonNull(term).toString());
         } else {
             String shared = get(id).toString();
-            assertEquals(flaggedId > 0 ? shared + local : local + shared, term.toString());
+            assertEquals(flaggedId > 0 ? shared + local : local + shared, requireNonNull(term).toString());
         }
     }
 
@@ -489,11 +489,13 @@ class TermTest {
         int id = (int)RopeDict.internIri(iri, 0, iri.len());
         assertTrue(id > 0);
 
-        assertSame(CLOSE_IRI, make(id, "#>".getBytes(UTF_8), 1, 1).local);
+        assertSame(CLOSE_IRI, requireNonNull(make(id, "#>".getBytes(UTF_8), 1, 1)).local);
         Term one = make(id, "#1>".getBytes(UTF_8), 1, 2);
         Term ab = make(id, "#ab>".getBytes(UTF_8), 1, 3);
-        assertSame(one.local, make(id, "1>".getBytes(UTF_8), 0, 2).local);
-        assertSame(ab.local, make(id, "ab>".getBytes(UTF_8), 0, 3).local);
+        assertNotNull(one);
+        assertNotNull(ab);
+        assertSame(one.local, requireNonNull(make(id, "1>".getBytes(UTF_8), 0, 2)).local);
+        assertSame(ab.local, requireNonNull(make(id, "ab>".getBytes(UTF_8), 0, 3)).local);
     }
 
     static Stream<Arguments> testValueOfReversible() {
@@ -570,8 +572,8 @@ class TermTest {
 
     static Stream<Arguments> testToSparql() {
         var customMap = new RopeArrayMap();
-        customMap.put(Rope.of("<http://example.org/"), EMPTY);
-        customMap.put(Rope.of("<http://xmlns.com/foaf/0.1/"), Rope.of("foaf"));
+        customMap.put(new ByteRope("<http://example.org/"), EMPTY);
+        customMap.put(new ByteRope("<http://xmlns.com/foaf/0.1/"), Rope.of("foaf"));
         var custom = new PrefixAssigner(customMap);
         int foaf = (int)internIri(Rope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
         assertTrue(foaf > 0);

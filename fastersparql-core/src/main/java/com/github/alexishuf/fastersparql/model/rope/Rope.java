@@ -55,7 +55,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return switch (o) {
             case       byte[] a  -> a[i];
             case     ByteRope r  -> r.utf8[r.offset+i];
-            case   BufferRope r  -> r.buffer.get(r.buffer.position()+i);
+            case   BufferRope r  -> r.buffer.get(r.offset+i);
             case         Term t  -> t.get(i);
             case CharSequence cs -> {
                 char c = cs.charAt(i);
@@ -83,7 +83,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
             }
             case BufferRope r -> {
                 ByteBuffer bb = r.buffer;
-                int pos = bb.position();
+                int pos = r.offset;
                 not += pos; i += pos; begin += pos;
                 while (not >= begin && bb.get(not) == '\\') --not;
             }
@@ -96,6 +96,9 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     public Rope(int len) { this.len = len; }
 
+    /**
+     * A {@link MemorySegment} with {@link #len()} bytes where the first is {@code this.get(0)}.
+     */
     public abstract @Nullable MemorySegment segment();
 
     /** Get the number of bytes in this {@link Rope}. */
@@ -109,7 +112,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     public byte get(int i) {
         if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
         return switch (this) {
-            case BufferRope r -> r.buffer.get(r.buffer.position()+i);
+            case BufferRope r -> r.buffer.get(r.offset+i);
             case Term t -> {
                 int id = t.flaggedDictId;
                 byte[] fst = id > 0 ? RopeDict.get(id           ).utf8 : t.local;
@@ -144,7 +147,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int len = end - begin;
         switch (this) {
             case   ByteRope r -> arraycopy(r.utf8, r.offset+begin, dest, offset, len);
-            case BufferRope r -> r.buffer.get(r.buffer.position()+begin, dest, offset, len);
+            case BufferRope r -> r.buffer.get(r.offset+begin, dest, offset, len);
             case Term t -> {
                 int fId = t.flaggedDictId;
                 if (fId == 0) {
@@ -168,24 +171,22 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     /** Equivalent to {@code out.write(toArray(0, len())); return len}. */
     public final int write(OutputStream out) throws IOException {
-        return switch (this) {
-            case ByteRope r -> { out.write(r.utf8, r.offset, r.len); yield r.len; }
+        switch (this) {
+            case ByteRope r -> out.write(r.utf8, r.offset, r.len);
             case BufferRope r -> {
                 ByteBuffer b = r.buffer;
-                int len = b.remaining();
-                if (b.hasArray()) out.write(b.array(), b.arrayOffset()+b.position(), len);
+                if (b.hasArray()) out.write(b.array(), b.arrayOffset()+r.offset, len);
                 else              out.write(toArray(0, len));
-                yield len;
             }
             case Term t -> {
                 int fId = t.flaggedDictId;
                 byte[] lc = t.local, sh = fId==0 ? EMPTY.utf8 : RopeDict.get(fId&0x7fffffff).utf8;
                 out.write(fId > 0 ? sh : lc);
                 out.write(fId > 0 ? lc : sh);
-                yield sh.length + lc.length;
             }
             default -> throw new UnsupportedOperationException();
-        };
+        }
+        return len;
     }
 
     /**
@@ -202,7 +203,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int len = end-begin;
         return switch (this) {
             case ByteRope   r -> new   ByteRope(r.utf8, r.offset+begin, len);
-            case BufferRope r -> new BufferRope(r.buffer.slice(r.buffer.position()+begin, len));
+            case BufferRope r -> new BufferRope(r.buffer, r.offset+begin, len);
             case Term       t -> subTerm(begin, end, t);
             default -> throw new UnsupportedOperationException();
         };
@@ -1036,11 +1037,10 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
                 begin += (offset = r.offset);
                 end += offset - 1;
                 while (end >= begin && u8[end] != c) --end;
-                return Math.max(end, begin)-r.offset;
             }
             case BufferRope r -> {
                 ByteBuffer bb = r.buffer;
-                begin += (offset = bb.position());
+                begin += (offset = r.offset);
                 end += offset - 1;
                 while (end >= begin && bb.get(end) != c) --end;
             }
@@ -1070,9 +1070,11 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int rLen = end - begin;
         if (pos < 0) throw new IndexOutOfBoundsException(pos);
         if (pos+rLen > this.len) return false;
-        MemorySegment lSeg = segment(), rSeg;
-        if (lSeg != null && (rSeg = rope.segment()) != null)
-            return RopeSupport.rangesEqual(lSeg, pos, rSeg, begin, rLen);
+        if (pos >= 32) {
+            MemorySegment lSeg = segment(), rSeg;
+            if (lSeg != null && (rSeg = rope.segment()) != null)
+                return RopeSupport.rangesEqual(lSeg, pos, rSeg, begin, rLen);
+        }
         while (begin < end) {
             if (get(pos++) != rope.get(begin++)) return false;
         }
@@ -1298,7 +1300,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         if (this instanceof ByteRope r)
             return new String(r.utf8, r.offset+begin, end-begin, UTF_8);
         else if (this instanceof BufferRope r && r.buffer.hasArray())
-            return new String(r.buffer.array(), r.buffer.position()+begin, end-begin, UTF_8);
+            return new String(r.buffer.array(), r.offset+begin, end-begin, UTF_8);
         else
             return new String(toArray(begin, end), 0, end-begin, UTF_8);
     }
@@ -1308,7 +1310,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         if (this instanceof ByteRope r)
             return RopeSupport.hash(r.utf8, r.offset, len);
         if (this instanceof BufferRope r && r.buffer.hasArray()) {
-            int offset = r.buffer.arrayOffset() + r.buffer.position();
+            int offset = r.buffer.arrayOffset() + r.offset;
             return RopeSupport.hash(r.buffer.array(), offset, len);
         }
         int h = 0;
@@ -1324,11 +1326,15 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     @Override public int compareTo(@NonNull Rope o) {
-        int len = len(), shared = Math.min(len, o.len());
-        for (int i = 0; i < shared; i++) {
-            if (get(i) != o.get(i)) return get(i) - o.get(i);
-        }
-        return len - o.len();
+        int common = Math.min(len, o.len), i = 0, diff = 0;
+        while (i < common && (diff = get(i) - o.get(i)) == 0) ++i;
+        return diff == 0 ? len - o.len : diff;
+    }
+
+    public int compareTo(Rope o, int begin, int end) {
+        int oLen = end-begin, common = Math.min(len, oLen), i = 0, diff = 0;
+        while (i < common && (diff = get(i)-o.get(begin++)) == 0) ++i;
+        return diff == 0 ? len - oLen : diff;
     }
 
     @Override public final @NonNull String toString() {

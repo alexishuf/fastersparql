@@ -362,4 +362,30 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         return this;
     }
 
+    @Override public int compareTo(@NonNull Rope o) {
+        int common = Math.min(len, o.len), i = 0, diff = 0;
+        byte[] u8 = utf8;
+        if (o instanceof ByteRope r) {
+            byte[] oU8 = r.utf8;
+            while (i < common && (diff = u8[offset+i] - oU8[r.offset+i]) == 0) ++i;
+        } else {
+            while (i < common && (diff = u8[offset+i] - o.get(i))        == 0) ++i;
+        }
+        return diff == 0 ? len - o.len : diff;
+    }
+
+    @Override public int compareTo(@NonNull Rope o, int begin, int end) {
+        int oLen = end-begin, common = Math.min(len, oLen), i = 0, diff = 0;
+        byte[] u8 = utf8;
+        if (o instanceof ByteRope r) {
+            byte[] oU8 = r.utf8;
+            i += offset;
+            common += offset;
+            begin += r.offset;
+            while (i < common && (diff = u8[i] - oU8[begin++])  == 0) ++i;
+        } else {
+            while (i < common && (diff = u8[offset+i] - o.get(begin+i)) == 0) ++i;
+        }
+        return diff == 0 ? len - oLen : diff;
+    }
 }

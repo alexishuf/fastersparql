@@ -15,7 +15,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.ByteBuffer;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -158,7 +157,7 @@ class ResultsParserTest {
 
     private void wsFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
                         RopeFac ropeFac) {
-        try (var parser = factory.create(Batch.TERM, ex.vars(), queueMaxBatches())) {
+        try (var parser = factory.create(Batch.TERM, ex.vars(), 2)) {
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {

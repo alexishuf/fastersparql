@@ -8,8 +8,6 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.Map;
@@ -78,13 +76,7 @@ public class WsSerializer extends ResultsSerializer {
             super(new RopeArrayMap());
         }
 
-        void reset() {
-            prefix2name.clear();
-            prefix2name.put(Term.XSD.sub(0, Term.XSD.len()-1), PrefixMap.XSD_NAME);
-            prefix2name.put(Term.RDF.sub(0, Term.RDF.len()-1), PrefixMap.RDF_NAME);
-        }
-
-        @Override public Rope nameFor(Rope prefix) {
+        @Override public Rope nameFor(ByteRope prefix) {
             Rope name = prefix2name.get(prefix);
             if (name == null) {
                 name = new ByteRope().append('p').append(prefix2name.size());

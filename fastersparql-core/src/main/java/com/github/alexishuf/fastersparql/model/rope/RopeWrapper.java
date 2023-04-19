@@ -17,9 +17,7 @@ public enum RopeWrapper {
     private static int naturalLen(Object o) {
         return switch (o) {
             case byte[] a -> a.length;
-            case ByteRope r -> r.len;
-            case BufferRope r -> r.buffer.remaining();
-            case Rope r -> r.len();
+            case Rope r -> r.len;
             case CharSequence cs -> cs.length();
             default -> throw new IllegalArgumentException("Expected byte[], Rope, or CharSequence");
         };
@@ -107,19 +105,16 @@ public enum RopeWrapper {
         if (!(o instanceof byte[]) && !(o instanceof Rope))
             return toBodyArrayObject(o, begin, end);
         int bodyLen = end-begin;
-        if (this == NONE && o instanceof byte[] a && bodyLen == a.length)
+        byte[] a = o instanceof byte[] arr ? arr : null;
+        if (this == NONE && a != null && bodyLen == a.length)
             return a;
         int body = switch (this) {
             case NONE, CLOSE_LIT, CLOSE_IRI -> 0;
             case LIT, OPEN_LIT, IRI, OPEN_IRI -> 1;
         };
         var u8 = new byte[bodyLen + extraBytes()];
-        switch (o) {
-            case byte[] a     -> arraycopy(a, begin, u8, body, bodyLen);
-            case ByteRope r   -> arraycopy(r.utf8, r.offset+ begin, u8, body, bodyLen);
-            case BufferRope r -> r.buffer.get(r.buffer.position()+ begin, u8, body, bodyLen);
-            default           -> ((Rope) o).copy(begin, end, u8, body);
-        }
+        if (a == null) ((Rope)o).copy(begin, end, u8, body);
+        else           arraycopy(a, begin, u8, body, bodyLen);
         return u8;
     }
 
