@@ -1056,9 +1056,11 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     public final boolean has(int position, byte[] seq) {
         if (position < 0) throw new IndexOutOfBoundsException(position);
         if (position+seq.length > len) return false;
-        MemorySegment s = segment();
-        if (s != null)
-            return rangesEqual(s, position, MemorySegment.ofArray(seq), 0, seq.length);
+        if (seq.length >= B_LEN) {
+            MemorySegment s = segment();
+            if (s != null)
+                return rangesEqual(s, position, MemorySegment.ofArray(seq), 0, seq.length);
+        }
         for (byte b : seq) {
             if (b != get(position++)) return false;
         }
@@ -1070,7 +1072,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int rLen = end - begin;
         if (pos < 0) throw new IndexOutOfBoundsException(pos);
         if (pos+rLen > this.len) return false;
-        if (pos >= 32) {
+        if (rLen >= B_LEN) {
             MemorySegment lSeg = segment(), rSeg;
             if (lSeg != null && (rSeg = rope.segment()) != null)
                 return RopeSupport.rangesEqual(lSeg, pos, rSeg, begin, rLen);
