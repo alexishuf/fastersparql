@@ -28,7 +28,7 @@ public abstract class CardinalityEstimator {
         return NSL.get(name).load(client, spec);
     }
 
-    interface Loader extends NamedService<String> {
+    public interface Loader extends NamedService<String> {
         CardinalityEstimator load(SparqlClient client, Spec spec) throws IOException, BadSerializationException;
     }
 
