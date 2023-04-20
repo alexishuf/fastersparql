@@ -130,7 +130,7 @@ public class HdtBatch extends Batch<HdtBatch> {
         int oCols = o.cols;
         if (row < 0 || col < 0 || row >= o.rows || col >= oCols || destCol < 0 || destCol >= cols)
             throw new IndexOutOfBoundsException();
-        arr[offerRowBase+col] = o.arr[row*oCols + col];
+        arr[offerRowBase+destCol] = o.arr[row*oCols + col];
         return true;
     }
 
