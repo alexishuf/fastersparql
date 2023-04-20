@@ -155,7 +155,12 @@ public final class Modifier extends Plan {
     public <B extends Batch<B>>
     BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
         BIt<B> in = left().execute(bt, binding,
-                                   (canDedup && !(offset > 0)) || distinctCapacity > 0);
+                (canDedup && !(offset > 0)) || distinctCapacity > 0);
+        return executeFor(in, binding, canDedup);
+    }
+    public <B extends Batch<B>>
+    BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean canDedup) {
+        var bt = in.batchType();
         Vars outVars = publicVars(), inVars = in.vars();
         if (binding != null)
             outVars = outVars.minus(binding.vars);

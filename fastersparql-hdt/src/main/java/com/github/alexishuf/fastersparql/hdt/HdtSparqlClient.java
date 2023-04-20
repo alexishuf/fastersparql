@@ -23,6 +23,7 @@ import com.github.alexishuf.fastersparql.hdt.cardinality.HdtCardinalityEstimator
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
+import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -44,6 +45,7 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.CompletionStage;
 
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorPeek;
+import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatch.TYPE;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static java.lang.String.format;
 import static java.lang.invoke.MethodHandles.lookup;
@@ -95,37 +97,45 @@ public class HdtSparqlClient extends AbstractSparqlClient {
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         BIt<HdtBatch> hdtIt;
-        if (sparql instanceof TriplePattern tp) {
-            long s, p, o;
-            Vars vars = sparql.publicVars();
-            var dict = hdt.getDictionary();
-            if (       (s = plain(dict, tp.s,   SUBJECT)) == NOT_FOUND
-                    || (p = plain(dict, tp.p, PREDICATE)) == NOT_FOUND
-                    || (o = plain(dict, tp.o,    OBJECT)) == NOT_FOUND) {
-                hdtIt = new EmptyBIt<>(HdtBatch.TYPE, vars);
-            } else {
-                var it = hdt.getTriples().search(new TripleID(s, p, o));
-                hdtIt = new HdtIteratorBIt(tp, it);
-            }
-        } else {
-            hdtIt = federation.query(HdtBatch.TYPE, sparql);
-        }
+        if (sparql instanceof Modifier m && m.left instanceof TriplePattern tp)
+            hdtIt = m.executeFor(queryTP(tp), null, false);
+        else if (sparql instanceof TriplePattern tp)
+            hdtIt = queryTP(tp);
+        else
+            hdtIt = federation.query(TYPE, sparql);
         return batchType.convert(hdtIt);
     }
 
+    private BIt<HdtBatch> queryTP(TriplePattern tp) {
+        long s, p, o;
+        Vars vars = tp.publicVars();
+        var dict = hdt.getDictionary();
+        if (       (s = plain(dict, tp.s,   SUBJECT)) == NOT_FOUND
+                || (p = plain(dict, tp.p, PREDICATE)) == NOT_FOUND
+                || (o = plain(dict, tp.o,    OBJECT)) == NOT_FOUND) {
+            return new EmptyBIt<>(TYPE, vars);
+        } else {
+            var it = hdt.getTriples().search(new TripleID(s, p, o));
+            return new HdtIteratorBIt(tp, it);
+        }
+    }
+
     @Override
-    public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql, @Nullable BIt<B> bindings, @Nullable BindType type, Metrics.@Nullable JoinMetrics metrics) {
+    public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql, @Nullable BIt<B> bindings, @Nullable BindType type, Metrics.@Nullable JoinMetrics metrics) {
         if (bindings == null || bindings instanceof EmptyBIt<B>)
-            return query(batchType, sparql);
+            return query(bt, sparql);
         else if (type == null)
             throw new NullPointerException("bindings != null, but type is null!");
         if (sparql.isGraph())
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         try {
-            Plan query = new SparqlParser().parse(sparql);
-            if (batchType == HdtBatch.TYPE && query instanceof TriplePattern tp) //noinspection unchecked
-                return (BIt<B>) new HdtBindingBIt((BIt<HdtBatch>) bindings, type, tp, metrics);
-            return new ClientBindingBIt<>(bindings, type, this, query, metrics);
+            Plan q = new SparqlParser().parse(sparql);
+            if (bt == TYPE && (q instanceof TriplePattern
+                    || (q instanceof Modifier m && m.left instanceof TriplePattern))) {
+                //noinspection unchecked
+                return (BIt<B>) new HdtBindingBIt((BIt<HdtBatch>)bindings, type, q, metrics);
+            }
+            return new ClientBindingBIt<>(bindings, type, this, q, metrics);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
         }
@@ -165,7 +175,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             this(tp.publicVars(), tp.s, tp.p, tp.o, it);
         }
         public HdtIteratorBIt(Vars vars, Term s, Term p, Term o, IteratorTripleID it) {
-            super(HdtBatch.TYPE, vars);
+            super(TYPE, vars);
             acquireHdt();
             this.it = it;
 
@@ -215,24 +225,31 @@ public class HdtSparqlClient extends AbstractSparqlClient {
     }
 
     public final class HdtBindingBIt extends BindingBIt<HdtBatch> {
+        private final @Nullable Modifier modifier;
         private final TriplePattern right;
         private final long s, p, o;
         private final @Nullable BIt<HdtBatch> empty;
         private final Vars rightFreeVars;
         private final Dictionary dict;
 
-        public HdtBindingBIt(BIt<HdtBatch> left, BindType type, TriplePattern right,
+        public HdtBindingBIt(BIt<HdtBatch> left, BindType type, Plan rightPlan,
                              Metrics.@Nullable JoinMetrics metrics) {
-            super(left, type, right.publicVars(), null, metrics);
+            super(left, type, rightPlan.publicVars(), null, metrics);
             acquireHdt();
-            this.right = right;
+            if (rightPlan instanceof Modifier m) {
+                this.modifier = m;
+                this.right = (TriplePattern) m.left();
+            } else {
+                this.modifier = null;
+                this.right = (TriplePattern) rightPlan;
+            }
             this.dict = hdt.getDictionary();
             this.s = plain(dict, right.s,   SUBJECT);
             this.p = plain(dict, right.p, PREDICATE);
             this.o = plain(dict, right.o,    OBJECT);
             this.rightFreeVars = right.publicVars().minus(left.vars());
             if (s == -1 || p == -1 || o == -1)
-                empty = new EmptyBIt<>(HdtBatch.TYPE, rightFreeVars);
+                empty = new EmptyBIt<>(TYPE, rightFreeVars);
             else
                 empty = null;
         }
@@ -270,7 +287,10 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             Term s = binding.getIf(right.s);
             Term p = binding.getIf(right.p);
             Term o = binding.getIf(right.o);
-            return new HdtIteratorBIt(rightFreeVars, s, p, o, hdt.getTriples().search(query));
+            BIt<HdtBatch> it = new HdtIteratorBIt(rightFreeVars, s, p, o, hdt.getTriples().search(query));
+            if (modifier != null)
+                it = modifier.executeFor(it, null, false);
+            return it;
         }
     }
 

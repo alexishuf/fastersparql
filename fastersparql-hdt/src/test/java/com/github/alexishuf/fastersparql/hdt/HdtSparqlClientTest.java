@@ -1,14 +1,10 @@
 package com.github.alexishuf.fastersparql.hdt;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
-import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.hdt.cardinality.HdtEstimatorPeek;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.*;
@@ -85,6 +81,18 @@ class HdtSparqlClientTest {
     @Test public void testWaitEstimator() {
         try (var c = (HdtSparqlClient)FS.clientFor(endpoint)) {
             assertSame(c, assertTimeout(ofMillis(100), () -> waitStage(c.estimatorReady())));
+        }
+    }
+
+    @Test public void testQueryTPWithModifier() {
+        try (var client = (HdtSparqlClient)FS.clientFor(endpoint)) {
+            results("?n", ":n1", ":n2", ":n3")
+                    .query("SELECT DISTINCT ?n WHERE { ?s :next ?n }")
+                    .check(client);
+            results("?s ?n", ":n0", ":n1")
+                    .query("SELECT DISTINCT ?n WHERE { ?s :next ?n }")
+                    .bindings("?s", ":n0")
+                    .check(client, TYPE, b -> TYPE.convert(b, client.dictId));
         }
     }
 
