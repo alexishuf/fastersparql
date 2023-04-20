@@ -152,32 +152,76 @@ public final class Spec {
         }
     }
 
-    private void toToml(StringBuilder keyPrefix, Appendable out) throws IOException {
+    private enum ValueKind {
+        PRIMITIVE, SPEC, PRIMITIVE_ARRAY, SPEC_ARRAY, MIXED_ARRAY;
+
+        public static ValueKind of(Object o) {
+            return switch (o) {
+                case Spec ignored -> SPEC;
+                case Map<?, ?> ignored -> SPEC;
+                case Collection<?> coll -> {
+                    ValueKind kind = null;
+                    for (Object item : coll) {
+                        var itemKind = switch (of(item)) {
+                            case PRIMITIVE, PRIMITIVE_ARRAY -> PRIMITIVE_ARRAY;
+                            case MIXED_ARRAY -> MIXED_ARRAY;
+                            case SPEC, SPEC_ARRAY -> SPEC_ARRAY;
+                        };
+                        if      (kind ==     null) kind = itemKind;
+                        else if (kind != itemKind) yield MIXED_ARRAY;
+                    }
+                    yield kind == null ? PRIMITIVE_ARRAY : kind;
+                }
+                default -> PRIMITIVE;
+            };
+        }
+    }
+
+    private void toToml(StringBuilder path, int pathVisibleFrom,
+                        Appendable out) throws IOException {
+        // write all members that are not arrays of tables (else they would be parsed
+        // as members of the last sub-table of the last array of tables).
         for (var e : map.entrySet()) {
-            Object value = e.getValue();
             String key = e.getKey();
-            if (value instanceof Spec s) {
-                s.toToml(keyPrefix.append(key).append('.'), out);
-            } else {
-                out.append(keyPrefix).append(key).append(" = ");
-                writeValue(out, value);
-                out.append('\n');
+            Object value = e.getValue();
+            switch (ValueKind.of(value)) {
+                case SPEC -> {
+                    int oldLen = path.length();
+                    path.append(key).append('.');
+                    ((Spec) value).toToml(path, pathVisibleFrom, out);
+                    path.setLength(oldLen);
+                }
+                case PRIMITIVE, PRIMITIVE_ARRAY -> {
+                    out.append(path, pathVisibleFrom, path.length()).append(key).append(" = ");
+                    writeValue(out, value);
+                    out.append('\n');
+                }
+                case MIXED_ARRAY -> throw new UnsupportedOperationException("Cannot serialize arrays with TOML primitive and tables");
             }
         }
-        // remove ".parent." keyPrefix="root.inner.parent."
-        int dot = Math.max(0, keyPrefix.length()-1); // jump over trailing '.'
-        while (dot > 0 && keyPrefix.charAt(dot-1) != '.') --dot;
-        keyPrefix.setLength(dot);
+        // write arrays of tables
+        for (var e : map.entrySet()) {
+            Object v = e.getValue();
+            if (ValueKind.of(v) != ValueKind.SPEC_ARRAY) continue;
+            String key = e.getKey();
+            for (Object specObj : ((Collection<?>) e.getValue())) {
+                out.append("[[").append(path).append(key).append("]]\n");
+                int oldLen = path.length();
+                path.append(key).append('.');
+                coerce(specObj, Spec.class).toToml(path, path.length(), out);
+                path.setLength(oldLen);
+            }
+        }
     }
 
     public void toToml(Appendable out) throws IOException {
-        toToml(new StringBuilder(), out);
+        toToml(new StringBuilder(), 0, out);
     }
 
     public String toToml() {
         var buf = new StringBuffer();
         try {
-            toToml(new StringBuilder(), buf);
+            toToml(new StringBuilder(), 0, buf);
             return buf.toString();
         } catch (IOException e) {
             throw new RuntimeException(e); // never throws

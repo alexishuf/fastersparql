@@ -150,7 +150,12 @@ class SpecTest {
                 Spec.of("a", Spec.of("i", 7L)),
                 Spec.of("a", Spec.of("v", List.of())),
                 Spec.of("a", Spec.of("v", List.of(1L))),
-                Spec.of("a", Spec.of("v", List.of(1L, 2L, 3L)))
+                Spec.of("a", Spec.of("v", List.of(1L, 2L, 3L))),
+                Spec.of("a", List.of(Spec.of("b", 1L)),
+                        "name", "alice", "ints", List.of(1L)),
+                Spec.of("a", List.of(Spec.of("b", 1L),
+                                     Spec.of("b", List.of(Spec.of("c", List.of(23L))))),
+                        "name", "alice", "ints", List.of(1L))
         ).map(Arguments::arguments);
     }
 
