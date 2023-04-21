@@ -143,6 +143,7 @@ public abstract class Selector implements AutoCloseable {
      *  {@code origin == QUERY}. */
     protected final void notifyInit(InitOrigin origin, Throwable error) {
         if (error != null) {
+            log.error("Failed to init {} from {}", this, origin, error);
             completableInit.completeExceptionally(error);
         } else {
             Spec s = origin == InitOrigin.QUERY ? spec.get(STATE, Spec.class) : null;
@@ -158,6 +159,8 @@ public abstract class Selector implements AutoCloseable {
     @Override public void close() { }
 
     public SparqlEndpoint endpoint() { return endpoint; }
+
+    @Override public String toString() { return getClass().getSimpleName()+"("+endpoint+")"; }
 
     /**
      * A {@link Future} that will complete once the {@code this} is initialized.

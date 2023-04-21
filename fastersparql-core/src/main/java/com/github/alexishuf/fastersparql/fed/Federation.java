@@ -45,6 +45,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 @SuppressWarnings("unused")
 public class Federation extends AbstractSparqlClient {
     public static final String SOURCES = "sources";
+    public static final String URL = Source.URL;
 
     private final List<Source> sources = new ArrayList<>();
     private final Optimizer optimizer = new Optimizer();
@@ -198,7 +199,7 @@ public class Federation extends AbstractSparqlClient {
             var initialized = this.init = new CompletableFuture<>();
             sources.addAll(collection);
             for (Source s : collection)
-                optimizer.estimator(s.client, s.estimator);
+                optimizer.estimator(s.client(), s.estimator());
             this.<InitOrigin>forEachSource(
                     (s, handler) -> s.selector().initialization().handle(handler)
             ).thenAccept(initialized::complete);

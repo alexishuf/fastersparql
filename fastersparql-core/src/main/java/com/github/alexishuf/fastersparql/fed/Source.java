@@ -20,6 +20,8 @@ import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll
 
 public final class Source implements AutoCloseable {
     /* --- --- --- keys dictionary --- --- --- */
+    public static final String TYPE = "type";
+    public static final String SPARQL_TYPE = "sparql";
     public static final String CLIENT_TAG = "client-tag";
     public static final String SELECTOR = "selector";
     public static final String ESTIMATOR = "estimator";
@@ -94,7 +96,7 @@ public final class Source implements AutoCloseable {
             var estimator = CardinalityEstimator.load(client, estimatorSpec);
             return new Source(client, selector, estimator, sourceSpec);
         }
-        @Override public String name() { return "sparql"; }
+        @Override public String name() { return SPARQL_TYPE; }
     }
 
     /* --- --- --- loader helpers --- --- --- */
