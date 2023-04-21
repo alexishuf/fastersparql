@@ -99,4 +99,11 @@ public class Workloads {
             default -> throw new IllegalArgumentException();
         };
     }
+
+    public static void cooldown(int ms) {
+        long start = System.nanoTime();
+        System.gc();
+        ms = Math.max(50, ms - (int)((System.nanoTime()-start)/1_000_000));
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
+    }
 }

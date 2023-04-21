@@ -90,8 +90,7 @@ public class ResultsParserBench {
                           (System.nanoTime()-start)/1_000_000.0, fragmentsLists.size(),
                           fragmentsLists.get(0).size(), listBytes/1024.0);
         drainer = Thread.ofPlatform().name("drainer").start(this::drain);
-        System.gc();
-        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        Workloads.cooldown(500);
     }
 
     @TearDown(Level.Trial) public void trialTearDown() throws InterruptedException {

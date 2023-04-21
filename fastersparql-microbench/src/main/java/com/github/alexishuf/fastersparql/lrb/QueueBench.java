@@ -77,7 +77,7 @@ public class QueueBench {
         vars = Workloads.makeVars(requireNonNull(inputsQueue.peekFirst()));
         invocations = 0;
         feederThread = Thread.ofVirtual().name("feeder").start(this::feeder);
-        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        Workloads.cooldown(500);
     }
 
     @TearDown(Level.Iteration) public void tearDown() {
