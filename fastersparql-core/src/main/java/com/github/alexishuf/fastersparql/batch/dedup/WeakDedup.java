@@ -54,6 +54,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * @return whether row is a duplicate.
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
+        if (debug) checkBatchType(batch);
         // beware of race conditions / lost updates
         // the writes on bitset[] and row[] are not synchronized and one thread may undo
         // updates done by another. For example, if thread 1 is doing add(r1) and thread 2 is
@@ -83,6 +84,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * in the set.
      */
     @Override public boolean contains(B batch, int row) {
+        if (debug) checkBatchType(batch);
         int hash = batch.hash(row), bucket = hash&mask;
         int bitIdx = hash&bitsetMask, wordIdx = bitIdx >> 5, bit = 1 << bitIdx;
         return (bitset[wordIdx] & bit) != 0

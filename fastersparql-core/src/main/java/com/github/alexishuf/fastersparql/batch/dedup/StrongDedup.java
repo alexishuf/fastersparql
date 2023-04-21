@@ -111,6 +111,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public boolean isDuplicate(B batch, int row, int source) {
+        if (debug) checkBatchType(batch);
         int hash = batch.hash(row);
         Bucket<B> bucket = buckets[hash & bucketsMask];
         // null bucket means nothing was added to it.
@@ -157,6 +158,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
      * or {@link StrongDedup#add(B, int)}
      */
     @Override public boolean contains(B batch, int row) {
+        if (debug) checkBatchType(batch);
         int hash = batch.hash(row);
         Bucket<B> bucket = buckets[hash & bucketsMask];
         return bucket != null && bucket.contains(batch, row, hash);
@@ -216,7 +218,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
                 ++i;
             if (i == weakBegin) {
                 if (weakBegin < capacity) {
-                    i = weakBegin + (hash % (capacity - weakBegin));
+                    i = weakBegin + ((hash&0x7fffffff) % (capacity - weakBegin));
                     return hashes[i] == hash && rows.equals(i, batch, row);
                 }
                 return false;
@@ -229,7 +231,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             int capacity = hashes.length, i;
             boolean incSize;
             if (weakBegin < capacity) {
-                i = weakBegin + hash % (capacity - weakBegin);
+               i = weakBegin + (hash&0x7fffffff) % (capacity - weakBegin);
                 incSize = !rows.has(i);
             } else {
                 incSize = true;

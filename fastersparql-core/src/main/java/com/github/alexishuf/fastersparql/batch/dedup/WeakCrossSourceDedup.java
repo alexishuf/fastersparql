@@ -57,6 +57,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
      *         than {@code source}
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
+        if (debug) checkBatchType(batch);
         int hash = batch.hash(row), bucket = hash & bucketMask;
         int begin = bucket << 3, end = begin+8, match = -1;
         for (int i = begin; match == -1 && i < end; i++) {
@@ -90,6 +91,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public boolean contains(B batch, int row) {
+        if (debug) checkBatchType(batch);
         int hash = batch.hash(row), i = (hash & bucketMask) << 3, e = i+8;
         while (i < e && (hashesAndSources[i<<1] != hash || !table.equals(i, batch, row))) ++i;
         return i < e;

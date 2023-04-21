@@ -9,10 +9,17 @@ import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
     protected final BatchType<B> bt;
     protected int cols;
+    protected static final boolean debug = Dedup.class.desiredAssertionStatus();
 
     public Dedup(BatchType<B> batchType, int cols) {
         this.bt = batchType;
         this.cols = cols;
+    }
+
+    protected void checkBatchType(B b) {
+        if (!debug || b == null || b.getClass() == bt.batchClass) return;
+        throw new IllegalArgumentException("Unexpected batch of class "+b.getClass()+
+                                          ", expected "+bt.batchClass);
     }
 
     public abstract int capacity();
@@ -63,4 +70,8 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
 
     /** Execute {@code consumer.accept(r)} for every batch in this set. */
     public abstract  <E extends Throwable> void forEach(ThrowingConsumer<B, E> consumer) throws E;
+
+    @Override public String toString() {
+        return String.format("%s@%x", getClass().getSimpleName(), System.identityHashCode(this));
+    }
 }
