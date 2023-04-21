@@ -176,4 +176,16 @@ class ByteRopeTest {
         r.append('#');
         assertEquals("@"+string.substring(begin, end)+"#", r.toString());
     }
+
+    @Test void testAppendCodePoint() {
+        String string = "\t\u0000aA~\u007F" +
+                "£\u0080ࣿ" +
+                "€ह한" +
+                "\uD800\uDF48";
+        for (int codePoint : string.codePoints().toArray()) {
+            String expected = "@" + Character.toString(codePoint) + ">";
+            String actual = new ByteRope().append("@").appendCodePoint(codePoint).append('>').toString();
+            assertEquals(expected, actual);
+        }
+    }
 }

@@ -778,4 +778,27 @@ class RopeTest {
             }
         }
     }
+
+
+    @ParameterizedTest @MethodSource("factories")
+    void testParseCodePoint(Factory fac) {
+        //noinspection UnnecessaryUnicodeEscape
+        int[] codePoints = "\0\t~\u007F\u00a3\u0418\u0939\u20ac\uD55c\uD800\uDF48"
+                .codePoints().toArray();
+        String lowercase = "\\u0000\\u0009\\u007e\\u007f\\u00a3\\u0418\\u0939\\u20ac\\ud55c\\U00010348";
+        String uppercase = "\\u0000\\u0009\\u007E\\u007F\\u00A3\\u0418\\u0939\\u20AC\\uD55C\\U00010348";
+        for (Rope r : fac.create(lowercase, uppercase)) {
+            for (int i = 0, n = 0; i < r.len; i++, n++) {
+                i = r.skipUntil(i, r.len, '\\');
+                if (i == r.len) break;
+                int code = 0;
+                try {
+                    code = r.parseCodePoint(i);
+                } catch (Throwable t) {
+                    fail("n="+n+", i="+i, t);
+                }
+                assertEquals(codePoints[n], code, "n="+n+", i="+i);
+            }
+        }
+    }
 }

@@ -375,6 +375,7 @@ public final class Term extends Rope implements Expr {
     /** Array containing UTF-8 bytes to be prefixed or suffixed to {@code flaggedDictId} */
     public final byte[] local;
 
+    private @Nullable MemorySegment segment;
     private @Nullable Number number;
     private int hash;
 
@@ -733,7 +734,10 @@ public final class Term extends Rope implements Expr {
     /* --- --- --- Rope implementation --- --- --- */
 
     @Override public @Nullable MemorySegment segment() {
-        return flaggedDictId == 0 ? MemorySegment.ofArray(local) : null;
+        MemorySegment s = segment;
+        if (s == null && flaggedDictId == 0)
+            segment = s = MemorySegment.ofArray(local);
+        return s;
     }
 
     /* --- --- --- Expr implementation --- --- --- */
@@ -850,11 +854,16 @@ public final class Term extends Rope implements Expr {
 
     /** {@code lang} if this is a literal tagged with {@code @lang}, else {@code null}. */
     public @Nullable Rope lang() {
-        if (local[0] != '"' || flaggedDictId != 0) return null;
-        int i = RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ);
-        if (local[i] == '"' && i+1 < local.length && local[i+1] == '@')
+        int i = endLex();
+        if (i > 0 && i+1 < local.length && local[i+1] == '@')
             return new ByteRope(local, i+2, local.length-(i+2));
         return null;
+    }
+
+    /** Index of closing {@code "} if this is a literal, else {@code -1} */
+    public int endLex() {
+        if (local[0] != '"') return -1;
+        return RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ);
     }
 
     /**
@@ -938,6 +947,65 @@ public final class Term extends Rope implements Expr {
         if (local.length < 2 || local[endLex] != '"')
             throw new InvalidTermException(toString(), 0, "Unclosed \"");
         return new ByteRope(local, 1, endLex-1);
+    }
+
+    /** The number of UTF-8 bytes that would be output by {@link #unescapedLexical(ByteRope)}. */
+    public int unescapedLexicalSize() {
+        int endLex = endLex(), required = 0;
+        for (int i = 1, j, n; i < endLex; i += n) {
+            j = skipUntil(i, endLex, '\\');
+            n = j-i;
+            byte c = j == endLex ? 0 : local[j + 1];
+            required += n + switch (c) {
+                case 0 -> 0;
+                case 'u', 'U' -> {
+                    int codePoint = parseCodePoint(j);
+                    i += c == 'u' ? 6 : 10;
+                    if (codePoint < 0 || codePoint >= 0x110000)
+                        yield Character.toString(codePoint).length();
+                    if      (codePoint < 0x80   ) yield 1;
+                    else if (codePoint < 0x800  ) yield 2;
+                    else if (codePoint < 0x10000) yield 3;
+                    else                          yield 4;
+                }
+                default -> { i += 2; yield 1; }
+            };
+        }
+        return required;
+    }
+
+    /**
+     * Write the lexical form (the literal value without surrounding quotes and without the
+     * language tag or datatype.) of this term into {@code dest} replacing {@code \}-escape
+     * sequences with the represented characters (e.g., {@code \n} becomes a line feed.
+     *
+     * @param dest where the unescaped lexical form shall be appended to
+     * @return total number of UTF-8 bytes written.
+     */
+    public int unescapedLexical(ByteRope dest) {
+        int endLex = endLex();
+        int before = dest.len;
+        for (int i = 1, j, n; i < endLex; i = j+2) {
+            n = (j = skipUntil(i, endLex, '\\')) - i;
+            dest.append(local, i, n);
+            if (j >= endLex) break;
+            byte c = local[j+1];
+            switch (c) {
+                case 'n'           -> dest.append('\n');
+                case 'r'           -> dest.append('\r');
+                case 't'           -> dest.append('\t');
+                case '\\','"','\'' -> dest.append(c);
+                case 'u','U'       -> {
+                    dest.appendCodePoint(parseCodePoint(j));
+                    // this escape is not just 2 bytes: \\u0123 \\U01230123
+                    //                                   ++++@@  ++++++++@@
+                    j += c == 'U' ? 8 : 4; // @@'s incremented on the loop
+                }
+                default            -> dest.appendCodePoint('\\');
+            }
+        }
+
+        return dest.len-before;
     }
 
     /**

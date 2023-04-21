@@ -1265,6 +1265,25 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return val * sign;
     }
 
+    public int parseCodePoint(int begin) {
+        if (get(begin) == '\\') ++begin;
+        int digits = switch (get(begin++)) {
+            case 'u' -> 4;
+            case 'U' -> 8;
+            default -> throw new IllegalArgumentException("No unicode escape at index");
+        };
+        if (begin+digits > len) throw new IllegalArgumentException("Unicode escape truncated");
+        int code = 0;
+        for (int weight = 1 << (4*(digits-1)), v; weight > 0; weight >>= 4) {
+            byte c = get(begin++);
+            if ((v = c-'0') > 10) v = 10 + ((c-'A')&31);
+            if (v < 0 || v > 15)
+                throw new IllegalArgumentException("Non-hex digit in unicode escape");
+            code += v * weight;
+        }
+        return code;
+    }
+
     private NumberFormatException badNumber(int begin) {
         return new NumberFormatException("Expected sign or integer" +": "+sub(begin, skip(begin, len(), UNTIL_WS)));
     }

@@ -627,4 +627,32 @@ class TermTest {
             }
         }
     }
+
+    @SuppressWarnings("UnnecessaryUnicodeEscape") static Stream<Arguments> testUnescapedLexical() {
+        return Stream.of(
+                arguments("\"~\"", 1, "~"),
+                arguments("\"\"", 0, ""),
+                arguments("\"\\u20b2\"", 3, "\u20b2"),
+                arguments("\" \\u0418 \"", 2+2, " \u0418 "),
+                arguments("\".\\U00000939.\"", 3+2, ".\u0939."),
+                arguments("\"\\\"\"", 1, "\""),
+                arguments("\"\\t\\r\\n\"", 3, "\t\r\n"),
+                arguments("\"\\U00010348\"", 4, "\uD800\uDF48")
+        );
+    }
+
+    @ParameterizedTest @MethodSource("testUnescapedLexical")
+    void testUnescapedLexicalSize(String in, int expected, String ignored) {
+        Term term = valueOf(in);
+        assertEquals(expected, term.unescapedLexicalSize());
+    }
+
+    @ParameterizedTest @MethodSource
+    void testUnescapedLexical(String in, int exSize, String ex) {
+        Term term = valueOf(in);
+        ByteRope dest = new ByteRope().append('@');
+        int n = term.unescapedLexical(dest);
+        assertEquals(dest.len, n+1);
+        assertEquals("@"+ex, dest.toString());
+    }
 }

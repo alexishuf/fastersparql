@@ -15,6 +15,40 @@ public interface ByteSink<B extends ByteSink<B>> {
     }
     @This B append(byte c);
 
+    default @This B appendCodePoint(int code) {
+        /* 4-bytes UTF-8 encoding
+         *
+         * Input (binary): 0babcdefghijklmnopqrstuvwxyzABCDEFG
+         * +------------+-----------+-----------------+----------+----------+----------+
+         * | first code | end  code |          byte 0 |   byte 2 |   byte 3 |   byte 4 |
+         * | 0x00000    | 0x000080  | (0x00) 0ABCDEFG |          |          |          |
+         * | 0x00800    | 0x0008ff  | (0xc0) 110wxyzA | 10BCDEFG |          |          |
+         * | 0x08000    | 0x010000  | (0xe0) 1110rstu | 10vwxyzA | 10BCDEFG |          |
+         * | 0x10000    | 0x110000  | (0xf0) 11110mno | 10pqrstu | 10vwxyzA | 10BCDEFG |
+         * +------------+-----------+-----------------+----------+----------+----------+
+         */
+        if (code >= 0) {
+            int code6 = code >> 6;
+            if (code < 0x80) {
+                return append((byte) code);
+            } else if (code < 0x800) {
+                return append((byte) (0xc0 | code6)).append((byte) (0x80 | (code & 0x3f)));
+            } else if (code < 0x10000) {
+                return append((byte) (0xe0 | (code >> 12)))
+                        .append((byte) (0x80 | (code6 & 0x3f)))
+                        .append((byte) (0x80 | ( code       & 0x3f)));
+            } else if (code < 0x110000) {
+                return append((byte) (0xf0  | (code >> 18)))
+                        .append((byte)(0x80 | ((code >> 12) & 0x3f)))
+                        .append((byte)(0x80 | (code6 & 0x3f)))
+                        .append((byte)(0x80 | ( code        & 0x3f)));
+            }
+        }
+        // code >= 0x110000, this is very uncommon, thus we can take an allocation for cleaner code
+        append(Character.toString(code));
+        return (B) this;
+    }
+
     default @This B append(Rope rope) { return append(rope, 0, rope.len); }
     @This B append(Rope rope, int begin, int end);
 

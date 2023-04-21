@@ -1,16 +1,24 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
+import jdk.incubator.vector.ByteVector;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.dictionary.DictionarySection;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
+import org.rdfhdt.hdt.util.string.CompactString;
+import org.rdfhdt.hdt.util.string.DelayedString;
+import org.rdfhdt.hdt.util.string.ReplazableString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.VarHandle;
 
 import static java.lang.invoke.MethodHandles.lookup;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class IdAccess {
@@ -24,6 +32,8 @@ public class IdAccess {
     static final int  ROLE_BIT = Long.numberOfTrailingZeros(ROLE_MASK);
     static final int  DICT_BIT = Long.numberOfTrailingZeros(DICT_MASK);
     static final int PLAIN_BIT = Long.numberOfTrailingZeros(PLAIN_MASK);
+
+    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
 
     public static final int MAX_DICT = (int)(DICT_MASK >> DICT_BIT) + 1;
 
@@ -39,6 +49,7 @@ public class IdAccess {
             throw new ExceptionInInitializerError(e);
         }
     }
+    @SuppressWarnings("unused") // access through LOCK
     private static int plainLock;
     private static final Dictionary[] dicts = new Dictionary[MAX_DICT];
     private static final int[] freeDictSlots = BS.init(null, MAX_DICT);
@@ -85,7 +96,7 @@ public class IdAccess {
      * @return {@code 0} if {@code term} is null or a var, -1 if it was not found or an
      *         id that can be used with {@link Dictionary#idToString(long, TripleComponentRole)}.
      */
-    public static long plain(Dictionary dictionary, CharSequence term, TripleComponentRole role) {
+    public static long plain(Dictionary dictionary, Term term, TripleComponentRole role) {
         if (term == null || term.isEmpty()) return 0;
         char f = term.charAt(0);
         if (f == '?' || f == '$') return 0;
@@ -171,7 +182,8 @@ public class IdAccess {
             if (oRole != PREDICATE && role != PREDICATE)
                 return plain <= dict.getNshared() ? plain : -1;
         }
-        return plain(dict, toString(sourcedId), role);
+        long id = dict.stringToId(toString(sourcedId), role);
+        return id <= 0 ? -1 : id;
     }
 
     @SuppressWarnings("unused")
@@ -180,6 +192,17 @@ public class IdAccess {
                 +", on dict["+dictId(sourcedId)+"]="+toString(sourcedId);
     }
 
+    @SuppressWarnings("UnnecessaryUnicodeEscape")
+    private static final int[] LIT_INVALID = Rope.alphabet("\"\\" +
+            "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007" +
+            "\u0008\t\n\u000B\u000C\r\u000E\u000F" +
+            "\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017" +
+            "\u0018\u0019\u001A\u001B\u001C\u001D\u001E\u001F");
+    private static final byte[] UNICODE_WS =
+            ("u0000u0001u0002u0003u0004u0005u0006u0007" +
+             "u0008u0009u000Au000Bu000Cu000Du000Eu000F" +
+             "u0010u0011u0012u0013u0014u0015u0016u0017" +
+             "u0018u0019u001Au001Bu001Cu001Du001Eu001Fu0020").getBytes(UTF_8);
 
     /**
      * Get a {@link Term} instance for the RDF term represented by {@code sourcedId}.
@@ -195,8 +218,72 @@ public class IdAccess {
     public static Term toTerm(long sourcedId) {
         var str = toString(sourcedId);
         if (str == null) return null;
-        char f = str.charAt(0);
-        return f == '"' || f == '_' ? Term.valueOf(str) : Term.iri(str);
+        while (str instanceof DelayedString ds) str = ds.getInternal();
+        byte[] u8 = switch (str) {
+            case ReplazableString s -> s.getBuffer();
+            case CompactString s -> s.getData();
+            default -> null;
+        };
+        int len = str.length();
+        return switch (str.charAt(0)) {
+            case '"' -> {
+                ByteRope esc = new ByteRope((len + B_SP_LEN) & -B_SP_LEN);
+                esc.append('"');
+                if (u8 == null)
+                    yield coldEscapeString(esc, str);
+                int endLex = len -1;
+                while (endLex > 0 && u8[endLex] != '"') --endLex;
+                for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
+                    byte c = 0;
+                    while (i < endLex && ((c=u8[i]) < 0 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
+                        ++i;
+                    esc.append(u8, consumed, i);
+                    if (i >= endLex) break;
+                    esc.append('\\');
+                    switch (c) {
+                        case '\\', '"' -> esc.append(c);
+                        case '\t'      -> esc.append('t');
+                        case '\r'      -> esc.append('r');
+                        case '\n'      -> esc.append('n');
+                        default        -> esc.append(UNICODE_WS, c*5, 5);
+                    }
+                }
+                esc.append(u8, endLex, len);
+                yield Term.valueOf(esc, 0, esc.len);
+            }
+            case '_' -> u8 == null ? Term.valueOf(new ByteRope(str))
+                                   : Term.make(0, u8, 0, len);
+            default -> {
+                ByteRope wrapped = new ByteRope(len + 2).append('<');
+                if (u8 == null) wrapped.append(str);
+                else            wrapped.append(u8, 0, len);
+                wrapped.append('>');
+                yield Term.valueOf(wrapped, 0, wrapped.len);
+            }
+        };
+    }
+
+    private static Term coldEscapeString(ByteRope esc, CharSequence in) {
+        int endLex = in.length()-1;
+        while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
+        for (int consumed = 1, i = 1; consumed < endLex; consumed = ++i) {
+            // find first invalid char c at index i
+            char c = 0;
+            while (i < endLex && ((c=in.charAt(i)) > 128 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
+                ++i;
+            esc.append(in, consumed, i); // copy sequence of valid chars
+            if (i >= endLex) break;
+            esc.append('\\'); // add escape for c
+            switch (c) {
+                case '\\', '"' -> esc.append(c);
+                case '\t'      -> esc.append('t');
+                case '\r'      -> esc.append('r');
+                case '\n'      -> esc.append('n');
+                default        -> esc.append(UNICODE_WS, c*5, 5);
+            }
+        }
+        esc.append(in, endLex, in.length()); // copy everything starting at ending '"'
+        return Term.valueOf(esc);
     }
 
     /** Equivalent to {@code dict(sourcedId).idToString(plain(sourcedId), role(sourcedId))}. */
@@ -256,9 +343,9 @@ public class IdAccess {
     }
 
     /**
-     * Equivalent to {@link #encode(int, Dictionary, CharSequence)} using {@code dict(dictId)}.
+     * Equivalent to {@link #encode(int, Dictionary, Term)} using {@code dict(dictId)}.
      */
-    public static long encode(int dictId, CharSequence term) {
+    public static long encode(int dictId, Term term) {
         return encode(dictId, dict(dictId), term);
     }
 
@@ -274,12 +361,10 @@ public class IdAccess {
      *         the {@code dictId} the located ID and the role of such ID bundled in a
      *         {@code long} built by {@link #encode(long, int, TripleComponentRole)}.
      */
-    public static long encode(int dictId, Dictionary dict, CharSequence term) {
-        if (term == null || term.isEmpty()) return 0;
-        char f = term.charAt(0);
-        if (f == '?' || f == '$') return 0;
+    public static long encode(int dictId, Dictionary dict, Term term) {
+        var string = toHdtString(term);
+        if (string == null) return 0;
         var role = SUBJECT;
-        String string = toHdtString(term);
         long id = dict.getShared().locate(string);
         if (id == 0) {
             if ((id = dict.getSubjects().locate(string)) == 0) {
@@ -308,7 +393,7 @@ public class IdAccess {
      *         {@code long} built by {@link #encode(long, int, TripleComponentRole)}.
      */
     public static long encode(int dictId, Dictionary dict, TripleComponentRole role,
-                              CharSequence term) {
+                              Term term) {
         long id = plain(dict, term, role);
         if      (id == 0) return 0;
         else if (id <  0) return NOT_FOUND;
@@ -316,20 +401,42 @@ public class IdAccess {
     }
 
     /**
-     * Convert a {@link CharSequence} (including {@link Term}) to a {@link String} that can be
+     * Convert a {@link Term} to a {@link String} that can be
      * used with {@link Dictionary#stringToId(CharSequence, TripleComponentRole)} and
      * {@link DictionarySection#locate(CharSequence)}.
      *
      * <p>HDT tools store IRIs without surrounding brackets and {@link Dictionary} implementations
      * require either a {@link String} or specific {@link CharSequence} implementations</p>
      */
-    private static String toHdtString(CharSequence term) {
-        if (term instanceof Term t)
-            return t.isIri() ? t.toString(1, t.len-1) : t.toString();
-        else if (term.charAt(0) == '<')
-            return term.toString().substring(1, term.length()-1);
-        else
-            return term.toString();
+    private static @Nullable ReplazableString toHdtString(Term t) {
+        ReplazableString rs = switch (t == null ? null : t.type()) {
+            case VAR  -> null;
+            case null -> null;
+            case BLANK -> {
+                var str = new ReplazableString(t.len);
+                t.copy(0, t.len, str.getBuffer(), 0);
+                yield str;
+            }
+            case IRI   -> {
+                var str = new ReplazableString(t.len - 2);
+                t.copy(1, t.len-1, str.getBuffer(), 0);
+                yield str;
+            }
+            case LIT -> {
+                int endLex = t.endLex(), required = 1 + t.unescapedLexicalSize() + t.len-endLex;
+                var str = new ReplazableString(required);
+                var unescaped = new ByteRope(str.getBuffer(), 0, 0);
+                unescaped.append('"');
+                t.unescapedLexical(unescaped);
+                unescaped.append(t, endLex, t.len);
+                yield str;
+            }
+        };
+        if (rs != null) {
+            byte[] u8 = rs.getBuffer();
+            rs.replace(0, u8, 0, u8.length);
+        }
+        return rs;
     }
 
     /**
@@ -344,7 +451,7 @@ public class IdAccess {
      */
     public static long encode(long id, int dictId, TripleComponentRole role) {
         if ((id & ~PLAIN_MASK) != 0)
-            throw new UnsupportedOperationException("Id is too big");
+            throw new UnsupportedOperationException("Id is -1 or too big");
         if (dictId <= 0 || dictId >= MAX_DICT)
             throw new IllegalArgumentException("dictId does not originate from register()");
         return role.ordinal()+1L << ROLE_BIT | (long)dictId << DICT_BIT | id;

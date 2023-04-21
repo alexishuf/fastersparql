@@ -273,7 +273,8 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         ensureFreeCapacity(1);
         utf8[len++] = c;
         slice = null;
-        return this; }
+        return this;
+    }
 
     @Override public @This ByteRope append(CharSequence cs, int begin, int end) {
         if (cs instanceof Rope r) return append(r, begin, end);

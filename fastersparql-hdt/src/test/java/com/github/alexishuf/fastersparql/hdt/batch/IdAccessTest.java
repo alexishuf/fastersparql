@@ -8,6 +8,7 @@ import org.rdfhdt.hdt.dictionary.impl.FourSectionDictionary;
 import org.rdfhdt.hdt.dictionary.impl.section.PFCDictionarySection;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
 import org.rdfhdt.hdt.options.HDTSpecification;
+import org.rdfhdt.hdt.util.string.CompactString;
 
 import java.util.List;
 
@@ -20,12 +21,14 @@ class IdAccessTest {
 
     public static final String ALICE_S = "http://example.org/Alice";
     public static final String BOB_S = "http://example.org/Bob";
-    public static final String CHARLIE_S = "\"charlie\"";
+    public static final String CHARLIE_S = "\"ch\ta\"r\u000C li\r\ne\"";
+    public static final CompactString DAVE_S = new CompactString("\"d\r\na\tv\u000C e\"\"@en-US");
     public static final String KNOWS_S = "http://xmlns.com/foaf/0.1/knows";
 
     public static final Term ALICE_T = Term.valueOf("<http://example.org/Alice>");
     public static final Term BOB_T = Term.valueOf("<http://example.org/Bob>");
-    public static final Term CHARLIE_T = Term.valueOf("\"charlie\"");
+    public static final Term CHARLIE_T = Term.valueOf("\"ch\\ta\\\"r\\u000C li\\r\\ne\"");
+    public static final Term DAVE_T = Term.valueOf("\"d\\r\\na\\tv\\u000C e\\\"\"@en-US");
     public static final Term KNOWS_T = Term.valueOf("<http://xmlns.com/foaf/0.1/knows>");
 
     public static long Alice(Dictionary dictionary) {
@@ -56,6 +59,11 @@ class IdAccessTest {
         long plain = d.stringToId(CHARLIE_S, OBJECT);
         return encode(plain, dictId, OBJECT);
     }
+    public static long dave(int dictId) {
+        Dictionary d = IdAccess.dict(dictId);
+        long plain = d.stringToId(DAVE_S, OBJECT);
+        return encode(plain, dictId, OBJECT);
+    }
     public static long knows(int dictId) {
         Dictionary d = IdAccess.dict(dictId);
         long plain = d.stringToId(KNOWS_S, PREDICATE);
@@ -71,7 +79,7 @@ class IdAccessTest {
         ((PFCDictionarySection)dict.getPredicates())
                 .load(List.of(KNOWS_S).iterator(), 1, null);
         ((PFCDictionarySection)dict.getObjects())
-                .load(List.of(CHARLIE_S).iterator(), 1, null);
+                .load(List.of(CHARLIE_S, DAVE_S).iterator(), 2, null);
         return dict;
     }
 
@@ -154,11 +162,10 @@ class IdAccessTest {
             assertEquals(NOT_FOUND, IdAccess.encode(dId, d, OBJECT, KNOWS_T));
             assertEquals(NOT_FOUND, IdAccess.encode(dId, d, SUBJECT, CHARLIE_T));
 
-            assertEquals(0, IdAccess.encode(dId, d, SUBJECT, ""));
-            assertEquals(0, IdAccess.encode(dId, d, PREDICATE, "?x"));
+            assertEquals(0, IdAccess.encode(dId, d, SUBJECT, null));
+            assertEquals(0, IdAccess.encode(dId, d, PREDICATE, Term.valueOf("?x")));
             assertEquals(0, IdAccess.encode(dId, d, OBJECT, Term.valueOf("?y")));
-            assertEquals(0, IdAccess.encode(dId, d, ""));
-            assertEquals(0, IdAccess.encode(dId, d, "?x"));
+            assertEquals(0, IdAccess.encode(dId, d, null));
             assertEquals(0, IdAccess.encode(dId, d, Term.valueOf("?y")));
         } finally {
             IdAccess.release(dId);
@@ -209,6 +216,7 @@ class IdAccessTest {
          try {
              long   alice1 = Alice(dId1),     bob1 = Bob(dId1);
              long charlie1 = charlie(dId1), knows1 = knows(dId1);
+             long dave1    = dave(dId1);
              assertEquals(d2.stringToId(ALICE_S, SUBJECT), plainIn(d2, SUBJECT, alice1));
              assertEquals(d2.stringToId(ALICE_S,  OBJECT), plainIn(d2,  OBJECT, alice1));
 
@@ -217,10 +225,12 @@ class IdAccessTest {
 
              assertEquals(d2.stringToId(BOB_S,     SUBJECT), plainIn(d2, SUBJECT, bob1));
              assertEquals(d2.stringToId(CHARLIE_S,  OBJECT), plainIn(d2,  OBJECT, charlie1));
+             assertEquals(d2.stringToId(DAVE_S,     OBJECT), plainIn(d2,  OBJECT, dave1));
              assertEquals(d2.stringToId(KNOWS_S,    OBJECT), plainIn(d2,  OBJECT, knows1));
 
              assertEquals(d1.stringToId(BOB_S,     SUBJECT), plainIn(d1, SUBJECT, bob1));
              assertEquals(d1.stringToId(CHARLIE_S,  OBJECT), plainIn(d1,  OBJECT, charlie1));
+             assertEquals(d1.stringToId(DAVE_S,     OBJECT), plainIn(d1,  OBJECT, dave1));
              assertEquals(d1.stringToId(KNOWS_S,    OBJECT), plainIn(d1,  OBJECT, knows1));
 
              assertEquals(0, plainIn(d1, SUBJECT, 0));
@@ -262,6 +272,7 @@ class IdAccessTest {
             assertEquals(ALICE_T,   toTerm(Alice(dId)));
             assertEquals(BOB_T,     toTerm(Bob(dId)));
             assertEquals(CHARLIE_T, toTerm(charlie(dId)));
+            assertEquals(DAVE_T,    toTerm(dave(dId)));
             assertEquals(KNOWS_T,   toTerm(knows(dId)));
 
             assertNull(toTerm(0));
@@ -273,5 +284,7 @@ class IdAccessTest {
             release(dId);
         }
      }
+
+
 
 }
