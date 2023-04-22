@@ -7,7 +7,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.Objects;
 
 import static java.lang.System.arraycopy;
 
@@ -66,12 +65,7 @@ public class HdtBatchBucket implements RowBucket<HdtBatch> {
     }
 
     @Override public boolean equals(int row, HdtBatch other, int otherRow) {
-        int cols = other.cols;
-        if (cols != b.cols) throw new IllegalArgumentException();
-        long[] la = b.arr, ra = other.arr;
-        for (int l = row*cols, r = otherRow*cols, e = l+cols; l < e; l++, r++)
-            if (!Objects.equals(la[l], ra[r])) return false;
-        return true;
+        return b.equals(row, other, otherRow);
     }
 
     @Override public Iterator<HdtBatch> iterator() {
