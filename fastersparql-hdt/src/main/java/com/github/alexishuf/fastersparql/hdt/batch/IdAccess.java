@@ -35,7 +35,7 @@ public class IdAccess {
 
     private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
 
-    public static final int MAX_DICT = (int)(DICT_MASK >> DICT_BIT) + 1;
+    public static final int MAX_DICT = (int)(DICT_MASK >> DICT_BIT);
 
     public static final long NOT_FOUND = ~ROLE_MASK;
 
@@ -468,7 +468,7 @@ public class IdAccess {
     public static long encode(long id, int dictId, TripleComponentRole role) {
         if ((id & ~PLAIN_MASK) != 0)
             throw new UnsupportedOperationException("Id is -1 or too big");
-        if (dictId <= 0 || dictId >= MAX_DICT)
+        if (dictId <= 0 || dictId > MAX_DICT)
             throw new IllegalArgumentException("dictId does not originate from register()");
         return role.ordinal()+1L << ROLE_BIT | (long)dictId << DICT_BIT | id;
     }
@@ -485,9 +485,10 @@ public class IdAccess {
     public static int register(Dictionary dictionary) {
         while (!LOCK.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
         try {
-            int id = nextDictId++;
-            if (id > dicts.length) {
-                --nextDictId;
+            int id = nextDictId;
+            if (id <= MAX_DICT) {
+                ++nextDictId;
+            } else {
                 id = 1 + BS.nextSetOrLen(freeDictSlots, 0);
                 if (id > dicts.length)
                     throw new NoSpaceForDictException();
