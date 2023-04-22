@@ -286,17 +286,6 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
                 return encoderAppend(cs, begin, end);
             appendCodePoint(c);
         }
-//        var enc = UTF_8.newEncoder()
-//                .onMalformedInput(CodingErrorAction.REPLACE)
-//                .onUnmappableCharacter(CodingErrorAction.REPLACE);
-//        var cb = CharBuffer.wrap(cs, begin, end);
-//        CoderResult result;
-//        do {
-//            ensureFreeCapacity(cb.remaining()*4);
-//            var bb = ByteBuffer.wrap(utf8, len, utf8.length - len);
-//            result = enc.encode(cb, bb, true);
-//            len = bb.position();
-//        } while (result.isOverflow());
         return this;
     }
 
