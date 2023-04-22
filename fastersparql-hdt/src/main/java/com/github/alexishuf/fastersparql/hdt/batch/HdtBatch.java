@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -11,8 +12,10 @@ import org.rdfhdt.hdt.dictionary.Dictionary;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
+import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static java.lang.System.arraycopy;
 import static java.lang.invoke.MethodHandles.lookup;
+import static java.util.Arrays.copyOf;
 import static java.util.Objects.requireNonNull;
 
 public class HdtBatch extends Batch<HdtBatch> {
@@ -28,6 +31,7 @@ public class HdtBatch extends Batch<HdtBatch> {
     }
 
     long[] arr;
+    int[] hashes;
     private int offerRowBase = -1;
     @SuppressWarnings("unused") // access through CACHED_LOCK
     private int plainCachedLock;
@@ -39,23 +43,73 @@ public class HdtBatch extends Batch<HdtBatch> {
     public HdtBatch(int rowsCapacity, int cols) {
         super(0, cols);
         this.arr = new long[Math.min(1, rowsCapacity)*cols];
+        this.hashes = new int[arr.length];
     }
 
     public HdtBatch(long[] arr, int rows, int cols) {
+        this(arr, rows, cols, new int[arr.length]);
+    }
+
+    public HdtBatch(long[] arr, int rows, int cols, int[] hashes) {
         super(rows, cols);
         this.arr = arr;
+        this.hashes = hashes;
     }
 
     /* --- --- --- batch accessors --- --- --- */
 
     public long[] arr() { return arr; }
 
-    @Override public HdtBatch copy()          { return new HdtBatch(Arrays.copyOf(arr, arr.length), rows, cols); }
+    @Override public HdtBatch copy()          { return new HdtBatch(copyOf(arr, arr.length), rows, cols, copyOf(hashes, hashes.length)); }
     @Override public int      rowsCapacity()  { return arr.length/Math.max(1, cols); }
     @Override public boolean  hasCapacity(int rowsCapacity, int bytesCapacity) { return arr.length >= rowsCapacity*cols; }
     @Override public boolean  hasMoreCapacity(HdtBatch other)                  { return arr.length > other.arr.length; }
 
     /* --- --- --- term-level accessors --- --- --- */
+
+    @Override public int hash(int row, int col) {
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        int idx = row*cols + col, hash = hashes[idx];
+        if (hash == 0) {
+            CharSequence cs = IdAccess.toString(arr[idx]);
+            int len = cs == null ? 0 : cs.length();
+            byte[] u8 = IdAccess.peekU8(cs);
+            if (u8 == null) { // manual hashing as HDT strings use FNV hashes
+                for (int i = 0; i < len; i++) hash = 31 * hash + cs.charAt(i);
+            } else {
+                hash = RopeSupport.hash(u8, 0, len);
+            }
+            if (hashes.length < idx)
+                hashes = copyOf(hashes, arr.length);
+            hashes[idx] = hash;
+        }
+        return hash;
+    }
+
+    @Override
+    public boolean equals(@NonNegative int row, @NonNegative int col, HdtBatch other,
+                          int oRow, int oCol) {
+        int cols = this.cols, oCols = other.cols;
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols || oRow < 0 || oCol < 0
+                    || oRow >= other.rows || oCol >= oCols) throw new IndexOutOfBoundsException();
+        long id = arr[row*cols + col], oId = other.arr[oRow*oCols + oCol];
+        if (IdAccess.sameSource(id, oId)) return id == oId;
+        if (id == NOT_FOUND || oId == NOT_FOUND) return false;
+
+        // compare by string
+        CharSequence str = IdAccess.toString(id), oStr = IdAccess.toString(oId);
+        int len = str == null ? -1 : str.length();
+        if (oStr == null || len != oStr.length())
+            return false; // short-circuit on null or length mismatch
+        // try comparing byte arrays
+        byte[] u8 = IdAccess.peekU8(str);
+        byte[] oU8 = IdAccess.peekU8(oStr);
+        if (u8 != null && oU8 != null)
+            return RopeSupport.rangesEqual(u8, 0, oU8, 0, len);
+        // this line should not be reached: fallback to slow but always correct comparison
+        return CharSequence.compare(str, oStr) == 0;
+    }
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
@@ -89,7 +143,9 @@ public class HdtBatch extends Batch<HdtBatch> {
     @Override public void reserve(int additionalRows, int additionalBytes) {
         int required = (rows+additionalRows) * cols;
         if (arr.length < required)
-            arr = Arrays.copyOf(arr, Math.max(required, arr.length+(arr.length>>2)));
+            arr = copyOf(arr, Math.max(required, arr.length+(arr.length>>2)));
+        if (hashes.length < required)
+            hashes = copyOf(hashes, arr.length);
     }
 
     @Override public void clear(int newColumns) {
@@ -106,6 +162,8 @@ public class HdtBatch extends Batch<HdtBatch> {
         int base = rows*cols, required = base+cols;
         if (arr.length < required) return false;
         Arrays.fill(arr, base, required, 0);
+        if (hashes.length >= base)
+            Arrays.fill(hashes, base, Math.min(hashes.length, required), 0);
         offerRowBase = base;
         return true;
     }
@@ -155,11 +213,9 @@ public class HdtBatch extends Batch<HdtBatch> {
     }
 
     @Override public boolean offer(HdtBatch other) {
-        if (other.cols != cols) throw new IllegalArgumentException();
         int out = rows * cols, nTerms = other.rows*other.cols;
         if (nTerms > arr.length-out) return false;
-        arraycopy(other.arr, 0, arr, out, nTerms);
-        rows += other.rows;
+        put(other);
         return true;
     }
 
@@ -169,7 +225,10 @@ public class HdtBatch extends Batch<HdtBatch> {
             throw new IllegalArgumentException();
         int oRows = other.rows;
         reserve(oRows, 0);
-        arraycopy(other.arr, 0, arr, rows* this.cols, oRows* cols);
+        int items = oRows * cols;
+        arraycopy(other.arr, 0, arr, rows*cols, items);
+        arraycopy(other.hashes, 0, hashes, rows*cols,
+                  Math.min(other.hashes.length, items));
         rows += oRows;
     }
 
@@ -230,7 +289,8 @@ public class HdtBatch extends Batch<HdtBatch> {
     /* --- --- --- operation objects --- --- --- */
 
     static final class Merger extends BatchMerger<HdtBatch> {
-        private long @MonotonicNonNull [] tmp;
+        private long @MonotonicNonNull [] tmpIds;
+        private int  @MonotonicNonNull [] tmpHashes;
 
         public Merger(BatchType<HdtBatch> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
@@ -243,22 +303,33 @@ public class HdtBatch extends Batch<HdtBatch> {
                 if (projected != b) recycle(b);
                 return projected;
             }
-            long[] tmp = this.tmp;
-            if (tmp == null || tmp.length < w)
-                this.tmp = tmp = new long[w];
+            long[] tmpIds = this.tmpIds;
+            int[] tmpHashes = this.tmpHashes;
+            if (tmpIds == null || tmpIds.length < w)
+                this.tmpIds = tmpIds = new long[w];
+            if (tmpHashes == null || tmpHashes.length < w)
+                this.tmpHashes = tmpHashes = new int[w];
             b.cols = columns.length;
             long[] arr = b.arr;
+            int[] hashes = b.hashes;
             for (int in = 0, out = 0, inEnd = w*b.rows; in < inEnd; in += w) {
-                arraycopy(arr, in, tmp, 0, w);
-                for (int src : columns)
-                    arr[out++] = src >= 0 ? tmp[src] : 0;
+                arraycopy(arr, in, tmpIds, 0, w);
+                arraycopy(hashes, in, tmpHashes, 0, w);
+                for (int src : columns) {
+                    if (src >= 0) {
+                        arr   [out] = tmpIds[src];
+                        hashes[out] = tmpHashes[src];
+                    }
+                    ++out;
+                }
             }
             return b;
         }
     }
 
     static final class Filter extends BatchFilter<HdtBatch> {
-        private long @MonotonicNonNull [] tmp;
+        private long @MonotonicNonNull [] tmpIds;
+        private int  @MonotonicNonNull [] tmpHashes;
 
         public Filter(BatchType<HdtBatch> batchType, @Nullable BatchMerger<HdtBatch> projector,
                       RowFilter<HdtBatch> rowFilter) {
@@ -274,11 +345,13 @@ public class HdtBatch extends Batch<HdtBatch> {
                 b.cols = requireNonNull(projector.columns).length;
             b.rows = survivors;
             Arrays.fill(b.arr, 0L);
+            Arrays.fill(b.hashes, 0);
             return b;
         }
 
         @Override public HdtBatch filterInPlace(HdtBatch b, BatchMerger<HdtBatch> projector) {
             long[] arr = b.arr;
+            int[] hashes = b.hashes;
             int r = 0, rows = b.rows, w = b.cols, out = 0;
             int @Nullable [] columns = projector == null ? null : projector.columns;
             if (rows == 0 || w == 0 || (columns != null && columns.length == 0))
@@ -300,23 +373,35 @@ public class HdtBatch extends Batch<HdtBatch> {
                     for (; r < rows && !rowFilter.drop(b, r); ++r) kTerms += w;
                     // copy keep rows
                     arraycopy(arr, keep*w, arr, out, kTerms);
+                    arraycopy(hashes, keep*w, hashes, out, kTerms);
                 }
                 b.rows = out/w;
             } else {
-                long[] tmp = this.tmp;
-                if (tmp == null || tmp.length < w)
-                    this.tmp = tmp = new long[w];
-                boolean mayGrow = columns.length*rows > arr.length;
+                long[] tmpIds = this.tmpIds;
+                int[] tmpHashes = this.tmpHashes;
+                if (tmpIds == null || tmpIds.length < w)
+                    this.tmpIds = tmpIds = new long[w];
+                if (tmpHashes == null || tmpHashes.length < w)
+                    this.tmpHashes = tmpHashes = new int[w];
                 // when projecting and filtering, there is no gain in copying regions
                 for (int inRowStart = 0; r < rows; ++r, inRowStart += w) {
                     if (rowFilter.drop(b, r)) continue;
-                    arraycopy(arr, inRowStart, tmp, 0, w);
-                    if (mayGrow && out+columns.length > arr.length) {
+                    arraycopy(arr, inRowStart, tmpIds, 0, w);
+                    arraycopy(hashes, inRowStart, tmpHashes, 0, w);
+                    int required = out+columns.length;
+                    if (required > arr.length) {
                         int newLen = Math.max(columns.length*rows, arr.length+(arr.length>>1));
-                        b.arr = arr = Arrays.copyOf(arr, newLen);
+                        b.arr = arr = copyOf(arr, newLen);
                     }
-                    for (int src : columns)
-                        arr[out++] = src >= 0 ? tmp[src] : 0L;
+                    if (required < hashes.length)
+                        b.hashes = hashes = copyOf(b.hashes, arr.length);
+                    for (int src : columns) {
+                        if (src >= 0) {
+                            arr[out] = tmpIds[src];
+                            hashes[out] = tmpHashes[src];
+                        }
+                        ++out;
+                    }
                 }
                 b.cols = columns.length;
                 b.rows = out/columns.length;

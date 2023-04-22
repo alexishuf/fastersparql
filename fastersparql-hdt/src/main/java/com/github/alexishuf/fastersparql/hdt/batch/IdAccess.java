@@ -152,6 +152,17 @@ public class IdAccess {
     }
 
     /**
+     * Whether two sourced ids have the same source dictionary and role.
+     * @param a A {@code sourcedId} (see {@link #encode(long, int, TripleComponentRole)}
+     * @param b Another {@code sourcedId}
+     * @return true iff both are equals or if both {@code a} amd {@code b} have the same
+     *         {@link #dictId(long)} and {@link #role(long)}.
+     */
+    public static boolean sameSource(long a, long b) {
+        return (a&~PLAIN_MASK) == (b&~PLAIN_MASK);
+    }
+
+    /**
      * Get the HDT id embedded in {@code sourcedId}.
      *
      * @param sourcedId An HDT id augmented with {@link #encode(long, int, TripleComponentRole)}
@@ -218,12 +229,7 @@ public class IdAccess {
     public static Term toTerm(long sourcedId) {
         var str = toString(sourcedId);
         if (str == null) return null;
-        while (str instanceof DelayedString ds) str = ds.getInternal();
-        byte[] u8 = switch (str) {
-            case ReplazableString s -> s.getBuffer();
-            case CompactString s -> s.getData();
-            default -> null;
-        };
+        byte[] u8 = peekU8(str);
         int len = str.length();
         return switch (str.charAt(0)) {
             case '"' -> {
@@ -264,6 +270,7 @@ public class IdAccess {
     }
 
     private static Term coldEscapeString(ByteRope esc, CharSequence in) {
+        while (in instanceof DelayedString d) in = d.getInternal();
         int endLex = in.length()-1;
         while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
         for (int consumed = 1, i = 1; consumed < endLex; consumed = ++i) {
@@ -284,6 +291,15 @@ public class IdAccess {
         }
         esc.append(in, endLex, in.length()); // copy everything starting at ending '"'
         return Term.valueOf(esc);
+    }
+
+    public static byte[] peekU8(CharSequence hdtString) {
+        while (hdtString instanceof DelayedString d) hdtString = d.getInternal();
+        return switch (hdtString) {
+            case ReplazableString s -> s.getBuffer();
+            case CompactString s -> s.getData();
+            default -> null;
+        };
     }
 
     /** Equivalent to {@code dict(sourcedId).idToString(plain(sourcedId), role(sourcedId))}. */
