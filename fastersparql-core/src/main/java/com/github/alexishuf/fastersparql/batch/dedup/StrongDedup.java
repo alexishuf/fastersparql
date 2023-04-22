@@ -51,9 +51,15 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
 
     @Override public void clear(int cols) {
         tableSize = 0;
-        this.cols = cols;
-        for (Bucket<B> b : buckets) {
-            if (b != null) b.clear(cols);
+        if (cols != this.cols) {
+            this.cols = cols;
+            for (Bucket<B> b : buckets) {
+                if (b != null) b.clear(cols);
+            }
+        } else {
+            for (Bucket<B> b : buckets) {
+                if (b != null) b.clear();
+            }
         }
     }
 
@@ -201,6 +207,12 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             rows.clear(hashes.length, cols);
         }
 
+        void clear() {
+            bitset = 0;
+            size = 0;
+            weakBegin = hashes.length;
+        }
+
         void weaken() {
             int deficit = Math.max(8, hashes.length>>3) - (hashes.length-size);
             if (deficit > 0) {
@@ -213,12 +225,13 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
         boolean contains(B batch, int row, int hash) {
             if ((bitset & (1L << (hash & 63))) == 0)
                 return false; // certainly not present (but vulnerable to data race)
-            int weakBegin = this.weakBegin, capacity = hashes.length, i = 0;
-            while (i < weakBegin && (hashes[i] != hash || !rows.equals(i, batch, row)))
+            int strong = Math.min(size, weakBegin), i = 0;
+            while (i < strong && (hashes[i] != hash || !rows.equals(i, batch, row)))
                 ++i;
-            if (i == weakBegin) {
-                if (weakBegin < capacity) {
-                    i = weakBegin + ((hash&0x7fffffff) % (capacity - weakBegin));
+            if (i == strong) {
+                int weakBegin = this.weakBegin, nWeak = hashes.length-weakBegin;
+                if (nWeak > 0) {
+                    i = weakBegin + ((hash&0x7fffffff) % nWeak);
                     return hashes[i] == hash && rows.equals(i, batch, row);
                 }
                 return false;
@@ -231,7 +244,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             int capacity = hashes.length, i;
             boolean incSize;
             if (weakBegin < capacity) {
-               i = weakBegin + (hash&0x7fffffff) % (capacity - weakBegin);
+                i = weakBegin + (hash&0x7fffffff) % (capacity - weakBegin);
                 incSize = !rows.has(i);
             } else {
                 incSize = true;
