@@ -97,18 +97,19 @@ public class HdtSparqlClient extends AbstractSparqlClient {
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         BIt<HdtBatch> hdtIt;
-        if (sparql instanceof Modifier m && m.left instanceof TriplePattern tp)
-            hdtIt = m.executeFor(queryTP(tp), null, false);
-        else if (sparql instanceof TriplePattern tp)
-            hdtIt = queryTP(tp);
-        else
+        if (sparql instanceof Modifier m && m.left instanceof TriplePattern tp) {
+            Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+            hdtIt = m.executeFor(queryTP(vars, tp), null, false);
+        } else if (sparql instanceof TriplePattern tp) {
+            hdtIt = queryTP(tp.publicVars(), tp);
+        } else {
             hdtIt = federation.query(TYPE, sparql);
+        }
         return batchType.convert(hdtIt);
     }
 
-    private BIt<HdtBatch> queryTP(TriplePattern tp) {
+    private BIt<HdtBatch> queryTP(Vars vars, TriplePattern tp) {
         long s, p, o;
-        Vars vars = tp.publicVars();
         var dict = hdt.getDictionary();
         if (       (s = plain(dict, tp.s,   SUBJECT)) == NOT_FOUND
                 || (p = plain(dict, tp.p, PREDICATE)) == NOT_FOUND
@@ -116,7 +117,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             return new EmptyBIt<>(TYPE, vars);
         } else {
             var it = hdt.getTriples().search(new TripleID(s, p, o));
-            return new HdtIteratorBIt(tp, it);
+            return new HdtIteratorBIt(vars, tp.s, tp.p, tp.o, it);
         }
     }
 
@@ -171,9 +172,6 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         private final byte v1Role;
         private final byte v2Role;
 
-        public HdtIteratorBIt(TriplePattern tp, IteratorTripleID it) {
-            this(tp.publicVars(), tp.s, tp.p, tp.o, it);
-        }
         public HdtIteratorBIt(Vars vars, Term s, Term p, Term o, IteratorTripleID it) {
             super(TYPE, vars);
             acquireHdt();
@@ -247,7 +245,9 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             this.s = plain(dict, right.s,   SUBJECT);
             this.p = plain(dict, right.p, PREDICATE);
             this.o = plain(dict, right.o,    OBJECT);
-            this.rightFreeVars = right.publicVars().minus(left.vars());
+            this.rightFreeVars
+                    = (modifier != null && modifier.filters.isEmpty() ? modifier : right)
+                    .publicVars().minus(left.vars());
             if (s == -1 || p == -1 || o == -1)
                 empty = new EmptyBIt<>(TYPE, rightFreeVars);
             else
