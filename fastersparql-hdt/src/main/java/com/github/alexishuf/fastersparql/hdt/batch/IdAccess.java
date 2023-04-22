@@ -15,6 +15,7 @@ import org.rdfhdt.hdt.util.string.ReplazableString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static java.lang.invoke.MethodHandles.lookup;
@@ -23,6 +24,10 @@ import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class IdAccess {
     private static final Logger log = LoggerFactory.getLogger(IdAccess.class);
+    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
+    private static final int CACHE_SIZE = 256;
+    private static final int CACHE_MASK = CACHE_SIZE-1;
+    private static final VarHandle CACHE_ID  = MethodHandles.arrayElementVarHandle(long[].class);
 
     /* --- --- --- constants --- --- --- */
     static final long  ROLE_MASK = 0xc000000000000000L;
@@ -31,9 +36,7 @@ public class IdAccess {
 
     static final int  ROLE_BIT = Long.numberOfTrailingZeros(ROLE_MASK);
     static final int  DICT_BIT = Long.numberOfTrailingZeros(DICT_MASK);
-    static final int PLAIN_BIT = Long.numberOfTrailingZeros(PLAIN_MASK);
 
-    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
 
     public static final int MAX_DICT = (int)(DICT_MASK >> DICT_BIT);
 
@@ -54,6 +57,8 @@ public class IdAccess {
     private static final Dictionary[] dicts = new Dictionary[MAX_DICT];
     private static final int[] freeDictSlots = BS.init(null, MAX_DICT);
     private static int nextDictId = 1;
+    private static final         long[] cachedSourcedIds      = new         long[CACHE_SIZE];
+    private static final CharSequence[] cachedStringsAndTerms = new CharSequence[CACHE_SIZE];
 
     /* --- --- --- inner classes --- --- --- */
 
@@ -80,6 +85,31 @@ public class IdAccess {
         public NoSpaceForDictException() {
             super("No space left for registering a new Dictionary");
         }
+    }
+
+    /* --- --- --- cache methods --- --- --- */
+
+
+    private static void offerCache(long sourcedId, CharSequence cs) {
+        if (sourcedId == NOT_FOUND || sourcedId == 0 || cs == null)
+            return; // do not store special values
+        int slot = ((int)(sourcedId>>32) ^ (int)sourcedId) & CACHE_MASK;
+        long o = (long)CACHE_ID.getOpaque(cachedSourcedIds, slot);
+        if (CACHE_ID.compareAndSet(cachedSourcedIds, slot, o, NOT_FOUND)) {
+            cachedStringsAndTerms[slot] = cs;
+            CACHE_ID.setVolatile(cachedSourcedIds, slot, sourcedId);
+        }
+    }
+
+    private static CharSequence pollCached(long sourcedId) {
+        if (sourcedId == NOT_FOUND || sourcedId == 0L)
+            return null; // do not look up special values (0 -> empty, NOT_FOUND -> locked)
+        int slot = ((int)(sourcedId>>32) ^ (int)sourcedId) & CACHE_MASK;
+        if (!CACHE_ID.compareAndSet(cachedSourcedIds, slot, sourcedId, NOT_FOUND))
+            return null;
+        var cs = cachedStringsAndTerms[slot];
+        CACHE_ID.setVolatile(cachedSourcedIds, slot, sourcedId);
+        return cs;
     }
 
     /* --- --- --- id lookup methods --- --- --- */
@@ -227,11 +257,14 @@ public class IdAccess {
      *                          {@link #release(int)}d
      */
     public static Term toTerm(long sourcedId) {
-        var str = toString(sourcedId);
+        var str = pollCached(sourcedId);
+        if (str instanceof Term t)
+            return t;
+        str = toString(sourcedId);
         if (str == null) return null;
         byte[] u8 = peekU8(str);
         int len = str.length();
-        return switch (str.charAt(0)) {
+        Term t = switch (str.charAt(0)) {
             case '"' -> {
                 ByteRope esc = new ByteRope((len + B_SP_LEN) & -B_SP_LEN);
                 esc.append('"');
@@ -267,6 +300,9 @@ public class IdAccess {
                 yield Term.valueOf(wrapped, 0, wrapped.len);
             }
         };
+        if (t != null)
+            offerCache(sourcedId, t);
+        return t;
     }
 
     private static Term coldEscapeString(ByteRope esc, CharSequence in) {
@@ -293,13 +329,12 @@ public class IdAccess {
         return Term.valueOf(esc);
     }
 
-    public static byte[] peekU8(CharSequence hdtString) {
-        while (hdtString instanceof DelayedString d) hdtString = d.getInternal();
-        return switch (hdtString) {
-            case ReplazableString s -> s.getBuffer();
-            case CompactString s -> s.getData();
-            default -> null;
-        };
+    public static byte[] peekU8(CharSequence hdtStr) {
+        while (hdtStr instanceof DelayedString d)
+            hdtStr = d.getInternal();
+        if      (hdtStr instanceof ReplazableString s) return s.getBuffer();
+        else if (hdtStr instanceof    CompactString s) return s.getData();
+        return null;
     }
 
     /** Equivalent to {@code dict(sourcedId).idToString(plain(sourcedId), role(sourcedId))}. */
@@ -315,9 +350,13 @@ public class IdAccess {
         if (dictId == 0) throw new PlainIdException(sourcedId);
         Dictionary d = dicts[dictId-1];
         if (d == null) throw new NoDictException(sourcedId);
-        var string = d.idToString(sourcedId & PLAIN_MASK, role);
+        var string = pollCached(sourcedId);
+        if (string != null && !(string instanceof Term))
+            return string;
+        string = d.idToString(sourcedId & PLAIN_MASK, role);
         if (string == null)
             throw new NoStringException(sourcedId);
+        offerCache(sourcedId, string);
         return string;
     }
 

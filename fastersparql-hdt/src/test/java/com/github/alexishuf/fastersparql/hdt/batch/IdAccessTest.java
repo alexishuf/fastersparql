@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.rdfhdt.hdt.dictionary.Dictionary;
@@ -11,7 +12,9 @@ import org.rdfhdt.hdt.options.HDTSpecification;
 import org.rdfhdt.hdt.util.string.CompactString;
 
 import java.util.List;
+import java.util.Objects;
 
+import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.virtualRepeatAndWait;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -214,24 +217,24 @@ class IdAccessTest {
          Dictionary d2 = dummyDict();
          int dId1 = register(d1), dId2 = register(d2);
          try {
-             long   alice1 = Alice(dId1),     bob1 = Bob(dId1);
+             long alice1 = Alice(dId1), bob1 = Bob(dId1);
              long charlie1 = charlie(dId1), knows1 = knows(dId1);
-             long dave1    = dave(dId1);
+             long dave1 = dave(dId1);
              assertEquals(d2.stringToId(ALICE_S, SUBJECT), plainIn(d2, SUBJECT, alice1));
-             assertEquals(d2.stringToId(ALICE_S,  OBJECT), plainIn(d2,  OBJECT, alice1));
+             assertEquals(d2.stringToId(ALICE_S, OBJECT), plainIn(d2, OBJECT, alice1));
 
              assertEquals(d1.stringToId(ALICE_S, SUBJECT), plainIn(d1, SUBJECT, alice1));
-             assertEquals(d1.stringToId(ALICE_S,  OBJECT), plainIn(d1,  OBJECT, alice1));
+             assertEquals(d1.stringToId(ALICE_S, OBJECT), plainIn(d1, OBJECT, alice1));
 
-             assertEquals(d2.stringToId(BOB_S,     SUBJECT), plainIn(d2, SUBJECT, bob1));
-             assertEquals(d2.stringToId(CHARLIE_S,  OBJECT), plainIn(d2,  OBJECT, charlie1));
-             assertEquals(d2.stringToId(DAVE_S,     OBJECT), plainIn(d2,  OBJECT, dave1));
-             assertEquals(d2.stringToId(KNOWS_S,    OBJECT), plainIn(d2,  OBJECT, knows1));
+             assertEquals(d2.stringToId(BOB_S, SUBJECT), plainIn(d2, SUBJECT, bob1));
+             assertEquals(d2.stringToId(CHARLIE_S, OBJECT), plainIn(d2, OBJECT, charlie1));
+             assertEquals(d2.stringToId(DAVE_S, OBJECT), plainIn(d2, OBJECT, dave1));
+             assertEquals(d2.stringToId(KNOWS_S, OBJECT), plainIn(d2, OBJECT, knows1));
 
-             assertEquals(d1.stringToId(BOB_S,     SUBJECT), plainIn(d1, SUBJECT, bob1));
-             assertEquals(d1.stringToId(CHARLIE_S,  OBJECT), plainIn(d1,  OBJECT, charlie1));
-             assertEquals(d1.stringToId(DAVE_S,     OBJECT), plainIn(d1,  OBJECT, dave1));
-             assertEquals(d1.stringToId(KNOWS_S,    OBJECT), plainIn(d1,  OBJECT, knows1));
+             assertEquals(d1.stringToId(BOB_S, SUBJECT), plainIn(d1, SUBJECT, bob1));
+             assertEquals(d1.stringToId(CHARLIE_S, OBJECT), plainIn(d1, OBJECT, charlie1));
+             assertEquals(d1.stringToId(DAVE_S, OBJECT), plainIn(d1, OBJECT, dave1));
+             assertEquals(d1.stringToId(KNOWS_S, OBJECT), plainIn(d1, OBJECT, knows1));
 
              assertEquals(0, plainIn(d1, SUBJECT, 0));
              assertEquals(0, plainIn(d1, PREDICATE, 0));
@@ -253,6 +256,9 @@ class IdAccessTest {
              assertEquals(-1, plainIn(d2, SUBJECT, charlie1));
              assertEquals(-1, plainIn(d1, PREDICATE, charlie1));
              assertEquals(-1, plainIn(d2, PREDICATE, charlie1));
+         } catch (Throwable t) {
+             DebugJournal.SHARED.dump(80);
+             throw t;
          } finally {
              release(dId1);
              release(dId2);
@@ -261,6 +267,27 @@ class IdAccessTest {
 
      @Test void testAsPlainInConcurrent() throws Exception {
         virtualRepeatAndWait("testAsPlainIn", 100, this::testAsPlainIn);
+     }
+
+     @Test void testConcurrentToString() throws Exception {
+        platformRepeatAndWait("testConcurrentToString", 200, () -> {
+            var d = dummyDict();
+            int dId = register(d);
+            try {
+                long alice = Alice(dId), bob = Bob(dId), charlie = charlie(dId);
+                for (int i = 0; i < 1_000; i++) {
+                    assertEquals(ALICE_S, Objects.toString(IdAccess.toString(alice)));
+                    assertEquals(BOB_S, Objects.toString(IdAccess.toString(bob)));
+                    assertEquals(CHARLIE_S, Objects.toString(IdAccess.toString(charlie)));
+                }
+            } catch (Throwable t) {
+                DebugJournal.SHARED.dump(80);
+                throw t;
+            } finally {
+                release(dId);
+            }
+        });
+
      }
 
      @Test void testToTerm() {
