@@ -1204,15 +1204,15 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int h = 0, bit = 0, bits = end-begin;
         if (bits > 32)
             begin = end-(bits = 32);
-        MemorySegment s;
-        if (IS_LE && bits >= 8 && (s = segment()) != null) {
-            for (; bit + 8 <= bits; bit += 8)
-                h |= (int) Long.compress(s.get(LONG_UNALIGNED, begin + bit), LSB_MASK_L) << bit;
-            if (bit + 4 <= bits) {
-                h |= Integer.compress(s.get(INT_UNALIGNED, begin + bit), LSB_MASK_I) << bit;
-                bit += 4;
-            }
-        }
+//        MemorySegment s;
+//        if (IS_LE && bits >= 8 && (s = segment()) != null) {
+//            for (; bit + 8 <= bits; bit += 8)
+//                h |= (int) Long.compress(s.get(LONG_UNALIGNED, begin + bit), LSB_MASK_L) << bit;
+//            if (bit + 4 <= bits) {
+//                h |= Integer.compress(s.get(INT_UNALIGNED, begin + bit), LSB_MASK_I) << bit;
+//                bit += 4;
+//            }
+//        }
         while (bit < bits)
             h |= (get(begin + bit) & 1) << bit++;
         return h;
