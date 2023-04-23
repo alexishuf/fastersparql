@@ -9,7 +9,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class OutputStreamSink implements ByteSink<OutputStreamSink> {
     public OutputStream os;
-    private boolean empty = true;
+    private int len = 0;
 
     public OutputStreamSink(OutputStream os) {
         this.os = os;
@@ -17,7 +17,7 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
 
     private @This OutputStreamSink write(byte b) {
         try {
-            empty = false;
+            len++;
             os.write(b);
             return this;
         } catch (IOException e) { throw new RuntimeException(e); }
@@ -25,15 +25,14 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
 
     private @This OutputStreamSink write(byte[] bytes, int off, int len) {
         try {
-            empty &= len == 0;
+            this.len += len;
             os.write(bytes, off, len);
             return this;
         } catch (IOException e) { throw new RuntimeException(e); }
     }
 
-    @Override public boolean isEmpty() {
-        return empty;
-    }
+    @Override public boolean isEmpty() { return len == 0; }
+    @Override public int         len() { return len; }
 
     @Override public @This OutputStreamSink append(byte[] arr, int begin, int len) {
         return write(arr, begin, len);

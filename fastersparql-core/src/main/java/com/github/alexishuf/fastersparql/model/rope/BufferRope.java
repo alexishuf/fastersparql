@@ -25,6 +25,8 @@ public class BufferRope extends Rope {
 
     public ByteBuffer buffer() { return buffer; }
 
+    public int offset() { return offset; }
+
     public void buffer(ByteBuffer buffer) {
         this.buffer = buffer;
         this.offset = buffer.position();

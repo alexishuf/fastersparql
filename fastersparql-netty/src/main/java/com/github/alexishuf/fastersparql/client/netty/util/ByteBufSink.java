@@ -47,6 +47,10 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         return bb == null || bb.readableBytes() == 0;
     }
 
+    @Override public int len() {
+        return bb == null ? 0 : bb.readableBytes();
+    }
+
     @Override public @This ByteBufSink append(byte[] arr, int begin, int len) {
         bb.writeBytes(arr, begin, len);
         return this;
@@ -66,7 +70,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
     @Override public @This ByteBufSink append(Rope rope) {
         switch (rope) {
             case ByteRope b -> bb.writeBytes(b.utf8, b.offset, b.len);
-            case BufferRope b -> bb.writeBytes(b.buffer());
+            case BufferRope b -> bb.writeBytes(b.buffer().slice(b.offset(), b.len));
             case Term t -> {
                 var shared = RopeDict.getTolerant(t.flaggedDictId).utf8;
                 if (t.flaggedDictId < 0) {

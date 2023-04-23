@@ -5,6 +5,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 @SuppressWarnings("unchecked")
 public interface ByteSink<B extends ByteSink<B>> {
     boolean isEmpty();
+    int len();
 
     @This B append(byte[] arr, int begin, int len);
     default @This B append(byte[] arr) { return append(arr, 0, arr.length); }
