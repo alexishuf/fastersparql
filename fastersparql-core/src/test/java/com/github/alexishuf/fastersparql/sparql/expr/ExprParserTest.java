@@ -1,9 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -235,8 +234,8 @@ public class ExprParserTest {
     void test(TestData data) {
         ExprParser parser = new ExprParser();
         ByteRope rope = new ByteRope(data.expr);
-        Rope subRope = Rope.of("!", rope, ">").sub(1, 1 + rope.len);
-        BufferRope bufferRope = new BufferRope(ByteBuffer.wrap(rope.toArray(0, rope.len)));
+        var subRope = SegmentRope.of("!", rope, ">").sub(1, 1 + rope.len);
+        SegmentRope bufferRope = new SegmentRope(ByteBuffer.wrap(rope.toArray(0, rope.len)));
 
         var e1 = parser.parse(rope);
         var e2 = parser.parse(subRope);

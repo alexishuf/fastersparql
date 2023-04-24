@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -29,7 +30,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class SparqlParser {
 
-    private Rope in;
+    private SegmentRope in;
     private int start, pos, end;
     private final ExprParser exprParser = new ExprParser();
     private final GroupParser groupParser = new GroupParser();
@@ -49,7 +50,7 @@ public class SparqlParser {
      *                  given {@code prefixMap} may redefine them.
      * @return The {@link Plan} equivalent to the block.
      */
-    public Plan parseGroup(Rope sparql, int start, PrefixMap prefixMap) {
+    public Plan parseGroup(SegmentRope sparql, int start, PrefixMap prefixMap) {
         this.end = (this.in = sparql).len();
         this.pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin().addAll(prefixMap);
@@ -63,8 +64,8 @@ public class SparqlParser {
     public Plan parse(SparqlQuery q) {
         return q instanceof Plan p ? p : parse(q.sparql());
     }
-    public Plan parse(Rope query) { return parse(query, 0); }
-    public Plan parse(Rope query, int start) {
+    public Plan parse(SegmentRope query) { return parse(query, 0); }
+    public Plan parse(SegmentRope query, int start) {
         end = (in = query).len();
         this.start = start;
         pos = start;

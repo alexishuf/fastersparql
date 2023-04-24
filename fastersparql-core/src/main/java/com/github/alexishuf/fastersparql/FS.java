@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfigurat
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -394,7 +395,7 @@ public class FS {
             if (o instanceof Expr e)
                 parsed.add(e);
             else if (o != null)
-                parsed.add(p.parse(Rope.of(o)));
+                parsed.add(p.parse(SegmentRope.of(o)));
         }
         return parsed;
     }

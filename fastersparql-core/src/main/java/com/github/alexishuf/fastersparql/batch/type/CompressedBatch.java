@@ -193,7 +193,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * @return true iff the term was written.
      */
     private boolean setTerm(boolean forbidGrow, int destCol, int flaggedId,
-                            byte @Nullable [] local, @Nullable Rope localRope,
+                            byte @Nullable [] local, @Nullable SegmentRope localRope,
                             int localOff, int localLen) {
         if (offerNextLocals < 0) throw new IllegalStateException();
         if (destCol < 0 || destCol >= cols) throw new IndexOutOfBoundsException();
@@ -422,14 +422,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void writeNT(ByteSink<?> dest, int row, int col) {
         int base = mdBase(row, col), fId = md[base];
-        byte[] shared = fId == 0 ? null : RopeDict.get(fId & 0x7fffffff).utf8;
+        byte[] shared = fId == 0 ? null : RopeDict.get(fId & 0x7fffffff).u8();
         if (fId > 0) dest.append(shared, 0, shared.length);
         dest.append(locals, md[base+MD_OFF], md[base+MD_LEN]);
         if (fId < 0) dest.append(shared, 0, shared.length);
     }
     @Override public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
         int base = mdBase(row, col), len = end-begin, fId = md[base], lLen = md[base+MD_LEN];
-        byte[] shared = fId == 0 ? ByteRope.EMPTY.utf8 : RopeDict.get(fId&0x7fffffff).utf8;
+        byte[] shared = RopeDict.getTolerant(fId&0x7fffffff).u8();
         if (begin < 0 || len > shared.length+lLen) throw new IndexOutOfBoundsException();
 
         int written;
@@ -536,7 +536,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public boolean offerTerm(int col, Term t) {
         int fId = t == null ? 0 : t.flaggedDictId;
-        byte[] local = t == null ? ByteRope.EMPTY.utf8 : t.local;
+        byte[] local = t == null ? ByteRope.EMPTY.u8() : t.local;
         return setTerm(true, col, fId, local, null, 0, local.length);
     }
 
@@ -555,7 +555,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localLen) {
+    public boolean offerTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localLen) {
         return setTerm(true, col, flaggedId, null, localRope, localOff, localLen);
     }
 
@@ -598,7 +598,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void putTerm(int col, Term t) {
         int fId = t == null ? 0 : t.flaggedDictId;
-        byte[] local = t == null ? ByteRope.EMPTY.utf8 : t.local;
+        byte[] local = t == null ? ByteRope.EMPTY.u8() : t.local;
         setTerm(false, col, fId, local, null, 0, local.length);
     }
 
@@ -615,7 +615,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void putTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+    public void putTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localEnd) {
         setTerm(false, col, flaggedId, null, localRope, localOff,
                 localEnd-localOff);
     }

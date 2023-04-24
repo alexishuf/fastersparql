@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import jdk.incubator.vector.ByteVector;
@@ -35,7 +36,7 @@ class BatchTest {
 
     static final class Size {
         private static final int ALIGNMENT = ByteVector.SPECIES_PREFERRED.length();
-        private static final int P_EX = (int) RopeDict.internIri(Rope.of("<http://www.example.org/ns#>"), 0, 28);
+        private static final int P_EX = (int) RopeDict.internIri(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
         public final int rows;
         public final int cols;
         private final int requiredBytesUnaligned;

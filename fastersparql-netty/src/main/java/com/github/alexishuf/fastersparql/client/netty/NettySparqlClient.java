@@ -14,9 +14,9 @@ import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.model.MediaType;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
@@ -27,7 +27,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -106,7 +105,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private final FullHttpRequest request;
         private @Nullable Charset decodeCharset;
         private @MonotonicNonNull ResultsParserBIt<B> parser;
-        private final BufferRope bufferRope = new BufferRope(ByteBuffer.wrap(ByteRope.EMPTY.utf8));
+        private final SegmentRope bufferRope = new SegmentRope();
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), FSProperties.queueMaxBatches());
@@ -154,9 +153,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         /** Called for every {@link HttpContent}, which includes a {@link FullHttpResponse} */
         public void readContent(HttpContent httpContent) {
-            Rope r = bufferRope;
+            var r = bufferRope;
             if (decodeCharset == null)
-                bufferRope.buffer(httpContent.content().nioBuffer());
+                bufferRope.wrapBuffer(httpContent.content().nioBuffer());
             else
                 r = new ByteRope(httpContent.content().toString(decodeCharset));
             parser.feedShared(r);

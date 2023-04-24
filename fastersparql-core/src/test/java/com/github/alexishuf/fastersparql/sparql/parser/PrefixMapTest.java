@@ -183,14 +183,14 @@ class PrefixMapTest {
         assertEquals(Term.iri(trailing), pm.expand("trailing:"));
 
         // changes to ByteRopes fed to add() should not affect PrefixMap
-        Arrays.fill(unwrappedName.utf8, (byte)0);
-        Arrays.fill(wrappedName.utf8, (byte)0);
-        Arrays.fill(leadingName.utf8, (byte)0);
-        Arrays.fill(trailingName.utf8, (byte)0);
-        Arrays.fill(unwrapped.utf8, (byte)0);
-        Arrays.fill(wrapped.utf8, (byte)0);
-        Arrays.fill(leading.utf8, (byte)0);
-        Arrays.fill(trailing.utf8, (byte)0);
+        Arrays.fill(unwrappedName.u8(), (byte)0);
+        Arrays.fill(wrappedName.u8(), (byte)0);
+        Arrays.fill(leadingName.u8(), (byte)0);
+        Arrays.fill(trailingName.u8(), (byte)0);
+        Arrays.fill(unwrapped.u8(), (byte)0);
+        Arrays.fill(wrapped.u8(), (byte)0);
+        Arrays.fill(leading.u8(), (byte)0);
+        Arrays.fill(trailing.u8(), (byte)0);
 
         assertEquals(Term.iri("http://unwrapped.example.org/"), pm.expand("unwrapped:"));
         assertEquals(Term.iri("http://wrapped.example.org/"), pm.expand("wrapped:"));

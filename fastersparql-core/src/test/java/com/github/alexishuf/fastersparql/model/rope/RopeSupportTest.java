@@ -171,9 +171,9 @@ class RopeSupportTest {
 
         assertEquals(l.compareTo(r), compareTo(lU8, new ByteRope(r), 0, r.length()));
         assertEquals(l.compareTo(r), compareTo(lU8, new ByteRope(r+r), r.length(), 2*r.length()));
-        assertEquals(l.compareTo(r), compareTo(lU8, new BufferRope(ByteBuffer.wrap(r.getBytes(UTF_8))), 0, r.length()));
-        assertEquals(l.compareTo(r), compareTo(lU8, new BufferRope(ByteBuffer.wrap(("~"+r).getBytes(UTF_8))), 1, 1+r.length()));
-        assertEquals(l.compareTo(r), compareTo(lU8, new BufferRope(ByteBuffer.wrap((" "+r).getBytes(UTF_8))), 1, 1+r.length()));
+        assertEquals(l.compareTo(r), compareTo(lU8, new SegmentRope(ByteBuffer.wrap(r.getBytes(UTF_8))), 0, r.length()));
+        assertEquals(l.compareTo(r), compareTo(lU8, new SegmentRope(ByteBuffer.wrap(("~"+r).getBytes(UTF_8))), 1, 1+r.length()));
+        assertEquals(l.compareTo(r), compareTo(lU8, new SegmentRope(ByteBuffer.wrap((" "+r).getBytes(UTF_8))), 1, 1+r.length()));
         assertEquals(l.compareTo(r), compareTo(lU8, Term.valueOf("\""+r+"\"@en"), 1, 1+r.length()));
     }
 }

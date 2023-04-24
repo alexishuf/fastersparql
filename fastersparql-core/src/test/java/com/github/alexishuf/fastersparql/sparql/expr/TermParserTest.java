@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -217,7 +218,7 @@ public class TermParserTest {
             assertSame(parser, parser.eager());
         parser.prefixMap.add(Rope.of("ex"), Term.iri("http://example.org/ns#"));
         parser.prefixMap.add(Rope.of(""), Term.iri("http://example.org/"));
-        Rope inRope = Rope.of(in);
+        var inRope = SegmentRope.of(in);
         TermParser.Result result = parser.parse(inRope, start, len);
         assertEquals(expected != ERROR, result.isValid());
 

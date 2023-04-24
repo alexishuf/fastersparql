@@ -31,21 +31,21 @@ class RopeDictTest {
             resetWithCapacity(bits);
         else
             reset();
-        assertEquals(P_XSD, (int)internIri("<http://www.w3.org/2001/XMLSchema#>"));
-        assertEquals(P_RDF, (int)internIri("<http://www.w3.org/1999/02/22-rdf-syntax-ns#>"));
+        assertEquals(P_XSD, (int)internIri(SegmentRope.of("<http://www.w3.org/2001/XMLSchema#>")));
+        assertEquals(P_RDF, (int)internIri(SegmentRope.of("<http://www.w3.org/1999/02/22-rdf-syntax-ns#>")));
 
-        assertEquals(DT_string,       internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#string>"));
-        assertEquals(DT_integer,      internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
-        assertEquals(DT_decimal,      internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#decimal>"));
-        assertEquals(DT_duration,     internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#duration>"));
-        assertEquals(DT_date,         internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#date>"));
-        assertEquals(DT_dateTime,     internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#dateTime>"));
-        assertEquals(DT_INT,          internDatatype("\"^^<http://www.w3.org/2001/XMLSchema#int>"));
-        assertEquals(DT_PlainLiteral, internDatatype("\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral>"));
+        assertEquals(DT_string,       internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#string>")));
+        assertEquals(DT_integer,      internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#integer>")));
+        assertEquals(DT_decimal,      internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#decimal>")));
+        assertEquals(DT_duration,     internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#duration>")));
+        assertEquals(DT_date,         internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#date>")));
+        assertEquals(DT_dateTime,     internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#dateTime>")));
+        assertEquals(DT_INT,          internDatatype(SegmentRope.of("\"^^<http://www.w3.org/2001/XMLSchema#int>")));
+        assertEquals(DT_PlainLiteral, internDatatype(SegmentRope.of("\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral>")));
 
-        assertEquals(DT_integer, (int)internLit("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
-        assertEquals(DT_decimal, (int)internLit("\"23\"^^<http://www.w3.org/2001/XMLSchema#decimal>"));
-        assertEquals(DT_INT,     (int)internLit("\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"));
+        assertEquals(DT_integer, (int)internLit(SegmentRope.of("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>")));
+        assertEquals(DT_decimal, (int)internLit(SegmentRope.of("\"23\"^^<http://www.w3.org/2001/XMLSchema#decimal>")));
+        assertEquals(DT_INT,     (int)internLit(SegmentRope.of("\"23\"^^<http://www.w3.org/2001/XMLSchema#int>")));
     }
 
 
@@ -68,7 +68,7 @@ class RopeDictTest {
                 int thread = i;
                 tasks.add(ex.submit(() -> {
                     for (int round = 0; round < rounds; round++)
-                        thread2round2localAndId[thread][round] = internIri(iris[round]);
+                        thread2round2localAndId[thread][round] = internIri(SegmentRope.of(iris[round]));
                 }));
             }
             for (Future<?> t : tasks)
@@ -118,7 +118,7 @@ class RopeDictTest {
                     int t = tIdx;
                     tasks.add(ex.submit(() -> {
                         for (int i = t * chunk, e = t == threads - 1 ? iris.length : i + chunk; i < e; i++) {
-                            long localAndId = internIri(iris[i]);
+                            long localAndId = internIri(SegmentRope.of(iris[i]));
                             locals[i] = (int) (localAndId >>> 32);
                             ids[i] = (int) localAndId;
                         }
@@ -133,7 +133,7 @@ class RopeDictTest {
                     assertEquals(28, locals[i], ctx);
                     assertTrue(ids[i] > 0, ctx);
                     assertEquals(iris[i].substring(0, 28), get(ids[i]).toString(), ctx);
-                    assertEquals((28L << 32) | ids[i], internIri(iris[i]), ctx);
+                    assertEquals((28L << 32) | ids[i], internIri(SegmentRope.of(iris[i])), ctx);
                 }
             }
         }
@@ -161,7 +161,7 @@ class RopeDictTest {
             void test(int row) {
                 for (String prefix : List.of("\"^^<", "\"asd\"^^<", "\"\\\"^^<...>\"^^<")) {
                     var ctx = "prefix="+prefix+" at data["+row+"]="+this;
-                    var r = Rope.of(prefix, iri, '>');
+                    var r = SegmentRope.of(prefix, iri, '>');
                     int begin = prefix.length()-4, end = r.len();
                     assertEquals(expected, RopeDict.internDatatype(r, begin, end), ctx);
                 }
@@ -172,7 +172,7 @@ class RopeDictTest {
                                                         "\"asd\"^^<",
                                                         "\"\\\"^^<...>\"^^<")) {
                             var ctx = "bogusPrefix="+bogusPrefix+", bogusSuffix="+bogusSuffix+", litPrefix="+litPrefix+" at data["+row+"]="+this;
-                            var r = Rope.of(bogusPrefix, litPrefix, iri, '>', bogusSuffix);
+                            var r = SegmentRope.of(bogusPrefix, litPrefix, iri, '>', bogusSuffix);
                             int begin = bogusPrefix.length(), end = r.len-bogusSuffix.length();
                             long suffixAndId = internLit(r, begin, end);
                             int expectedSuffix = bogusPrefix.length() + litPrefix.length() - 4;
@@ -207,27 +207,27 @@ class RopeDictTest {
 
     @Test
     void testInternShortIri() {
-        assertEquals(0L, internIri(Rope.of("<>")));
-        assertEquals(0L, internIri(Rope.of("<http://www.123.de/1>")));
-        assertEquals(1L << 32, internIri(Rope.of("<<http://www.123.de/1>"), 1, 22));
+        assertEquals(0L, internIri(SegmentRope.of("<>")));
+        assertEquals(0L, internIri(SegmentRope.of("<http://www.123.de/1>")));
+        assertEquals(1L << 32, internIri(SegmentRope.of("<<http://www.123.de/1>"), 1, 22));
     }
 
     @Test
     void testInternWellBehavedIri() {
-        long alice = internIri("<http://example.org/123456/Alice>");
+        long alice = internIri(SegmentRope.of("<http://example.org/123456/Alice>"));
         assertEquals(27, alice>>>32);
         assertEquals("<http://example.org/123456/", get((int)alice).toString());
 
-        assertEquals(alice, internIri("<http://example.org/123456/Alice>"));
-        assertEquals(alice, internIri("<http://example.org/123456/Bob>"));
-        assertEquals(alice, internIri("<http://example.org/123456/>"));
+        assertEquals(alice, internIri(SegmentRope.of("<http://example.org/123456/Alice>")));
+        assertEquals(alice, internIri(SegmentRope.of("<http://example.org/123456/Bob>")));
+        assertEquals(alice, internIri(SegmentRope.of("<http://example.org/123456/>")));
 
         long shifted = alice + (1L << 32);
-        assertEquals(shifted, internIri(Rope.of(".<http://example.org/123456/Bob>."), 1, 32));
-        assertEquals(shifted, internIri(Rope.of("<<http://example.org/123456/Bob>>"), 1, 32));
-        assertEquals(shifted, internIri(Rope.of("!<http://example.org/123456/Bob>/"), 1, 32));
-        assertEquals(shifted, internIri(Rope.of("#<http://example.org/123456/Bob>#"), 1, 32));
-        assertEquals(shifted, internIri(Rope.of("/<http://example.org/123456/Bob>>/#."), 1, 32));
+        assertEquals(shifted, internIri(SegmentRope.of(".<http://example.org/123456/Bob>."), 1, 32));
+        assertEquals(shifted, internIri(SegmentRope.of("<<http://example.org/123456/Bob>>"), 1, 32));
+        assertEquals(shifted, internIri(SegmentRope.of("!<http://example.org/123456/Bob>/"), 1, 32));
+        assertEquals(shifted, internIri(SegmentRope.of("#<http://example.org/123456/Bob>#"), 1, 32));
+        assertEquals(shifted, internIri(SegmentRope.of("/<http://example.org/123456/Bob>>/#."), 1, 32));
     }
 
     @Test
@@ -241,7 +241,7 @@ class RopeDictTest {
             int minSplit = MAX_VALUE, blockedAt = MAX_VALUE;
             for (int i = 0; i < 512 && blockedAt == MAX_VALUE; i++) {
                 String iri = tpl.replace("xxx", format("%03d", i));
-                long localAndId = internIri(iri);
+                long localAndId = internIri(SegmentRope.of(iri));
                 minSplit = (int) Math.min(localAndId>>>32, minSplit);
                 if ((int)localAndId == 0) {
                     blockedAt = i;
@@ -261,7 +261,7 @@ class RopeDictTest {
         int minSplit = MAX_VALUE, blockedAt = MAX_VALUE;
         for (int i = 0; i < 512 && blockedAt == MAX_VALUE; i++) {
             String iri = tpl.replace("xxx", format("%03d", i));
-            long localAndId = internIri(iri);
+            long localAndId = internIri(SegmentRope.of(iri));
             minSplit = (int) Math.min(minSplit, localAndId>>>32);
             if ((int)localAndId == 0) {
                 blockedAt = i;
@@ -282,15 +282,15 @@ class RopeDictTest {
 
             void test(int row) {
                 test(new ByteRope(lit), 0, lit.length(), row);
-                test(new BufferRope(ByteBuffer.wrap(lit.getBytes(UTF_8))), 0, lit.length(), row);
+                test(new SegmentRope(ByteBuffer.wrap(lit.getBytes(UTF_8))), 0, lit.length(), row);
 
                 String padded = "\"^^<" + lit + "\"^^</#";
                 int begin = 4, end = begin+lit.length();
                 test(new ByteRope(padded), begin, end, row);
-                test(new BufferRope(ByteBuffer.wrap(padded.getBytes(UTF_8))), begin, end, row);
+                test(new SegmentRope(ByteBuffer.wrap(padded.getBytes(UTF_8))), begin, end, row);
             }
 
-            void test(Rope rope, int begin, int end, int row) {
+            void test(SegmentRope rope, int begin, int end, int row) {
                 var ctx = "at data["+row+"]="+this;
                 long suffixAndId = internLit(rope, begin, end);
                 assertEquals(suffix+begin, suffixAndId>>>32, ctx);
@@ -327,7 +327,7 @@ class RopeDictTest {
     }
 
     @Test void testInternFoaf() {
-        Rope foaf = Rope.of("<http://xmlns.com/foaf/0.1/>");
+        var foaf = SegmentRope.of("<http://xmlns.com/foaf/0.1/>");
         long localAndId = internIri(foaf, 0, foaf.len());
         assertEquals(27,  localAndId>>>32);
         assertTrue((int)localAndId > 0);

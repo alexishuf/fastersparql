@@ -53,7 +53,7 @@ public class WsSerializer extends ResultsSerializer {
                 batch.writeSparql(rowsBuffer, begin, col, prefixAssigner);
                 rowsBuffer.append('\t');
             }
-            rowsBuffer.utf8[rowsBuffer.len-1] = '\n'; // replace last '\t' with line separator
+            rowsBuffer.u8()[rowsBuffer.len-1] = '\n'; // replace last '\t' with line separator
             if ((begin&0xf) == 0xf) { // flush rowsBuffer to buffer once every 16 lines
                 dest.append(rowsBuffer);
                 rowsBuffer.clear();

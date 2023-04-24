@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
@@ -94,7 +95,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         public Tsv(BatchType<B> batchType, Vars vars, int maxItems) { super(batchType, EOL, vars, maxItems); }
         public Tsv(CallbackBIt<B> destination) { super(destination.batchType(), EOL, destination); }
 
-        @Override protected final void doFeedShared(Rope rope) {
+        @Override protected final void doFeedShared(SegmentRope rope) {
             int begin = 0, end = rope.len();
             if (partialLine != null && partialLine.len > 0) {
                 handlePartialLine(rope);
@@ -151,7 +152,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         }
 
 
-        private int parseAsk(Rope rope, int begin, int end) {
+        private int parseAsk(SegmentRope rope, int begin, int end) {
             if (begin < end && rope.get(begin) == '!')
                 begin = handleControl(rope, begin);
             if (findEOL(rope, begin, end) >= end)
@@ -187,7 +188,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             termParser.eager();
         }
 
-        @Override protected void doFeedShared(Rope rope) {
+        @Override protected void doFeedShared(SegmentRope rope) {
             if (partialLine != null && partialLine.len != 0) {
                 handlePartialLine(rope);
                 return;
@@ -252,7 +253,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
          * @return The new value for {@code begin}, which may be {@code end} or the index of a column
          * or line separator.
          */
-        private int parseCsv(Rope rope, int begin, int end) {
+        private int parseCsv(SegmentRope rope, int begin, int end) {
             byte first = 0;
             while (begin != end && ((first = rope.get(begin)) == ' ' || first == '\t')) ++begin;
             int lexBegin = first == '"' ? begin+1 : begin;
@@ -261,7 +262,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             if (lexEnd >= end)
                 return suspend(rope, begin, end);
             if (lexEnd > lexBegin) {
-                Rope nt;
+                SegmentRope nt;
                 if (lexBegin+1 < lexEnd && rope.has(lexBegin, BN_PREFIX_u8)) {
                     nt = rope.sub(lexBegin, lexEnd);
                 } else {
@@ -281,7 +282,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     boolean iri = false;
                     for (int i = 0; !iri && i < IRI_SCHEMES.length; i++)
                         iri = esc.has(1, IRI_SCHEMES[i]);
-                    if (iri) esc.append('>').utf8[0] = '<';
+                    if (iri) esc.append('>').u8()[0] = '<';
                     else esc.append('"');
                     nt = esc;
                 }

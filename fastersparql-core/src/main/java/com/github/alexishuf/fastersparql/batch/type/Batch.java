@@ -1,9 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -399,7 +396,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param localEnd {@code localOff + term.local.length}
      * @return {@code true} iff the row offer may continue
      */
-    public boolean offerTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+    public boolean offerTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localEnd) {
         Term term;
         if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
         else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);
@@ -487,7 +484,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param localOff Index of first byte in {@code localRope} that goes into {@link Term#local}
      * @param localEnd {@code localOff + term.local.length}
      */
-    public void putTerm(int col, int flaggedId, Rope localRope, int localOff, int localEnd) {
+    public void putTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localEnd) {
         Term term;
         if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
         else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);

@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -238,27 +238,27 @@ class TermTest {
     }
 
     @Test void testPrefixedRopeInterns() {
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("integer>"), 0, 8));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("integer>"), 0, 7));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("integer"), 0, 7));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("xsd:integer>"), 4, 12));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("xsd:integer>"), 4, 11));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("xsd:integer"), 4, 11));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, Rope.of("xsd:integer,"), 4, 11));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer>"), 0, 8));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer>"), 0, 7));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer"), 0, 7));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer>"), 4, 12));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer>"), 4, 11));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer"), 4, 11));
+        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer,"), 4, 11));
 
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of(">"), 0, 1));
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of(""), 0, 0));
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of("xsd:>"), 4, 5));
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of("xsd:>"), 4, 4));
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of("xsd:"), 4, 4));
-        assertSame(XSD, Term.prefixed(P_XSD, Rope.of("xsd:."), 4, 4));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of(">"), 0, 1));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of(""), 0, 0));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:>"), 4, 5));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:>"), 4, 4));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:"), 4, 4));
+        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:."), 4, 4));
 
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of(".type>"), 1, 6));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of(".type>"), 1, 5));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of(".type"), 1, 5));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of("xsd:type>"), 4, 9));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of("xsd:type"), 4, 8));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, Rope.of("xsd:type;"), 4, 8));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type>"), 1, 6));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type>"), 1, 5));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type"), 1, 5));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type>"), 4, 9));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type"), 4, 8));
+        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type;"), 4, 8));
     }
 
     @Test void testPrefixedBytesInterns() {
@@ -269,39 +269,39 @@ class TermTest {
     }
 
     @Test void testPrefixedInternShortLocal() {
-        int id = (int)internIri(Rope.of("<http://www.example.org/ns#>"), 0, 28);
+        int id = (int)internIri(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
         assertTrue(id > 0);
 
         assertSame(CLOSE_IRI, prefixed(id, ">".getBytes(UTF_8)).local);
-        assertSame(CLOSE_IRI, prefixed(id, Rope.of(">"), 0, 1).local);
-        assertSame(CLOSE_IRI, prefixed(id, Rope.of(".>,"), 1, 2).local);
+        assertSame(CLOSE_IRI, prefixed(id, SegmentRope.of(">"), 0, 1).local);
+        assertSame(CLOSE_IRI, prefixed(id, SegmentRope.of(".>,"), 1, 2).local);
 
         Term x = prefixed(id, "x>".getBytes(UTF_8));
         Term xy = prefixed(id, "xy>".getBytes(UTF_8));
 
         assertSame(xy.local, prefixed(id, "xy>".getBytes(UTF_8)).local);
 
-        assertSame(xy.local, prefixed(id, Rope.of("xy>"), 0, 3).local);
-        assertSame(xy.local, prefixed(id, Rope.of("xy>"), 0, 2).local);
-        assertSame(xy.local, prefixed(id, Rope.of("xy" ), 0, 2).local);
-        assertSame(xy.local, prefixed(id, Rope.of("xy,"), 0, 2).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of("xy>"), 0, 3).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of("xy>"), 0, 2).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of("xy" ), 0, 2).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of("xy,"), 0, 2).local);
 
-        assertSame(xy.local, prefixed(id, Rope.of(":xy>"), 1, 4).local);
-        assertSame(xy.local, prefixed(id, Rope.of(":xy>"), 1, 3).local);
-        assertSame(xy.local, prefixed(id, Rope.of(":xy" ), 1, 3).local);
-        assertSame(xy.local, prefixed(id, Rope.of(":xy,"), 1, 3).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy>"), 1, 4).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy>"), 1, 3).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy" ), 1, 3).local);
+        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy,"), 1, 3).local);
 
         assertSame(x.local, prefixed(id, "x>".getBytes(UTF_8)).local);
 
-        assertSame(x.local, prefixed(id, Rope.of("x>"), 0, 2).local);
-        assertSame(x.local, prefixed(id, Rope.of("x>"), 0, 1).local);
-        assertSame(x.local, prefixed(id, Rope.of("x" ), 0, 1).local);
-        assertSame(x.local, prefixed(id, Rope.of("x,"), 0, 1).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of("x>"), 0, 2).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of("x>"), 0, 1).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of("x" ), 0, 1).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of("x,"), 0, 1).local);
 
-        assertSame(x.local, prefixed(id, Rope.of(":x>"), 1, 3).local);
-        assertSame(x.local, prefixed(id, Rope.of(":x>"), 1, 2).local);
-        assertSame(x.local, prefixed(id, Rope.of(":x" ), 1, 2).local);
-        assertSame(x.local, prefixed(id, Rope.of(":x,"), 1, 2).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of(":x>"), 1, 3).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of(":x>"), 1, 2).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of(":x" ), 1, 2).local);
+        assertSame(x.local, prefixed(id, SegmentRope.of(":x,"), 1, 2).local);
     }
 
     @Test void testLang() {
@@ -370,7 +370,7 @@ class TermTest {
         ex = ex == null ? in : ex;
         byte[] u8 = in.getBytes(UTF_8);
         ByteRope br = new ByteRope(u8);
-        BufferRope padded = new BufferRope(ByteBuffer.wrap(("\""+in+"\"").getBytes(UTF_8)));
+        SegmentRope padded = new SegmentRope(ByteBuffer.wrap(("\""+in+"\"").getBytes(UTF_8)));
 
         if (ex.equals("ERROR")) {
             assertThrows(Throwable.class, () -> Term.valueOf(br));
@@ -397,9 +397,9 @@ class TermTest {
 
         assertNull(Term.valueOf(EMPTY));
         assertNull(Term.valueOf(EMPTY, 0, 0));
-        assertNull(Term.valueOf(Rope.of("a"), 1, 1));
-        assertNull(Term.valueOf(Rope.of("a"), 0, 0));
-        assertNull(Term.valueOf(Rope.of("a"), 23, 23));
+        assertNull(Term.valueOf(SegmentRope.of("a"), 1, 1));
+        assertNull(Term.valueOf(SegmentRope.of("a"), 0, 0));
+        assertNull(Term.valueOf(SegmentRope.of("a"), 23, 23));
         assertNull(Term.valueOf(new StringBuilder()));
         assertNull(Term.valueOf(""));
     }
@@ -485,7 +485,7 @@ class TermTest {
 
     @Test
     void testMakeInternsIriLocal() {
-        Rope iri = Rope.of("<http://www.example.org/ns#>");
+        var iri = SegmentRope.of("<http://www.example.org/ns#>");
         int id = (int)RopeDict.internIri(iri, 0, iri.len());
         assertTrue(id > 0);
 
@@ -514,7 +514,7 @@ class TermTest {
     void testValueOfReversible(String in) {
         byte[] utf8 = in.getBytes(UTF_8);
         assertEquals(in, valueOf(new ByteRope(utf8)).toString());
-        Term wrapped = valueOf(Rope.of("'\"", new ByteRope(utf8), "<"), 2, 2+utf8.length);
+        Term wrapped = valueOf(SegmentRope.of("'\"", new ByteRope(utf8), "<"), 2, 2+utf8.length);
         assertEquals(in, wrapped.toString());
         assertEquals(in, valueOf(in).toString());
     }
@@ -525,19 +525,19 @@ class TermTest {
             assertEquals(Type.VAR, t.type());
             assertEquals("x", requireNonNull(t.name()).toString());
         }
-        for (Term t : List.of(valueOf(Rope.of(", ?1"), 2, 4),
-                valueOf(Rope.of("_:$1"), 2, 4))) {
+        for (Term t : List.of(valueOf(SegmentRope.of(", ?1"), 2, 4),
+                valueOf(SegmentRope.of("_:$1"), 2, 4))) {
             assertEquals(Type.VAR, t.type());
             assertEquals("1", requireNonNull(t.name()).toString());
         }
-        for (Term t : List.of(valueOf(Rope.of(",?test123"), 1, 9),
-                valueOf(Rope.of("$test123")))) {
+        for (Term t : List.of(valueOf(SegmentRope.of(",?test123"), 1, 9),
+                valueOf(SegmentRope.of("$test123")))) {
             assertEquals(Type.VAR, t.type());
             assertEquals("test123", requireNonNull(t.name()).toString());
         }
 
-        for (Term t : List.of(valueOf("$test"), valueOf(Rope.of("$test")),
-                              valueOf(new BufferRope(ByteBuffer.wrap(",$test".getBytes(UTF_8))), 1, 6))) {
+        for (Term t : List.of(valueOf("$test"), valueOf(SegmentRope.of("$test")),
+                              valueOf(new SegmentRope(ByteBuffer.wrap(",$test".getBytes(UTF_8))), 1, 6))) {
             assertEquals("$test", t.toString());
             assertEquals("$test", t.toString(0, 5));
             assertEquals("test", requireNonNull(t.name()).toString());
@@ -563,9 +563,9 @@ class TermTest {
 
     @ParameterizedTest @MethodSource
     void testEscapedLexical(String in, String ex) {
-        assertEquals(ex, requireNonNull(valueOf(Rope.of(in)).escapedLexical()).toString());
+        assertEquals(ex, requireNonNull(valueOf(SegmentRope.of(in)).escapedLexical()).toString());
         assertEquals(ex, requireNonNull(valueOf(in).escapedLexical()).toString());
-        var padded = Rope.of("\"" + in + "\"");
+        var padded = SegmentRope.of("\"" + in + "\"");
         assertEquals(ex, requireNonNull(valueOf(padded, 1, 1+in.length()).escapedLexical()).toString());
 
     }
@@ -575,7 +575,7 @@ class TermTest {
         customMap.put(new ByteRope("<http://example.org/"), EMPTY);
         customMap.put(new ByteRope("<http://xmlns.com/foaf/0.1/"), Rope.of("foaf"));
         var custom = new PrefixAssigner(customMap);
-        int foaf = (int)internIri(Rope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
+        int foaf = (int)internIri(SegmentRope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
         assertTrue(foaf > 0);
 
         return Stream.of(

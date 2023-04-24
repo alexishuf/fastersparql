@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.util;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.slf4j.Logger;
@@ -182,7 +183,7 @@ public class UriUtils {
      * @param string the string to have %-escapes decoded
      * @return a new string with escapes decoded or the same instance there are no escapes.
      */
-    public static @PolyNull Rope unescape(@PolyNull Rope string, int begin, int end) {
+    public static @PolyNull SegmentRope unescape(@PolyNull SegmentRope string, int begin, int end) {
         if (string == null)
             return null;
         int i = string.skipUntil(begin, end, '%');

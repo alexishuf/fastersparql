@@ -13,9 +13,8 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.ContentNegotiator;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
@@ -41,7 +40,6 @@ import org.slf4j.LoggerFactory;
 import java.io.PrintStream;
 import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
@@ -296,7 +294,7 @@ public class NettySparqlServer implements AutoCloseable {
             return true;
         }
 
-        protected boolean parseQuery(Rope sparql, int start) {
+        protected boolean parseQuery(SegmentRope sparql, int start) {
             try {
                 query = new SparqlParser().parse(sparql, start);
                 return true;
@@ -452,7 +450,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private void handlePost(int round, FullHttpRequest req) {
             String ct = req.headers().get(CONTENT_TYPE);
-            var r = new BufferRope(req.content().nioBuffer());
+            var r = new SegmentRope(req.content().nioBuffer());
             if (indexOfIgnoreCaseAscii(ct, APPLICATION_X_WWW_FORM_URLENCODED, 0) == 0) {
                 int begin = 0, len = r.len;
                 while (begin < len && !r.hasAnyCase(begin, QUERY_EQ))
@@ -469,7 +467,7 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
 
-        private void handleQuery(int round, Rope sparqlRope) {
+        private void handleQuery(int round, SegmentRope sparqlRope) {
             if (parseQuery(sparqlRope, 0) && dispatchQuery(null, BindType.JOIN)) {
                 if (httpVersion == HttpVersion.HTTP_1_0) {
                     handleQueryHttp10(round);
@@ -550,9 +548,8 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] CANCEL = "!cancel".getBytes(UTF_8);
         private static final byte[] ERROR = "!error ".getBytes(UTF_8);
         private static final byte[] CANCELLED = "!cancelled ".getBytes(UTF_8);
-        private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.wrap(ByteRope.EMPTY.utf8);
 
-        private final BufferRope wrapperRope = new BufferRope(EMPTY_BUFFER);
+        private final SegmentRope wrapperRope = new SegmentRope();
         private @MonotonicNonNull ByteBufSink fsSink;
         private final int maxBindingsBatches = FSProperties.queueMaxBatches();
         private final int maxBindings = maxBindingsBatches*4*BIt.PREFERRED_MIN_BATCH;
@@ -607,7 +604,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame msg) {
-            wrapperRope.buffer(msg.content().nioBuffer());
+            wrapperRope.wrapBuffer(msg.content().nioBuffer());
             byte f = wrapperRope.len < 2 ? 0 : wrapperRope.get(1);
             try {
                 if (f == 'c' && wrapperRope.has(0, CANCEL)) {
@@ -620,7 +617,7 @@ public class NettySparqlServer implements AutoCloseable {
                     handleQueryCommand(ctx, f);
                 }
             } finally {
-                wrapperRope.buffer(EMPTY_BUFFER);
+                wrapperRope.wrapEmptyBuffer();
             }
         }
 

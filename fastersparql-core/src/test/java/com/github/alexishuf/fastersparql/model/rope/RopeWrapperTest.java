@@ -72,7 +72,7 @@ class RopeWrapperTest {
         var a = in.getBytes(UTF_8);
         var sb = new StringBuilder(in);
         var r = new ByteRope(in);
-        var br = new BufferRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
+        var br = new SegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
 
         assertEquals(ex, new String(w.toArray(in, 0, in.length()), UTF_8));
         assertEquals(ex, new String(w.toArray(sb, 0, in.length()), UTF_8));
@@ -87,7 +87,7 @@ class RopeWrapperTest {
             var pa = p.getBytes(UTF_8);
             var psb = new StringBuilder(p);
             var pr = new ByteRope(p);
-            var pbr = new BufferRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
+            var pbr = new SegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
             int begin = 1, end = 1+r.len, cEnd = 1+in.length();
 
             assertEquals(ex, new String(w.toArray(p,   begin, cEnd), UTF_8));
@@ -154,7 +154,7 @@ class RopeWrapperTest {
                 arguments("<", forIri, asIri, CLOSE_IRI),
                 arguments("<>", forIri, asIri, NONE),
 
-                arguments(""+weirdIri+"", forIri, asIri, IRI),
+                arguments(weirdIri, forIri, asIri, IRI),
                 arguments("<"+weirdIri, forIri, asIri, CLOSE_IRI),
                 arguments(weirdIri+">", forIri, asIri, OPEN_IRI),
                 arguments("<"+weirdIri+">", forIri, asIri, NONE),
@@ -199,7 +199,7 @@ class RopeWrapperTest {
         var sb = new StringBuilder(in);
         var a  = in.getBytes(UTF_8);
         var r  = new ByteRope(in);
-        var br = new BufferRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
+        var br = new SegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
 
         assertEquals(ex, fac.create(in, 0, in.length()));
         assertEquals(ex, fac.create(sb, 0, in.length()));
@@ -218,7 +218,7 @@ class RopeWrapperTest {
             var psb = new StringBuilder(p);
             var pa  = p.getBytes(UTF_8);
             var pr  = new ByteRope(p);
-            var pbr = new BufferRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
+            var pbr = new SegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
 
             int begin = 1, cEnd = 1+in.length(), end = 1+r.len;
 
@@ -278,7 +278,7 @@ class RopeWrapperTest {
         var sb = new StringBuilder(in);
         var r = new ByteRope(in);
         var a = r.utf8;
-        var br = new BufferRope(ByteBuffer.wrap(r.utf8));
+        var br = new SegmentRope(ByteBuffer.wrap(r.u8()));
 
         assertEquals(ex, new String(conv.convert(in, 0, in.length()), UTF_8));
         assertEquals(ex, new String(conv.convert(sb, 0, in.length()), UTF_8));
@@ -289,8 +289,8 @@ class RopeWrapperTest {
         for (String p : padded(in)) {
             var psb = new StringBuilder(p);
             var pr = new ByteRope(p);
-            var pa = pr.utf8;
-            var pbr = new BufferRope(ByteBuffer.wrap(pr.utf8));
+            var pa = pr.u8();
+            var pbr = new SegmentRope(ByteBuffer.wrap(pr.u8()));
             int begin = 1, end = 1+r.len, cEnd = 1+in.length();
 
             assertEquals(ex, new String(conv.convert(p,   begin, cEnd), UTF_8));

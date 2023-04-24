@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -43,7 +44,7 @@ class SparqlQueryTest {
     private static SparqlQuery
     parseFull(SparqlParser parser, String sparql) throws SilentSkip {
         try {
-            return parser.parse(Rope.of(sparql));
+            return parser.parse(SegmentRope.of(sparql));
         } catch (InvalidSparqlException e) {
             if (e.getMessage().startsWith("binding vars to expressions"))
                 throw new SilentSkip();

@@ -7,7 +7,6 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
@@ -74,21 +73,21 @@ public final class Term extends Rope implements Expr {
     public static final Term RDF_XMLLITERAL = new Term(P_RDF, "XMLLiteral>".getBytes(UTF_8));
     public static final Term RDF_JSON = new Term(P_RDF, "JSON>".getBytes(UTF_8));
 
-    public static final Term RDF_TYPE = new Term(P_RDF, new ByteRope("type>").utf8);
-    public static final Term RDF_FIRST = new Term(P_RDF, new ByteRope("first>").utf8);
-    public static final Term RDF_REST = new Term(P_RDF, new ByteRope("rest>").utf8);
-    public static final Term RDF_NIL = new Term(P_RDF, new ByteRope("nil>").utf8);
-    public static final Term RDF_VALUE = new Term(P_RDF, new ByteRope("value>").utf8);
-    public static final Term RDF_PROPERTY = new Term(P_RDF, new ByteRope("Property>").utf8);
-    public static final Term RDF_LIST = new Term(P_RDF, new ByteRope("List>").utf8);
-    public static final Term RDF_BAG = new Term(P_RDF, new ByteRope("Bag>").utf8);
-    public static final Term RDF_SEQ = new Term(P_RDF, new ByteRope("Seq>").utf8);
-    public static final Term RDF_ALT = new Term(P_RDF, new ByteRope("Alt>").utf8);
-    public static final Term RDF_STATEMENT = new Term(P_RDF, new ByteRope("Statement>").utf8);
-    public static final Term RDF_SUBJECT = new Term(P_RDF, new ByteRope("subject>").utf8);
-    public static final Term RDF_PREDICATE = new Term(P_RDF, new ByteRope("predicate>").utf8);
-    public static final Term RDF_OBJECT = new Term(P_RDF, new ByteRope("object>").utf8);
-    public static final Term RDF_DIRECTION = new Term(P_RDF, new ByteRope("direction>").utf8);
+    public static final Term RDF_TYPE = new Term(P_RDF, new ByteRope("type>").u8());
+    public static final Term RDF_FIRST = new Term(P_RDF, new ByteRope("first>").u8());
+    public static final Term RDF_REST = new Term(P_RDF, new ByteRope("rest>").u8());
+    public static final Term RDF_NIL = new Term(P_RDF, new ByteRope("nil>").u8());
+    public static final Term RDF_VALUE = new Term(P_RDF, new ByteRope("value>").u8());
+    public static final Term RDF_PROPERTY = new Term(P_RDF, new ByteRope("Property>").u8());
+    public static final Term RDF_LIST = new Term(P_RDF, new ByteRope("List>").u8());
+    public static final Term RDF_BAG = new Term(P_RDF, new ByteRope("Bag>").u8());
+    public static final Term RDF_SEQ = new Term(P_RDF, new ByteRope("Seq>").u8());
+    public static final Term RDF_ALT = new Term(P_RDF, new ByteRope("Alt>").u8());
+    public static final Term RDF_STATEMENT = new Term(P_RDF, new ByteRope("Statement>").u8());
+    public static final Term RDF_SUBJECT = new Term(P_RDF, new ByteRope("subject>").u8());
+    public static final Term RDF_PREDICATE = new Term(P_RDF, new ByteRope("predicate>").u8());
+    public static final Term RDF_OBJECT = new Term(P_RDF, new ByteRope("object>").u8());
+    public static final Term RDF_DIRECTION = new Term(P_RDF, new ByteRope("direction>").u8());
 
     private static final Term[] SRT_RDF = new Term[] {
             RDF_ALT,
@@ -375,7 +374,6 @@ public final class Term extends Rope implements Expr {
     /** Array containing UTF-8 bytes to be prefixed or suffixed to {@code flaggedDictId} */
     public final byte[] local;
 
-    private @Nullable MemorySegment segment;
     private @Nullable Number number;
     private int hash;
 
@@ -404,7 +402,7 @@ public final class Term extends Rope implements Expr {
         if ("<\"?$_".indexOf((char) get(0)) < 0)
             return false; // bad first char
         ByteRope suffix = RopeDict.getTolerant(flaggedId);
-        if (suffix.offset != 0)
+        if (suffix.backingArrayOffset() != 0)
             return false; // RopeDict ByteRopes MUST have offset==0
         if (flaggedId > 0 && suffix.get(0) != '<')
             return false; // IRI prefix does start with '<'
@@ -500,7 +498,7 @@ public final class Term extends Rope implements Expr {
      * {@code r} will be visible in ther {@link Term} instance.</p>
      */
     public static Term wrap(ByteRope r) {
-        byte[] u8 = r.utf8;
+        byte[] u8 = r.u8();
         if (r.len != u8.length)
             u8 = Arrays.copyOf(u8, r.len);
         return new Term(0, u8);
@@ -576,7 +574,7 @@ public final class Term extends Rope implements Expr {
     }
 
     /** Equivalent to {@code typed(lex.toARray(begin, end), suffixId)}. */
-    public static Term typed(Rope lex, int begin, int end, int suffixId) {
+    public static Term typed(SegmentRope lex, int begin, int end, int suffixId) {
         if ((suffixId&0x7fffffff) == DT_string || suffixId == 0)
             return typedCold(lex.toArray(begin, end), 0, end-begin);
         return new Term(suffixId|SUFFIX_MASK, asOpenLitU8(lex, begin, end));
@@ -637,7 +635,7 @@ public final class Term extends Rope implements Expr {
      * @param end where the local portion of the IRI ends (non-inclusive) in {@code suffix}
      * @return a new {@link Term} instance.
      */
-    public static Term prefixed(int prefixId, Rope suffix, int begin, int end) {
+    public static Term prefixed(int prefixId, SegmentRope suffix, int begin, int end) {
         if (prefixId == P_XSD || prefixId == P_RDF)
             return intern(prefixId, suffix, begin, end-begin);
         return new Term(prefixId, internIriLocal(suffix, begin, end));
@@ -655,7 +653,7 @@ public final class Term extends Rope implements Expr {
         return new Term(0, w.append(r, escLex).append('@').append(lang).fitBytes());
     }
 
-    public static Term valueOf(Rope r, int begin, int end) {
+    public static Term valueOf(SegmentRope r, int begin, int end) {
         if (r == null || end <= begin)  return null;
         return switch (r.get(begin)) {
             case '"' -> {
@@ -681,9 +679,9 @@ public final class Term extends Rope implements Expr {
         };
     }
 
-    /** Equivalent to {@link Term#valueOf(Rope, int, int)} from {@code 0} to {@code r.len()}. */
+    /** Equivalent to {@link Term#valueOf(SegmentRope, int, int)} from {@code 0} to {@code r.len()}. */
     public static Term valueOf(Rope r) {
-        return r == null ? null : r instanceof Term t ? t : valueOf(r, 0, r.len());
+        return r == null ? null : r instanceof Term t ? t : valueOf((SegmentRope) r, 0, r.len());
     }
 
     /** Equivalent to {@link Term#valueOf(Rope)} over the UTF-8 encoding of {@code string}. */
@@ -692,10 +690,12 @@ public final class Term extends Rope implements Expr {
             return null;
         if (string instanceof Rope)
             return valueOf((Rope) string);
-        var br = new ByteRope(string);
-        return switch (br.utf8[0]) {
-            case '?', '$', '_' -> new Term(0, br.utf8);
-            default -> Term.valueOf(br, 0, br.len);
+        return switch (string.charAt(0)) {
+            case '?', '$', '_' -> new Term(0, string.toString().getBytes(UTF_8));
+            default -> {
+                ByteRope br = new ByteRope(string);
+                yield Term.valueOf(br, 0, br.len);
+            }
         };
     }
 
@@ -714,7 +714,7 @@ public final class Term extends Rope implements Expr {
         termParser.prefixMap.add(Rope.of("ex"), Term.iri("http://example.org/"));
         termParser.prefixMap.add(Rope.of("exns"), Term.iri("http://www.example.org/ns#"));
         for (int i = 0; i < terms.length; i++)
-            a[i] = terms[i] == null ? null : termParser.parseTerm(Rope.of(terms[i]));
+            a[i] = terms[i] == null ? null : termParser.parseTerm(SegmentRope.of(terms[i]));
         return a;
     }
 
@@ -733,11 +733,14 @@ public final class Term extends Rope implements Expr {
 
     /* --- --- --- Rope implementation --- --- --- */
 
-    @Override public @Nullable MemorySegment segment() {
-        MemorySegment s = segment;
-        if (s == null && flaggedDictId == 0)
-            segment = s = MemorySegment.ofArray(local);
-        return s;
+    @Override public byte get(int i) {
+        if (flaggedDictId == 0) return local[i];
+        if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
+        byte[] shared = RopeDict.get(flaggedDictId & 0x7fffffff).u8();
+        if (flaggedDictId > 0)
+            return i < shared.length ? shared[i] : local[i-shared.length];
+        else
+            return i < local.length  ? local[i]  : shared[i-local.length];
     }
 
     /* --- --- --- Expr implementation --- --- --- */
@@ -775,7 +778,7 @@ public final class Term extends Rope implements Expr {
             } else {
                 dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
                 // will finalize writing shared
-                localLen = (local = shared.utf8).length;
+                localLen = (local = shared.u8()).length;
                 localOff = 0;
                 // try to find a prefix name for PREFIX in shared="\"^^<PREFIX...>
                 long localAndId = internIri(shared, 3, shared.len);
@@ -791,7 +794,7 @@ public final class Term extends Rope implements Expr {
             if (flaggedDictId == P_RDF && localLen == 5
                     && Arrays.equals(local, localOff, localOff+localLen,
                                      Term.RDF_TYPE.local, 0, Term.RDF_TYPE.local.length)) {
-                localLen = (local = ByteRope.A.utf8).length;
+                localLen = (local = ByteRope.A.u8()).length;
                 localOff = 0;
             } else {
                 Rope name = assigner.nameFor(shared);
@@ -939,7 +942,7 @@ public final class Term extends Rope implements Expr {
      * Get the lexical form of the literal with escapes as required by {@code "}-quoted
      * N-Triples literals.
      */
-    public @Nullable Rope escapedLexical() {
+    public @Nullable SegmentRope escapedLexical() {
         if (local.length == 0 || local[0] != '"') return null;
         if (flaggedDictId < 0)
             return new ByteRope(local, 1, local.length-1);
@@ -1035,7 +1038,7 @@ public final class Term extends Rope implements Expr {
                 int tail = RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ)+1;
                 int tailLen = local.length-tail;
                 var tmp = new ByteRope(w.extraBytes() + lex.len() + tailLen);
-                l = w.append(tmp, lex).append(local, tail, tailLen).utf8;
+                l = w.append(tmp, lex).append(local, tail, tailLen).u8();
             }
         } else if (flaggedDictId < 0) {
             l = forOpenLit(lex).toArray(lex);

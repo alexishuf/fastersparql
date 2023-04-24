@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
@@ -32,7 +31,7 @@ public final class TermParser {
     private static final byte TTL_KIND_BNODE    = 4;
     private static final byte TTL_KIND_PREFIXED = 5;
 
-    private Rope in;
+    private SegmentRope in;
     private @Nullable ByteRope ntBuf;
     private int begin, end;
     private int stopped, lexEnd;
@@ -85,7 +84,7 @@ public final class TermParser {
      *         false, {@code in.substring(begins)} starts with an invalid term or something
      *         that is not a term (e.g., an SPARQL expression operator such as {@code <}.
      */
-    public Result parse(Rope in, int begin, int end) {
+    public Result parse(SegmentRope in, int begin, int end) {
         this.in = in;
         if (ntBuf != null) ntBuf.clear();
         stopped = this.begin = begin;
@@ -190,32 +189,32 @@ public final class TermParser {
             ++lexEnd;
     }
 
-    /** Call {@link TermParser#parse(Rope, int, int)} and return {@link TermParser#asTerm()}. */
-    public Term parseTerm(Rope in) {
+    /** Call {@link TermParser#parse(SegmentRope, int, int)} and return {@link TermParser#asTerm()}. */
+    public Term parseTerm(SegmentRope in) {
         parse(in, 0, in.len());
         return asTerm();
     }
 
-    /** Call {@link TermParser#parse(Rope, int, int)} and return {@link TermParser#asTerm()}. */
-    public Term parseTerm(Rope in, int begin, int end) {
+    /** Call {@link TermParser#parse(SegmentRope, int, int)} and return {@link TermParser#asTerm()}. */
+    public Term parseTerm(SegmentRope in, int begin, int end) {
         parse(in, begin, end);
         return asTerm();
     }
 
     /**
-     * Get the {@link Result} of the last {@link #parse(Rope, int, int)} call or
-     * {@code null} if {@link #parse(Rope, int, int)} has not been called yet.
+     * Get the {@link Result} of the last {@link #parse(SegmentRope, int, int)} call or
+     * {@code null} if {@link #parse(SegmentRope, int, int)} has not been called yet.
      */
     public Result result() { return result; }
 
     /**
      * Get the {@link Rope} to which {@link #localBegin()} and {@link #localEnd()} refer to.
      *
-     * <p>This may be the input Rope given to {@link #parse(Rope, int, int)}. But if the parsed
+     * <p>This may be the input Rope given to {@link #parse(SegmentRope, int, int)}. But if the parsed
      * term was a non-NT literal or the {@code a} keyword this return a buffer held by the
      * {@link TermParser}</p>
      */
-    public Rope localBuf() {
+    public SegmentRope localBuf() {
         if (localBegin == -1) postParse();
         return ntBuf == null || ntBuf.len == 0 ? in : ntBuf;
     }
@@ -232,7 +231,7 @@ public final class TermParser {
     }
 
     /** Sets {@code flaggedId}, {@code localBegin} and {@code localEnd} after
-     *  {@link #parse(Rope, int, int)} */
+     *  {@link #parse(SegmentRope, int, int)} */
     private void postParse() {
         if (result == null) throw new IllegalStateException("parse() not called");
         switch (in.get(begin)) {
@@ -337,7 +336,7 @@ public final class TermParser {
     }
 
     /**
-     * Given a previous {@code true}-returning call to {@link TermParser#parse(Rope, int, int)},
+     * Given a previous {@code true}-returning call to {@link TermParser#parse(SegmentRope, int, int)},
      * get a {@link Term} for the parsed RDF term/var.
      *
      * @return a {@link Term} instance
@@ -375,7 +374,7 @@ public final class TermParser {
     }
 
     /**
-     * If {@link TermParser#parse(Rope, int, int)} returned {@code true}, this is the
+     * If {@link TermParser#parse(SegmentRope, int, int)} returned {@code true}, this is the
      * index of the first char in {@code in} that is not part of the RDF term/var
      * (can be {@code in.length()}).
      */

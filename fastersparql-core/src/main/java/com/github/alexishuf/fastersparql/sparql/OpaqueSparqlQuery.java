@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.sparql;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
@@ -15,7 +16,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static java.util.Arrays.copyOf;
 
 public class OpaqueSparqlQuery implements SparqlQuery {
-    public final Rope sparql;
+    public final SegmentRope sparql;
     public final boolean isGraph;
     public final Vars publicVars;
     public final Vars allVars;
@@ -24,7 +25,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     private final int verbEnd;
     final int[] varPos; // visible for testing
 
-    private OpaqueSparqlQuery(Rope sparql, boolean isGraph, Vars publicVars, Vars allVars,
+    private OpaqueSparqlQuery(SegmentRope sparql, boolean isGraph, Vars publicVars, Vars allVars,
                               Vars aliasVars, int[] varPos, int verbBegin, int verbEnd) {
         this.sparql = sparql;
         this.isGraph = isGraph;
@@ -37,7 +38,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     public OpaqueSparqlQuery(CharSequence sparql) {
-        this.sparql = Rope.of(sparql);
+        this.sparql = SegmentRope.of(sparql);
         var s = new Scan(this.sparql);
         this.isGraph = s.isGraph;
         this.publicVars = s.publicVars;
@@ -53,7 +54,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         return c == 'a' || c == 'A';
     }
 
-    @Override public Rope        sparql() { return sparql; }
+    @Override public SegmentRope sparql() { return sparql; }
     @Override public boolean    isGraph() { return isGraph; }
     @Override public Vars    publicVars() { return publicVars; }
     @Override public Vars       allVars() { return allVars; }
@@ -195,7 +196,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     private static final class Scan {
-        final Rope in;
+        final SegmentRope in;
         int pos;
         final int len;
         boolean isGraph;
@@ -204,7 +205,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         int nVarPositions, verbBegin, verbEnd;
         TermParser termParser = new TermParser();
 
-        public Scan(Rope query) {
+        public Scan(SegmentRope query) {
             len = (in = query).len();
             findQueryVerb();
             if (isGraph) {

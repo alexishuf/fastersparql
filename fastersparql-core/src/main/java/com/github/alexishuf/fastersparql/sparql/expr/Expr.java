@@ -1,10 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
@@ -486,7 +483,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final byte[] BN_PREFIX = "_:".getBytes(UTF_8);
         @Override public Term eval(Binding binding) {
             Term term = args[0].eval(binding);
-            Rope lex = term.escapedLexical();
+            SegmentRope lex = term.escapedLexical();
             if (lex == null || !lex.has(0, BN_PREFIX))
                 throw new InvalidExprTypeException(args[0], term, "literal with _:-prefixed lexical form");
             return valueOf(lex, 0, lex.len());

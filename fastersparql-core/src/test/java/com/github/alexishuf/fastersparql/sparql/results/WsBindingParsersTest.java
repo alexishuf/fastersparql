@@ -3,9 +3,8 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
@@ -33,14 +32,14 @@ import static java.util.Collections.synchronizedList;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class WsBindingParsersTest {
-    private static final Rope DIE = Rope.of("!!!DIE!!!");
+    private static final SegmentRope DIE = SegmentRope.of("!!!DIE!!!");
 
     private static final List<Throwable> threadErrors = synchronizedList(new ArrayList<>());
     private int byteOrBuf = 0;
 
     private final class Mailbox implements WsFrameSender<ByteRope> {
         private final String name;
-        private final BlockingQueue<Rope> queue = new LinkedBlockingDeque<>();
+        private final BlockingQueue<SegmentRope> queue = new LinkedBlockingDeque<>();
 
         public Mailbox(String name) {
             this.name = name;
@@ -57,16 +56,16 @@ public class WsBindingParsersTest {
         @Override public void releaseSink(ByteRope sink) { }
 
         public void send(CharSequence frame) {
-            Rope rope;
+            SegmentRope rope;
             if      (frame.equals(DIE))      rope = DIE;
             else if ((byteOrBuf++ & 1) == 0) rope = new ByteRope(frame);
-            else                             rope = new BufferRope(ByteBuffer.wrap(frame.toString().getBytes(UTF_8)));
+            else                             rope = new SegmentRope(ByteBuffer.wrap(frame.toString().getBytes(UTF_8)));
             try {
                 queue.put(rope);
             } catch (InterruptedException e) { throw new RuntimeException(e); }
         }
 
-        public Rope recv() {
+        public SegmentRope recv() {
             try {
                 return queue.take();
             } catch (InterruptedException e) { throw new RuntimeException(e); }
@@ -107,11 +106,11 @@ public class WsBindingParsersTest {
     private static Object feed(ResultsParserBIt<?> parser, Mailbox mailbox) {
         try {
             while (true) {
-                Rope frame = mailbox.recv();
+                var frame = mailbox.recv();
                 if (frame == DIE) break;
                 parser.feedShared(frame);
-                if (frame instanceof ByteRope b) b.fill(0);
-                else if (frame instanceof BufferRope b) b.buffer().clear().limit(0);
+                if      (frame instanceof ByteRope     b) b.fill(0);
+                else if (frame instanceof SegmentRope sr) sr.len = 0;
             }
         } catch (Throwable t) {
             parser.complete(t);

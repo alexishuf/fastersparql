@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -22,16 +22,16 @@ class SkipTest {
         byte[] u8 = string.getBytes(UTF_8);
         return List.of(new ByteRope(string),
                        new ByteRope("."+string).sub(1, u8.length+1),
-                       new BufferRope(ByteBuffer.wrap(u8)));
+                       new SegmentRope(ByteBuffer.wrap(u8)));
     }
 
     @Test
     public void testMask() {
         for (int i = 0; i < 127; i++) {
             var msg = "i="+i;
-            int[] alphabet = Rope.alphabet(""+(char)i);
+            int[] alphabet = Rope.alphabet(String.valueOf((char) i));
             int[] untilMask = Rope.invert(alphabet);
-            for (Rope in : inputs("" + ((char) i))) {
+            for (Rope in : inputs(String.valueOf((char) i))) {
                 assertEquals(1, in.skip(0, 1, alphabet), msg);
                 assertEquals(0, in.skip(0, 1, untilMask), msg);
                 assertEquals(0, in.reverseSkip(0, 1, alphabet), msg);

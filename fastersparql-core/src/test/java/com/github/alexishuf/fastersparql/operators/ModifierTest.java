@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.operators;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
@@ -34,7 +34,7 @@ public class ModifierTest {
 
         List<Expr> expressions = new ArrayList<>(filters.length);
         for (var string : filters)
-            expressions.add(p.parse(Rope.of(string)));
+            expressions.add(p.parse(SegmentRope.of(string)));
         return new Modifier(in.asPlan(), projection, distinctCapacity,
                               offset, limit, expressions);
     }

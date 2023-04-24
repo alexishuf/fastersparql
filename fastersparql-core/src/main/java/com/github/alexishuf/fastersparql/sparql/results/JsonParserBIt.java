@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -51,7 +52,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
 
     /* --- --- --- implement/override ResultsParserBIt methods --- --- --- */
 
-    @Override protected void doFeedShared(Rope rope) {
+    @Override protected void doFeedShared(SegmentRope rope) {
         if (partial != null) {
             rope = partial.append(rope);
             partial = null;
@@ -188,16 +189,16 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
              SparqlState next = switch (this) {
                 case ROOT -> {
                     SparqlState s;
-                    if      (l==4 && r.hasAnyCase(b, P_HEAD.utf8))    s = HEAD;
-                    else if (l==7 && r.hasAnyCase(b, P_RESULTS.utf8)) s = RESULTS;
-                    else if (l==7 && r.hasAnyCase(b, P_BOOLEAN.utf8)) s = BOOLEAN;
+                    if      (l==4 && r.hasAnyCase(b, P_HEAD.u8()))    s = HEAD;
+                    else if (l==7 && r.hasAnyCase(b, P_RESULTS.u8())) s = RESULTS;
+                    else if (l==7 && r.hasAnyCase(b, P_BOOLEAN.u8())) s = BOOLEAN;
                     else                                              s = null;
                     if (s != null) p.hadSparqlProperties = true;
                     yield s;
                 }
                 case IGNORE -> IGNORE;
-                case HEAD    -> l==4 && r.hasAnyCase(b, P_VARS.utf8)     ? VARS     : IGNORE;
-                case RESULTS -> l==8 && r.hasAnyCase(b, P_BINDINGS.utf8) ? BINDINGS : IGNORE;
+                case HEAD    -> l==4 && r.hasAnyCase(b, P_VARS.u8())     ? VARS     : IGNORE;
+                case RESULTS -> l==8 && r.hasAnyCase(b, P_BINDINGS.u8()) ? BINDINGS : IGNORE;
                 case BINDING_ROW -> {
                     p.dtSuffix.clear();
                     p.type = null;
@@ -206,10 +207,10 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                     yield (p.column = p.vars.indexOf(r.sub(b, e))) >= 0 ? BINDING_VALUE : IGNORE;
                 }
                 case BINDING_VALUE -> {
-                    if   (l==5 && r.hasAnyCase(b, VALUE.utf8))    yield BINDING_VALUE_VALUE;
-                    if   (l==4 && r.hasAnyCase(b, TYPE.utf8))     yield BINDING_VALUE_TYPE;
-                    if   (l==8 && r.hasAnyCase(b, DATATYPE.utf8)) yield BINDING_VALUE_DATATYPE;
-                    yield l==8 && r.hasAnyCase(b, XMLLANG.utf8)   ?     BINDING_VALUE_LANG : null;
+                    if   (l==5 && r.hasAnyCase(b, VALUE.u8()))    yield BINDING_VALUE_VALUE;
+                    if   (l==4 && r.hasAnyCase(b, TYPE.u8()))     yield BINDING_VALUE_TYPE;
+                    if   (l==8 && r.hasAnyCase(b, DATATYPE.u8())) yield BINDING_VALUE_DATATYPE;
+                    yield l==8 && r.hasAnyCase(b, XMLLANG.u8())   ?     BINDING_VALUE_LANG : null;
                 }
                 default -> null;
             };
@@ -254,7 +255,8 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                             rb.putTerm(col, (int)localAndId, v, (int)(localAndId>>>32), v.len);
                         }
                         case LIT -> {
-                            v.utf8[0] = '"';  v.utf8[v.len-1] = '"'; //replace <> with ""
+                            byte[] u8 = v.u8();
+                            u8[0] = '"';  u8[v.len-1] = '"'; //replace <> with ""
                             if (p.dtSuffix.len == 0) {
                                 if (p.lang.len > 0) {
                                     p.lang.replace('_', '-');
@@ -329,8 +331,8 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                 case IGNORE -> {}
                 case BOOLEAN -> {
                     int len = e - b;
-                    if      (len == 4 && r.hasAnyCase(b,  TRUE.utf8)) onBool(p, true);
-                    else if (len == 5 && r.hasAnyCase(b, FALSE.utf8)) onBool(p, false);
+                    if      (len == 4 && r.hasAnyCase(b,  TRUE.u8())) onBool(p, true);
+                    else if (len == 5 && r.hasAnyCase(b, FALSE.u8())) onBool(p, false);
                     else throw ex(this, r, b, e);
                 }
                 case BINDING_VALUE_TYPE -> {
@@ -342,8 +344,8 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                         case 'l', 'L' -> {v1 = LITERAL; v2 = LIT; yield Term.Type.LIT;}
                         default -> Term.Type.LIT;
                     };
-                    if ((v1 == null || !r.hasAnyCase(b, v1.utf8))
-                            && (v2 == null || !r.hasAnyCase(b, v2.utf8))) {
+                    if ((v1 == null || !r.hasAnyCase(b, v1.u8()))
+                            && (v2 == null || !r.hasAnyCase(b, v2.u8()))) {
                         throw ex(this, r, b, e);
                     }
                 }
@@ -390,11 +392,11 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                         int ue = r.skip(b, e, UNQUOTED_VALUE);
                         if (ue == e) yield -1;
                         parser.pop();
-                        if ((c == 'n' || c == 'N') && r.hasAnyCase(b, NULL.utf8))
+                        if ((c == 'n' || c == 'N') && r.hasAnyCase(b, NULL.u8()))
                             spState.onNull(parser);
-                        else if ((c == 'f' || c == 'F') && r.hasAnyCase(b, FALSE.utf8))
+                        else if ((c == 'f' || c == 'F') && r.hasAnyCase(b, FALSE.u8()))
                             spState.onBool(parser, false);
-                        else if ((c == 't' || c == 'T') && r.hasAnyCase(b, TRUE.utf8))
+                        else if ((c == 't' || c == 'T') && r.hasAnyCase(b, TRUE.u8()))
                             spState.onBool(parser, true);
                         else if (Rope.contains(SparqlSkip.NUMBER_FIRST, c))
                             spState.onNumber(parser, r, b, ue);

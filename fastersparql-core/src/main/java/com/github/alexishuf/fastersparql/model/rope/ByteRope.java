@@ -4,7 +4,6 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.*;
@@ -23,66 +22,45 @@ import static java.util.Arrays.copyOf;
 import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings("UnusedReturnValue")
-public final class ByteRope extends Rope implements ByteSink<ByteRope> {
+public final class ByteRope extends SegmentRope implements ByteSink<ByteRope> {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     private static final int READLINE_CHUNK = 128;
 
-    public static final ByteRope EMPTY = new ByteRope(new byte[0]);
+    static final byte[] EMPTY_UTF8 = new byte[0];
+    static final MemorySegment EMPTY_SEGMENT = MemorySegment.ofArray(EMPTY_UTF8);
+
+    public static final ByteRope EMPTY = new ByteRope(EMPTY_UTF8);
     public static final ByteRope A = new ByteRope(new byte[]{'a'});
     public static final ByteRope DQ = new ByteRope(new byte[]{'"'});
     public static final ByteRope GT = new ByteRope(new byte[]{'>'});
     public static final ByteRope DT_MID = new ByteRope(new byte[]{'"', '^', '^'});
     public static final ByteRope DT_MID_LT = new ByteRope(new byte[]{'"', '^', '^', '<'});
 
-    private static final MemorySegment EMPTY_SEGMENT = MemorySegment.ofArray(EMPTY.utf8);
-
-    public byte[] utf8;
-    public final int offset;
-    private @Nullable MemorySegment segment, slice;
 
     /** Create an empty {@link ByteRope} */
-    public ByteRope() {
-        super(0);
-        segment = slice = EMPTY_SEGMENT;
-        utf8 = EMPTY.utf8;
-        offset = 0;
-    }
+    public ByteRope() { super(EMPTY_SEGMENT, 0, 0); }
 
     /** Create an empty {@link ByteRope} backed by an array of the given capacity */
-    public ByteRope(int capacity) {
-        super(0);
-        utf8 = new byte[capacity];
-        slice = EMPTY_SEGMENT;
-        offset = 0;
-    }
+    public ByteRope(int capacity) { super(new byte[capacity], 0, 0); }
 
     /** Copy the UTF-8 of {@code r}. */
-    public ByteRope(Rope r) {
-        super(r.len);
-        utf8 = r.toArray(0, r.len());
-        offset = 0;
+    public ByteRope(Rope r) { super(r.toArray(0, r.len), 0, r.len); }
+
+    private static byte[] asArray(Object o) {
+        return switch (o) {
+            case null -> EMPTY_UTF8;
+            case Rope r -> r.toArray(0, r.len);
+            case byte[] a -> a;
+            default -> o.toString().getBytes(UTF_8);
+        };
     }
 
     /** Copy the UTF-8 of {@code o}. */
-    public ByteRope(Object o) {
-        super(0);
-        utf8 = switch (o) {
-            case null     ->  EMPTY.utf8;
-            case Rope r   ->  r.toArray(0, r.len());
-            case byte[] a ->  a;
-            default       ->  o.toString().getBytes(UTF_8);
-        };
-        offset = 0;
-        len = utf8.length;
-    }
+    public ByteRope(Object o) { this(asArray(o)); }
 
     /** Equivalent to {@code ByteRope(utf8, 0, utf8.length)} */
-    public ByteRope(byte[] utf8) {
-        super(utf8.length);
-        this.utf8 = utf8;
-        this.offset = 0;
-    }
+    public ByteRope(byte[] utf8) { super(utf8, 0, utf8.length); }
 
     /**
      * Create a ByteRope backed by {@code len} bytes starting at {@code utf8[offset]}.
@@ -95,29 +73,10 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
      * @param offset start of the UTF-8 string in {@code utf8}
      * @param len length (in bytes) of the UTF-8 string in {@code utf8}.
      */
-    public ByteRope(byte[] utf8, int offset, int len) {
-        super(len);
-        if (offset < 0 || offset+len > utf8.length)
-            throw new IndexOutOfBoundsException(offset < 0 ? offset : offset+len);
-        this.utf8 = utf8;
-        this.offset = offset;
-    }
+    public ByteRope(byte[] utf8, int offset, int len) { super(utf8, offset, len); }
 
-    @Override public MemorySegment segment() {
-        var s = slice;
-        if (s == null) {
-            if ((s = segment) == null)
-                segment = s = MemorySegment.ofArray(utf8);
-            if (offset != 0 || len != utf8.length)
-                s = s.asSlice(offset, len);
-            slice = s;
-        }
-        return s;
-    }
-
-    @Override public byte get(int i) {
-        if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
-        return utf8[offset+i];
+    public byte @NonNull[] u8() {//noinspection DataFlowIssue
+        return utf8;
     }
 
     @Override public boolean isEmpty() { return super.isEmpty(); }
@@ -130,18 +89,16 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         ensureFreeCapacity(increment);
         int len = this.len;
         this.len += increment;
-        slice = null;
         return len;
     }
 
     @Override public @This ByteRope ensureFreeCapacity(int increment) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int len = this.len, required = len+increment;
+        //noinspection DataFlowIssue (utf8 != null)
         if (required > utf8.length) {
             utf8 = copyOf(utf8, max(utf8.length+(utf8.length>>1), required));
-            segment = null;
-            slice = null;
-
+            segment = MemorySegment.ofArray(utf8);
         }
         return this;
     }
@@ -153,13 +110,13 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
 
     /** Get {@code this.utf8} or a copy with {@code length == this.len}. */
     public byte[] fitBytes() {
+        byte[] utf8 = u8();
         return utf8.length == len ? utf8 : copyOf(utf8, len);
     }
 
     public @This ByteRope clear() {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         len = 0;
-        slice = null;
         return this;
     }
 
@@ -167,6 +124,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         if (offset != 0 || this == EMPTY) raiseImmutable();
         int i = 0;
         Vector<Byte> cVec = B_SP.broadcast(c);
+        byte[] utf8 = u8();
         for (int j, e = B_SP.loopBound(len); i < e; i += B_SP.length()) {
             for (var vec = fromArray(B_SP, utf8, i); (j = vec.eq(cVec).firstTrue()) != B_LEN; )
                 vec = vec.withLane(j, utf8[i+j] = (byte) r);
@@ -178,10 +136,11 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
 
     public @This ByteRope erase(int begin, int end) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
-        if (end < len)
+        if (end < len) {
+            byte[] utf8 = u8();
             arraycopy(utf8, end, utf8, begin, len-end);
+        }
         len -= Math.min(len, end-begin);
-        slice = null;
         return this;
     }
 
@@ -211,7 +170,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         ensureFreeCapacity(READLINE_CHUNK);
         if (in instanceof BufferedInputStream) {
             in.mark(READLINE_CHUNK);
-            for (int n; (n = in.read(utf8, len, READLINE_CHUNK)) != -1; ) {
+            for (int n; (n = in.read(u8(), len, READLINE_CHUNK)) != -1; ) {
                 got = true;
                 int begin = len, eol;
                 long breakLenAndIndex = skipUntilLineBreak(begin, len += n);
@@ -222,12 +181,13 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
                     break;
                 } else {
                     in.mark(READLINE_CHUNK);
+                    ensureFreeCapacity(READLINE_CHUNK);
                 }
             }
 
         } else {
             int sum = 0, c;
-            for (int free = utf8.length-len; (c = in.read()) != -1 && c != '\n'; --free, ++sum) {
+            for (int free = u8().length-len; (c = in.read()) != -1 && c != '\n'; --free, ++sum) {
                 if (free-- == 0) {
                     int newLength = utf8.length + (utf8.length >> 1);
                     free = (utf8 = copyOf(utf8, newLength)).length - len;
@@ -239,7 +199,8 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
                 --len; // unget() '\r'
             got = sum > 0 || c == '\n';
         }
-        slice = null;
+        if (segment == null)
+            segment = MemorySegment.ofArray(utf8);
         return got;
     }
 
@@ -253,13 +214,13 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
 
     public @This ByteRope fill(int value) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
-        Arrays.fill(utf8, offset, offset+len, (byte)value);
+        Arrays.fill(u8(), offset, offset+len, (byte)value);
         return this;
     }
 
     @Override public @This ByteRope append(byte[] utf8, int offset, int len) {
         int out = postIncLen(len);
-        arraycopy(utf8, offset, this.utf8, out, len);
+        arraycopy(utf8, offset, u8(), out, len);
         return this;
     }
 
@@ -271,8 +232,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
 
     @Override public @This ByteRope append(byte c) {
         ensureFreeCapacity(1);
-        utf8[len++] = c;
-        slice = null;
+        u8()[len++] = c;
         return this;
     }
 
@@ -297,6 +257,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         CoderResult result;
         do {
             ensureFreeCapacity(cb.remaining()*4);
+            byte[] utf8 = u8();
             var bb = ByteBuffer.wrap(utf8, len, utf8.length - len);
             result = enc.encode(cb, bb, true);
             len = bb.position();
@@ -342,6 +303,7 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
         n = Math.abs(n);
         postIncLen(sign + (int) Math.floor(Math.log10(n) + 1));
         int i = len;
+        byte[] utf8 = u8();
         for (long rem = n%10; n  > 0; n = n/10, rem = n%10)
             utf8[--i] = (byte)('0' + rem);
         if (sign == 1)
@@ -350,7 +312,9 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
     }
 
     @Override public @This ByteRope repeat(byte c, int n) {
-        for (int i = 0, out = postIncLen(n); i < n; i++) utf8[out++] = c;
+        int out = postIncLen(n);
+        byte[] utf8 = u8();
+        while (n-- > 0) utf8[out++] = c;
         return this;
     }
 
@@ -369,34 +333,6 @@ public final class ByteRope extends Rope implements ByteSink<ByteRope> {
     public @This ByteRope unAppend(int n) {
         if (n > len) throw new IllegalArgumentException("n ("+n+") > size ("+ len +")");
         len -= n;
-        slice = null;
         return this;
-    }
-
-    @Override public int compareTo(@NonNull Rope o) {
-        int common = Math.min(len, o.len), i = 0, diff = 0;
-        byte[] u8 = utf8;
-        if (o instanceof ByteRope r) {
-            byte[] oU8 = r.utf8;
-            while (i < common && (diff = u8[offset+i] - oU8[r.offset+i]) == 0) ++i;
-        } else {
-            while (i < common && (diff = u8[offset+i] - o.get(i))        == 0) ++i;
-        }
-        return diff == 0 ? len - o.len : diff;
-    }
-
-    @Override public int compareTo(@NonNull Rope o, int begin, int end) {
-        int oLen = end-begin, common = Math.min(len, oLen), i = 0, diff = 0;
-        byte[] u8 = utf8;
-        if (o instanceof ByteRope r) {
-            byte[] oU8 = r.utf8;
-            i += offset;
-            common += offset;
-            begin += r.offset;
-            while (i < common && (diff = u8[i] - oU8[begin++])  == 0) ++i;
-        } else {
-            while (i < common && (diff = u8[offset+i] - o.get(begin+i)) == 0) ++i;
-        }
-        return diff == 0 ? len - oLen : diff;
     }
 }

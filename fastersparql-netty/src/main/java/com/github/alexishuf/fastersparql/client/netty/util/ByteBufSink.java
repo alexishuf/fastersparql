@@ -1,10 +1,15 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import org.checkerframework.common.returnsreceiver.qual.This;
+
+import java.lang.foreign.MemorySegment;
 
 import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -68,43 +73,38 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
     }
 
     @Override public @This ByteBufSink append(Rope rope) {
-        switch (rope) {
-            case ByteRope b -> bb.writeBytes(b.utf8, b.offset, b.len);
-            case BufferRope b -> bb.writeBytes(b.buffer().slice(b.offset(), b.len));
-            case Term t -> {
-                var shared = RopeDict.getTolerant(t.flaggedDictId).utf8;
-                if (t.flaggedDictId < 0) {
-                    bb.writeBytes(t.local);
-                    bb.writeBytes(shared);
-                } else {
-                    bb.writeBytes(shared);
-                    bb.writeBytes(t.local);
-                }
-            }
-            default -> throw new UnsupportedOperationException();
-        }
+        NettyRopeUtils.write(bb, rope);
         return this;
     }
 
     @Override public @This ByteBufSink append(Rope rope, int begin, int end) {
-        switch (rope) {
-            case ByteRope b -> bb.writeBytes(b.utf8, begin, end-begin);
-            case BufferRope b -> bb.writeBytes(b.buffer().slice(begin, end-begin));
-            case Term t -> {
-                var shared = RopeDict.getTolerant(t.flaggedDictId).utf8;
-                var fst = t.flaggedDictId < 0 ? t.local :  shared;
-                var snd = t.flaggedDictId < 0 ?  shared : t.local;
-                if (begin < fst.length) {
-                    bb.writeBytes(fst, begin, min(fst.length, end)-begin);
-                    begin = 0;
-                } else {
-                    begin -= fst.length;
-                }
-                end -= fst.length;
-                if (begin < end)
-                    bb.writeBytes(snd, begin, end-begin);
+        int len = end - begin;
+        bb.ensureWritable(len);
+        if (rope instanceof SegmentRope sr) {
+            int physBegin = sr.offset() + begin;
+            byte[] u8 = sr.backingArray();
+            if (u8 == null) {
+                int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
+                MemorySegment dst = MemorySegment.ofBuffer(bb.internalNioBuffer(wIdx, free));
+                MemorySegment.copy(sr.segment(), physBegin, dst, 0, len);
+            } else {
+                bb.writeBytes(u8, physBegin, len);
             }
-            default -> throw new UnsupportedOperationException();
+        } else if (rope instanceof Term t) {
+            var shared = RopeDict.getTolerant(t.flaggedDictId).u8();
+            var fst = t.flaggedDictId < 0 ? t.local :  shared;
+            var snd = t.flaggedDictId < 0 ?  shared : t.local;
+            if (begin < fst.length) {
+                bb.writeBytes(fst, begin, min(fst.length, end)-begin);
+                begin = 0;
+            } else {
+                begin -= fst.length;
+            }
+            end -= fst.length;
+            if (begin < end)
+                bb.writeBytes(snd, begin, end-begin);
+        } else {
+            throw new UnsupportedOperationException();
         }
         return this;
     }

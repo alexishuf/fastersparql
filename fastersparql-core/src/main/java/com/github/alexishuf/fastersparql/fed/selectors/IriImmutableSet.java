@@ -115,7 +115,7 @@ final class IriImmutableSet {
         for (Term term : iris) {
             int id = term.flaggedDictId;
             if (id > 0)
-                out.write(RopeDict.get(id).utf8);
+                out.write(RopeDict.get(id).u8());
             out.write(term.local);
             out.write('\n');
         }

@@ -78,8 +78,8 @@ class RopeTest {
             var innerDirect = ByteBuffer.allocateDirect(utf8.length+66)
                                         .position(33).put(utf8)
                                         .position(33).limit(33+utf8.length);
-            return List.of(new BufferRope(tight), new BufferRope(inner),
-                           new BufferRope(innerDirect));
+            return List.of(new SegmentRope(tight), new SegmentRope(inner),
+                           new SegmentRope(innerDirect));
         }
         @Override public String toString() { return "BufferRopeFac"; }
     }
@@ -97,7 +97,7 @@ class RopeTest {
             }
             byte[] u8 = string.getBytes(UTF_8);
             list.add(Term.valueOf(new ByteRope(u8)));
-            list.add(Term.valueOf(new BufferRope(ByteBuffer.wrap(u8))));
+            list.add(Term.valueOf(new SegmentRope(ByteBuffer.wrap(u8))));
             if (string.startsWith("\"") && string.matches("\"(@[a-zA-Z\\-]+)?$"))
                 list.add(Term.make(0, u8, 0, u8.length));
             ByteRope padded = Rope.of(".", string, ".");
@@ -380,6 +380,18 @@ class RopeTest {
     }
 
     @ParameterizedTest @MethodSource("factories")
+    void testToString(Factory fac) {
+        List<String> strings = List.of("", "a", "<rel>", "\"23\"@en", "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+                "<http://www.w3.org/2001/XMLSchema#integer>");
+        for (String str : strings) {
+            for (Rope r : fac.create(str)) {
+                assertEquals(str, r.toString());
+                assertEquals(str, r.toString(0, r.len));
+            }
+        }
+    }
+
+    @ParameterizedTest @MethodSource("factories")
     void testSkipNonAscii(Factory fac) {
         int[] alphabet = Rope.withNonAscii(Rope.alphabet("", Rope.Range.ALPHANUMERIC));
         int[] until = Rope.invert(alphabet);
@@ -423,7 +435,7 @@ class RopeTest {
         assertEquals("123", Rope.of(new ByteRope((Integer)1), 2, 3).toString());
         assertEquals("123", Rope.of(new ByteRope("1"), new StringBuilder().append("2"), "3").toString());
 
-        Rope a = new ByteRope("a"), b = new BufferRope(ByteBuffer.wrap("b".getBytes(UTF_8)));
+        Rope a = new ByteRope("a"), b = new SegmentRope(ByteBuffer.wrap("b".getBytes(UTF_8)));
         assertSame(a, Rope.of(a));
         assertSame(b, Rope.of(b));
     }

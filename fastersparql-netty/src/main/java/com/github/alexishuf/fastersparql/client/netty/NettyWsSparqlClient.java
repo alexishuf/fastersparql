@@ -23,9 +23,9 @@ import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfigurat
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
@@ -43,7 +43,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
-import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 
@@ -144,7 +143,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final Rope requestMessage;
         private final WsClientParserBIt<B> parser;
         private boolean gotFrames = false;
-        private final BufferRope bufferRope = new BufferRope(ByteBuffer.wrap(ByteRope.EMPTY.utf8));
+        private final SegmentRope bufferRope = new SegmentRope();
         protected @MonotonicNonNull ChannelRecycler recycler;
         protected final ByteBufSink bbSink = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT);
 
@@ -228,7 +227,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void frame(WebSocketFrame frame) {
             gotFrames = true;
             if (frame instanceof TextWebSocketFrame t) {
-                bufferRope.buffer(t.content().nioBuffer());
+                bufferRope.wrapBuffer(t.content().nioBuffer());
                 parser.feedShared(bufferRope);
             } else if (!terminated && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();

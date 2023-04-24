@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -13,7 +14,7 @@ import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public final class ExprParser {
-    private Rope in;
+    private SegmentRope in;
     private int consumedPos, pos, len;
     public final TermParser termParser = new TermParser().eager();
     private @Nullable Symbol symbol;
@@ -29,7 +30,7 @@ public final class ExprParser {
      * @throws InvalidTermException if there is a syntax error.
      * @return A non-null {@link Term} parsed from the SPARQL string
      */
-    public Expr parse(Rope in) {
+    public Expr parse(SegmentRope in) {
         if (in == null || in.len() == 0)
             throw new InvalidExprException("null and \"\" are not valid expressions");
         this.len = (this.in = in).len();
@@ -44,12 +45,12 @@ public final class ExprParser {
     }
 
     /** Sets input String to be used in subsequent {@link ExprParser#parse(int)} calls. */
-    public void input(Rope in) {
+    public void input(SegmentRope in) {
         this.len = (this.in = in).len();
     }
 
     /** Parse an expression that starts at char {@code pos} of the previously set
-     *  {@link ExprParser#input(Rope)}. */
+     *  {@link ExprParser#input(SegmentRope)}. */
     public Expr parse(int pos) {
         assert in != null;
         this.consumedPos = this.pos = pos;

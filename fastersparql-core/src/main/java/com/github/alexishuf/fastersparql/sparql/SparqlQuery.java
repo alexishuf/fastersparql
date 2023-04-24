@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 
 public interface SparqlQuery {
     /** Gets the SPARQL representation of this query. The representation may use prefixed IRIs. */
-    Rope sparql();
+    SegmentRope sparql();
 
     /** Whether this is an ASK query */
     boolean isAsk();

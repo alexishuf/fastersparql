@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeWrapper;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -91,7 +92,9 @@ public final class PrefixMap {
         int id = prefix.flaggedDictId;
         if (id == 0)
             return expandNoId(prefix, str,  colonIdx, localNameEnd);
-        return Term.prefixed(id, str, colonIdx+1, localNameEnd);
+        if (str instanceof SegmentRope sr)
+            return Term.prefixed(id, sr, colonIdx+1, localNameEnd);
+        return Term.prefixed(id, str.toArray(colonIdx+1, localNameEnd));
     }
 
     private Term expandNoId(Term prefix, Rope str, int colonIdx, int localNameEnd) {

@@ -13,18 +13,19 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
- * ({@link ResultsParserBIt#feedShared(Rope)}) and produces rows to be
+ * ({@link ResultsParserBIt#feedShared(SegmentRope)}) and produces rows to be
  * consumed via its {@link BIt} methods.
  *
  * <p>This is designed for concurrent use where one thread feeds bytes and
  * another consumes the rows. A slow consumer can cause the producer thread
- * to block on {@link ResultsParserBIt#feedShared(Rope)}. See the {@link CallbackBIt}
+ * to block on {@link ResultsParserBIt#feedShared(SegmentRope)}. See the {@link CallbackBIt}
  * methods for configuring the queue size.</p>
  *
  * @param <B> the row type
@@ -69,7 +70,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * services file.</p>
      *
      * @param format     the format of the UTF-8 segments that will be fed via
-     *                   {@link ResultsParserBIt#feedShared(Rope)}
+     *                   {@link ResultsParserBIt#feedShared(SegmentRope)}
      * @param batchType  basic operations for the type of row that will be created
      * @param vars       list of vars that will correspond to the columns in the produced rows
      * @param maxItems maximum number of queued batches ({@link CallbackBIt#maxReadyBatches()}
@@ -88,7 +89,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * completes (successfully or not).
      *
      * @param format      the format of the UTF-8 segments that will be fed via
-     *                    {@link ResultsParserBIt#feedShared(Rope)}
+     *                    {@link ResultsParserBIt#feedShared(SegmentRope)}
      * @param destination rows will be sent only {@code destination.feed(R)} and this
      *                    {@link ResultsParserBIt} will never output the rows itself. However, the
      *                    {@link ResultsParserBIt} will complete (blocking any consumer) until
@@ -143,7 +144,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      *                              cancelled before it could be completed.
      * @throws BItReadClosedException if {@code this.close()} was previously called.
      */
-    public final void feedShared(Rope rope) {
+    public final void feedShared(SegmentRope rope) {
         try {
             if (rope == null)
                 throw new IllegalArgumentException("null rope");
@@ -157,14 +158,14 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     /**
-     * Implement the parsing as specified by {@link ResultsParserBIt#feedShared(Rope)}.
+     * Implement the parsing as specified by {@link ResultsParserBIt#feedShared(SegmentRope)}.
      *
      * <p>Input parameters are already validated, but the result serialization may still be invalid.
      * Anything thrown by this method will be wrapped into an {@link InvalidSparqlResultsException}
      * (if it is not already a instance) and reported downstream to {@link BIt} consumers via
      * {@link ResultsParserBIt#complete(Throwable)}</p>
      */
-    protected abstract void doFeedShared(Rope rope);
+    protected abstract void doFeedShared(SegmentRope rope);
 
     @Override public B offer(B batch) throws BItCompletedException {
         return destination != null ? destination.offer(batch) : super.offer(batch);
@@ -188,7 +189,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * be produced (if {@code error != null}).
      *
      * <p>While this is a public method, it should only be called by the thread
-     * calling {@link ResultsParserBIt#feedShared(Rope)}.</p>
+     * calling {@link ResultsParserBIt#feedShared(SegmentRope)}.</p>
      *
      * <p>If {@code error} is a {@link Throwable} other than
      * {@link InvalidSparqlResultsException}, it will be wrapped as one.</p>

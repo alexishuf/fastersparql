@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -117,7 +118,7 @@ public final class Modifier extends Plan {
         return sb.toString();
     }
 
-    @Override public Rope sparql() {
+    @Override public SegmentRope sparql() {
         var sb = new ByteRope(256);
         if (projection != null && projection.isEmpty() && limit == 1 && offset == 0) {
             groupGraphPattern(sb.append(ASK_u8).append(' '), 0, PrefixAssigner.NOP);

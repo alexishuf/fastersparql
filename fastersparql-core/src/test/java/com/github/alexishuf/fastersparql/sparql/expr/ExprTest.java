@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -27,7 +27,7 @@ class ExprTest {
 
     @ParameterizedTest @MethodSource
     void testVars(String exprString, Vars expected) {
-        Expr e = new ExprParser().parse(Rope.of(exprString));
+        Expr e = new ExprParser().parse(SegmentRope.of(exprString));
         Vars.Mutable vars = new Vars.Mutable(10);
         assertEquals(expected.size(), Expr.addVars(vars, e));
         assertEquals(expected, vars);

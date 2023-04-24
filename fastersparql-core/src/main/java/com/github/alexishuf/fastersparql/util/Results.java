@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -42,12 +43,12 @@ public final class Results {
     public static final PrefixMap PREFIX_MAP;
     static {
         PrefixMap pm = new PrefixMap().resetToBuiltin();
-        pm.add(Rope.of(""), Term.iri("http://example.org/"));
-        pm.add(Rope.of("ex"), Term.iri("http://example.org/"));
-        pm.add(Rope.of("exns"), Term.iri("http://www.example.org/ns#"));
-        pm.add(Rope.of("rdfs"), Term.iri("http://www.w3.org/2000/01/rdf-schema#"));
-        pm.add(Rope.of("owl"), Term.iri("http://www.w3.org/2002/07/owl#"));
-        pm.add(Rope.of("foaf"), Term.iri("http://xmlns.com/foaf/0.1/"));
+        pm.add(SegmentRope.of(""), Term.iri("http://example.org/"));
+        pm.add(SegmentRope.of("ex"), Term.iri("http://example.org/"));
+        pm.add(SegmentRope.of("exns"), Term.iri("http://www.example.org/ns#"));
+        pm.add(SegmentRope.of("rdfs"), Term.iri("http://www.w3.org/2000/01/rdf-schema#"));
+        pm.add(SegmentRope.of("owl"), Term.iri("http://www.w3.org/2002/07/owl#"));
+        pm.add(SegmentRope.of("foaf"), Term.iri("http://xmlns.com/foaf/0.1/"));
         PREFIX_MAP = pm;
     }
 
@@ -121,7 +122,7 @@ public final class Results {
      * Builds a {@link Vars} set from the leading elements of {@code varsAndTerms} that are
      * {@link CharSequence}s starting with '?' or that are themselves {@link Vars} instances and
      * use the remainder of {@code varsAndTerms} as a row-major enumeration of all terms in
-     * the results (if there are {@code n} vars, every sequence of {@code n} objects will be
+     * the results. If there are {@code n} vars, every sequence of {@code n} objects will be
      * parsed by {@link TermParser} if non-null and used to build a row of expected results.
      *
      * <p>Examples:</p>
@@ -197,7 +198,7 @@ public final class Results {
         termParser.prefixMap = PREFIX_MAP;
         List<Term> row = new ArrayList<>();
         for (Object term : terms) {
-            row.add(term == null ? null : termParser.parseTerm(Rope.of(term)));
+            row.add(term == null ? null : termParser.parseTerm(SegmentRope.of(term)));
             if (row.size() == columns) {
                 rows.add(row);
                 row = new ArrayList<>();
@@ -217,7 +218,7 @@ public final class Results {
     public static TriplePattern parseTP(CharSequence cs) {
         TermParser parser = new TermParser().eager();
         parser.prefixMap = Results.PREFIX_MAP;
-        Rope r = Rope.of(cs);
+        SegmentRope r = SegmentRope.of(cs);
         int len = r.len();
         return new TriplePattern(parser.parseTerm(r, 0, len),
                                  parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len),
@@ -542,7 +543,7 @@ public final class Results {
                     yield (List<Term>) l;
                 var terms = new ArrayList<Term>();
                 for (Object o : l)
-                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(Rope.of(o)));
+                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
                 yield terms;
             }
             case Term[] a -> asList(a);
@@ -563,7 +564,7 @@ public final class Results {
             case Object[] a -> {
                 var terms = new ArrayList<Term>();
                 for (Object o : a)
-                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(Rope.of(o)));
+                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
                 yield terms;
             }
             case null -> throw new AssertionError("null is not a valid row object");

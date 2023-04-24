@@ -301,6 +301,13 @@ public class RopeDict {
     }
 
     /**
+     * Equivalent to {@link #internIri(SegmentRope, int, int)} with {@code 0} and {@code rope.len} .
+     */
+    public static long internIri(SegmentRope rope) {
+        return internIri(rope, 0, rope.len);
+    }
+
+    /**
      * Find a split point {@code l >= begin} and {@code < end} of {@code rope} and return both
      * {@code l} and an {@code id} such that {@code RopeDict.get(id).equals(rope.sub(begin, l)}.
      *
@@ -310,7 +317,7 @@ public class RopeDict {
      * @return {@code ((long)l << 32 | id)} where {@code l} is the start of the local part and
      *         {@code id}, if non-zero, {@code RopeDict.get(id).equals(rope.sub(begin, l)}.
      */
-    public static long internIri(Rope rope, int begin, int end) {
+    public static long internIri(SegmentRope rope, int begin, int end) {
         if (end-begin < MIN_INTERNABLE)
             return (long)begin << 32; // too short for interning, thus everything is "local"
         var s = stats[rope.lsbHash(begin + IRI_SKIP, begin + IRI_SKIP + 8)];
@@ -325,8 +332,8 @@ public class RopeDict {
         return ((long)local << 32) | (int)insertion;
     }
     /** Test/internal use ONLY */
-    static long internIri(CharSequence string) {
-        Rope r = Rope.of(string);
+    private static long internIri(String string) {
+        var r = SegmentRope.of(string);
         return internIri(r, 0, r.len());
     }
 
@@ -340,7 +347,7 @@ public class RopeDict {
      *         {@code 0} if the {@code "^^<...>} segment was too short or if the dictionary
      *         was full.
      */
-    public static int internDatatype(Rope rope, int begin, int end) {
+    public static int internDatatype(SegmentRope rope, int begin, int end) {
         if (end-begin < MIN_INTERNABLE)
             return 0;
         long insertion = find(rope, begin, end, DT_SKIP, buckets);
@@ -348,9 +355,14 @@ public class RopeDict {
             insertion = store(new ByteRope(rope.toArray(begin, end)), insertion, DT_SKIP);
         return (int)insertion;
     }
+
+    public static int internDatatype(SegmentRope rope) {
+        return internDatatype(rope, 0, rope.len);
+    }
+
     /** Test/internal use ONLY */
-    static int internDatatype(CharSequence string) {
-        Rope r = Rope.of(string);
+    private static int internDatatype(String string) {
+        var r = SegmentRope.of(string);
         return internDatatype(r, 0, r.len());
     }
 
@@ -367,7 +379,7 @@ public class RopeDict {
      *         is the index of {@code "\"^^<"} and id is such that
      *         {@code RopeDict.get(id).equals(rope.sub(endLex, end))}.
      */
-    public static long internLit(Rope rope, int begin, int end) {
+    public static long internLit(SegmentRope rope, int begin, int end) {
         if (end-begin < MIN_INTERNABLE) // whole literal is too short
             return (long) end << 32;
         int endLex = rope.skipUntilUnescaped(begin, end, DT_MID);
@@ -379,9 +391,14 @@ public class RopeDict {
         return (int) insertion == 0 ? (long) end << 32 //cannot intern
                                     : ((long) endLex << 32) | (int) insertion; //
     }
+
+    public static long internLit(SegmentRope rope) {
+        return internLit(rope, 0, rope.len);
+    }
+
     /** Test use ONLY */
-    public static long internLit(CharSequence lit) {
-        Rope r = Rope.of(lit);
+    private static long internLit(String lit) {
+        var r = SegmentRope.of(lit);
         return internLit(r, 0, r.len());
     }
 
@@ -605,7 +622,7 @@ public class RopeDict {
         int h = hashes[id];
         if (h == 0) {
             // no need to spinlock, worst case we compute the same hash more than once
-            byte[] utf8 = strings[id].utf8;
+            byte[] utf8 = strings[id].u8();
             h = hashes[id] = RopeSupport.hash(utf8, 0, utf8.length);
         }
         return h;

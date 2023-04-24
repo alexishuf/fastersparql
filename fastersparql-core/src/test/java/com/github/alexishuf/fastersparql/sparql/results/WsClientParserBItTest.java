@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -128,8 +128,8 @@ class WsClientParserBItTest extends ResultsParserTest {
         }
         int idx = in.indexOf("!end\n");
         if (idx >= 0 && idx < in.length()-5)
-            doTestSingleFeed(fac, expected, Rope.of(in));
+            doTestSingleFeed(fac, expected, SegmentRope.of(in));
         else
-            doTest(fac, expected, Rope.of(in));
+            doTest(fac, expected, SegmentRope.of(in));
     }
 }

@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.openjdk.jmh.annotations.*;
 
@@ -24,11 +25,11 @@ import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class RopeDictBench {
 
-    @Param({"ALL"})                private String sizeName;
-    @Param({"NETTY", "BYTE"})      private RopeType ropeType;
+    @Param({"ALL"})           private String sizeName;
+    @Param({"NETTY", "BYTE"}) private RopeType ropeType;
 
     private int[][] startsArray;
-    private Rope[] ropes;
+    private SegmentRope[] ropes;
     private RopeTypeHolder rt;
 
     @Setup(Level.Trial) public void setup() {
@@ -51,7 +52,7 @@ public class RopeDictBench {
         starts[i] = sink.len();
         Rope rope = rt.takeRope(sink);
         startsArray = new int[64][];
-        ropes = new Rope[64];
+        ropes = new SegmentRope[64];
         for (int rep = 0; rep < ropes.length; rep++) {
              ropes[rep] = rt.takeRope(rt.byteSink().append(rope));
              startsArray[rep] = Arrays.copyOf(starts, starts.length);
@@ -69,7 +70,7 @@ public class RopeDictBench {
         long acc = 0;
         for (int rep = 0; rep < startsArray.length; rep++) {
             int[] starts = startsArray[rep];
-            Rope rope = ropes[rep];
+            var rope = ropes[rep];
             for (int i = 0, last = starts.length-1; i < last; i++) {
                 int begin = starts[i], end = starts[i+1];
                 acc ^= switch (begin < end ? rope.get(begin) : 0) {

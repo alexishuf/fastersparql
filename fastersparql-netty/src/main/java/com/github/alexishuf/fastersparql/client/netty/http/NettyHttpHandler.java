@@ -3,8 +3,8 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.model.rope.BufferRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -181,7 +181,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             } else {
                 if (failureBody == ByteRope.EMPTY)
                     failureBody = new ByteRope();
-                failureBody.append(new BufferRope(httpContent.content().nioBuffer()));
+                failureBody.append(new SegmentRope(httpContent.content().nioBuffer()));
                 if (isLast)
                     fail(null); // will build a FSServerException from the response
             }

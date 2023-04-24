@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -174,7 +175,7 @@ public abstract sealed class Plan implements SparqlQuery
         }
     }
 
-    @Override public Rope sparql() {
+    @Override public SegmentRope sparql() {
         if (this instanceof Query q)
             return q.sparql.sparql();
         ByteRope rb = new ByteRope(256);

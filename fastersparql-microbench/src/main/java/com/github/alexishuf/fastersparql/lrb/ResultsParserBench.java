@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
@@ -44,7 +45,7 @@ public class ResultsParserBench {
     private BatchType bt;
     private Vars vars;
     private RopeTypeHolder ropeTypeHolder;
-    private List<List<Rope>> fragmentsLists;
+    private List<List<SegmentRope>> fragmentsLists;
     private int nextFragmentList = 0;
     private volatile boolean stopDrainer = false;
     private volatile int drainedRows = -1;
@@ -66,7 +67,7 @@ public class ResultsParserBench {
         nextFragmentList = 0;
         var serializer = ResultsSerializer.create(format);
         for (int i = 0; i < FRAGMENTS_LISTS; i++) {
-            List<Rope> fragments = new ArrayList<>();
+            List<SegmentRope> fragments = new ArrayList<>();
             ByteSink sink = ropeTypeHolder.byteSink();
             serializer.init(vars, vars, false, sink);
             fragments.add(ropeTypeHolder.takeRope(sink));
@@ -135,10 +136,10 @@ public class ResultsParserBench {
         this.drainedRows = -1;
         this.it = it;
         LockSupport.unpark(drainer);
-        List<Rope> fragments = fragmentsLists.get(nextFragmentList);
+        List<SegmentRope> fragments = fragmentsLists.get(nextFragmentList);
         nextFragmentList = (nextFragmentList+1) % fragmentsLists.size();
         try (parser) {
-            for (Rope fragment : fragments)
+            for (var fragment : fragments)
                 parser.feedShared(fragment);
             parser.complete(null);
         }

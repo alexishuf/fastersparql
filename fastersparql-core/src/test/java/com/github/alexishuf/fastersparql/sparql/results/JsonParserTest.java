@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -165,6 +165,6 @@ public class JsonParserTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(String in, Results expected) throws Exception {
-        doTest(new JsonParserBIt.JsonFactory(), expected, Rope.of(in));
+        doTest(new JsonParserBIt.JsonFactory(), expected, SegmentRope.of(in));
     }
 }
