@@ -106,7 +106,7 @@ public class SparqlParser {
         while (e > begin && in.get(e) == '.') --e;
         if (e == begin)
             throw ex("non-empty var name", pos);
-        Rope rope = in.sub(begin, e);
+        var rope = new ByteRope(e-begin).append(in, begin, e);
         pos = e;
         return rope;
     }
