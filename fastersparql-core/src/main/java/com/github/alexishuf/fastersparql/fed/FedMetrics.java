@@ -17,7 +17,7 @@ public final class FedMetrics {
     public long selectionAndAgglutinationNs;
     public long optimizationNs;
 
-    FedMetrics(Federation federation, SparqlQuery input) {
+    public FedMetrics(Federation federation, SparqlQuery input) {
         this.federation = federation;
         this.input = input;
     }

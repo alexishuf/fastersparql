@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.lrb.query;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.fed.Federation;
+import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -15,6 +16,8 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static java.lang.Boolean.parseBoolean;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -63,17 +66,17 @@ public final class PlanRegistry {
         return new PlanRegistry(map);
     }
 
-    public void resolve(Map<String, SparqlClient> host2client) {
+    public void resolve(Map<LrbSource, SparqlClient> source2client) {
         for (var e : name2node.entrySet())
-            e.getValue().resolve(host2client);
+            e.getValue().resolve(source2client);
     }
     public void resolve(Federation federation) {
-        Map<String, SparqlClient> host2client = new HashMap<>();
+        Map<LrbSource, SparqlClient> host2client = new HashMap<>();
         federation.<Void>forEachSource((src, handleReady) -> {
             String name = src.spec().getString("lrb-name");
             if (name == null) name = src.spec().getString("name");
-            name = name.toLowerCase().replace("-", "").replace("_", "");
-            host2client.put(name, src.client);
+            LrbSource lrb = LrbSource.tolerantValueOf(name);
+            host2client.put(lrb, src.client);
             handleReady.apply(null, null);
         });
         resolve(host2client);
@@ -98,10 +101,16 @@ public final class PlanRegistry {
         Map<Object, Object> params;
         List<Node> operands;
 
-        public void resolve(Map<String, SparqlClient> host2client) {
-            for (Node o : operands) o.resolve(host2client);
-            if (params.containsKey("endpoint"))
-                params.put("sparqlClient", host2client.get(params.get("endpoint").toString()));
+        private static final Pattern HOST_RX = Pattern.compile("(?i)https?://([^/:]+)");
+
+        public void resolve(Map<LrbSource, SparqlClient> src2client) {
+            for (Node o : operands) o.resolve(src2client);
+            var url = params.getOrDefault("endpoint", "").toString();
+            Matcher matcher = HOST_RX.matcher(url);
+            if (matcher.find()) {
+                LrbSource lrb = LrbSource.tolerantValueOf(matcher.group(1));
+                params.put("sparqlClient", src2client.get(lrb));
+            }
         }
 
         private Plan  left() { return operands.get(0).createPlan(); }

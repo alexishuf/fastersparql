@@ -22,10 +22,10 @@ class PlanRegistryTest {
     @BeforeAll
     static void beforeAll() {
         builtin = PlanRegistry.parseBuiltin();
-        Map<String, SparqlClient> host2client = new HashMap<>();
+        Map<LrbSource, SparqlClient> host2client = new HashMap<>();
         for (LrbSource src : LrbSource.values()) {
             String url = "http://" + src.name().toLowerCase().replace("_", "-") + "/sparql";
-            host2client.put(url, new ResultsSparqlClient(false, url));
+            host2client.put(src, new ResultsSparqlClient(false, url));
         }
         builtin.resolve(host2client);
     }

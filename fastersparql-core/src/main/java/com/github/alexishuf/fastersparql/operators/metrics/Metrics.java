@@ -40,6 +40,8 @@ public class Metrics {
      *  {@link Batch} was emitted */
     public long terminalNanos;
 
+    public boolean delivered = false;
+
     /** Average number of rows yielded for every binding of the right operand  */
     public final class JoinMetrics {
         /** How many times this operand was bound to a row of its left-side siblings */
@@ -110,8 +112,10 @@ public class Metrics {
 
         public void completeAndDeliver(@Nullable Throwable cause, BIt<?> it) {
             complete();
-            if (isLast)
+            if (isLast) {
                 Metrics.this.complete(cause, isClosedFor(cause, it));
+                deliver();
+            }
         }
 
         @Override public boolean equals(Object o) {
@@ -148,6 +152,8 @@ public class Metrics {
         this.plan = plan;
         this.lastEmit = startNanos = System.nanoTime();
         firstRowNanos = -1;
+        allRowsNanos = -1;
+        minNanosBetweenBatches = Long.MAX_VALUE;
         joinMetrics = switch (plan.type) {
             case JOIN,LEFT_JOIN,EXISTS,NOT_EXISTS,MINUS -> new JoinMetrics[plan.opCount()];
             default -> EMPTY_JOIN_METRICS;
@@ -176,7 +182,9 @@ public class Metrics {
     }
 
     public Metrics complete(@Nullable Throwable t, boolean cancelled) {
-        terminalNanos = System.nanoTime()-lastEmit;
+        long now = System.nanoTime();
+        allRowsNanos = now-startNanos;
+        terminalNanos = now -lastEmit;
         error = t;
         this.cancelled = cancelled;
         if (joinMetrics.length > 0) {
@@ -186,6 +194,7 @@ public class Metrics {
     }
 
     public void deliver() {
+        if (delivered) return;
         for (var listener : plan.listeners())
             listener.accept(this);
     }

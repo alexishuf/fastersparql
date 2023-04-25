@@ -25,6 +25,7 @@ public final class Source implements AutoCloseable {
     public static final String CLIENT_TAG = "client-tag";
     public static final String SELECTOR = "selector";
     public static final String ESTIMATOR = "estimator";
+    public static final String NAME = "name";
     public static final String URL = "url";
     public static final String CONFIG = "config";
     public static final String METHODS = "methods";

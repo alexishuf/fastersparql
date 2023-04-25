@@ -10,17 +10,23 @@ import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.fed.selectors.IriImmutableSet.EMPTY;
+import static java.lang.System.nanoTime;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class DictionarySelector extends Selector {
+    private static final Logger log = LoggerFactory.getLogger(DictionarySelector.class);
     public static final String NAME = "dictionary";
     private static final byte[] TYPE_LINE_U8 = (NAME+'\n').getBytes(UTF_8);
     public static final String FETCH_PREDICATES = "fetch-predicates";
@@ -49,7 +55,8 @@ public class DictionarySelector extends Selector {
         this.predicates = this.classes = EMPTY;
         boolean fetchPredicates = spec.getOr(FETCH_PREDICATES, true);
         boolean fetchClasses = spec.getBool(FETCH_CLASSES);
-        Thread.startVirtualThread(() -> init(client, fetchPredicates, fetchClasses));
+        Thread.ofPlatform().name("DictionarySelector-init-"+endpoint)
+              .start(() -> init(client, fetchPredicates, fetchClasses));
     }
 
     public DictionarySelector(SparqlEndpoint endpoint, Spec spec,
@@ -65,9 +72,12 @@ public class DictionarySelector extends Selector {
 
     private void init(SparqlClient client, boolean fetchPredicates, boolean fetchClasses) {
         try {
-            Thread.currentThread().setName("DictionarySelector.init("+client+")");
+            long start = nanoTime();
             predicates = fetchPredicates ? fetch(client, PREDICATES) : EMPTY;
             classes    = fetchClasses    ? fetch(client, CLASSES)    : EMPTY;
+            log.info("{} indexed {} predicates and {} classes in {}s",
+                     DictionarySelector.this, predicates.size(), classes.size(),
+                     String.format("%.3f", (nanoTime()-start)/1_000_000_000.0));
             notifyInit(InitOrigin.QUERY, null);
         } catch (Throwable t) {
             notifyInit(null, t);
@@ -76,6 +86,16 @@ public class DictionarySelector extends Selector {
 
     private IriImmutableSet fetch(SparqlClient client, OpaqueSparqlQuery query) {
         List<Term> iris = new ArrayList<>();
+        Semaphore done = new Semaphore(0);
+        Thread progress = Thread.startVirtualThread(() -> {
+            String what = query == PREDICATES ? "predicates" : (query == CLASSES) ? "classes" : "?";
+            try {
+                while (!done.tryAcquire(4, TimeUnit.SECONDS)) {
+                    log.info("{} loading {}: {}/?", this, what, iris.size());
+                }
+            } catch (InterruptedException ignored) {
+            }
+        });
         try (var it = client.query(Batch.TERM, query)) {
             for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
                 for (int r = 0, rows = b.rows; r < rows; r++) {
@@ -84,6 +104,11 @@ public class DictionarySelector extends Selector {
                         iris.add(term);
                 }
             }
+        } finally {
+            done.release();
+            try {
+                progress.join();
+            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
         return new IriImmutableSet(iris);
     }
