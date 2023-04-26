@@ -95,7 +95,7 @@ public class IdAccess {
             return; // do not store special values
         int slot = ((int)(sourcedId>>32) ^ (int)sourcedId) & CACHE_MASK;
         long o = (long)CACHE_ID.getOpaque(cachedSourcedIds, slot);
-        if (CACHE_ID.compareAndSet(cachedSourcedIds, slot, o, NOT_FOUND)) {
+        if (o != NOT_FOUND && CACHE_ID.compareAndSet(cachedSourcedIds, slot, o, NOT_FOUND)) {
             cachedStringsAndTerms[slot] = cs;
             CACHE_ID.setVolatile(cachedSourcedIds, slot, sourcedId);
         }
