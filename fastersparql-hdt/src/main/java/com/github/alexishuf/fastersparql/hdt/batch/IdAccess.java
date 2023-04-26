@@ -523,8 +523,9 @@ public class IdAccess {
      */
     public static int register(Dictionary dictionary) {
         while (!LOCK.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
+        int id;
         try {
-            int id = nextDictId;
+            id = nextDictId;
             if (id <= MAX_DICT) {
                 ++nextDictId;
             } else {
@@ -533,9 +534,9 @@ public class IdAccess {
                     throw new NoSpaceForDictException();
             }
             dicts[id-1] = dictionary;
-            log.debug("Registered Dictionary {}", id);
-            return id;
         } finally { LOCK.setRelease(0); }
+        log.debug("Registered Dictionary {}", id);
+        return id;
     }
 
     /**
@@ -566,9 +567,17 @@ public class IdAccess {
      * @param dictId an id obtained from {@link #register(Dictionary)}
      */
     public static void release(int dictId) {
+        log.debug("Releasing dict {}", dictId);
+        // remove all cached entries refering to this dict
+        long shiftedDictId = (long)dictId << DICT_BIT;
+        for (int i = 0; i < CACHE_SIZE; i++) {
+            long sourcedId = (long)CACHE_ID.getAcquire(cachedSourcedIds, i);
+            if ((sourcedId&DICT_MASK) == shiftedDictId)
+                CACHE_ID.setVolatile(cachedSourcedIds, i, 0L);
+        }
+        // mutual exclusion with register()
         while (!LOCK.weakCompareAndSetAcquire(0, 1)) Thread.onSpinWait();
         try{
-            log.debug("Releasing dict {}", dictId);
             BS.set(freeDictSlots, dictId);
             dicts[dictId-1] = null;
         } finally { LOCK.setRelease(0); }
