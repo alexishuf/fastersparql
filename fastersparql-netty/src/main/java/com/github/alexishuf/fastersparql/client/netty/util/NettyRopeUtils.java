@@ -40,7 +40,7 @@ public class NettyRopeUtils {
                 MemorySegment.copy(sr.segment(), sr.offset(), segment, 0, len);
                 dest.writerIndex(wIdx+len);
             } else {
-                dest.writeBytes(u8, sr.offset(), len);
+                dest.writeBytes(u8, (int) sr.offset(), len);
             }
         } else if (source instanceof Rope) {
             if (!(source instanceof Term t))

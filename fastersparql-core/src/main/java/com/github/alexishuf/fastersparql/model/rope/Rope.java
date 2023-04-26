@@ -838,7 +838,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     @Override public CharSequence subSequence(int start, int end) { return sub(start, end); }
 
-    public final String toString(int begin, int end) {
+    public String toString(int begin, int end) {
         byte[] u8 = new byte[end - begin]; // manual-inlining toArray() improves escape analysis
         copy(begin, end, u8, 0);
         return new String(u8, UTF_8);
@@ -875,8 +875,6 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     @Override public @NonNull String toString() {
-        if (this instanceof ByteRope r)
-            return new String(r.u8(), r.offset, r.len, UTF_8);
         return new String(toArray(0, len()), UTF_8);
     }
 }

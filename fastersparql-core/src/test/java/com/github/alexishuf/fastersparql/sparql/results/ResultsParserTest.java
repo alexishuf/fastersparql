@@ -70,8 +70,8 @@ class ResultsParserTest {
         @Override public void invalidate(Rope r) {
             SegmentRope sr = (SegmentRope) r;
             var segment = sr.segment();
-            for (int i = sr.offset(), e = sr.offset()+sr.len; i < e; i++) {
-                segment.set(JAVA_BYTE, i, (byte)switch(i&3) {
+            for (long i = sr.offset(), e = sr.offset()+sr.len; i < e; i++) {
+                segment.set(JAVA_BYTE, i, (byte)switch((int)(i&3L)) {
                     case 0  -> '\r';
                     case 1  -> '\n';
                     case 2  -> ',';

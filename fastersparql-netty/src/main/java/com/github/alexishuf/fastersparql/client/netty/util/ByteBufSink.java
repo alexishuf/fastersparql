@@ -81,14 +81,14 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         int len = end - begin;
         bb.ensureWritable(len);
         if (rope instanceof SegmentRope sr) {
-            int physBegin = sr.offset() + begin;
+            long physBegin = sr.offset() + begin;
             byte[] u8 = sr.backingArray();
             if (u8 == null) {
                 int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
                 MemorySegment dst = MemorySegment.ofBuffer(bb.internalNioBuffer(wIdx, free));
                 MemorySegment.copy(sr.segment(), physBegin, dst, 0, len);
             } else {
-                bb.writeBytes(u8, physBegin, len);
+                bb.writeBytes(u8, (int)physBegin, len);
             }
         } else if (rope instanceof Term t) {
             var shared = RopeDict.getTolerant(t.flaggedDictId).u8();

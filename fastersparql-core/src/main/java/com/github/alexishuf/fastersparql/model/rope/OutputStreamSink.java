@@ -44,7 +44,7 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
 
     @Override public @This OutputStreamSink append(Rope rope, int begin, int end) {
         if (rope instanceof ByteRope b)
-            return write(b.utf8, b.offset+begin, end-begin);
+            return write(b.u8(), (int)b.offset+begin, end-begin);
         byte[] a = rope.toArray(begin, end);
         return write(a, 0, a.length);
     }

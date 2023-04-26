@@ -214,7 +214,7 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope> {
 
     public @This ByteRope fill(int value) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
-        Arrays.fill(u8(), offset, offset+len, (byte)value);
+        Arrays.fill(u8(), 0, len, (byte)value);
         return this;
     }
 
