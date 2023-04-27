@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -53,7 +54,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
         long start = fillingStart;
         if (needsStartTime && start == ORIGIN)
-            fillingStart = start = System.nanoTime();
+            fillingStart = start = Timestamp.nanoTime();
         try {//noinspection StatementWithEmptyBody
             while (fetch(b) && readyInNanos(b.rows, start) > 0) {}
         } catch (Throwable t) { pendingError = t; }

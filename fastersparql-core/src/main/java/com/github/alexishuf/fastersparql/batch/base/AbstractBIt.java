@@ -162,7 +162,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         else if (r >= maxBatch   || eager) return 0;
         else if (!needsStartTime         ) return r >= minBatch ? 0 : Long.MAX_VALUE;
 
-        long elapsed = System.nanoTime() - start;
+        long elapsed = Timestamp.nanoTime() - start;
         if      (elapsed <  minWaitNs) return Math.max(0, minWaitNs-elapsed);
         else if (r       >=  minBatch) return 0;
         else if (elapsed <  maxWaitNs) return Math.max(0, maxWaitNs-elapsed);

@@ -10,7 +10,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 
-import static java.lang.System.nanoTime;
+import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.concurrent.locks.LockSupport.*;
 

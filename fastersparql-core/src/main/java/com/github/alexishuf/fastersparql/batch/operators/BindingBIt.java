@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -62,7 +63,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         boolean re = false;
         if (lb == null) return null; // already exhausted
         try {
-            long startNs = needsStartTime ? System.nanoTime() : ORIGIN;
+            long startNs = needsStartTime ? Timestamp.nanoTime() : ORIGIN;
             b = getBatch(b);
             do {
                 if (inner == null) {

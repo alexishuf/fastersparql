@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -136,7 +137,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
                     } else {
                         B b = ready;
                         if (b == null) {
-                            fillingStart = System.nanoTime(); // start counting time
+                            fillingStart = Timestamp.nanoTime(); // start counting time
                         } else if ((parkNs = readyInNanos(b.rows, fillingStart)) == 0) {
                             set = QS_READY; // stole ready, will not park
                             fillingStart = ORIGIN;
@@ -202,7 +203,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             if ((qs & QS_TERM) != 0) throw mkCompleted(); // reject offer() after complete()
             B filling = ready;
             if (filling == null) {
-                if (needsStartTime) fillingStart = System.nanoTime();
+                if (needsStartTime) fillingStart = Timestamp.nanoTime();
                 // b.rows < minBatch likely means we have a fill-by-row producer.
                 // copying to a recycled batch will avoid a realloc on next offer()/copy()
                 // and will avoid a new alloc for the producer.
@@ -252,7 +253,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             B filling = ready;
             if (filling == null) {
                 //journal.write("copy: start filling from src.rows=", src.rows);
-                if (needsStartTime) fillingStart = System.nanoTime();
+                if (needsStartTime) fillingStart = Timestamp.nanoTime();
                 ready = filling = getBatch(null);
             } //else { journal.write("copy: put() rows=", src.rows, "on filling.rows=", filling.rows); }
             filling.put(src);
