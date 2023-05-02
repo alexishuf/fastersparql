@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,6 +18,7 @@ import java.util.Objects;
 import java.util.stream.Stream;
 
 import static java.lang.Character.toUpperCase;
+import static java.lang.Integer.signum;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
@@ -68,6 +70,58 @@ class RopeTest {
         @Override public String toString() { return "ByteSubRopeFac"; }
     }
 
+    private static final class TwoSegmentRopeFac implements Factory {
+        @Override public List<Rope> create(String string) {
+            ArrayList<Rope> list = new ArrayList<>();
+            MemorySegment seg = MemorySegment.ofArray(string.getBytes(UTF_8));
+            int n = (int) seg.byteSize();
+            list.add(new TwoSegmentRope(seg, 0, n, seg, 0, 0));
+            list.add(new TwoSegmentRope(seg, n, 0, seg, 0, n));
+
+            var r = new TwoSegmentRope();
+            r.wrapFirst(seg, 0, n);
+            list.add(r);
+
+            r = new TwoSegmentRope();
+            r.wrapSecond(seg, 0, n);
+            list.add(r);
+
+            if (n > 2) {
+                int mid = n>>1;
+                list.add(new TwoSegmentRope(seg, 0, mid, seg, mid, n-mid));
+
+                r = new TwoSegmentRope(seg, mid, n, seg, 0, n);
+                r.wrapFirst(seg, 0, mid);
+                r.wrapSecond(seg, mid, n-mid);
+                list.add(r);
+
+                r = new TwoSegmentRope();
+                r.wrapSecond(seg, 1, n-1);
+                r.wrapFirst(seg, 0, 1);
+                list.add(r);
+
+                r = new TwoSegmentRope(seg, mid, n-mid, seg, 0, mid);
+                r.wrapSecond(seg, 1, n-1);
+                r.wrapFirst(seg, 0, 1);
+                list.add(r);
+            }
+            return list;
+        }
+        @Override public String toString() { return "TwoSegmentRopeFac"; }
+    }
+
+    private static final class TwoSegmentSubRopeFac implements Factory {
+        @Override public List<Rope> create(String string) {
+            var s = MemorySegment.ofArray(("." + string + ".").getBytes(UTF_8));
+            int n = (int) s.byteSize();
+            int mid = n>>1;
+            var parent = new TwoSegmentRope(s, 0, mid, s, mid, n - mid);
+            return List.of(parent.sub(1, n-1));
+        }
+
+        @Override public String toString() { return "TwoSegmentSubRopeFac"; }
+    }
+
     private static final class BufferRopeFac implements Factory  {
         @Override public List<Rope> create(String string) {
             byte[] utf8 = string.getBytes(UTF_8);
@@ -112,6 +166,8 @@ class RopeTest {
             new ByteRopeFac(),
             new ByteSubRopeFac(),
             new BufferRopeFac(),
+            new TwoSegmentRopeFac(),
+            new TwoSegmentSubRopeFac(),
             new TermRopeFac()
     );
 
@@ -620,13 +676,13 @@ class RopeTest {
                 int expected = left.compareTo(right);
                 for (Rope lr : f.create(left)) {
                     for (Rope rr : f.create(right)) {
-                        assertEquals( expected, lr.compareTo(rr), ctx);
-                        assertEquals(-expected, rr.compareTo(lr), ctx);
+                        assertEquals(signum( expected), signum(lr.compareTo(rr)), ctx);
+                        assertEquals(signum(-expected), signum(rr.compareTo(lr)), ctx);
                         assertEquals(expected == 0, lr.equals(rr));
                     }
                     for (String rString : List.of(" " + right + " ", "~" + right + "~")) {
                         for (Rope rr : f.create(rString)) {
-                            assertEquals(expected, lr.compareTo(rr, 1, rr.len - 1), ctx);
+                            assertEquals(signum(expected), signum(lr.compareTo(rr, 1, rr.len - 1)), ctx);
                         }
                     }
                 }

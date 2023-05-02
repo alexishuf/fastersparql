@@ -18,7 +18,7 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
-public class SegmentRope extends Rope {
+public class SegmentRope extends PlainRope {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
 
@@ -82,6 +82,13 @@ public class SegmentRope extends Rope {
         return segment.asByteBuffer().position(iOffset).limit(iOffset+len);
     }
 
+    public void wrap(SegmentRope other) {
+        this.segment = other.segment;
+        this.utf8 = null;
+        this.offset = other.offset;
+        this.len = other.len;
+    }
+
     public void wrapSegment(MemorySegment segment, long offset, int len) {
         this.segment = segment;
         this.utf8 = null;
@@ -120,15 +127,9 @@ public class SegmentRope extends Rope {
     @Override public int write(OutputStream out) throws IOException {
         if (utf8 != null) {
             out.write(utf8, (int)offset, len);
-        } else {
-            byte[] buf = new byte[128];
-            for (int i = (int)offset, end = i + len; i < end; i += 128) {
-                int n = Math.min(end - i, 128);
-                MemorySegment.copy(segment, JAVA_BYTE, i, buf, 0, n);
-                out.write(buf, 0, n);
-            }
+            return len;
         }
-        return len;
+        return super.write(out);
     }
 
     @Override public SegmentRope sub(int begin, int end) {
@@ -136,78 +137,91 @@ public class SegmentRope extends Rope {
         return rLen == len ? this : new SegmentRope(segment, offset + begin, rLen);
     }
 
-    @Override public int skipUntil(int begin, int end, char c0) {
-        var segment = this.segment;
-        int rLen = rangeLen(begin, end);
-        long i = begin+offset, e = i+rLen;
+    static long skipUntil(MemorySegment segment, long i, long e, char c0) {
+        int rLen = (int)(e-i);
         if (rLen >= B_LEN) {
             Vector<Byte> c0Vec = B_SP.broadcast(c0);
             for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
                 int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
-                if (lane < B_LEN) return (int) (i - offset + lane);
+                if (lane < B_LEN) return (int) (i + lane);
             }
         }
         while (i < e && segment.get(JAVA_BYTE, i) != c0) ++i;
-        return (int) (i - offset);
+        return i;
+
     }
 
-    @Override public int skipUntil(int begin, int end, char c0, char c1) {
-        var segment = this.segment;
-        int rLen = rangeLen(begin, end);
-        long i = begin+offset, e = i+rLen;
+    @Override public int skipUntil(int begin, int end, char c0) {
+        rangeLen(begin, end);
+        return (int) (skipUntil(segment, begin+offset, end+offset, c0)-offset);
+    }
+
+    static long skipUntil(MemorySegment segment, long i, long e, char c0, char c1) {
+        int rLen = (int)(e-i);
         if (rLen >= B_LEN) {
             Vector<Byte> c0Vec = B_SP.broadcast(c0);
             Vector<Byte> c1Vec = B_SP.broadcast(c1);
             for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
                 ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue();
-                if (lane < B_LEN) return (int) (i - offset) + lane;
+                if (lane < B_LEN) return i + lane;
             }
         }
         for (byte c; i < e && (c=segment.get(JAVA_BYTE, i)) != c0 && c != c1;) ++i;
-        return (int) (i - offset);
+        return i;
+    }
+
+    @Override public int skipUntil(int begin, int end, char c0, char c1) {
+        rangeLen(begin, end);
+        return (int)(skipUntil(segment, offset+begin, offset+end, c0, c1)-offset);
+    }
+
+    static long skipUntilLast(MemorySegment segment, long begin, long end, char c0) {
+        int rLen = (int)(end-begin);
+        if (rLen >= B_LEN) {
+            Vector<Byte> c0Vec = B_SP.broadcast(c0);
+            while ((end -= B_LEN) >= begin) {
+                int lane = fromMemorySegment(B_SP, segment, end, LITTLE_ENDIAN).eq(c0Vec).lastTrue();
+                if (lane >= 0) return end + lane;
+            }
+            end += B_LEN; // the while above always overdraws from i
+        }
+        for (end -= 1; end >= begin; --end) {
+            if (segment.get(JAVA_BYTE, end) == c0) return end;
+        }
+        return begin+rLen;
     }
 
     @Override public int skipUntilLast(int begin, int end, char c0) {
-        var segment = this.segment;
-        int rLen = rangeLen(begin, end); // checks range
-        long physBegin = begin+offset, i = physBegin+rLen;
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            while ((i -= B_LEN) >= physBegin) {
-                int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).lastTrue();
-                if (lane >= 0) return (int) (i - offset) + lane;
-            }
-            i += B_LEN; // the while above always overdraws from i
-        }
-        for (i -= 1; i >= physBegin; --i) {
-            if (segment.get(JAVA_BYTE, i) == c0) return (int) (i-offset);
-        }
-        return end;
+        rangeLen(begin, end);
+        return (int)(skipUntilLast(segment, offset+begin, offset+end, c0)-offset);
     }
 
-    @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
-        var segment = this.segment;
-        int rLen = rangeLen(begin, end); // checks bounds
-        long physBegin = begin+offset, i = physBegin + rLen;
+    static long skipUntilLast(MemorySegment segment, long begin, long end, char c0, char c1) {
+        int rLen = (int)(end-begin);
         if (rLen >= B_LEN) {
             Vector<Byte> c0Vec = B_SP.broadcast(c0);
             Vector<Byte> c1Vec = B_SP.broadcast(c1);
-            while ((i -= B_LEN) >= physBegin) {
-                ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
+            while ((end -= B_LEN) >= begin) {
+                ByteVector vec = fromMemorySegment(B_SP, segment, end, LITTLE_ENDIAN);
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue();
-                if (lane >= 0) return (int) (i - offset) + lane;
+                if (lane >= 0) return end  + lane;
             }
-            i += B_LEN-1; // the while above always overdraws from i
+            end += B_LEN-1; // the while above always overdraws from end
         }
-        i -= 1;
-        for (byte c; i >= physBegin; --i) {
-            if ((c=segment.get(JAVA_BYTE, i)) == c0 || c == c1) return (int) (i-offset);
+        end -= 1;
+        for (byte c; end >= begin; --end) {
+            if ((c=segment.get(JAVA_BYTE, end)) == c0 || c == c1) return end;
         }
-        return end;
+        return begin+rLen;
     }
 
-    private boolean isEscapedPhys(long begin, long i) {
+    @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+        rangeLen(begin, end);
+        return (int)(skipUntilLast(segment, offset+begin, offset+end, c0, c1)-offset);
+    }
+
+    boolean isEscapedPhys(long begin, long i) {
         long not = i - 1;
         while (not >= begin && segment.get(JAVA_BYTE, not) == '\\') --not;
         return ((i - not) & 1) == 0;
@@ -238,11 +252,10 @@ public class SegmentRope extends Rope {
         return (int) (i-offset);
     }
 
-    @Override public int skip(int begin, int end, int[] alphabet) {
+    static long skip(MemorySegment segment, long begin, long end, int[] alphabet) {
         boolean stopOnNonAscii = (alphabet[3] & 0x80000000) == 0;
-        long i = begin+offset, e = i+rangeLen(begin, end); // checks bounds
-        for (; i < e; ++i) {
-            byte c = segment.get(JAVA_BYTE, i);
+        for (; begin < end; ++begin) {
+            byte c = segment.get(JAVA_BYTE, begin);
             if (c >= 0) { // c is ASCII
                 if ((alphabet[c >> 5] & (1 << c)) == 0)
                     break; // c is not in alphabet
@@ -250,7 +263,12 @@ public class SegmentRope extends Rope {
                 break; // non-ASCII  not allowed by alphabet
             }
         }
-        return (int) (i-offset);
+        return begin;
+    }
+
+    @Override public int skip(int begin, int end, int[] alphabet) {
+        rangeLen(begin, end);
+        return (int)(skip(segment, begin+offset, end+offset, alphabet)-offset);
     }
 
     @Override public int skipWS(int begin, int end) {
@@ -275,6 +293,23 @@ public class SegmentRope extends Rope {
         return true;
     }
 
+    static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {
+        long end = begin+rLen;
+        if (left != right)
+            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
+        // manually compare since MemorySegment.mismatch() on JDK 20 will assume
+        // any two ranges in the same segment to be equal.
+        for (long ve = pos+B_SP.loopBound(rLen); pos < ve; pos += B_LEN, begin += B_LEN) {
+            ByteVector v = fromMemorySegment(B_SP,  left,   pos, LITTLE_ENDIAN);
+            ByteVector u = fromMemorySegment(B_SP, right, begin, LITTLE_ENDIAN);
+            if (!v.eq(u).allTrue()) return false;
+        }
+        while (begin < end) {
+            if (left.get(JAVA_BYTE, pos++) != right.get(JAVA_BYTE, begin++)) return false;
+        }
+        return true;
+    }
+
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
         int rLen = end - begin;
         if (pos < 0 || rLen < 0) throw new IndexOutOfBoundsException();
@@ -282,22 +317,10 @@ public class SegmentRope extends Rope {
 
         long i = pos+offset;
         MemorySegment seg = this.segment;
-        if (rope instanceof SegmentRope s) {
-            long e = i+rLen;
-            MemorySegment oSeg = s.segment;
-            long j = begin+s.offset;
-            if (oSeg != seg)
-                return mismatch(seg, i, e, oSeg, j, j+rLen) < 0;
-            // manually compare since MemorySegment.mismatch() on JDK 20 will assume
-            // any two ranges in the same segment to be equal.
-            for (long ve = i+B_SP.loopBound(rLen); i < ve; i += B_LEN, j += B_LEN) {
-                ByteVector v = fromMemorySegment(B_SP,  seg, i, LITTLE_ENDIAN);
-                ByteVector u = fromMemorySegment(B_SP, oSeg, j, LITTLE_ENDIAN);
-                if (!v.eq(u).allTrue()) return false;
-            }
-            for (; i < e && seg.get(JAVA_BYTE, i) == oSeg.get(JAVA_BYTE, j); ++i)
-                ++j;
-            return i == e;
+        if (rope instanceof TwoSegmentRope t) {
+            return t.has(begin, this, pos, pos+rLen);
+        } else if (rope instanceof SegmentRope s) {
+            return has(seg, i, s.segment, s.offset+begin, rLen);
         } else {
             while (begin < end) {
                 if (seg.get(JAVA_BYTE, i++) != rope.get(begin++)) return false;
@@ -331,12 +354,14 @@ public class SegmentRope extends Rope {
         return h;
     }
 
-    @Override public int hashCode() {
-        int h = 0;
-        MemorySegment segment = this.segment;
-        for (long i = offset, end = i + len; i < end; i++)
+    static int hashCode(int h, MemorySegment segment, long begin, long end) {
+        for (long i = begin; i < end; i++)
             h = 31 * h + segment.get(JAVA_BYTE, i);
         return h;
+    }
+
+    @Override public int hashCode() {
+        return hashCode(0, segment, offset, offset+len);
     }
 
     @Override public @NonNull String toString() {
@@ -351,12 +376,15 @@ public class SegmentRope extends Rope {
         return super.toString(begin, end);
     }
 
+    static int compareTo(MemorySegment segment, long offset, int len, Rope o, int begin, int end) {
+        int oLen = end - begin, common = Math.min(len, oLen), i = 0, diff = 0;
+        while (i < common && (diff = segment.get(JAVA_BYTE, offset+i) - o.get(begin++)) == 0)
+            ++i;
+        return diff == 0 ? len - oLen : diff;
+    }
+
     @Override public int compareTo(@NonNull Rope o) {
-        MemorySegment segment = this.segment;
-        int common = Math.min(len, o.len), i = 0, diff = 0;
-        long offset = this.offset;
-        while (i < common && (diff = segment.get(JAVA_BYTE, offset+i) - o.get(i)) == 0) ++i;
-        return diff == 0 ? len - o.len : diff;
+        return compareTo(segment, offset, len, o, 0, o.len);
     }
 
     public final int compareTo(SegmentRope o) {
@@ -369,11 +397,6 @@ public class SegmentRope extends Rope {
     }
 
     @Override public int compareTo(Rope o, int begin, int end) {
-        MemorySegment segment = this.segment;
-        int oLen = end - begin, common = Math.min(len, oLen), i = 0, diff = 0;
-        long offset = this.offset;
-        while (i < common && (diff = segment.get(JAVA_BYTE, offset+i) - o.get(begin++)) == 0)
-            ++i;
-        return diff == 0 ? len - oLen : diff;
+        return compareTo(segment, offset, len, o, begin, end);
     }
 }

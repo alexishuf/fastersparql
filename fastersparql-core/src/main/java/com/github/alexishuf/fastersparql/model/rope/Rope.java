@@ -135,11 +135,11 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
 
     /** Equivalent to {@code out.write(toArray(0, len())); return len}. */
     public int write(OutputStream out) throws IOException {
-        if (!(this instanceof Term t)) throw new UnsupportedOperationException();
-        int fId = t.flaggedDictId;
-        byte[] lc = t.local, sh = fId == 0 ? EMPTY.u8() : RopeDict.get(fId & 0x7fffffff).u8();
-        out.write(fId > 0 ? sh : lc);
-        out.write(fId > 0 ? lc : sh);
+        byte[] buf = new byte[128];
+        for (int i = 0, end = len; i < end; i += 128) {
+            int n = Math.min(end-i, 128);
+            out.write(copy(i, i+n, buf, 0), 0, n);
+        }
         return len;
     }
 
@@ -422,7 +422,6 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @throws IndexOutOfBoundsException if {@code begin < 0} or {@code end > len()}
      */
     public int skipUntilUnescaped(int begin, int end, char c) {
-        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
         int i = begin;
         while ((i=skipUntil(i, end, c)) < end && (get(i) != c || isEscaped(i)))
             ++i;
@@ -868,6 +867,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return diff == 0 ? len - o.len : diff;
     }
 
+    /** Equivalent to {@link #compareTo(Rope)} with {@code o.sub(begin, end}. */
     public int compareTo(Rope o, int begin, int end) {
         int oLen = end-begin, common = Math.min(len, oLen), i = 0, diff = 0;
         while (i < common && (diff = get(i)-o.get(begin++)) == 0) ++i;
