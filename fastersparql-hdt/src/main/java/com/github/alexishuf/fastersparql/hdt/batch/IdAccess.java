@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
 import jdk.incubator.vector.ByteVector;
@@ -260,16 +261,33 @@ public class IdAccess {
         var str = pollCached(sourcedId);
         if (str instanceof Term t)
             return t;
+        SegmentRope nt = toNT(sourcedId);
+        if (nt == null) return null;
+        Term t = Term.valueOf(nt, 0, nt.len);
+        if (t != null)
+            offerCache(sourcedId, t);
+        return t;
+    }
+
+    public static SegmentRope toNT(long sourcedId) {
+        var str = pollCached(sourcedId);
+        if (str instanceof SegmentRope r)
+            return r;
+        if (str instanceof Term t)
+            return new ByteRope(t.len).append(t);
         str = toString(sourcedId);
-        if (str == null) return null;
+        if (str == null)
+            return null;
         byte[] u8 = peekU8(str);
         int len = str.length();
-        Term t = switch (str.charAt(0)) {
+        SegmentRope rope = switch (str.charAt(0)) {
             case '"' -> {
                 ByteRope esc = new ByteRope((len + B_SP_LEN) & -B_SP_LEN);
                 esc.append('"');
-                if (u8 == null)
-                    yield coldEscapeString(esc, str);
+                if (u8 == null) {
+                    coldEscapeString(esc, str);
+                    yield esc;
+                }
                 int endLex = len -1;
                 while (endLex > 0 && u8[endLex] != '"') --endLex;
                 for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
@@ -288,24 +306,23 @@ public class IdAccess {
                     }
                 }
                 esc.append(u8, endLex, len);
-                yield Term.valueOf(esc, 0, esc.len);
+                yield esc;
             }
-            case '_' -> u8 == null ? Term.valueOf(new ByteRope(str))
-                                   : Term.make(0, u8, 0, len);
+            case '_' -> u8 == null ? new ByteRope(str)
+                                   : new ByteRope(len).append(u8, 0, len);
             default -> {
                 ByteRope wrapped = new ByteRope(len + 2).append('<');
                 if (u8 == null) wrapped.append(str);
                 else            wrapped.append(u8, 0, len);
                 wrapped.append('>');
-                yield Term.valueOf(wrapped, 0, wrapped.len);
+                yield wrapped;
             }
         };
-        if (t != null)
-            offerCache(sourcedId, t);
-        return t;
+        offerCache(sourcedId, rope);
+        return rope;
     }
 
-    private static Term coldEscapeString(ByteRope esc, CharSequence in) {
+    private static void coldEscapeString(ByteRope esc, CharSequence in) {
         while (in instanceof DelayedString d) in = d.getInternal();
         int endLex = in.length()-1;
         while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
@@ -326,7 +343,6 @@ public class IdAccess {
             }
         }
         esc.append(in, endLex, in.length()); // copy everything starting at ending '"'
-        return Term.valueOf(esc);
     }
 
     public static byte[] peekU8(CharSequence hdtStr) {
@@ -351,7 +367,7 @@ public class IdAccess {
         Dictionary d = dicts[dictId-1];
         if (d == null) throw new NoDictException(sourcedId);
         var string = pollCached(sourcedId);
-        if (string != null && !(string instanceof Term))
+        if (string != null && !(string instanceof Rope))
             return string;
         string = d.idToString(sourcedId & PLAIN_MASK, role);
         if (string == null)
