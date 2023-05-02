@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.store.index;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -47,14 +48,19 @@ public class HdtConverter {
         int dictId = IdAccess.register(hdt.getDictionary());
         try (var db = new CompositeDictBuilder(tempDir, destDir)) {
             commonPool().invoke(new VisitStringsAction(db, dictId));
+            log.info("{}: writing shared dict...", destDir);
             var sndPass = db.nextPass();
+            log.info("{}: Second pass on HDT Dictionary...", destDir);
             commonPool().invoke(new VisitStringsAction(sndPass, dictId));
             sndPass.write();
+            log.info("{}: writing strings dict...", destDir);
             try (var shared = new Dict(destDir.resolve("shared"));
                  var strings = new Dict(destDir.resolve("strings"), shared);
                  var sorter = new TriplesSorter(tempDir)) {
                 var it = hdt.getTriples().searchAll();
-                commonPool().invoke(new TriplesAction(it, sorter, dictId, strings));
+                long triples = hdt.getTriples().getNumberOfElements();
+                commonPool().invoke(new TriplesAction(triples, it, sorter, dictId, strings));
+                log.info("{}: writing spo, pso and ops indices...", destDir);
                 sorter.write(destDir);
             }
         } finally {
@@ -63,8 +69,10 @@ public class HdtConverter {
     }
 
     private static final class TriplesAction  extends RecursiveAction {
+        private static final Logger log = LoggerFactory.getLogger(TriplesAction.class);
         private static final int Q_SIZE = 64;
         private static final T T_DIE = new T().set(-1L, -1L, -1L);
+        private final long triples;
         private final IteratorTripleID it;
         private final TriplesSorter sorter;
         private final int dictId;
@@ -75,7 +83,9 @@ public class HdtConverter {
         private final ArrayBlockingQueue<T> recycled = new ArrayBlockingQueue<>(Q_SIZE);
         private final ArrayBlockingQueue<T> ready = new ArrayBlockingQueue<>(Q_SIZE);
 
-        public TriplesAction(IteratorTripleID it, TriplesSorter sorter, int dictId, Dict strings) {
+        public TriplesAction(long triples, IteratorTripleID it, TriplesSorter sorter,
+                             int dictId, Dict strings) {
+            this.triples = triples;
             this.it = it;
             this.sorter = sorter;
             this.dictId = dictId;
@@ -153,9 +163,15 @@ public class HdtConverter {
         private final class Sorter extends RecursiveAction {
             @Override protected void compute()  {
                 try {
+                    long i = 0, last = Timestamp.nanoTime();
                     for (T t; (t = uninterruptibleTake(ready)) != T_DIE; ) {
+                        if (Timestamp.nanoTime()-last > 10_000_000_000L) {
+                            log.info("Visited {}/{} triples", i, triples);
+                            last = Timestamp.nanoTime();
+                        }
                         sorter.addTriple(t.s, t.p, t.o);
                         recycled.offer(t);
+                        ++i;
                     }
                 } catch (IOException e) {
                     completeExceptionally(e);
@@ -203,29 +219,55 @@ public class HdtConverter {
             }
 
             @Override protected void compute() {
-                for (long i = 1, n = section.getNumberOfElements(); i <= n; i++) {
-                    long id = i+offset;
-                    uninterruptiblePut(queue, toNT(encode(id, dictId, role)));
+                try {
+                    for (long i = 1, n = section.getNumberOfElements(); i <= n; i++) {
+                        long id = i + offset;
+                        uninterruptiblePut(queue, toNT(encode(id, dictId, role)));
+                    }
+                } finally {
+                    if (activeDecoders.decrementAndGet() == 0)
+                        uninterruptiblePut(queue, DIE_ROPE);
                 }
-                if (activeDecoders.decrementAndGet() == 0)
-                    uninterruptiblePut(queue, DIE_ROPE);
             }
         }
         private final class Consumer extends RecursiveAction {
+            private final long strings;
+
+            private Consumer(long strings) {
+                this.strings = strings;
+            }
+
             @Override protected void compute() {
-                for (SegmentRope r; (r = uninterruptibleTake(queue)) != DIE_ROPE; )
-                    visitor.visit(r);
+                long i = 0, last  = Timestamp.nanoTime();
+                try {
+                    for (SegmentRope r; (r = uninterruptibleTake(queue)) != DIE_ROPE; ) {
+                        if (Timestamp.nanoTime()-last > 10_000_000_000L) {
+                            last = Timestamp.nanoTime();
+                            log.info("visited {}/{} strings", i, strings);
+                        }
+                        ++i;
+                        visitor.visit(r);
+                    }
+                } catch (Throwable t) {
+                    try {
+                        while (queue.take() != DIE_ROPE) Thread.onSpinWait();
+                    } catch (InterruptedException ignored) {}
+                    throw t;
+                }
             }
         }
 
         @Override protected void compute() {
             Dictionary d = IdAccess.dict(dictId);
             long shared = d.getNshared();
+            long stringCount = shared + d.getSubjects().getNumberOfElements()
+                                      + d.getPredicates().getNumberOfElements()
+                                      + d.getObjects().getNumberOfElements();
             invokeAll(new Decoder(d.getShared(), SUBJECT, 0),
                       new Decoder(d.getSubjects(), SUBJECT, shared),
                       new Decoder(d.getPredicates(), TripleComponentRole.PREDICATE, 0),
                       new Decoder(d.getObjects(), TripleComponentRole.OBJECT, shared),
-                      new Consumer());
+                      new Consumer(stringCount));
         }
     }
 

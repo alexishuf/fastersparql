@@ -11,3 +11,4 @@ todo.txt
 target/
 dependency-reduced-pom.xml
 /settings.xml
+/fastersparql-store/indexer-journal.md

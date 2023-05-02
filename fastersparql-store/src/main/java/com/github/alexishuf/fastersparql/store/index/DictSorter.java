@@ -1,14 +1,18 @@
 package com.github.alexishuf.fastersparql.store.index;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +25,9 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
 
 public class DictSorter extends Sorter<Path> {
+    private static final Logger log = LoggerFactory.getLogger(DictSorter.class);
+    private static final boolean IS_DEBUG = log.isDebugEnabled();
+
     private final int bytesPerBlock;
 
     private boolean stringsClosed = false;
@@ -74,9 +81,54 @@ public class DictSorter extends Sorter<Path> {
                     m.write();
                 }
             }
+            if (IS_DEBUG)
+                logStats(dest);
         } finally {
             unlock();
         }
+    }
+
+    private void logStats(Path dest) {
+        ByteBuffer bb = null;
+        long unique = 0, tableBytes = 0, fileBytes = dest.toFile().length();
+        boolean usesShared = false, sharedOverflow = false;
+        int offWidth = 0;
+        try (var ch = FileChannel.open(dest, READ)) {
+            bb = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN).limit(8);
+            if (ch.read(bb) != 8)
+                throw new IOException("Dict smaller than 8 bytes");
+            long stringsAndFlags = bb.getLong(0);
+            offWidth = (stringsAndFlags & OFF_W_MASK) == 0 ? 8 : 4;
+            usesShared = (stringsAndFlags & SHARED_MASK) != 0;
+            sharedOverflow = (stringsAndFlags & SHARED_OVF_MASK) != 0;
+            unique = stringsAndFlags & ~FLAGS_MASK;
+            tableBytes = (unique+1) * offWidth;
+        } catch (IOException e) {
+            log.error("Failed to read first bytes from {}: {}", dest, e.toString());
+        } finally {
+            SmallBBPool.releaseSmallDirectBB(bb);
+        }
+        long sum = 0;
+        List<Path> sorted = this.sorted;
+        if (sorted.size() == 1)
+            sorted = List.of(dest);
+        for (Path p : sorted) {
+            bb = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN).limit(8);
+            try (var ch = FileChannel.open(p, READ)) {
+                if (ch.read(bb) != 8)
+                    throw new IOException("Dict smaller than 8 bytes");
+                sum += bb.getLong(0)&~FLAGS_MASK;
+            } catch (IOException e) {
+                log.error("Failed to open block at "+p);
+            } finally {
+                SmallBBPool.releaseSmallDirectBB(bb);
+            }
+        }
+        log.debug("{}: {} blocks with {} KiB capacity summing {} strings ({} unique) " +
+                  "offsets table cost: {}/{} ({}), offWidth={}, usesShared={}, sharedOverflow={}",
+                  dest, sorted.size(), bytesPerBlock, sum, unique,
+                  tableBytes, fileBytes, String.format("%.3f%%", 100.0*tableBytes/fileBytes),
+                  offWidth, usesShared, sharedOverflow);
     }
 
     /**
@@ -170,7 +222,7 @@ public class DictSorter extends Sorter<Path> {
 
         /** Merges the content of all sorted blocks writing then to the destination dict file. */
         public void write() throws IOException {
-            long strings = 0, bytes = 0;
+            long strings = 0, bytes = 0, visited = 0, last = Timestamp.nanoTime();
             for (int i = 0; (i = nextBlock(i)) >= 0; ++strings)
                 bytes += currentStrings[i].len;
             // reset iteration
@@ -187,8 +239,14 @@ public class DictSorter extends Sorter<Path> {
                 }
             }
             try (var w = new DictWriter(destChannel, strings, bytes, usesShared, sharedOverflow)) {
-                for (int i = 0; (i = nextBlock(i)) >= 0; )
+                for (int i = 0; (i = nextBlock(i)) >= 0; ) {
                     w.writeSorted(currentStrings[i]);
+                    ++visited;
+                    if (Timestamp.nanoTime()-last > 10_000_000_000L) {
+                        log.info("Visited {}/{} strings", visited, strings);
+                        last = Timestamp.nanoTime();
+                    }
+                }
             }
         }
 

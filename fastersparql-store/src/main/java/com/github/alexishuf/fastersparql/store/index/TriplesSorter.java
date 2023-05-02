@@ -1,6 +1,9 @@
 package com.github.alexishuf.fastersparql.store.index;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +26,7 @@ import static java.nio.file.StandardOpenOption.*;
 import static java.util.concurrent.ForkJoinPool.commonPool;
 
 public class TriplesSorter extends Sorter<TriplesBlock> {
+    private static final Logger log = LoggerFactory.getLogger(TriplesSorter.class);
     private static final int DEF_BLOCK_CAPACITY =
             (int)Math.min(128*1024*1024, Runtime.getRuntime().freeMemory()/10)/24;
 
@@ -93,32 +97,31 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
             filling = null;
             if (sorted.isEmpty())
                 sorted.add(new TriplesBlock(createTempFile(), arena.scope(), 0));
-            Future<?> spoValidation, psoValidation;
+            long triples = 0;
+            for (TriplesBlock b : sorted) triples += b.triples;
+            log.debug("{}: {} blocks with {} KiB capacity summing {} entries longIds={}",
+                      destDir, sorted.size(), blockCapacity>>10, triples, longIds);
+//            Future<?> spoValidation, psoValidation;
             try (Merger merger = new Merger(sorted, longIds)) {
                 merger.write(spo);
-                spoValidation = commonPool().submit(() -> validate(spoP));
+//                spoValidation = commonPool().submit(() -> validate(spoP));
+                log.info("{}: shuffling spo -> pso...", destDir);
                 shuffleAndSort(TriplesBlock::spo2pso);
                 merger.write(pso);
-                psoValidation = commonPool().submit(() -> validate(spoP));
+//                psoValidation = commonPool().submit(() -> validate(spoP));
+                log.info("{}: shuffling pso -> ops...", destDir);
                 shuffleAndSort(TriplesBlock::pso2ops);
                 merger.write(ops);
-                validate(opsP);
-                try {
-                    spoValidation.get();
-                    psoValidation.get();
-                } catch (InterruptedException | ExecutionException e) {
-                    throw new IOException(e);
-                }
+//                validate(opsP);
+//                try {
+//                    spoValidation.get();
+//                    psoValidation.get();
+//                } catch (InterruptedException | ExecutionException e) {
+//                    throw new IOException(e);
+//                }
             }
         } finally {
             unlock();
-        }
-    }
-
-    private static boolean validate(Path path) throws IOException {
-        try (Triples triples = new Triples(path)) {
-            triples.validate();
-            return true;
         }
     }
 
@@ -135,6 +138,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
         private int offW;
         private boolean bufferedPairs;
         private long firstKeyId, keys, lastKey, nextKeyOffDest, pairsDest;
+        private long visited, lastLog;
 
         public Merger(List<TriplesBlock> blocks, boolean longIds) {
             this.blocks = blocks.toArray(TriplesBlock[]::new);
@@ -151,6 +155,11 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
         }
 
         private void visit(int pass, long s, long p, long o) throws IOException {
+            ++visited;
+            if (Timestamp.nanoTime()-lastLog > 10_000_000_000L) {
+                log.info("Pass {} visited {}/{}", pass, visited, triples);
+                lastLog = Timestamp.nanoTime();
+            }
             long lastKey = this.lastKey;
             if (pass == COUNT_KEYS) {
                 if (s != lastKey) {
@@ -186,6 +195,8 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
         }
 
         private void beginVisit(int pass) {
+            visited = 0;
+            lastLog = Timestamp.nanoTime();
             if (pass == COUNT_KEYS) {
                 keys = 0;
                 lastKey = 0;

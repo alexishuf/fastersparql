@@ -36,17 +36,9 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.rdfhdt</groupId>
-            <artifactId>hdt-java-core</artifactId>
-            <!--suppress MavenPackageUpdate -->
-            <version>2.1.2-FASTER</version>
-        </dependency>
-
-        <!--  test stuff  -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+            <version>4.6.3</version>
         </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
@@ -56,7 +48,13 @@
             <groupId>com.github.alexishuf.fastersparql</groupId>
             <artifactId>fastersparql-hdt</artifactId>
             <version>1.0.0-SNAPSHOT</version>
-            <scope>compile</scope>
+        </dependency>
+
+        <!--  test stuff  -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -72,6 +70,25 @@
                         <goals><goal>jar-no-fork</goal></goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>info.picocli</groupId>
+                            <artifactId>picocli-codegen</artifactId>
+                            <version>4.6.3</version>
+                        </path>
+                    </annotationProcessorPaths>
+                    <compilerArgs>
+                        <arg>--enable-preview</arg>
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector</arg>
+                        <arg>-Aproject=${project.groupId}</arg>
+                    </compilerArgs>
+                </configuration>
             </plugin>
         </plugins>
     </build>
