@@ -115,8 +115,7 @@ public class TestTaskSet implements AutoCloseable, Consumer<Future<?>> {
         for (Future<?> task : tasks) {
             try { task.get(); } catch (Throwable t) { c.condense(t); }
         }
-        Exception t = c.get();
-        if (t != null) throw t;
+        c.throwIf();
     }
 
     @Override public void close() throws Exception {
