@@ -21,7 +21,7 @@ public class Timestamp {
         }
     }
 
-    @SuppressWarnings("unused") private static long plainNow;
+    @SuppressWarnings({"unused", "FieldMayBeFinal"}) private static long plainNow = System.nanoTime();
     @SuppressWarnings("unused") private static long plainErr;
     private static boolean tickerInterruptLogged = false;
     @SuppressWarnings("unused") private static final Thread ticker
