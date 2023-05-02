@@ -1,126 +1,81 @@
 package com.github.alexishuf.fastersparql.store.index;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
-import java.lang.invoke.VarHandle;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.atomic.AtomicReference;
 
-import static com.github.alexishuf.fastersparql.util.concurrent.Async.*;
-import static java.lang.System.identityHashCode;
-import static java.lang.invoke.MethodHandles.lookup;
+import static com.github.alexishuf.fastersparql.store.index.Dict.*;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
 
-public class DictSorter implements AutoCloseable {
-    private static final VarHandle WRITING;
-    static {
-        try {
-            WRITING = lookup().findVarHandle(DictSorter.class, "plainWriting", int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-    private static final Logger log = LoggerFactory.getLogger(DictSorter.class);
+public class DictSorter extends Sorter<Path> {
     private final int bytesPerBlock;
 
-    private final Path tempDir;
-    private final List<Path> storedBlocks = new ArrayList<>();
-    @SuppressWarnings("unused") private volatile int plainWriting;
     private boolean stringsClosed = false;
+    public boolean usesShared, sharedOverflow;
 
-    private final ExceptionCondenser<IOException> blockJobError = new ExceptionCondenser<>(IOException.class, IOException::new);
-    private final AtomicReference<Block> recycledBlock = new AtomicReference<>();
-    private Block fillingBlock;
-    private final ArrayBlockingQueue<BlockJob> blockJobs = new ArrayBlockingQueue<>(1);
-    private final Thread blockJobsWorker;
+    private @Nullable DictBlock fillingBlock;
 
     public DictSorter(Path tempDir) {
         this(tempDir, 128*1024*1024);
     }
 
     public DictSorter(Path tempDir, int bytesPerBlock) {
+        super(tempDir, "dict", ".block");
         this.bytesPerBlock = bytesPerBlock;
-        this.fillingBlock = new Block(bytesPerBlock);
-        this.tempDir = tempDir;
-        this.blockJobsWorker = Thread.ofPlatform().name(toString()).start(this::blockJobsWorker);
-    }
-
-    @Override public void close() {
-        checkConcurrency();
-        try {
-            // wait for block store thread
-            while (blockJobsWorker.isAlive() && !blockJobs.offer(END_BLOCK_JOB))
-                blockJobs.poll();
-            uninterruptibleJoin(blockJobsWorker);
-            // delete block files
-            var errs = new ExceptionCondenser<>(IOException.class, IOException::new);
-            for (Path file : storedBlocks) {
-                try {
-                    if (file.toFile().exists())
-                        Files.delete(file);
-                } catch (Throwable t) {
-                    log.info("Failed to delete {}", file);
-                    errs.condense(t);
-                }
-            }
-        } finally {
-            WRITING.setRelease(this, 0);
-        }
-    }
-
-    private void checkConcurrency() {
-        if ((int)WRITING.compareAndExchangeAcquire(this, 0, 1) != 0)
-            throw new IllegalStateException("Concurrent close()/storeCopy()/writeDict()");
-    }
-
-    @Override public String toString() {
-        return String.format("DictSorter@%x(%s)", identityHashCode(this), tempDir);
+        this.fillingBlock = new DictBlock(bytesPerBlock);
     }
 
     /**
      * Creates or overwrites {@code dest} with a dictionary containing all strings previously
-     * given to {@link #storeCopy(SegmentRope)}.
+     * given to {@link #copy(SegmentRope)}.
      */
     public void writeDict(Path dest) throws IOException {
-        checkConcurrency();
+        lock();
         try {
             stringsClosed = true;
-            if (blockJobsWorker.isAlive()) {
-                uninterruptiblePut(blockJobs, END_BLOCK_JOB);
-                uninterruptibleJoin(blockJobsWorker);
+            Path residual = runResidual(fillingBlock);
+            fillingBlock = null;
+            waitBlockJobs();
+            if (residual != null)
+                sorted.add(residual);
+            if (sorted.size() == 0) {
+                try (DictBlock empty = new DictBlock(0)) { sorted.add(empty.run()); }
             }
-            var err = blockJobError.get();
-            if (err != null)
-                throw new IOException("Could not store intermediary block", err);
-            if (storedBlocks.size() == 1 && fillingBlock.isEmpty()) {
-                Files.move(storedBlocks.get(0), dest, REPLACE_EXISTING);
-            } else if (storedBlocks.isEmpty()) {
-                fillingBlock.store(dest);
-            } else {
-                if (!fillingBlock.isEmpty()) {
-                    storeToTemp(fillingBlock);
-                    fillingBlock = Block.EMPTY;
+            if (sorted.size() == 1) {
+                Files.move(sorted.get(0), dest, REPLACE_EXISTING);
+                var bb = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN).limit(8);
+                try (var ch = FileChannel.open(dest, WRITE, READ)) {
+                    if (ch.read(bb) != 8)
+                        throw new IOException("Corrupted "+dest);
+                    byte flags = (byte)(bb.get(7)
+                            |  (usesShared     ? SHARED_MASK    >>>FLAGS_BIT : 0)
+                            |  (sharedOverflow ? SHARED_OVF_MASK>>>FLAGS_BIT : 0));
+                    bb.put(7, flags).flip();
+                    if (ch.write(bb, 0) != 8)
+                        throw new IOException("Refused to write all 8 header bytes");
+                } finally {
+                    SmallBBPool.releaseSmallDirectBB(bb);
                 }
-                try (Merger m = new Merger(storedBlocks, dest)) {
+            } else {
+                try (Merger m = new Merger(sorted, dest, usesShared, sharedOverflow)) {
                     m.write();
                 }
             }
         } finally {
-            WRITING.setRelease(this, 0);
+            unlock();
         }
     }
 
@@ -133,21 +88,36 @@ public class DictSorter implements AutoCloseable {
      *
      * @param string a string to be stored.
      */
-    public void storeCopy(SegmentRope string) {
-        checkConcurrency();
+    public void copy(SegmentRope string) {
+        copy(string, ByteRope.EMPTY);
+    }
+
+    /**
+     * Stores a copy of the string resulting from the concatenation of {@code prefix}
+     * and {@code suffix}.
+     *
+     * <p>This method may be called with strings out of order. They will be sorted when necessary.
+     * This method does not keep any (indirect) reference to {@code string}. Thus the caller
+     * may mutate it as soon as this method returns.</p>
+     *
+     * @param prefix the prefix of the string to be stored
+     * @param suffix the suffix of the string to be stored
+     */
+    public void copy(SegmentRope prefix, SegmentRope suffix) {
+        lock();
         try {
             if (stringsClosed)
                 throw new IllegalArgumentException("writeDict()/close() called");
-            if (!fillingBlock.copy(string)) {
-                uninterruptiblePut(blockJobs, fillingBlock);
-                fillingBlock = recycledBlock.getAndSet(null);
-                if (fillingBlock == null) fillingBlock = new Block(bytesPerBlock);
-                else                      fillingBlock.reset();
-                if (!fillingBlock.copy(string))
+            if (fillingBlock == null || !fillingBlock.copy(prefix, suffix)) {
+                if (fillingBlock != null)
+                    scheduleBlockJob(fillingBlock);
+                if ((fillingBlock = (DictBlock) recycled()) == null)
+                    fillingBlock = new DictBlock(bytesPerBlock);
+                if (!fillingBlock.copy(prefix, suffix))
                     throw new IllegalArgumentException("string too large");
             }
         } finally {
-            WRITING.setRelease(this, 0);
+            unlock();
         }
     }
 
@@ -158,8 +128,13 @@ public class DictSorter implements AutoCloseable {
         private final long[] currentStringIds;
         private final SegmentRope[] currentStrings;
         private final FileChannel destChannel;
+        private final boolean usesShared, sharedOverflow;
+        private final SegmentRope lastString = RopeHandlePool.segmentRope();
 
-        public Merger(List<Path> blockFiles, Path dest) {
+        public Merger(List<Path> blockFiles, Path dest,
+                      boolean usesShared, boolean sharedOverflow) {
+            this.usesShared = usesShared;
+            this.sharedOverflow = sharedOverflow;
             int n = blockFiles.size();
             blocks = new Dict[n];
             FileChannel destChannel = null;
@@ -174,15 +149,26 @@ public class DictSorter implements AutoCloseable {
             currentStringIds = new long[n];
             currentStrings   = new SegmentRope[n<<1];
             currentStringIds[0] = Dict.MIN_ID-1;
-            currentStrings  [0] = new SegmentRope();
-            for (int i = 1; i < n; i++)
-                currentStrings[i] = blocks[i].get(currentStringIds[i] = Dict.MIN_ID);
+            currentStrings  [0] = RopeHandlePool.segmentRope();
+            for (int i = 1; i < n; i++) {
+                var s = RopeHandlePool.segmentRope();
+                currentStrings[i] = s;
+                blocks[i].get(currentStringIds[i] = MIN_ID, s);
+            }
         }
 
         @Override public void close() {
             ExceptionCondenser.closeAll(Arrays.stream(blocks).iterator());
+            for (int i = 0; i < currentStrings.length; i++) {
+                SegmentRope r = currentStrings[i];
+                if (r == null) continue;
+                if (RopeHandlePool.offer(r) != null) break;
+                currentStrings[i] = null;
+            }
+            RopeHandlePool.offer(lastString);
         }
 
+        /** Merges the content of all sorted blocks writing then to the destination dict file. */
         public void write() throws IOException {
             long strings = 0, bytes = 0;
             for (int i = 0; (i = nextBlock(i)) >= 0; ++strings)
@@ -193,24 +179,48 @@ public class DictSorter implements AutoCloseable {
             for (int i = 1; i < blocks.length; i++) {
                 SegmentRope rope = currentStrings[blocks.length + i];
                 currentStrings[i] = rope;
-                blocks[i].get(1, rope);
-                currentStringIds[i] = 1;
+                if (blocks[i].get(1, rope)) {
+                    currentStringIds[i] = 1;
+                } else {
+                    currentStrings[blocks.length+i] = currentStrings[i];
+                    currentStrings[i] = null;
+                }
             }
-            try (var w = new DictWriter(destChannel, strings, bytes)) {
+            try (var w = new DictWriter(destChannel, strings, bytes, usesShared, sharedOverflow)) {
                 for (int i = 0; (i = nextBlock(i)) >= 0; )
                     w.writeSorted(currentStrings[i]);
             }
         }
 
+        /** Get the current string for block or null if exhausted. Will advance if duplicate. */
+        private @Nullable SegmentRope currString(int block) {
+            var s = currentStrings[block];
+            // skip cross-block duplicate string occurrences
+            while (s != null && s.equals(lastString)) {
+                if (!blocks[block].get(++currentStringIds[block], s)) { // exhausted
+                    currentStrings[blocks.length+block] = s;
+                    currentStrings[block] = s = null;
+                }
+            }
+            return s;
+        }
+
+        /** Advances the id of the current block and finds the block with lowest, novel string */
         private int nextBlock(int currBlock) {
+            //remember current string to remove duplicates
+            lastString.wrap(currentStrings[currBlock]);
+
+            // advance position on currBlock, we may exhaust it with this
             if (!blocks[currBlock].get(++currentStringIds[currBlock], currentStrings[currBlock])) {
                 currentStrings[blocks.length+currBlock] = currentStrings[currBlock];
                 currentStrings[currBlock] = null;
             }
+
+            // find lowest string that is not lastString
             SegmentRope min = null;
             currBlock = -1;
-            for (int i = 0; i < currentStringIds.length; i++) {
-                var candidate = currentStrings[i];
+            for (int i = 0; i < blocks.length; i++) {
+                var candidate = currString(i); // internally advances block id if duplicate
                 if (candidate != null && (min == null || candidate.compareTo(min) < 0)) {
                     min = candidate;
                     currBlock = i;
@@ -220,40 +230,44 @@ public class DictSorter implements AutoCloseable {
         }
     }
 
-    private interface BlockJob {
-        default boolean isEnd() { return false; }
-    }
-
-    private static final class EndBlockJob implements BlockJob {
-        @Override public boolean isEnd() { return true; }
-    }
-    private static final EndBlockJob END_BLOCK_JOB = new EndBlockJob();
-
-    private static final class Block implements BlockJob {
-        public static final Block EMPTY = new Block(0, 0);
-
+    private final class DictBlock implements BlockJob<Path> {
+        private final Arena arena;
         private final MemorySegment bytes;
         private SegmentRope[] ropes;
+        private final TwoSegmentRope offer = new TwoSegmentRope();
         private int nBytes = 0, nRopes = 0;
 
-        public Block(int bytesCapacity) { this(bytesCapacity, Math.max(2, bytesCapacity>>>10)); }
-        public Block(int bytesCapacity, int ropesCapacity) {
+        public DictBlock(int bytesCapacity) { this(bytesCapacity, Math.max(2, bytesCapacity>>>10)); }
+        public DictBlock(int bytesCapacity, int ropesCapacity) {
             // native memory here will avoid one copy when rope[i] is written to a FileChannel
-            bytes = MemorySegment.allocateNative(bytesCapacity, SegmentScope.auto());
+            arena = Arena.openShared();
+            bytes = arena.allocate(bytesCapacity, 8);
             ropes = new SegmentRope[ropesCapacity];
         }
 
-        public void      reset() { nBytes = nRopes = 0; }
-        public boolean isEmpty() { return nRopes == 0; }
+        @Override public void      reset() { nBytes = nRopes = 0; }
+        @Override public boolean isEmpty() { return nRopes == 0; }
+
+        @Override public void close() {
+            arena.close();
+            for (int i = 0, n = nRopes; i < n; i++) {
+                SegmentRope r = ropes[i];
+                if (r != null && RopeHandlePool.offer(r) != null) break;
+            }
+        }
 
         @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-        public boolean copy(SegmentRope rope) {
-            if (rope == null) return true;
-            int len = rope.len, nBytes = this.nBytes;
-            // quick check for duplicates
-            for (int i = Math.max(0, nRopes-5); i < nRopes; i++) {
-                if (ropes[i].equals(rope)) return true; // do not store duplicate
-            }
+        public boolean copy(SegmentRope prefix, SegmentRope suffix) {
+            // check if string was recently added (5 covers current and last triple)
+            offer.wrapFirst(prefix);
+            offer.wrapSecond(suffix);
+            for (int i = Math.max(0, nRopes-5), e = nRopes-1; i < e; i++) {
+                //noinspection EqualsBetweenInconvertibleTypes
+                if (offer.equals(ropes[i])) return true;
+            } // else: prefix+suffix might be novel
+
+            int prefixLen = prefix.len, suffixLen = suffix.len;
+            int len = prefixLen + suffixLen, nBytes = this.nBytes;
 
             // check for space in bytes
             if (nBytes + len > bytes.byteSize())
@@ -262,45 +276,38 @@ public class DictSorter implements AutoCloseable {
             // store a new rope backed by this.bytes, growing ropes if necessary
             if (nRopes == ropes.length)
                 ropes = Arrays.copyOf(ropes, ropes.length + (ropes.length>>1));
-            SegmentRope handle = ropes[nRopes];
-            if (handle != null) handle.wrapSegment(bytes, nBytes, len);
-            else                ropes[nRopes] = new SegmentRope(bytes, nBytes, len);
-            ++nRopes;
+            var handle = ropes[nRopes];
+            if (handle == null) ropes[nRopes] = handle = RopeHandlePool.segmentRope();
+            handle.wrapSegment(bytes, nBytes, len);
 
             //store UTF-8 bytes
-            MemorySegment.copy(rope.segment(), rope.offset(), bytes, nBytes, len);
+            MemorySegment.copy(prefix.segment(), prefix.offset(), bytes, nBytes, prefixLen);
+            MemorySegment.copy(suffix.segment(), suffix.offset(),
+                               bytes, nBytes+prefixLen, suffixLen);
+
+            // commit the addition
+            ++nRopes;
             this.nBytes = nBytes+len;
             return true;
         }
 
-        public void store(Path dest) throws IOException {
-            Arrays.sort(ropes, 0, nRopes);
+        public Path run() throws IOException {
+            Path dest = createTempFile();
+            int nRopes = this.nRopes, end = this.nRopes;
+            // sort, then remove duplicates by writing nulls
+            Arrays.sort(ropes, 0, end);
+            SegmentRope last = null;
+            for (int i = 0; i < end; i++) {
+                var r = ropes[i];
+                if (r.equals(last)) { ropes[i] = null; --nRopes; }
+                else                last = r;
+            }
+            //write all ropes
             try (var ch = FileChannel.open(dest, WRITE,CREATE,TRUNCATE_EXISTING);
-                 var w = new DictWriter(ch, nRopes, nBytes)) {
-                w.writeSorted(ropes, nRopes);
+                 var w = new DictWriter(ch, nRopes, nBytes, false, false)) {
+                w.writeSorted(ropes, 0, end);
             }
-        }
-    }
-
-    private void storeToTemp(Block block) throws IOException {
-        Path file = Files.createTempFile(tempDir, "dict", ".block");
-        block.store(file);
-        storedBlocks.add(file);
-    }
-
-    private void blockJobsWorker() {
-        boolean failed = false;
-        for (BlockJob j; !(j = uninterruptibleTake(blockJobs)).isEnd(); ) {
-            Block block = (Block) j;
-            try {
-                if (!failed)
-                    storeToTemp(block);
-            } catch (Throwable t) {
-                blockJobError.condense(t);
-                failed = true;
-            } finally {
-                recycledBlock.compareAndSet(null, block);
-            }
+            return dest;
         }
     }
 }

@@ -45,6 +45,14 @@ A dictionary file consists of the following components laid out sequentially:
    - bit `0`: if set, `OFF_W=4`, else `OFF_W=8`. This controls whether 
      subsequent indices and lengths are 4B LE or 8-byte 
      little endian
+   - bit `1`: if set, all strings stored start with `____.` or `____!` where 
+     `____` is a base64-encoded id into a `shared` dict, `.` denotes that the 
+   - shared string is a prefix and `!` denotes that the shared string is a 
+   - suffix.
+   - bit `2`: if set, indicates that despite bit `1` being set, some 
+     there are shared strings whose id did not fit in 4 base64 characters
+     (24 bits). Such strings are stored as if prefixed by a shared empty 
+     string.
 3. Offset `8`: `N_STRINGS` occurrences of `OFF_W`B LE integer with the 
    absolute offset within this file where the string starts:
 4. Offset `8+OFF_W * N_STRINGS`: index of the first byte after the end of the 
@@ -54,20 +62,48 @@ A dictionary file consists of the following components laid out sequentially:
 
 ### TriplesIndex
 
+Given a triple has three terms, with one term having the role of subject, 
+one having the role of predicate and another having the role of object. a 
+TripleIndex purpose is quickly answering the following two queries:
+1. Given a term `t` and its role `r`, enumerate all pairs of terms that take the 
+   other two roles in all triples that have `t` in role `r`. In other words, 
+   answer queries such as `S ?p ?o`, `?s P ?o` and `?s ?p O`.
+2. Given a term `t0` with role `r0` and a term `t1` with role `r1`, enumerate 
+   all terms that appear in the remaining role of triples with `t0` as `r0`
+   and `t1` as `r1`.
+
+A triple index can answer the above query types if `r0` is the role of its keys
+and `r1` is the role of is subkeys.
+
+A triple index 
+
+A triple index consists of the following elements laid out sequentially:
+
 1. Offset `0`: A 7B LE integer `N_KEYS` with the number of keys in this file.
 2. Offset `7`: One byte of flags, where:
    - bit `0`: if set, makes `OFF_W=4` rather than `OFF_W=8`, causing all 
      following offsets in this file to be encoded with 4 bytes.
-   - bit `1`: if set, makes `ID_W=4` rather than `ID_W=8`, causing all term 
-     ids to be encoded with 4 bytes.
-3. Offset `8`: A `OFF_W`B LE integer with the string id of the first key in 
+   - bit `1`: if set, makes `ID_W=4` rather than `ID_W=8`, causing all ids 
+     to be encoded with 4B LE instead of 8B LEin term. The id pair will then 
+     consume 8 bytes instead of 16.
+3. Offset `8`: A 8B LE integer with the string id of the first key in 
    this file. The purpose of this field is to avoid encoding a long sequence 
-   of keys with no data
-4. Offset `8`: `N_KEYS` occurrences of `OFF_W`B LE integers, where the `i`-th 
-   integer is an absolute offset in this file where the list of pairs of 
-   `ID_W`B LE integers. The list of pairs ends when the list for the `i+1`-th 
-   key starts.
-5. Offset `8+ N_KEYS*OFF_W`: One `OFF_W`B LE integer with the end of the last 
-   list of pairs in this file. This offset should never be dereferenced and 
-   will likely be the file length.
+   of keys with no data. Note that in order to preserve alignment, this is 
+   not encoded with only `ID_W` bytes
+4. Offset `16`: `N_KEYS` occurrences of `OFF_W`B LE integers, where the
+   `i`-th integer is an absolute offset in this file where the list of pairs 
+   of `ID_W`B LE integers. The list of pairs ends when the list for the 
+   `i+1`-th key starts.
+5. Offset `16 + N_KEYS*OFF_W`: One `OFF_W`B LE integer with the end of 
+   the last list of pairs in this file. This offset should never be 
+   de-referenced and will likely be the file length.
+6. Offset `16 + N_KEYS*OFF_W + OFF_W`: If `16 + N_KEYS*OFF_W + OFF_W` is not 
+   divisible by 8, 4 zero bytes to ensure subsequent data is 8-byte aligned.
+   Let `PADD_KEYS_OFFS` be the number of bytes inserted here.
+7. Offset `16 + N_KEYS*OFF_W + OFF_W + PADD_KEYS_OFFS`: the aforementioned 
+   id pairs lists.
 
+Note that the ids are ids into the `strings` dictionary. The strings stored 
+there may embed prefixes signaling that the term is composed of a shared 
+suffix or prefix stored in `shared` concatenated with the remainder of the 
+string stored in `strings`

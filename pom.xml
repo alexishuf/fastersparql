@@ -64,7 +64,7 @@
     <module>fastersparql-core</module>
     <module>fastersparql-netty</module>
     <module>fastersparql-hdt</module>
-<!--    <module>fastersparql-store</module>-->
+    <module>fastersparql-store</module>
 <!--    <module>fastersparql-operators-jena</module>-->
     <module>fastersparql-integration-tests</module>
     <module>fastersparql-jcstress</module>

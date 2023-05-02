@@ -1,0 +1,14 @@
+@prefix : <http://www.example.org/ns#>.
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+
+_:anon a :Person .
+:Alice :age "23"^^xsd:integer ;
+       :name "Ali\tce"@en-US ;
+       :knows :Bob ;
+       :knows :Alice ;
+       :knows :Charlie .
+:Bob :name "B\"ob" .
+:Dave :age "23"^^xsd:integer .
+
+

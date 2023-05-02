@@ -30,34 +30,49 @@ class DictSorterTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {0, 1, 2, 16, 32, 256})
+    @ParameterizedTest @ValueSource(ints = {0, 1, 2, 16, 32, 256, 1024})
     void test(int nStrings) throws IOException {
         List<SegmentRope> strings = new ArrayList<>(nStrings);
         for (int i = 0; i < nStrings; i++)
             strings.add(new ByteRope().append((long) nStrings - i));
-        ByteRope tmp = new ByteRope();
 
         // build dict
         try (var sorter = new DictSorter(tempDir, 32)) {
+            ByteRope tmp = new ByteRope();
+            int i = 0;
+            for (SegmentRope s : strings) {
+                sorter.copy(tmp.clear().append(s));
+                if ((i++ &1) == 0)
+                    sorter.copy(tmp.clear().append(s));
+            }
             for (SegmentRope s : strings)
-                sorter.storeCopy(tmp.clear().append(s));
+                sorter.copy(tmp.clear().append(s));
             sorter.writeDict(tempDir.resolve("merged"));
         }
 
         try (var dict = new Dict(tempDir.resolve("merged"))) {
+            var split = new StringSplitStrategy();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {
-                long id = dict.find(s, tmp);
+                long id = dict.find(s, split);
                 assertTrue(id >= Dict.MIN_ID, "id="+id+", s="+s);
+                //noinspection AssertBetweenInconvertibleTypes
                 assertEquals(s, dict.get(id), "id=" + id + ", s=" + s);
             }
             // find strings in reverse direction without giving a tmp
             for (int i = strings.size()-1; i >= 0; i--) {
-                var s = strings.get(i);
+                SegmentRope s = strings.get(i);
                 long id = dict.find(s, null);
+                //noinspection AssertBetweenInconvertibleTypes
                 assertEquals(s, dict.get(id), "id=" + id + ", s=" + s);
             }
+
+            //test dump()
+            var exBuilder = new StringBuilder();
+            strings.stream().sorted().forEach(r -> exBuilder.append(r).append('\n'));
+            exBuilder.setLength(Math.max(0, exBuilder.length()-1));
+            assertEquals(exBuilder.toString(), dict.dump());
         }
 
         String[] filenames = tempDir.toFile().list();
