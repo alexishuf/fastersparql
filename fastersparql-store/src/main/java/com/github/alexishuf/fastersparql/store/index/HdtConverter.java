@@ -15,14 +15,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
-import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.toNT;
+import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptiblePut;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleTake;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -82,6 +83,7 @@ public class HdtConverter {
         private final ArrayBlockingQueue<T> raw = new ArrayBlockingQueue<>(Q_SIZE);
         private final ArrayBlockingQueue<T> recycled = new ArrayBlockingQueue<>(Q_SIZE);
         private final ArrayBlockingQueue<T> ready = new ArrayBlockingQueue<>(Q_SIZE);
+        private final Hdt2StoreIdCache idCache = new Hdt2StoreIdCache();
 
         public TriplesAction(long triples, IteratorTripleID it, TriplesSorter sorter,
                              int dictId, Dict strings) {
@@ -122,24 +124,72 @@ public class HdtConverter {
                 }
             }
         }
+
+        private static final class Hdt2StoreIdCache {
+            private static final VarHandle LOCK;
+            static {
+                try {
+                    LOCK = MethodHandles.lookup().findVarHandle(Hdt2StoreIdCache.class, "plainLock", int.class);
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    throw new ExceptionInInitializerError(e);
+                }
+            }
+            @SuppressWarnings("unused") private int plainLock;
+            private static final int CAPACITY = 1024*1024>>4;
+            private static final int MASK = CAPACITY-1;
+            private final long[] table = new long[CAPACITY<<1];
+
+            private void lock() {
+                while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) == 1) Thread.onSpinWait();
+            }
+            private void unlock() { LOCK.setRelease(this, 0); }
+
+            public long get(long plainHdtId, TripleComponentRole role) {
+                long key = plainHdtId << 2 | role.ordinal(), value = 0;
+                int slot = ((int)key & MASK) << 1;
+                lock();
+                try {
+                    if (table[slot] == key)
+                        value = table[slot+1];
+                } finally { unlock(); }
+                return value;
+            }
+            public void set(long plainHdtId, TripleComponentRole role, long storeId) {
+                long key = plainHdtId << 2 | role.ordinal();
+                int slot = ((int)key & MASK) << 1;
+                lock();
+                try {
+                    table[slot] = key;
+                    table[slot+1] = storeId;
+                } finally { unlock(); }
+            }
+        }
+
         private final class Translator extends RecursiveAction {
+            private final StringSplitStrategy split = new StringSplitStrategy();
+
+            private long translate(long hdtId, TripleComponentRole role) {
+                long storeId = idCache.get(hdtId, role);
+                if (storeId == 0) {
+                    SegmentRope nt = toNT(encode(hdtId, dictId, role));
+                    if (nt == null)
+                        throw new RuntimeException("string for " + hdtId + " not found in HDT dict");
+                    storeId = strings.find(nt, split);
+                    if (storeId == Dict.NOT_FOUND)
+                        throw new RuntimeException("String not found in strings dict: "+nt);
+                    idCache.set(hdtId, role, storeId);
+                }
+                return storeId;
+            }
             @Override protected void compute() {
                 try {
-                    var tmp = new StringSplitStrategy();
                     for (T t; (t = uninterruptibleTake(raw)) != T_DIE; ) {
-                        var sNT = toNT(encode(t.s, dictId, SUBJECT));
-                        var pNT = toNT(encode(t.p, dictId, PREDICATE));
-                        var oNT = toNT(encode(t.o, dictId, OBJECT));
-                        if (sNT == null || pNT == null || oNT == null)
-                            throw new RuntimeException("Terms for " + t + " not found in dict");
-                        long s = strings.find(sNT, tmp);
-                        long p = strings.find(pNT, tmp);
-                        long o = strings.find(oNT, tmp);
-                        if (s == Dict.NOT_FOUND || p == Dict.NOT_FOUND || o == Dict.NOT_FOUND)
-                            throw new RuntimeException("Strings missing for "+sNT+" "+pNT+" "+oNT);
                         T translated = recycled.poll();
                         if (translated == null) translated = new T();
-                        uninterruptiblePut(ready, translated.set(s, p, o));
+                        translated.set(translate(t.s, SUBJECT),
+                                       translate(t.p, PREDICATE),
+                                       translate(t.o, OBJECT));
+                        uninterruptiblePut(ready, translated);
                     }
                     if (activeTranslators.decrementAndGet() == 0)
                         uninterruptiblePut(ready, T_DIE);
