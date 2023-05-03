@@ -217,7 +217,7 @@ public class HdtConverter {
                     for (T t; (t = uninterruptibleTake(ready)) != T_DIE; ) {
                         if (Timestamp.nanoTime()-last > 10_000_000_000L) {
                             log.info("Visited {}/{} triples ({}%)",
-                                     i, triples, String.format("%.3f", i/(double)triples));
+                                     i, triples, String.format("%.3f", 100.0*i/triples));
                             last = Timestamp.nanoTime();
                         }
                         sorter.addTriple(t.s, t.p, t.o);
@@ -295,7 +295,7 @@ public class HdtConverter {
                         if (Timestamp.nanoTime()-last > 10_000_000_000L) {
                             last = Timestamp.nanoTime();
                             log.info("Visited {}/{} strings ({}%)",
-                                     i, strings, String.format("%.3f", i/(double)strings));
+                                     i, strings, String.format("%.3f", 100.0*i/strings));
                         }
                         ++i;
                         visitor.visit(r);
