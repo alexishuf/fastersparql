@@ -12,6 +12,7 @@ import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 public class DictWriter implements AutoCloseable  {
+    private static final long MAX_4B = 0xffffffffL;
     private static final VarHandle WRITING;
     static {
         try {
@@ -35,7 +36,7 @@ public class DictWriter implements AutoCloseable  {
             throw new IllegalArgumentException("Too many strings");
         this.channel = dest;
         long est = 8 + (nStrings +1)*4 + utf8Bytes;
-        if (est < 0xffffffffL) {
+        if (est < MAX_4B) {
             this.offsetWidth = 4;
         } else {
             this.offsetWidth = 8;
@@ -85,7 +86,7 @@ public class DictWriter implements AutoCloseable  {
 
         write(nextUtf8Off, rope.asBuffer());
         nextUtf8Off += rope.len;
-        if (offsetWidth == 4 && utf8EndOff > Integer.MAX_VALUE)
+        if (offsetWidth == 4 && utf8EndOff > MAX_4B)
             throw new IllegalStateException("Total UTF-8 bytes written overflow the 4-bytes in the offsets table. Review utf8BYtes constructor param");
     }
 
