@@ -88,6 +88,10 @@ class Sorter<T> implements AutoCloseable {
         WRITING.setRelease(this, 0);
     }
 
+    protected static int defaultBlockBytes() {
+        return (int) Math.min(256*1024*1024, Runtime.getRuntime().maxMemory()/5);
+    }
+
     protected Path createTempFile() throws IOException {
         return Files.createTempFile(tempDir, tempFilePrefix, tempFileSuffix);
     }

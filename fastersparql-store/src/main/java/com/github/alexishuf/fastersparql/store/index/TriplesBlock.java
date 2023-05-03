@@ -32,7 +32,7 @@ class TriplesBlock implements Sorter.BlockJob<TriplesBlock> {
 
     public TriplesBlock(Path file, SegmentScope scope, int triplesCapacity) throws IOException {
         path = file;
-        ch = FileChannel.open(path, CREATE, READ, WRITE, TRUNCATE_EXISTING, SPARSE);
+        ch = FileChannel.open(path, CREATE, READ, WRITE, TRUNCATE_EXISTING);
         seg = ch.map(READ_WRITE, 0, triplesCapacity * 24L, scope);
     }
 

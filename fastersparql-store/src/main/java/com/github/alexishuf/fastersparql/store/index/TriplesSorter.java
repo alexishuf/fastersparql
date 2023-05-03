@@ -20,7 +20,6 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import static com.github.alexishuf.fastersparql.store.index.Triples.*;
-import static java.lang.Runtime.getRuntime;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardOpenOption.*;
@@ -29,18 +28,18 @@ import static java.util.concurrent.ForkJoinPool.commonPool;
 public class TriplesSorter extends Sorter<TriplesBlock> {
     private static final Logger log = LoggerFactory.getLogger(TriplesSorter.class);
 
-    private final int blockCapacity;
+    private final int blockTriplesCapacity;
     private final Arena arena;
     private TriplesBlock filling;
     private boolean longIds = false;
 
     public TriplesSorter(Path tempDir) {
-        this(tempDir, (int)Math.min(128*1024*1024, getRuntime().maxMemory()/5)/24);
+        this(tempDir, defaultBlockBytes()/24);
     }
 
-    public TriplesSorter(Path tempDir, int blockCapacity) {
+    public TriplesSorter(Path tempDir, int blockTriplesCapacity) {
         super(tempDir, "triples", ".block");
-        this.blockCapacity = blockCapacity;
+        this.blockTriplesCapacity = blockTriplesCapacity;
         this.arena = Arena.openShared();
     }
 
@@ -68,7 +67,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
             if (filling.add(s, p, o)) return;
             scheduleBlockJob(filling);
         }
-        filling = new TriplesBlock(createTempFile(), arena.scope(), blockCapacity);
+        filling = new TriplesBlock(createTempFile(), arena.scope(), blockTriplesCapacity);
         if (!filling.add(s, p, o))
             throw new IOException("triple unexpectedly rejected");
     }
@@ -101,7 +100,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
             long triples = 0;
             for (TriplesBlock b : sorted) triples += b.triples;
             log.debug("{}: {} blocks with {} KiB capacity summing {} entries longIds={}",
-                      destDir, sorted.size(), (blockCapacity*24L)>>10, triples, longIds);
+                      destDir, sorted.size(), (blockTriplesCapacity *24L)>>10, triples, longIds);
 //            Future<?> spoValidation, psoValidation;
             try (Merger merger = new Merger(sorted, longIds)) {
                 merger.write(spo);

@@ -37,7 +37,7 @@ public class DictSorter extends Sorter<Path> {
     private @Nullable DictBlock fillingBlock;
 
     public DictSorter(Path tempDir) {
-        this(tempDir, (int)Math.min(128*1024*1024, getRuntime().maxMemory()/5));
+        this(tempDir, defaultBlockBytes());
     }
 
     public DictSorter(Path tempDir, int bytesPerBlock) {
