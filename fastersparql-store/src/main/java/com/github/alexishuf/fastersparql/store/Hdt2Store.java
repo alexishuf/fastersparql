@@ -80,7 +80,7 @@ public class Hdt2Store implements Callable<Void> {
                      hdt, dest, ms/60_000, ms/1_000, ms%1_000);
         }
         long callMs = (System.nanoTime()-callStart)/1_000_000L;
-        log.info("Completed in {}m{}.{}s", callMs/60_000, callMs/1_000, callMs%1_000);
+        log.info("Completed in {}m{}.{}s", callMs/60_000, (callMs%60_000)/1_000, callMs%1_000);
         return null;
     }
 
