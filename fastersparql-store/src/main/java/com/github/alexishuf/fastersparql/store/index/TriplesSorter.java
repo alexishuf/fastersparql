@@ -20,6 +20,7 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import static com.github.alexishuf.fastersparql.store.index.Triples.*;
+import static java.lang.Runtime.getRuntime;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardOpenOption.*;
@@ -27,15 +28,15 @@ import static java.util.concurrent.ForkJoinPool.commonPool;
 
 public class TriplesSorter extends Sorter<TriplesBlock> {
     private static final Logger log = LoggerFactory.getLogger(TriplesSorter.class);
-    private static final int DEF_BLOCK_CAPACITY =
-            (int)Math.min(128*1024*1024, Runtime.getRuntime().freeMemory()/10)/24;
 
     private final int blockCapacity;
     private final Arena arena;
     private TriplesBlock filling;
     private boolean longIds = false;
 
-    public TriplesSorter(Path tempDir) { this(tempDir, DEF_BLOCK_CAPACITY); }
+    public TriplesSorter(Path tempDir) {
+        this(tempDir, (int)Math.min(128*1024*1024, getRuntime().maxMemory()/5)/24);
+    }
 
     public TriplesSorter(Path tempDir, int blockCapacity) {
         super(tempDir, "triples", ".block");
@@ -100,7 +101,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
             long triples = 0;
             for (TriplesBlock b : sorted) triples += b.triples;
             log.debug("{}: {} blocks with {} KiB capacity summing {} entries longIds={}",
-                      destDir, sorted.size(), blockCapacity>>10, triples, longIds);
+                      destDir, sorted.size(), (blockCapacity*24L)>>10, triples, longIds);
 //            Future<?> spoValidation, psoValidation;
             try (Merger merger = new Merger(sorted, longIds)) {
                 merger.write(spo);
