@@ -54,10 +54,10 @@ public class HdtConverter {
             log.info("{}: Second pass on HDT Dictionary...", destDir);
             commonPool().invoke(new VisitStringsAction(sndPass, dictId));
             sndPass.write();
-            log.info("{}: writing strings dict...", destDir);
             try (var shared = new Dict(destDir.resolve("shared"));
                  var strings = new Dict(destDir.resolve("strings"), shared);
                  var sorter = new TriplesSorter(tempDir)) {
+                log.info("{}: iterating/sorting triples", destDir);
                 var it = hdt.getTriples().searchAll();
                 long triples = hdt.getTriples().getNumberOfElements();
                 commonPool().invoke(new TriplesAction(triples, it, sorter, dictId, strings));
