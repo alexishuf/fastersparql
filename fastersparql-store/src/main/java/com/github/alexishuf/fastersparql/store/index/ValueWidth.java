@@ -12,6 +12,7 @@ public enum ValueWidth {
     LE4B,
     LE8B;
 
+    private static final long INT_MASK = 0x00000000ffffffffL;
     private static final OfInt LE4B_LAYOUT =
             JAVA_INT.order() == LITTLE_ENDIAN ? JAVA_INT : JAVA_INT.withOrder(LITTLE_ENDIAN);
     private static final OfLong LE8B_LAYOUT =
@@ -27,7 +28,8 @@ public enum ValueWidth {
      *         {@link ValueWidth} has less than 8 bytes).
      */
     public final long read(MemorySegment s, long address)  {
-        return this == LE4B ? s.get(LE4B_LAYOUT, address) : s.get(LE8B_LAYOUT, address);
+        return this == LE4B ? s.get(LE4B_LAYOUT, address) & INT_MASK
+                            : s.get(LE8B_LAYOUT, address);
     }
 
     /**
@@ -41,7 +43,7 @@ public enum ValueWidth {
      *         {@link ValueWidth} has less than 8 bytes, higher bytes will be zero.
      */
     public final long readNext(MemorySegment s, long address) {
-        return this == LE4B ? s.get(LE4B_LAYOUT, address+4)
+        return this == LE4B ? s.get(LE4B_LAYOUT, address+4) & INT_MASK
                             : s.get(LE8B_LAYOUT, address+8);
     }
 
@@ -81,7 +83,7 @@ public enum ValueWidth {
      */
     public final long readIdx(MemorySegment s, long base, long index) {
         if (this == LE4B)
-            return s.get(LE4B_LAYOUT, base + (index << 2));
+            return INT_MASK&s.get(LE4B_LAYOUT, base + (index << 2));
         return s.get(LE8B_LAYOUT, base + (index << 3));
     }
 
