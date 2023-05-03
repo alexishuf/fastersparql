@@ -18,9 +18,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
-import static java.lang.Runtime.getRuntime;
 import static java.lang.System.arraycopy;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
@@ -186,18 +187,36 @@ public class DictSorter extends Sorter<Path> {
         private final boolean usesShared, sharedOverflow;
 
         public Merger(List<Path> blockFiles, Path dest,
-                      boolean usesShared, boolean sharedOverflow) {
+                      boolean usesShared, boolean sharedOverflow) throws IOException {
             this.usesShared = usesShared;
             this.sharedOverflow = sharedOverflow;
             int n = blockFiles.size();
             blocks = new Dict[n];
             FileChannel destChannel = null;
+            var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
-                for (int i = 0; i < n; i++)//noinspection resource
+                for (int i = 0; i < n; i++) //noinspection resource
                     blocks[i] = new Dict(blockFiles.get(i));
+                log.info("Validating block files: {}", blockFiles);
+                IntStream.range(0, n).mapToObj(i -> {
+                    try {
+                        blocks[i].validate();
+                        return null;
+                    } catch (IOException e) {
+                        log.error("{} is not valid: {}", blockFiles.get(i), e.getMessage());
+                        return e;
+                    }
+                }).filter(Objects::nonNull).forEachOrdered(condenser::condense);
                 destChannel = FileChannel.open(dest, TRUNCATE_EXISTING,CREATE,WRITE);
             } catch (Throwable t) {
+                condenser.condense(t);
                 ExceptionCondenser.closeAll(Arrays.stream(blocks).iterator());
+            }
+            try {
+                condenser.throwIf();
+            } catch (Throwable t) {
+                if (destChannel != null) destChannel.close();
+                throw t;
             }
             this.destChannel = destChannel;
             // init string pointers pointing to "before first"
