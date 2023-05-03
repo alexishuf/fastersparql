@@ -89,20 +89,25 @@ class TriplesBlock implements Sorter.BlockJob<TriplesBlock> {
     public void sort(int begin, int end) {
         if (end-begin < 2) return; // already sorted
         int mid = partition(begin, end-1);
-        sort(begin, mid);
+        sort(begin, mid+1);
         sort(mid+1, end);
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
     private int partition(int fst, int lst) {
         int mid = (fst + lst) >>> 1, i = mid*24, j;
         long pv0 = seg.get(JAVA_LONG, i);
         long pv1 = seg.get(JAVA_LONG, i+8);
         long pv2 = seg.get(JAVA_LONG, i+16);
 
+        // compensate for infix decrement on whiles below. the infix ensures the
+        // algorithm progresses when *fst == *lst
+        --fst;
+        ++lst;
         while (true) {
             // move fst and lst pointers toward mid while *fst < *mid and *lst > *mid
-            while (cmp(fst, pv0, pv1, pv2) < 0) ++fst;
-            while (cmp(lst, pv0, pv1, pv2) > 0) --lst;
+            while (cmp(++fst, pv0, pv1, pv2) < 0) { /* pass */ }
+            while (cmp(--lst, pv0, pv1, pv2) > 0) { /* pass */ }
             if (lst <= fst) //finished scanning both partitions
                 return lst;
 
