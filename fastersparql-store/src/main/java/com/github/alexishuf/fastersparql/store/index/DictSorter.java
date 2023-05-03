@@ -21,9 +21,11 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
 import static java.lang.Runtime.getRuntime;
+import static java.lang.System.arraycopy;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
+import static java.util.Arrays.fill;
 
 public class DictSorter extends Sorter<Path> {
     private static final Logger log = LoggerFactory.getLogger(DictSorter.class);
@@ -182,7 +184,6 @@ public class DictSorter extends Sorter<Path> {
         private final SegmentRope[] currentStrings;
         private final FileChannel destChannel;
         private final boolean usesShared, sharedOverflow;
-        private final SegmentRope lastString = RopeHandlePool.segmentRope();
 
         public Merger(List<Path> blockFiles, Path dest,
                       boolean usesShared, boolean sharedOverflow) {
@@ -199,15 +200,12 @@ public class DictSorter extends Sorter<Path> {
                 ExceptionCondenser.closeAll(Arrays.stream(blocks).iterator());
             }
             this.destChannel = destChannel;
+            // init string pointers pointing to "before first"
             currentStringIds = new long[n];
             currentStrings   = new SegmentRope[n<<1];
-            currentStringIds[0] = Dict.MIN_ID-1;
-            currentStrings  [0] = RopeHandlePool.segmentRope();
-            for (int i = 1; i < n; i++) {
-                var s = RopeHandlePool.segmentRope();
-                currentStrings[i] = s;
-                blocks[i].get(currentStringIds[i] = MIN_ID, s);
-            }
+            fill(currentStringIds, MIN_ID-1);
+            for (int i = 0; i < blocks.length; i++)
+                currentStrings[blocks.length+i] = RopeHandlePool.segmentRope();
         }
 
         @Override public void close() {
@@ -218,27 +216,16 @@ public class DictSorter extends Sorter<Path> {
                 if (RopeHandlePool.offer(r) != null) break;
                 currentStrings[i] = null;
             }
-            RopeHandlePool.offer(lastString);
         }
 
         /** Merges the content of all sorted blocks writing then to the destination dict file. */
         public void write() throws IOException {
+            resetIteration();
             long strings = 0, bytes = 0, visited = 0, last = Timestamp.nanoTime();
             for (int i = 0; (i = nextBlock(i)) >= 0; ++strings)
                 bytes += currentStrings[i].len;
-            // reset iteration
-            currentStringIds[0] = Dict.MIN_ID-1;
-            currentStrings[0] = currentStrings[blocks.length];
-            for (int i = 1; i < blocks.length; i++) {
-                SegmentRope rope = currentStrings[blocks.length + i];
-                currentStrings[i] = rope;
-                if (blocks[i].get(1, rope)) {
-                    currentStringIds[i] = 1;
-                } else {
-                    currentStrings[blocks.length+i] = currentStrings[i];
-                    currentStrings[i] = null;
-                }
-            }
+
+            resetIteration();
             try (var w = new DictWriter(destChannel, strings, bytes, usesShared, sharedOverflow)) {
                 for (int i = 0; (i = nextBlock(i)) >= 0; ) {
                     w.writeSorted(currentStrings[i]);
@@ -252,39 +239,45 @@ public class DictSorter extends Sorter<Path> {
             }
         }
 
-        /** Get the current string for block or null if exhausted. Will advance if duplicate. */
-        private @Nullable SegmentRope currString(int block) {
-            var s = currentStrings[block];
-            // skip cross-block duplicate string occurrences
-            while (s != null && s.equals(lastString)) {
-                if (!blocks[block].get(++currentStringIds[block], s)) { // exhausted
-                    currentStrings[blocks.length+block] = s;
-                    currentStrings[block] = s = null;
-                }
+        /** Move block 0 to "before first" and all others to "first" */
+        private void resetIteration() {
+            fill(currentStringIds, Dict.MIN_ID-1);
+            arraycopy(currentStrings, blocks.length, currentStrings, 0, blocks.length);
+            for (int i = 1; i < blocks.length; i++)
+                advance(i); // advance from "before first" to "first"
+        }
+
+        /** Advance to next id for the {@code block}-th block. Will return null if reached end. */
+        private @Nullable SegmentRope advance(int block) {
+            SegmentRope s = currentStrings[block];
+            if (!blocks[block].get(++currentStringIds[block], s)) {
+                currentStrings[blocks.length+block] = currentStrings[block];
+                currentStrings[block] = s = null;
             }
             return s;
         }
 
         /** Advances the id of the current block and finds the block with lowest, novel string */
         private int nextBlock(int currBlock) {
-            //remember current string to remove duplicates
-            lastString.wrap(currentStrings[currBlock]);
-
             // advance position on currBlock, we may exhaust it with this
-            if (!blocks[currBlock].get(++currentStringIds[currBlock], currentStrings[currBlock])) {
-                currentStrings[blocks.length+currBlock] = currentStrings[currBlock];
-                currentStrings[currBlock] = null;
-            }
+            advance(currBlock);
 
-            // find lowest string that is not lastString
+            // find the smallest string while skipping over inter-block duplicates
             SegmentRope min = null;
             currBlock = -1;
+            blocks:
             for (int i = 0; i < blocks.length; i++) {
-                var candidate = currString(i); // internally advances block id if duplicate
-                if (candidate != null && (min == null || candidate.compareTo(min) < 0)) {
-                    min = candidate;
-                    currBlock = i;
+                SegmentRope candidate = currentStrings[i];
+                while (true) {
+                    if (candidate == null) continue blocks; // block ended
+                    if (min == null) break;                 // no min, make candidate the min
+                    int diff = candidate.compareTo(min);
+                    if (diff < 0) break;                    // candidate < min
+                    if (diff > 0 || (candidate = advance(i)) == null)
+                        continue blocks; // candidate > min or block only had duplicates
                 }
+                min = candidate;
+                currBlock = i;
             }
             return currBlock;
         }
