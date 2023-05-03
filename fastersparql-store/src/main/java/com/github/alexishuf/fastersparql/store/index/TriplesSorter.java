@@ -157,7 +157,8 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
         private void visit(int pass, long s, long p, long o) throws IOException {
             ++visited;
             if (Timestamp.nanoTime()-lastLog > 10_000_000_000L) {
-                log.info("Pass {} visited {}/{}", pass, visited, triples);
+                log.info("Pass {} visited {}/{} triples ({}%)",
+                         pass, visited, triples, String.format("%.3f", 100.0*visited/triples));
                 lastLog = Timestamp.nanoTime();
             }
             long lastKey = this.lastKey;

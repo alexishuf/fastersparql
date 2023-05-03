@@ -244,7 +244,8 @@ public class DictSorter extends Sorter<Path> {
                     w.writeSorted(currentStrings[i]);
                     ++visited;
                     if (Timestamp.nanoTime()-last > 10_000_000_000L) {
-                        log.info("Visited {}/{} strings", visited, strings);
+                        log.info("Wrote {}/{} strings ({}%)", visited, strings,
+                                 String.format("%.3f", 100.0*visited/strings));
                         last = Timestamp.nanoTime();
                     }
                 }
