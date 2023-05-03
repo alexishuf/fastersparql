@@ -242,16 +242,115 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(@NonNull Rope o) {
-        int mid = Math.min(o.len, fstLen);
-        int diff = SegmentRope.compareTo(fst, fstOff, fstLen, o, 0, mid);
-        if (diff != 0) return diff;
-        return SegmentRope.compareTo(snd, sndOff, sndLen, o, mid, o.len);
+        if      (o instanceof SegmentRope    s) return -s.compareTo(this);
+        else if (o instanceof TwoSegmentRope t) return compareTo(t);
+        else                                    return super.compareTo(o);
+    }
+
+    @Override public int compareTo(PlainRope o) {
+        return o instanceof SegmentRope s ? -s.compareTo(this) : compareTo((TwoSegmentRope) o);
+    }
+
+    @Override public int compareTo(SegmentRope o) { return -o.compareTo(this); }
+
+    @Override public int compareTo(TwoSegmentRope o) {
+        // keep two ranges, defined by:
+        //   - lSeg, lOff, lLen
+        //   - rSeg, rOff, rLen
+        //
+        MemorySegment lSeg = fst,      rSeg = o.fst;
+        long          lOff = fstOff,   rOff = o.fstOff;
+        int           lLen = fstLen,   rLen = o.fstLen;
+        boolean       lFst = true,     rFst = true;
+
+        // if any of the ranges starts empty, advance it instead of exiting due to common == 0
+        if (lLen == 0) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false;}
+        if (rLen == 0) { rSeg = o.snd; rOff = o.sndOff; rLen = o.sndLen; rFst = false;}
+
+        // iterate comparing the common length between the ranges and then moving one
+        // (or both ranges they had the same length)
+        int common, diff;
+        while (true) {
+            if ((common = Math.min(lLen, rLen)) == 0)
+                return lLen - rLen; // one side exhausted, largest wins
+            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
+                return diff; // found a mismatching byte
+            // advance ranges
+            lOff += common; lLen -= common;
+            rOff += common; rLen -= common;
+            if (lLen == 0 && lFst) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false;}
+            if (rLen == 0 && rFst) { rSeg = o.snd; rOff = o.sndOff; rLen = o.sndLen; rFst = false;}
+        }
     }
 
     @Override public int compareTo(Rope o, int begin, int end) {
-        int mid = begin+Math.min(fstLen, end-begin);
-        int diff = SegmentRope.compareTo(fst, fstOff, fstLen, o, begin, mid);
-        if (diff != 0) return diff;
-        return SegmentRope.compareTo(snd, sndOff, sndLen, o, mid, end);
+        if      (o instanceof SegmentRope    s) return compareTo(s, begin, end);
+        else if (o instanceof TwoSegmentRope t) return compareTo(t, begin, end);
+        else                                    return super.compareTo(o, begin, end);
+    }
+
+    @Override public int compareTo(PlainRope o, int begin, int end) {
+        return o instanceof SegmentRope s
+                ? compareTo(s, begin, end)
+                : compareTo((TwoSegmentRope)o, begin, end);
+    }
+
+    @Override public int compareTo(SegmentRope o, int begin, int end) {
+        MemorySegment lSeg = fst,      rSeg = o.segment;
+        long          lOff = fstOff,   rOff = o.offset+begin;
+        int           lLen = fstLen,   rLen = end-begin;
+        boolean lFst = true;
+
+        // maybe our first segment is empty, then we should start at snd
+        if (lLen == 0) { lSeg = snd; lOff = sndOff; lLen = sndLen; lFst = false; }
+
+        // iterate comparing the common length between the ranges and then moving one
+        // (or both ranges they had the same length)
+        int common, diff;
+        while (true) {
+            if ((common = Math.min(lLen, rLen)) == 0)
+                return lLen - rLen; // one side exhausted, largest wins
+            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
+                return diff; // found a mismatching byte
+            // advance ranges
+            lOff += common; lLen -= common;
+            rOff += common; rLen -= common;
+            if (lLen == 0 && lFst) { lSeg = snd; lOff = sndOff; lLen = sndLen; lFst = false; }
+        }
+    }
+
+    @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
+        // the following locals simulate o.sub(begin, end)
+        long o_fstOff = o.fstOff+begin, o_sndOff = o.sndOff+Math.max(0, begin-o.fstLen);
+        int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
+             o_sndLen = end-begin-o_fstLen;
+
+        // keep two ranges, defined by:
+        //   - lSeg, lOff, lLen
+        //   - rSeg, rOff, rLen
+        //
+        MemorySegment lSeg = fst,      rSeg = o.fst;
+        long          lOff = fstOff,   rOff = o_fstOff;
+        int           lLen = fstLen,   rLen = o_fstLen;
+        boolean       lFst = true,     rFst = true;
+
+        // if any of the ranges starts empty, advance it instead of exiting due to common == 0
+        if (lLen == 0) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false; }
+        if (rLen == 0) { rSeg = o.snd; rOff = o_sndOff; rLen = o_sndLen; rFst = false; }
+
+        // iterate comparing the common length between the ranges and then moving one
+        // (or both ranges they had the same length)
+        int common, diff;
+        while (true) {
+            if ((common = Math.min(lLen, rLen)) == 0)
+                return lLen - rLen; // one side exhausted, largest wins
+            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
+                return diff; // found a mismatching byte
+            // advance ranges
+            lOff += common; lLen -= common;
+            rOff += common; rLen -= common;
+            if (lLen == 0 && lFst) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false; }
+            if (rLen == 0 && rFst) { rSeg = o.snd; rOff = o_sndOff; rLen = o_sndLen; rFst = false; }
+        }
     }
 }

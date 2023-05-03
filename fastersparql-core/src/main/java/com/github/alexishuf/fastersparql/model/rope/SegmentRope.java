@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -376,27 +377,94 @@ public class SegmentRope extends PlainRope {
         return super.toString(begin, end);
     }
 
-    static int compareTo(MemorySegment segment, long offset, int len, Rope o, int begin, int end) {
-        int oLen = end - begin, common = Math.min(len, oLen), i = 0, diff = 0;
-        while (i < common && (diff = segment.get(JAVA_BYTE, offset+i) - o.get(begin++)) == 0)
-            ++i;
-        return diff == 0 ? len - oLen : diff;
+    private static final VectorSpecies<Short> S_SP = ShortVector.SPECIES_PREFERRED;
+    private static final int S_LEN = S_SP.length();
+    static int compareTo(MemorySegment left, long lOff, int lLen,
+                         MemorySegment right, long rOff, int rLen) {
+        //vectorization helps, but is slower than JAVA_LONG_UNALIGNED. Using Vector.lane() is
+        // too slow. Best vector implementation consisted of left.compare(NE, right).firstTrue()
+        // followed by JAVA_BYTE scalar accesses. ByteVector.sub() cannot be used as byte overflows
+        // render the comparison invalid.
+        long lEnd = lOff+Math.min(lLen, rLen);
+        for (int diff; lOff < lEnd; lOff++, rOff++) {
+            if ((diff = left.get(JAVA_BYTE, lOff) - right.get(JAVA_BYTE, rOff)) != 0) {
+                return diff;
+            }
+        }
+        return lLen - rLen;
     }
 
     @Override public int compareTo(@NonNull Rope o) {
-        return compareTo(segment, offset, len, o, 0, o.len);
+        if (o instanceof SegmentRope s)
+            return compareTo(segment, offset, len, s.segment, s.offset, s.len);
+        else if (o instanceof TwoSegmentRope t)
+            return compareTo(t);
+        return super.compareTo(o);
     }
 
     public final int compareTo(SegmentRope o) {
-        MemorySegment seg = this.segment, oSeg = o.segment;
-        int diff = 0;
-        long i = offset, j = o.offset, common = i+Math.min(len, o.len);
-        while (i < common && (diff = seg.get(JAVA_BYTE, i) - oSeg.get(JAVA_BYTE, j++)) == 0)
-            ++i;
-        return diff == 0 ? len - o.len : diff;
+        return compareTo(segment, offset, len, o.segment, o.offset, o.len);
+    }
+    public final int compareTo(TwoSegmentRope o) {
+        MemorySegment segment = this.segment;
+        // compare all we can on the left side with all we can of the right side
+        long offset = this.offset;
+        int fstLen = o.fstLen, len = Math.min(this.len, fstLen);
+        int diff = compareTo(segment, offset, len, o.fst, o.fstOff, len);
+        if (diff != 0) return diff;
+        if (fstLen > len)
+            return -1; // left side exhausted before right side
+
+        // update [offset, offset+len) range
+        offset += len;
+        len = this.len-len;
+
+        // compare whatever remains on the left side with the second segment of o
+        return compareTo(segment, offset, len, o.snd, o.sndOff, o.sndLen);
+    }
+    public final int compareTo(PlainRope o) {
+        return o instanceof SegmentRope s ? compareTo(s)
+                                          : compareTo((TwoSegmentRope)o);
     }
 
     @Override public int compareTo(Rope o, int begin, int end) {
-        return compareTo(segment, offset, len, o, begin, end);
+       if (o instanceof SegmentRope s)
+           return compareTo(segment, offset, len, s.segment, s.offset+begin, end-begin);
+       else if (o instanceof TwoSegmentRope t)
+           return compareTo(t, begin, end);
+       return super.compareTo(o, begin, end);
+    }
+
+    @Override public int compareTo(PlainRope o, int begin, int end) {
+        return o instanceof SegmentRope s
+                ? compareTo(segment, offset, len, s.segment, s.offset+begin, end-begin)
+                : compareTo((TwoSegmentRope) o, begin, end);
+    }
+
+    @Override public int compareTo(SegmentRope o, int begin, int end) {
+        return compareTo(segment, offset, len, o.segment, o.offset+begin, end-begin);
+    }
+
+    @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
+        int fstLen = o.fstLen, oLen = fstLen-begin, len = Math.min(this.len, oLen);
+        long offset = this.offset;
+        if (len > 0) { // compare this vs fst segment
+            int diff = compareTo(segment, offset, len, o.fst, o.fstOff+begin, len);
+            if (diff != 0) return diff;
+        }
+        if (oLen > len)
+            return -1; // left side is already exhausted, right is larger.
+
+        // advance [offset, offset+len) on our side
+        offset += len;
+        len = this.len-len;
+        // make [begin, end) relative to o.snd
+        if ((end -= fstLen) < 0)
+            return len; // o is exhausted, will return 0 if equal, >0 if this is larger
+        begin = Math.max(0, begin-fstLen);
+        oLen = end-begin;
+
+        // compare [offset, offset+len) and [begin, end) unlike earlier, length may differ
+        return compareTo(segment, offset, len, o.snd, o.sndOff+begin, oLen);
     }
 }

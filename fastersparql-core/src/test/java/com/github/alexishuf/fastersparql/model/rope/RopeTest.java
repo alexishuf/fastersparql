@@ -162,12 +162,13 @@ class RopeTest {
         @Override public String toString() { return "TermRopeFac"; }
     }
 
+    private static final TwoSegmentSubRopeFac TWO_SEGMENT_ROPE_FAC = new TwoSegmentSubRopeFac();
     private static final List<Factory> FACTORIES = List.of(
             new ByteRopeFac(),
             new ByteSubRopeFac(),
             new BufferRopeFac(),
             new TwoSegmentRopeFac(),
-            new TwoSegmentSubRopeFac(),
+            TWO_SEGMENT_ROPE_FAC,
             new TermRopeFac()
     );
 
@@ -671,24 +672,38 @@ class RopeTest {
     @ParameterizedTest @MethodSource("factories")
     void testCompareTo(Factory fac) {
         record D(String left, String right) {
-            void test(Factory f, int row) {
+            @SuppressWarnings("EqualsWithItself") void test(Factory f, int row) {
                 String ctx = "at data["+row+"]="+D.this;
                 int expected = left.compareTo(right);
                 for (Rope lr : f.create(left)) {
+                    assertEquals(0, lr.compareTo(lr));
                     for (Rope rr : f.create(right)) {
+                        assertEquals(0, rr.compareTo(rr));
                         assertEquals(signum( expected), signum(lr.compareTo(rr)), ctx);
                         assertEquals(signum(-expected), signum(rr.compareTo(lr)), ctx);
                         assertEquals(expected == 0, lr.equals(rr));
                     }
                     for (String rString : List.of(" " + right + " ", "~" + right + "~")) {
                         for (Rope rr : f.create(rString)) {
+                            assertEquals(0, rr.compareTo(rr));
                             assertEquals(signum(expected), signum(lr.compareTo(rr, 1, rr.len - 1)), ctx);
+                            assertEquals(expected == 0, lr.equals(rr.sub(1, rr.len-1)));
+                        }
+                    }
+                    if (f instanceof ByteRopeFac || f instanceof BufferRopeFac) {
+                        for (Rope rr : TWO_SEGMENT_ROPE_FAC.create(right)) {
+                            assertEquals( signum(expected), signum(lr.compareTo(rr)));
+                            assertEquals(-signum(expected), signum(rr.compareTo(lr)));
+
+                            assertEquals( signum(expected), signum(lr.compareTo(rr, 0, rr.len)));
+                            assertEquals(-signum(expected), signum(rr.compareTo(lr, 0, lr.len)));
+                            assertEquals(expected == 0, lr.equals(rr));
                         }
                     }
                 }
             }
         }
-        List<D> data = List.of(
+        List<D> data = new ArrayList<>(List.of(
                 new D("1", "1"),
                 new D("1", "2"),
                 new D("11", "22"),
@@ -705,7 +720,14 @@ class RopeTest {
                 new D("200", "3"),
                 new D("299", "300"),
                 new D("299", "300")
-        );
+        ));
+        String pad32 = "_".repeat(32);
+        String pad48 = pad32+"-".repeat(16);
+        for (int i = 0, n = data.size(); i < n; i++) {
+            D d = data.get(i);
+            data.add(new D(pad32+d.left, pad32+d.right));
+            data.add(new D(pad48+d.left, pad48+d.right));
+        }
         for (int row = 0; row < data.size(); row++)
             data.get(row).test(fac, row);
     }
