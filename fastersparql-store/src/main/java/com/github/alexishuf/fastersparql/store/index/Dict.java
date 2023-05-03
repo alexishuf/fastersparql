@@ -43,6 +43,7 @@ public class Dict implements AutoCloseable {
     private final ValueWidth offWidth;
     private final @Nullable Dict shared;
     private final boolean sharedOverflow;
+    private final byte emptyId;
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -87,6 +88,8 @@ public class Dict implements AutoCloseable {
             this.sharedOverflow = (stringsAndFlags & SHARED_OVF_MASK) != 0;
         }
         this.nStrings = stringsAndFlags & STRINGS_MASK;
+        this.emptyId = nStrings > 0 && offWidth.read(seg, OFFS_OFF) == offWidth.readNext(seg, OFFS_OFF)
+                     ? (byte)MIN_ID : (byte)NOT_FOUND;
     }
 
     public Dict(Path file) throws IOException {
@@ -202,7 +205,7 @@ public class Dict implements AutoCloseable {
      */
     public long find(PlainRope rope, @Nullable StringSplitStrategy split) {
         if (rope.len == 0)
-            return findEmpty();
+            return emptyId;
         if (shared != null) {
             if (split == null)
                 split = new StringSplitStrategy();
@@ -246,10 +249,6 @@ public class Dict implements AutoCloseable {
             else               return mid + Dict.MIN_ID;
         }
         return NOT_FOUND;
-    }
-
-    private long findEmpty() {
-        return offWidth.read(seg, OFFS_OFF) == offWidth.readNext(seg, OFFS_OFF) ? 1 : NOT_FOUND;
     }
 
     public static final class BadSharedId extends IllegalStateException {
