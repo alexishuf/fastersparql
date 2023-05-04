@@ -82,7 +82,7 @@ public class IterationTester implements AutoCloseable {
                 assertNotNull(is);
                 is.transferTo(out);
             }
-            HdtConverter.convert(hdtPath, tempDir);
+            new HdtConverter().convert(hdtPath, tempDir);
             triples = triplesFromHDT(tempDir);
         } catch (Throwable t) {
             deleteDir(tempDir);

@@ -41,23 +41,50 @@ class SplitterTest {
 
     static Stream<Arguments> testSplit() {
         return Stream.of(
-                arguments("<rel>", "", "<rel>", NONE),
-                arguments("_:b0", "", "_:b0", NONE),
-                arguments("_:anon", "", "_:anon", NONE),
-                arguments("_:anon123456", "", "_:anon123456", NONE),
-                arguments("\"Bob\"", "", "\"Bob\"", NONE),
-                arguments("\"Alice\"@en", "", "\"Alice\"@en", NONE),
-                arguments("\"Alice\"@en-US", "\"@en-US", "\"Alice", SUFFIX),
-                arguments("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"23", SUFFIX),
-                arguments("<http://example.org/Alice>", "<http://example.org/", "Alice>", PREFIX),
-                arguments("<http://example.org/a/b/file#X>", "<http://example.org/a/b/file#", "X>", PREFIX)
+                arguments(defSplit, "<rel>", "", "<rel>", NONE),
+                arguments(defSplit, "_:b0", "", "_:b0", NONE),
+                arguments(defSplit, "_:anon", "", "_:anon", NONE),
+                arguments(defSplit, "_:anon123456", "", "_:anon123456", NONE),
+                arguments(defSplit, "\"Bob\"", "", "\"Bob\"", NONE),
+                arguments(defSplit, "\"Alice\"@en", "", "\"Alice\"@en", NONE),
+                arguments(defSplit, "\"Alice\"@en-US", "\"@en-US", "\"Alice", SUFFIX),
+                arguments(defSplit, "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"23", SUFFIX),
+                arguments(defSplit, "<http://example.org/Alice>", "<http://example.org/", "Alice>", PREFIX),
+                arguments(defSplit, "<http://example.org/a/b/file#X>", "<http://example.org/a/b/file#", "X>", PREFIX),
+                arguments(defSplit, "<http://example.org/TCGA-34-26k-g156>",
+                                    "<http://example.org/", "TCGA-34-26k-g156>", PREFIX),
+                arguments(defSplit, "<http://example.org/chebi:ex>",
+                                    "<http://example.org/", "chebi:ex>", PREFIX),
+
+                arguments(prolongedSplit, "_:b0-bogus:2", "", "_:b0-bogus:2", NONE),
+                arguments(prolongedSplit, "\"x\"^^<http://example.org/TCGA-23>",
+                                          "\"^^<http://example.org/TCGA-23>", "\"x", SUFFIX),
+                arguments(prolongedSplit, "<http://example.org/Alice>",
+                                          "<http://example.org/", "Alice>", PREFIX),
+                arguments(prolongedSplit, "<http://example.org/chebi:ex>",
+                                          "<http://example.org/chebi:", "ex>", PREFIX),
+                arguments(prolongedSplit, "<http://example.org/TCGA-34-26n-g156>",
+                                          "<http://example.org/TCGA-34-26n-", "g156>", PREFIX),
+
+                arguments(penultimateSplit, "_:b0", "", "_:b0", NONE),
+                arguments(penultimateSplit, "_:b0/1", "", "_:b0/1", NONE),
+                arguments(penultimateSplit, "\"x\"^^<http://example.org/some/thing#type>",
+                                            "\"^^<http://example.org/some/thing#type>", "\"x", SUFFIX),
+                arguments(penultimateSplit, "<http://example.org/123/name>",
+                                            "<http://example.org/", "123/name>", PREFIX),
+                arguments(penultimateSplit, "<http://example.org/123/456/name>",
+                                            "<http://example.org/123/", "456/name>", PREFIX),
+                arguments(penultimateSplit, "<http://example.org/Alice>",
+                                            "<http://example.org/", "Alice>", PREFIX)
         );
     }
 
-    private final Splitter split = new Splitter();
+    private static final Splitter defSplit = new Splitter();
+    private static final Splitter prolongedSplit = new Splitter(Splitter.Mode.PROLONG);
+    private static final Splitter penultimateSplit = new Splitter(Splitter.Mode.PENULTIMATE);
 
     @ParameterizedTest @MethodSource
-    public void testSplit(String nt, String shared, String local, SharedSide side) {
+    public void testSplit(Splitter split, String nt, String shared, String local, SharedSide side) {
         ByteRope ntRope = new ByteRope(nt);
         ByteRope localRope = new ByteRope(local), sharedRope = new ByteRope(shared);
         TwoSegmentRope ts0 = new TwoSegmentRope(), ts1 = new TwoSegmentRope();

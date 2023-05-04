@@ -20,17 +20,36 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
-@Command(name = "hdt2store", description = "Convert an HDT file into a directory with " +
-        "the fastersparql-store indexes")
+import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.*;
+
+@Command(name = "hdt2store",
+        description = "Convert an HDT file into a directory with the fastersparql-store indexes",
+        showDefaultValues = true,
+        mixinStandardHelpOptions = true)
 public class Hdt2Store implements Callable<Void> {
     private static final Logger log = LoggerFactory.getLogger(Hdt2Store.class);
 
     @Option(names = {"--same-dir"}, description = "Treat all parameters as HDT files " +
             "and convert generate index dirs with same basename on the same dir as the HDT file")
     private boolean sameDir = false;
+
+    @Option(names = {"--prolong"}, description = "When splitting IRIs, instead of " +
+            "splitting on last / or #, advance as many words as possible until only one word " +
+            "remains in the local part of the IRI, where a word is defined by " +
+            "the [A-Za-z0-9] regexp. This cannot be used together with --penultimate")
+    private boolean prolongSplit = false;
+
+    @Option(names = {"--penultimate"}, description = "When splitting IRIs, split on the " +
+            "penultimate / or # instead of splitting on the last. This should be used for " +
+            "datasets that have many IRIs that share the same ending sequence or whose IRIS " +
+            "typically have the last two path segments being unique (which would create shared " +
+            "strings that are only used once. This cannot be used together with --prolong")
+    private boolean penultimateSplit = false;
+
     @Option(names = {"--force", "-f"}, description = "Rebuild indexes even if already existing " +
             "with matching number of triples.")
     private boolean force = false;
+
     @Option(names = {"-n", "--dry-run"}, description = "Only log what actions would be taken " +
             "and produce no side-effects")
     private boolean dryRun = false;
@@ -53,6 +72,8 @@ public class Hdt2Store implements Callable<Void> {
     }
 
     @Override public Void call() throws Exception {
+        if (prolongSplit && penultimateSplit)
+            return fail("--penultimate and --prolong cannot be set at the same time");
         long callStart = System.nanoTime();
         if (tempDir != null) {
             File file = tempDir.toFile();
@@ -106,7 +127,6 @@ public class Hdt2Store implements Callable<Void> {
         log.debug("Mapping {}", hdtFile);
         try (HDT hdt = HDTManager.mapHDT(hdtFile.getAbsolutePath())) {
             Path destPath = dest.toPath();
-            Path tempDirPath = tempDir == null ? destPath : tempDir;
             long triples = hdt.getTriples().getNumberOfElements();
             if (!force) {
                 boolean valid = Stream.of("spo", "pso", "ops").parallel()
@@ -120,7 +140,10 @@ public class Hdt2Store implements Callable<Void> {
                 log.info("--dry-run: Would convert {} into {}", hdtFile, dest);
             } else {
                 log.info("Converting {} triples in {} into {}", triples, hdt, dest);
-                HdtConverter.convert(hdt, destPath, tempDirPath);
+                new HdtConverter()
+                        .tempDir(tempDir == null ? destPath : tempDir)
+                        .splitMode(prolongSplit ? PROLONG : penultimateSplit ? PENULTIMATE : LAST)
+                        .convert(hdt, destPath);
             }
         }
     }

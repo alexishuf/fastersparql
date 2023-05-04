@@ -9,6 +9,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class Splitter {
@@ -35,10 +36,24 @@ public class Splitter {
     public SharedSide sharedSide = SharedSide.NONE;
     private PlainRope str = EMPTY;
     private int suffixBegin = 0;
+    private final Mode mode;
     private final SegmentRope sharedView = RopeHandlePool.segmentRope();
     private final SegmentRope localView  = RopeHandlePool.segmentRope();
     private TwoSegmentRope tsSharedView, tsLocalView;
     private final ByteRope b64 = new ByteRope(5);
+
+    public Splitter() { this(Mode.LAST); }
+    public Splitter(Mode mode) {
+        if (mode == null)
+            throw new IllegalArgumentException("mode cannot be null");
+        this.mode = mode;
+    }
+
+    public enum Mode {
+        LAST,
+        PENULTIMATE,
+        PROLONG
+    }
 
     public enum SharedSide {
         PREFIX, SUFFIX, NONE;
@@ -96,6 +111,8 @@ public class Splitter {
         };
     }
 
+    public Mode mode() { return mode; }
+
     @Override public String toString() {
         return "{side="+sharedSide+", shared="+shared()+", local="+ local()+"}";
     }
@@ -146,7 +163,27 @@ public class Splitter {
                 int i = str.skipUntilLast(0, len, '/', '#');
                 if (i >= len)
                     yield SharedSide.NONE;
-                suffixBegin = i+1;
+                switch (mode) {
+                    //                  .../path/local>
+                    //                          i^       // ^ marks is the new value of i
+                    case LAST        -> ++i;
+                    case PENULTIMATE -> {
+                        //                  ..../22601/name>
+                        //                       ^    i      // ^ marks the updated value of i
+                        int j = str.skipUntilLast(0, i, '/', '#');
+                        i = (j < 8 ? i : j)+1; // do not create http:// and https:// shared strings
+                    }
+                    case PROLONG -> {
+                        // .../TCGA-34-2600-g156>
+                        //     i    j              // indexes on first for body entry
+                        //          i      j       // before second iteration
+                        //                 i     j // after second iteration, stop
+                        ++i;
+                        for (int j, lst = len-1; (j = str.skip(i, len, ALPHANUMERIC)+1) < lst; )
+                            i = j;
+                    }
+                }
+                suffixBegin = i;
                 yield SharedSide.PREFIX;
             }
             default -> SharedSide.NONE;

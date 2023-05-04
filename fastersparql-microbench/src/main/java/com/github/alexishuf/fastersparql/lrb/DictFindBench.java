@@ -43,7 +43,7 @@ public class DictFindBench {
             if (is.transferTo(out) == 0) throw new RuntimeException("Empty NYT.hdt");
         }
         full = Files.createTempDirectory("fastersparql");
-        HdtConverter.convert(hdtPath, full);
+        new HdtConverter().convert(hdtPath, full);
         Random random = new Random(seed);
         try (Dict shared = new Dict(full.resolve("shared"));
              Dict d = new Dict(full.resolve("strings"), shared)) {

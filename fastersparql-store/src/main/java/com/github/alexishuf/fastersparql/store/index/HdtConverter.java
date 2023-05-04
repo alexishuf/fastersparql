@@ -34,21 +34,22 @@ import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 public class HdtConverter {
     private static final Logger log = LoggerFactory.getLogger(HdtConverter.class);
 
-    public static void convert(Path hdtPath, Path destDir) throws IOException {
-        convert(hdtPath, destDir, destDir);
-    }
-    public static void convert(Path hdtPath, Path destDir, Path tempDir) throws IOException {
+    private Path tempDir;
+    private Splitter.Mode splitMode = Splitter.Mode.LAST;
+
+    public @This HdtConverter   tempDir(Path v)          { this.tempDir = v; return this; }
+    public @This HdtConverter splitMode(Splitter.Mode v) { this.splitMode = v; return this; }
+
+    public void convert(Path hdtPath, Path destDir) throws IOException {
         try (HDT hdt = HDTManager.mapHDT(hdtPath.toString())) {
-            convert(hdt, destDir, tempDir);
+            convert(hdt, destDir);
         }
     }
 
-    public static void convert(HDT hdt, Path destDir) throws IOException {
-        convert(hdt, destDir, destDir);
-    }
-    public static void convert(HDT hdt, Path destDir, Path tempDir) throws IOException {
+    public void convert(HDT hdt, Path destDir) throws IOException {
         int dictId = IdAccess.register(hdt.getDictionary());
-        try (var db = new CompositeDictBuilder(tempDir, destDir)) {
+        Path tempDir = this.tempDir == null ? destDir : this.tempDir;
+        try (var db = new CompositeDictBuilder(tempDir, destDir, splitMode)) {
             commonPool().invoke(new VisitStringsAction(db, dictId));
             log.info("{}: writing shared dict...", destDir);
             var sndPass = db.nextPass();

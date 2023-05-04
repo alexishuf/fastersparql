@@ -8,6 +8,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.PENULTIMATE;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.PROLONG;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
@@ -31,7 +33,8 @@ public class DictWriter implements AutoCloseable  {
     @SuppressWarnings("unused") private int plainWriting;
 
     public DictWriter(FileChannel dest, long nStrings, long utf8Bytes,
-                      boolean usesShared, boolean sharedIdOverflow) {
+                      boolean usesShared, boolean sharedIdOverflow,
+                      Splitter.Mode split) {
         if (nStrings > Dict.STRINGS_MASK)
             throw new IllegalArgumentException("Too many strings");
         this.channel = dest;
@@ -47,9 +50,12 @@ public class DictWriter implements AutoCloseable  {
         this.tableEndOff = nextTableOff + offsetWidth*nStrings;
         this.nextUtf8Off = tableEndOff + offsetWidth;
         this.flags = (byte)(
-                     (offsetWidth == 4 ? (byte)(OFF_W_MASK>>FLAGS_BIT)      : (byte)0)
-                   | (usesShared       ? (byte)(SHARED_MASK>>FLAGS_BIT)     : (byte)0)
-                   | (sharedIdOverflow ? (byte)(SHARED_OVF_MASK>>FLAGS_BIT) : (byte)0));
+                     (offsetWidth == 4     ? (byte)(OFF_W_MASK       >>> FLAGS_BIT) : (byte)0)
+                   | (usesShared           ? (byte)(SHARED_MASK      >>> FLAGS_BIT) : (byte)0)
+                   | (sharedIdOverflow     ? (byte)(SHARED_OVF_MASK  >>> FLAGS_BIT) : (byte)0)
+                   | (split == PROLONG     ? (byte)(PROLONG_MASK     >>> FLAGS_BIT) : (byte)0)
+                   | (split == PENULTIMATE ? (byte)(PENULTIMATE_MASK >>> FLAGS_BIT) : (byte)0)
+        );
         this.tmp = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN);
     }
 

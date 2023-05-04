@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.*;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
@@ -35,6 +36,7 @@ public class DictSorter extends Sorter<Path> {
 
     private boolean stringsClosed = false;
     public boolean usesShared, sharedOverflow;
+    public Splitter.Mode split = Splitter.Mode.LAST;
 
     private @Nullable DictBlock fillingBlock;
 
@@ -71,8 +73,11 @@ public class DictSorter extends Sorter<Path> {
                     if (ch.read(bb) != 8)
                         throw new IOException("Corrupted "+dest);
                     byte flags = (byte)(bb.get(7)
-                            |  (usesShared     ? SHARED_MASK    >>>FLAGS_BIT : 0)
-                            |  (sharedOverflow ? SHARED_OVF_MASK>>>FLAGS_BIT : 0));
+                            |  (usesShared           ? SHARED_MASK      >>> FLAGS_BIT : 0)
+                            |  (sharedOverflow       ? SHARED_OVF_MASK  >>> FLAGS_BIT : 0)
+                            |  (split == PROLONG     ? PROLONG_MASK     >>> FLAGS_BIT : 0)
+                            |  (split == PENULTIMATE ? PENULTIMATE_MASK >>> FLAGS_BIT : 0)
+                    );
                     bb.put(7, flags).flip();
                     if (ch.write(bb, 0) != 8)
                         throw new IOException("Refused to write all 8 header bytes");
@@ -80,7 +85,7 @@ public class DictSorter extends Sorter<Path> {
                     SmallBBPool.releaseSmallDirectBB(bb);
                 }
             } else {
-                try (Merger m = new Merger(sorted, dest, usesShared, sharedOverflow)) {
+                try (Merger m = new Merger(sorted, dest, usesShared, sharedOverflow, split)) {
                     m.write();
                 }
             }
@@ -184,12 +189,14 @@ public class DictSorter extends Sorter<Path> {
         private final long[] currIds;
         private final FileChannel destChannel;
         private final boolean usesShared, sharedOverflow;
+        private final Splitter.Mode split;
         private int currBlock;
 
-        public Merger(List<Path> blockFiles, Path dest,
-                      boolean usesShared, boolean sharedOverflow) throws IOException {
+        public Merger(List<Path> blockFiles, Path dest, boolean usesShared,
+                      boolean sharedOverflow, Splitter.Mode split) throws IOException {
             this.usesShared = usesShared;
             this.sharedOverflow = sharedOverflow;
+            this.split = split;
             int n = blockFiles.size();
             blocks = new Dict.Lookup[n];
             FileChannel destChannel = null;
@@ -236,7 +243,8 @@ public class DictSorter extends Sorter<Path> {
             for (SegmentRope s; (s = nextString()) != null; ++strings) bytes += s.len;
 
             resetIteration();
-            try (var w = new DictWriter(destChannel, strings, bytes, usesShared, sharedOverflow)) {
+            try (var w = new DictWriter(destChannel, strings, bytes,
+                                        usesShared, sharedOverflow, split)) {
                 for (SegmentRope s; (s = nextString()) != null; ) {
                     w.writeSorted(s);
                     ++visited;
@@ -364,7 +372,7 @@ public class DictSorter extends Sorter<Path> {
             }
             //write all ropes
             try (var ch = FileChannel.open(dest, WRITE,CREATE,TRUNCATE_EXISTING);
-                 var w = new DictWriter(ch, nRopes, nBytes, false, false)) {
+                 var w = new DictWriter(ch, nRopes, nBytes, false, false, LAST)) {
                 w.writeSorted(ropes, 0, end);
             }
             return dest;

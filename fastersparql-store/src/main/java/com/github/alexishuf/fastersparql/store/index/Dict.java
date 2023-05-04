@@ -15,16 +15,15 @@ import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class Dict extends OffsetMappedLEValues implements AutoCloseable {
-    public static final long STRINGS_MASK = 0x00ffffffffffffffL;
-    public static final long      FLAGS_MASK = ~STRINGS_MASK;
-    public static final long      OFF_W_MASK = 0x0100000000000000L;
-    public static final long     SHARED_MASK = 0x0200000000000000L;
-    public static final long SHARED_OVF_MASK = 0x0400000000000000L;
-    public static final int       FLAGS_BIT = Long.numberOfTrailingZeros(FLAGS_MASK);
-    private static final int      OFF_W_BIT = Long.numberOfTrailingZeros(OFF_W_MASK);
-    private static final int     SHARED_BIT = Long.numberOfTrailingZeros(SHARED_MASK);
-    private static final int SHARED_OVF_BIT = Long.numberOfTrailingZeros(SHARED_OVF_MASK);
-    private static final int OFFS_OFF = 8;
+    public static final long     STRINGS_MASK = 0x00ffffffffffffffL;
+    public static final long       FLAGS_MASK = ~STRINGS_MASK;
+    public static final long       OFF_W_MASK = 0x0100000000000000L;
+    public static final long      SHARED_MASK = 0x0200000000000000L;
+    public static final long  SHARED_OVF_MASK = 0x0400000000000000L;
+    public static final long     PROLONG_MASK = 0x0800000000000000L;
+    public static final long PENULTIMATE_MASK = 0x1000000000000000L;
+    public static final int         FLAGS_BIT = Long.numberOfTrailingZeros(FLAGS_MASK);
+    private static final int OFFS_OFF         = 8;
 
     public static final long NOT_FOUND = 0;
     public static final long MIN_ID = 1;
@@ -33,6 +32,7 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
     private final long nStrings;
     private final @Nullable Dict shared;
     private final boolean sharedOverflow;
+    private final Splitter.Mode splitMode;
     private final long emptyId;
 
     /**
@@ -73,6 +73,12 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
             this.shared = shared;
             this.sharedOverflow = (stringsAndFlags & SHARED_OVF_MASK) != 0;
         }
+        boolean prolong     = (stringsAndFlags & PROLONG_MASK) != 0;
+        boolean penultimate = (stringsAndFlags & PENULTIMATE_MASK) != 0;
+        if (prolong && penultimate)
+            throw new IllegalArgumentException("Dict at "+file+" has both prolong and penultimate flags set");
+        this.splitMode = prolong ? Splitter.Mode.PROLONG
+                  : penultimate ? Splitter.Mode.PENULTIMATE : Splitter.Mode.LAST;
         this.nStrings = stringsAndFlags & STRINGS_MASK;
         this.emptyId = nStrings > 0 && readOff(0) == readOff(1) ? MIN_ID : NOT_FOUND;
     }
@@ -168,7 +174,7 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
         private final SegmentRope tmp = new SegmentRope();
         private final SegmentRope    out1 = shared == null ? tmp : new SegmentRope();
         private final TwoSegmentRope out2 = new TwoSegmentRope();
-        private final Splitter split = new Splitter();
+        private final Splitter split = new Splitter(splitMode);
 
         public Dict dict() { return Dict.this; }
 
