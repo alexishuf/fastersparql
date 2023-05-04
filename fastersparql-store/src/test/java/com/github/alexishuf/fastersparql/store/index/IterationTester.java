@@ -113,7 +113,7 @@ public class IterationTester implements AutoCloseable {
              Dict strings = new Dict(dir.resolve("strings"), shared);
              HDT hdt = HDTManager.mapHDT(dir.resolve("origin.hdt").toString())) {
             dictId = IdAccess.register(hdt.getDictionary());
-            var split = new StringSplitStrategy();
+            var split = new Splitter();
             for (var it = hdt.getTriples().searchAll(); it.hasNext(); ) {
                 TripleID triple = it.next();
                 var sNT = IdAccess.toNT(IdAccess.encode(triple.getSubject(),   dictId, SUBJECT));
@@ -198,7 +198,7 @@ public class IterationTester implements AutoCloseable {
 
     public void testLoadAndLookupStrings() {
         assertNotNull(strings);
-        var split = new StringSplitStrategy();
+        var split = new Splitter();
         if (strings.shared() == null) {
             SegmentRope nt = new SegmentRope();
             for (int id : terms) {

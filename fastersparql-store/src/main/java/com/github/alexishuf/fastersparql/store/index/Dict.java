@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.store.index;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide;
+import com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
@@ -11,7 +11,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentScope;
 import java.nio.file.Path;
 
-import static com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide.SUFFIX;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.SUFFIX;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class Dict extends OffsetMappedLEValues implements AutoCloseable {
@@ -174,18 +174,19 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
      * @return If the string was found, an {@code id} such that {@link #get(long)} returns a
      *         rope equals to {@code rope}. Else return {@link #NOT_FOUND}.
      */
-    public long find(PlainRope rope, @Nullable StringSplitStrategy split) {
+    public long find(PlainRope rope, @Nullable Splitter split) {
         if (rope.len == 0)
             return emptyId;
         if (shared != null) {
             if (split == null)
-                split = new StringSplitStrategy();
+                split = new Splitter();
             var b64 = split.b64(switch (split.split(rope)) {
                 case NONE -> MIN_ID;
                 case PREFIX,SUFFIX -> shared.find(split.shared(), split);
             });
-            var tmp = split.shared();
-            long id = find(b64, split.localOrWhole(), tmp);
+            PlainRope local = split.local();
+            SegmentRope tmp = split.stealHandle(local);
+            long id = find(b64, split.local(), tmp);
             if (id == NOT_FOUND && sharedOverflow)
                 id = find(split.b64(EMPTY_ID), rope, tmp);
             return id;
@@ -247,7 +248,7 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
             dest.wrapFirst(seg, off, len);
             dest.wrapSecond(seg, off, 0);
         } else {
-            long sId = StringSplitStrategy.decode(seg, off);
+            long sId = Splitter.decode(seg, off);
             if (!shared.get(sId, dest))
                 throw new BadSharedId(id, this, off, len);
             dest.wrapSecond(seg, off+5, len-5);

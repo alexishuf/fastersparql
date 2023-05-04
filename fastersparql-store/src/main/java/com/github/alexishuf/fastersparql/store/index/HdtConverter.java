@@ -23,7 +23,8 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
+import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
+import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.toNT;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptiblePut;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleTake;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -166,7 +167,7 @@ public class HdtConverter {
         }
 
         private final class Translator extends RecursiveAction {
-            private final StringSplitStrategy split = new StringSplitStrategy();
+            private final Splitter split = new Splitter();
 
             private long translate(long hdtId, TripleComponentRole role) {
                 long storeId = idCache.get(hdtId, role);

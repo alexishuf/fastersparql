@@ -51,7 +51,7 @@ class DictSorterTest {
         }
 
         try (var dict = new Dict(tempDir.resolve("merged"))) {
-            var split = new StringSplitStrategy();
+            var split = new Splitter();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {

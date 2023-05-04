@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.store.index;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide;
+import com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -12,12 +12,12 @@ import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide.*;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
-class StringSplitStrategyTest {
+class SplitterTest {
     public static Stream<Arguments> testBase64() {
         return Stream.of(
                 arguments(PREFIX, "QUJD.", 0x414243),
@@ -32,11 +32,11 @@ class StringSplitStrategyTest {
 
     @ParameterizedTest @MethodSource
     public void testBase64(SharedSide side, String base64, int id) {
-        var split = new StringSplitStrategy();
+        var split = new Splitter();
         split.sharedSide = side;
         assertEquals(base64, split.b64(id).toString());
         var seg = MemorySegment.ofArray(("!." + base64).getBytes(UTF_8));
-        assertEquals(id, StringSplitStrategy.decode(seg, 2));
+        assertEquals(id, Splitter.decode(seg, 2));
     }
 
     static Stream<Arguments> testSplit() {
@@ -54,7 +54,7 @@ class StringSplitStrategyTest {
         );
     }
 
-    private final StringSplitStrategy split = new StringSplitStrategy();
+    private final Splitter split = new Splitter();
 
     @ParameterizedTest @MethodSource
     public void testSplit(String nt, String shared, String local, SharedSide side) {
@@ -70,7 +70,6 @@ class StringSplitStrategyTest {
             assertEquals(side, split.split(in));
             assertEquals(shared, split.shared().toString());
             assertEquals(local, split.local().toString());
-            assertEquals(local, split.localOrWhole().toString());
         }
     }
 }

@@ -12,7 +12,7 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
-public class StringSplitStrategy {
+public class Splitter {
     private static final byte[] BITS_2_BASE64 = {
             'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
             'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
@@ -38,7 +38,7 @@ public class StringSplitStrategy {
     private int suffixBegin = 0;
     private final SegmentRope sharedView = RopeHandlePool.segmentRope();
     private final SegmentRope localView  = RopeHandlePool.segmentRope();
-    private ByteRope copy = null;
+    private TwoSegmentRope tsSharedView, tsLocalView;
     private final ByteRope b64 = new ByteRope(5);
 
     public enum SharedSide {
@@ -82,50 +82,60 @@ public class StringSplitStrategy {
         return b64;
     }
 
-    public SegmentRope shared() {
-        switch (sharedSide) {
+    public PlainRope shared() {
+        return switch (sharedSide) {
             case NONE,PREFIX -> wrap(sharedView, str, 0, suffixBegin);
             case SUFFIX      -> wrap(sharedView, str, suffixBegin, str.len-suffixBegin);
-        }
-        return sharedView;
+        };
     }
 
-    public SegmentRope local() {
-        switch (sharedSide) {
-            case PREFIX,NONE -> wrap(localView, str, suffixBegin, str.len-suffixBegin);
-            case SUFFIX      -> wrap(localView, str, 0, suffixBegin);
-        }
-        return localView;
-    }
-
-    public PlainRope localOrWhole() {
-        return sharedSide == SharedSide.NONE ? str : local();
+    public PlainRope local() {
+        return switch (sharedSide) {
+            case NONE   -> str;
+            case PREFIX -> wrap(localView, str, suffixBegin, str.len-suffixBegin);
+            case SUFFIX -> wrap(localView, str, 0, suffixBegin);
+        };
     }
 
     public SegmentRope stealHandle(@Nullable PlainRope except) {
-        return localView == except ? sharedView : localView;
+        if (except == localView) {
+            if (except == sharedView)
+                return new SegmentRope();
+            return sharedView;
+        }
+        return localView;
     }
 
     @Override public String toString() {
         return "{side="+sharedSide+", shared="+shared()+", local="+ local()+"}";
     }
 
-    private void wrap(SegmentRope wrapper, PlainRope str, int begin, int len) {
+    private PlainRope wrap(SegmentRope wrapper, PlainRope str, int begin, int len) {
         if (str instanceof SegmentRope s) {
             wrapper.wrapSegment(s.segment(), s.offset()+begin, len);
+            return wrapper;
         } else {
             TwoSegmentRope t = (TwoSegmentRope) str;
             int fstLen = t.fstLen;
             if (begin + len <= fstLen) {
                 wrapper.wrapSegment(t.fst, t.fstOff + begin, len);
+                return wrapper;
             } else if (begin > fstLen) {
                 wrapper.wrapSegment(t.snd, t.sndOff + begin - fstLen, len);
-            } else{
-                ByteRope copy = this.copy;
-                if (copy == null)
-                    this.copy = copy = new ByteRope((len + 32) & ~31);
-                copy.clear().append(str, begin, begin + len);
-                wrapper.wrap(copy);
+                return wrapper;
+            } else {
+                TwoSegmentRope tsw = wrapper == localView ? tsLocalView : tsSharedView;
+                boolean created = tsw == null;
+                if (created)
+                    tsw = new TwoSegmentRope();
+                int taken = fstLen - begin;
+                tsw.wrapFirst(t.fst, t.fstOff+begin, taken);
+                tsw.wrapSecond(t.snd, t.sndOff+Math.max(0, begin-t.fstLen), len-taken);
+                if (created) {
+                    if (wrapper == localView) tsLocalView  = tsw;
+                    else                      tsSharedView = tsw;
+                }
+                return tsw;
             }
         }
     }
