@@ -5,22 +5,16 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentScope;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 
 import static com.github.alexishuf.fastersparql.store.index.StringSplitStrategy.SharedSide.SUFFIX;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
-import static java.nio.file.StandardOpenOption.READ;
 
-public class Dict implements AutoCloseable {
-    private static final Logger log = LoggerFactory.getLogger(Dict.class);
+public class Dict extends OffsetMappedLEValues implements AutoCloseable {
     public static final long STRINGS_MASK = 0x00ffffffffffffffL;
     public static final long      FLAGS_MASK = ~STRINGS_MASK;
     public static final long      OFF_W_MASK = 0x0100000000000000L;
@@ -36,14 +30,10 @@ public class Dict implements AutoCloseable {
     public static final long MIN_ID = 1;
     public static final long EMPTY_ID = MIN_ID;
 
-    private final Path file;
-    private final FileChannel channel;
-    private final MemorySegment seg;
     private final long nStrings;
-    private final ValueWidth offWidth;
     private final @Nullable Dict shared;
     private final boolean sharedOverflow;
-    private final byte emptyId;
+    private final long emptyId;
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -68,11 +58,8 @@ public class Dict implements AutoCloseable {
      *                                  {@code file}.
      */
     public Dict(Path file, @Nullable Dict shared) throws IOException {
-        this.file = file;
-        this.channel = FileChannel.open(file, READ);
-        this.seg = channel.map(READ_ONLY, 0, channel.size(), SegmentScope.auto());
-        long stringsAndFlags = ValueWidth.LE8B.read(seg, 0);
-        this.offWidth = ValueWidth.le4If(stringsAndFlags, OFF_W_BIT);
+        super(file, SegmentScope.auto());
+        long stringsAndFlags = seg.get(LE_LONG, 0);
         if ((stringsAndFlags & SHARED_MASK) == 0) {
             if (shared != null)
                 shared.close();
@@ -88,19 +75,26 @@ public class Dict implements AutoCloseable {
             this.sharedOverflow = (stringsAndFlags & SHARED_OVF_MASK) != 0;
         }
         this.nStrings = stringsAndFlags & STRINGS_MASK;
-        this.emptyId = nStrings > 0 && offWidth.read(seg, OFFS_OFF) == offWidth.readNext(seg, OFFS_OFF)
-                     ? (byte)MIN_ID : (byte)NOT_FOUND;
+        this.emptyId = nStrings > 0 && readOff(0) == readOff(1) ? MIN_ID : NOT_FOUND;
     }
 
     public Dict(Path file) throws IOException {
         this(file, null);
     }
 
+    @Override protected void fillMetadata(MemorySegment seg, Metadata md) {
+        long stringsAndFlags = seg.get(LE_LONG, 0);
+        md.offsetsOff   = OFFS_OFF;
+        md.offsetsCount = (stringsAndFlags & STRINGS_MASK) + 1;
+        md.offsetWidth  = (stringsAndFlags & OFF_W_MASK) == 0 ? 8 : 4;
+        md.valueWidth   = 1;
+    }
+
+
     public void validate() throws IOException {
         SegmentRope prev = new SegmentRope(), curr = new SegmentRope();
         for (long i = 0; i < nStrings; i++) {
-            long begin = offWidth.readIdx(seg, OFFS_OFF, i);
-            long end   = offWidth.readIdx(seg, OFFS_OFF, i+1);
+            long begin = readOff(i), end = readOff(i+1);
             if (end == begin && i != 0)
                 throw new IOException("Malformed "+this+": has empty string at id "+(i+1));
             if (end < begin)
@@ -144,29 +138,6 @@ public class Dict implements AutoCloseable {
                 }
             }
         }
-    }
-
-    /**
-     * Closes the file and hints that memory-mapped pages in physical memory should be evicted.
-     *
-     * <p>Effectively unmapping the file is done by the JVM and this will happen once after
-     * {@code this} is collected</p>
-     */
-    @Override public void close() {
-        try {
-            seg.unload();
-        } catch (Throwable t) {
-            log.info("{}: Ignoring segment.unload() error", this, t);
-        }
-        try {
-            channel.close();
-        } catch (IOException e) {
-            log.info("Ignoring failure to close mmap()ed {}: {}", channel, e.toString());
-        }
-    }
-
-    @Override public String toString() {
-        return "Dict[" + file + "]";
     }
 
     public String dump() {
@@ -223,8 +194,8 @@ public class Dict implements AutoCloseable {
             long lo = 0, hi = nStrings-1;
             while (lo <= hi) {
                 long mid = ((lo + hi) >>> 1);
-                long off = offWidth.readIdx(seg, OFFS_OFF, mid);
-                tmp.wrapSegment(seg, off, (int) (offWidth.readIdx(seg, OFFS_OFF, mid+1) - off));
+                long off = readOff(mid);
+                tmp.wrapSegment(seg, off, (int) (readOff(mid+1) - off));
                 int diff = rope.compareTo(tmp);
                 if      (diff < 0) hi   = mid - 1;
                 else if (diff > 0) lo   = mid + 1;
@@ -238,8 +209,8 @@ public class Dict implements AutoCloseable {
         long lo = 0, hi = nStrings-1;
         while (lo <= hi) {
             long mid = ((lo + hi) >>> 1);
-            long off = offWidth.readIdx(seg, OFFS_OFF, mid);
-            int len = (int) (offWidth.readIdx(seg, OFFS_OFF, mid+1) - off);
+            long off = readOff(mid);
+            int len = (int) (readOff(mid+1) - off);
             tmp.wrapSegment(seg, off, len);
             int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
             if (diff == 0)
@@ -270,9 +241,8 @@ public class Dict implements AutoCloseable {
      */
     public boolean get(long id, TwoSegmentRope dest) {
         if (id < MIN_ID || id > nStrings) return false;
-        long pos = 8+offWidth.idx2addr(id-1);
-        long off = offWidth.read(seg, pos);
-        int len = (int) (offWidth.readNext(seg, pos) - off);
+        long off = readOff(id - 1);
+        int len = (int)(readOff(id) - off);
         if (shared == null) {
             dest.wrapFirst(seg, off, len);
             dest.wrapSecond(seg, off, 0);
@@ -301,9 +271,8 @@ public class Dict implements AutoCloseable {
         if (shared != null)
             throw new IllegalArgumentException("SegmentRope cannot be used with shared strings");
         if (id < MIN_ID || id > nStrings) return false;
-        long pos = 8+offWidth.idx2addr(id-1);
-        long off = offWidth.read(seg, pos);
-        dest.wrapSegment(seg, off, (int) (offWidth.readNext(seg, pos) - off));
+        long off = readOff(id-1);
+        dest.wrapSegment(seg, off, (int) (readOff(id) - off));
         return true;
     }
 

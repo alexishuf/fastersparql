@@ -4,27 +4,19 @@ import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentScope;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Iterator;
 
-import static com.github.alexishuf.fastersparql.store.index.ValueWidth.LE4B;
-import static com.github.alexishuf.fastersparql.store.index.ValueWidth.LE8B;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
-import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
-import static java.nio.file.StandardOpenOption.READ;
 import static jdk.incubator.vector.IntVector.fromMemorySegment;
 import static jdk.incubator.vector.IntVector.zero;
 
-public class Triples implements AutoCloseable {
-    private static final Logger log = LoggerFactory.getLogger(Triples.class);
+public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public static final long NKEYS_MASK = 0x00ffffffffffffffL;
     public static final long OFF_W_MASK = 0x0100000000000000L;
     public static final long  ID_W_MASK = 0x0200000000000000L;
@@ -36,44 +28,36 @@ public class Triples implements AutoCloseable {
 
     private static final VectorSpecies<Integer> I_SP = IntVector.SPECIES_PREFERRED;
     private static final int I_LEN = I_SP.length();
-    private static final VectorSpecies<Long> L_SP = LongVector.SPECIES_PREFERRED;
 
-    private final Path path;
-    private final FileChannel fileChannel;
-    private final MemorySegment seg;
     /** Base-1 id of the first key in this index.*/
     private final long firstKey;
-    /** Number of keys in this index */
-    private final long nKeys;
-    /** The number of bytes in a pair */
-    private final int pairWidth;
-    private final ValueWidth offWidth, idWidth;
 
     private final ValueIt noValueIt;
     private final PairIt noPairIt;
     private final SubKeyIt noSubKeyIt;
 
     public Triples(Path path) throws IOException {
-        this.path = path;
-        fileChannel = FileChannel.open(path, READ);
-        seg = fileChannel.map(READ_ONLY, 0, fileChannel.size(), SegmentScope.auto());
-        long keysAndFlags = seg.get(JAVA_LONG, KEYS_AND_FLAGS_OFF);
-        nKeys = keysAndFlags & NKEYS_MASK;
-        offWidth = ValueWidth.le4If(keysAndFlags, OFF_W_BIT);
-        idWidth  = ValueWidth.le4If(keysAndFlags, ID_W_BIT);
-        pairWidth = idWidth.bytes()<<1;
+        super(path, SegmentScope.auto());
         firstKey = seg.get(JAVA_LONG, FIRST_KEY_OFF);
-        noValueIt = new ValueIt(idWidth, seg, 0, 0, 0, 0);
-        noPairIt = new PairIt(offWidth, idWidth, seg, 0, 0);
-        noSubKeyIt = new SubKeyIt(idWidth, seg, 0, 0, 0);
+        noValueIt = new ValueIt(0, 0, 0, 0);
+        noPairIt = new PairIt(0, 0);
+        noSubKeyIt = new SubKeyIt(0, 0, 0);
         validateOffsets();
     }
 
+    @Override protected void fillMetadata(MemorySegment seg, Metadata md) {
+        long keysAndFlags = seg.get(LE_LONG, KEYS_AND_FLAGS_OFF);
+        md.offsetsCount = (keysAndFlags & NKEYS_MASK) + 1;
+        md.offsetsOff = OFFS_OFF;
+        md.offsetWidth = (keysAndFlags & OFF_W_MASK) == 0 ? 8 : 4;
+        md.valueWidth = (keysAndFlags & ID_W_MASK) == 0 ? 8 : 4;
+    }
+
     public void validateOffsets() throws IOException {
-        long last = OFFS_OFF+offWidth.idx2addr(nKeys+1);
+        long last = OFFS_OFF+(offsCount<<offShift);
         long end = seg.byteSize();
-        for (int i = 0; i <= nKeys; i++) {
-            long off = offWidth.readIdx(seg, OFFS_OFF, i);
+        for (int i = 0; i < offsCount; i++) {
+            long off = readOff(i);
             if (off < last)
                 throw new IOException("Malformed "+this+": offset "+off+" for "+i+"-th key below previous offset "+last);
             if ((off & 7) != 0)
@@ -85,11 +69,11 @@ public class Triples implements AutoCloseable {
 
     public void validate() throws IOException {
         validateOffsets();
-        for (long k = 0; k < nKeys; ++k) {
-            long begin = offWidth.readIdx(seg, OFFS_OFF, k);
-            long end   = offWidth.readIdx(seg, OFFS_OFF, k+1);
+        for (long k = 0, nKeys = offsCount-1; k < nKeys; ++k) {
+            long begin = readOff(k), end = readOff(k+1);
+            int pairWidth = valWidth<<1;
             for (long prevSK = 0, prevV = 0; begin < end; begin += pairWidth) {
-                long sk = idWidth.read(seg, begin), v = idWidth.readNext(seg, begin);
+                long sk = readValue(begin), v = readValue(begin+valWidth);
                 if (sk < prevSK || (sk == prevSK && v < prevV))
                     throw new IOException("Malformed "+this+": ("+sk+" "+v+") < ("+prevSK+" "+prevV+") byte "+begin+", key index "+k);
                 if (sk == 0)
@@ -100,27 +84,15 @@ public class Triples implements AutoCloseable {
         }
     }
 
-    @Override public void close() {
-        try {
-            seg.unload();
-        } catch (Throwable t) {
-            log.info("{}: Ignoring segment.unload() error ", this, t);
-        }
-        try {
-            fileChannel.close();
-        } catch (Throwable t) {
-            log.info("Ignoring error when closing FileChannel for {}: ", path, t);
-        }
+    @Override protected String computeToString() {
+        return "Triples{keys="+keysCount()+", path="+path+"]";
     }
 
-    @Override public String toString() { return "Triples{keys="+nKeys+", path="+path+"]"; }
-
-    public long keysCount() { return nKeys; }
+    public long keysCount() { return offsCount-1; }
 
     public long triplesCount() {
-        long end = offWidth.readIdx(seg, OFFS_OFF, nKeys);
-        long begin = offWidth.readIdx(seg, OFFS_OFF, 0);
-        return idWidth.addr2idx(end-begin)>>1;
+        long bytes = readOff(offsCount-1) - readOff(0);
+        return bytes>>(valShift+1);
     }
 
     /**
@@ -130,15 +102,15 @@ public class Triples implements AutoCloseable {
         ValueIt it = values(keyId, subKeyId);
         if (!it.advance()) return false;
         if (it.valueId == valueId) return true;
-        int step = idWidth.bytes()<<1;
+        int step = valWidth<<1;
         long end;
         if (valueId < it.valueId)
             end = it.bottom + (step = -step);
         else
             end = it.top;
-        for (long addr = it.midAddress; addr != end && idWidth.read(seg, addr) == subKeyId; addr += step) {
-            if (idWidth.read    (seg, addr) != subKeyId) return false;
-            if (idWidth.readNext(seg, addr) ==  valueId) return true;
+        for (long addr = it.midAddress; addr != end && readValue(addr) == subKeyId; addr += step) {
+            if (readValue(addr         ) != subKeyId) return false;
+            if (readValue(addr+valWidth) ==  valueId) return true;
         }
         return false;
     }
@@ -151,28 +123,21 @@ public class Triples implements AutoCloseable {
      */
     public PairIt pairs(long keyId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= nKeys) return noPairIt;
-        return new PairIt(offWidth, idWidth, seg, offWidth.readIdx(seg, OFFS_OFF, keyId),
-                          offWidth.readIdx(seg, OFFS_OFF, keyId+1));
+        if (keyId < 0 || keyId >= offsCount-1) return noPairIt;
+        return new PairIt(readOff(keyId), readOff(keyId+1));
     }
 
-    public static final class PairIt {
+    public final class PairIt {
         private long address;
         private final long end;
         public long subKeyId, valueId;
-        private final ValueWidth offWidth, idWidth;
-        private final MemorySegment seg;
 
-        public PairIt(ValueWidth offWidth, ValueWidth idWidth, MemorySegment seg,
-                      long address, long end) {
-            this.offWidth = offWidth;
-            this.idWidth = idWidth;
-            this.seg = seg;
+        public PairIt(long address, long end) {
             this.address = address;
             this.end = end;
         }
 
-        public long remaining() { return offWidth.addr2idx(end-address); }
+        public long remaining() { return (end-address)>>(valShift+1); }
 
         /**
          * Moves this iterator to the next pair, changing {@link #subKeyId} and {@link #valueId}.
@@ -195,16 +160,9 @@ public class Triples implements AutoCloseable {
         public boolean advance() {
             long address = this.address;
             if (address == end) return false;
-            if (idWidth == LE4B) {
-                long l = LE8B.read(seg, address);
-                subKeyId = (int)l;
-                valueId = (int)(l>>>32);
-                this.address += 8;
-            } else {
-                subKeyId = idWidth.read(seg, address);
-                valueId  = idWidth.readNext(seg, address);
-                this.address += 16;
-            }
+            subKeyId = readValue(address);
+            valueId = readValue(address+valWidth);
+            this.address += (long) valWidth <<1;
             return true;
         }
     }
@@ -219,22 +177,22 @@ public class Triples implements AutoCloseable {
      */
     public ValueIt values(long keyId, long subKeyId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= nKeys) return noValueIt;
-        long bottom = offWidth.readIdx(seg, OFFS_OFF, keyId);
-        long top    = offWidth.readIdx(seg, OFFS_OFF, keyId+1);
-        long lo = 0, hi = idWidth.addr2idx(top-1-bottom)>>1;
+        if (keyId < 0 || keyId >= offsCount-1) return noValueIt;
+        int pairShift = valShift + 1;
+        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long lo = 0, hi = (top-1-bottom)>>pairShift;
         while (lo <= hi) {
             long mid = (lo+hi)>>>1;
-            long midAddr = bottom + idWidth.idx2addr(mid<<1);
-            long diff = subKeyId - idWidth.read(seg, midAddr);
+            long midAddr = bottom + (mid<<pairShift);
+            long diff = subKeyId - readValue(midAddr);
             if      (diff < 0) hi = mid-1;
             else if (diff > 0) lo = mid+1;
-            else               return new ValueIt(idWidth, seg, bottom, top, midAddr, subKeyId);
+            else               return new ValueIt(bottom, top, midAddr, subKeyId);
         }
         return noValueIt;
     }
 
-    public static final class ValueIt {
+    public final class ValueIt {
         private long address;
         private final long midAddress, bottom, top;
         /** The {@code subKeyId} given to {@link #values(long, long)}. */
@@ -242,13 +200,9 @@ public class Triples implements AutoCloseable {
         /** The current value id of the queried {@code keyId} and {@code subKeyId} after
          *  a {@code true} {@link #advance()}. */
         public long valueId;
-        private final ValueWidth idWidth;
-        private final MemorySegment seg;
 
-        private ValueIt(ValueWidth idWidth, MemorySegment seg, long bottom, long top,
+        private ValueIt(long bottom, long top,
                         long midAddress, long subKeyId) {
-            this.idWidth = idWidth;
-            this.seg = seg;
             this.bottom = bottom;
             this.top    = top;
             this.midAddress = midAddress;
@@ -276,18 +230,18 @@ public class Triples implements AutoCloseable {
             long address = this.address;
             if (address == 0)
                 return false;
-            int pairWidth = idWidth.bytes()<<1;
+            int pairWidth = valWidth<<1;
             if (address >= midAddress) {
-                if (address < top && idWidth.read(seg, address) == subKeyId) {
-                    valueId = idWidth.readNext(seg, address);
+                if (address < top && readValue(address) == subKeyId) {
+                    valueId = readValue(address+valWidth);
                     this.address += pairWidth;
                     return true;
                 }
                 this.address = address = midAddress-pairWidth;
             }
             // address < midAddress
-            if (address >= bottom && idWidth.read(seg, address) == subKeyId) {
-                valueId = idWidth.readNext(seg, address);
+            if (address >= bottom && readValue(address) == subKeyId) {
+                valueId = readValue(address+valWidth);
                 this.address -= pairWidth;
                 return true;
             }
@@ -306,25 +260,19 @@ public class Triples implements AutoCloseable {
      */
     public SubKeyIt subKeys(long keyId, long valueId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId > nKeys) return noSubKeyIt;
-        long begin = offWidth.readIdx(seg, OFFS_OFF, keyId);
-        long end   = offWidth.readIdx(seg, OFFS_OFF, keyId+1);
-        return idWidth == LE4B ? new SubKeyIt4(idWidth, seg, begin, end, valueId)
-                               : new SubKeyIt (idWidth, seg, begin, end, valueId);
+        if (keyId < 0 || keyId >= offsCount-1) return noSubKeyIt;
+        long begin = readOff(keyId), end = readOff(keyId+1);
+        return valShift == 2 ? new SubKeyIt4(begin, end, valueId)
+                             : new SubKeyIt (begin, end, valueId);
     }
 
-    public static sealed class SubKeyIt {
+    public sealed class SubKeyIt {
         protected long address;
         protected final long valueId, end;
         /** The sub-key id fetched by the last {@code true} {@link #advance()} call. */
         public long subKeyId;
-        protected final ValueWidth idWidth;
-        protected final MemorySegment seg;
 
-        private SubKeyIt(ValueWidth idWidth, MemorySegment seg,
-                         long address, long end, long valueId) {
-            this.idWidth = idWidth;
-            this.seg = seg;
+        private SubKeyIt(long address, long end, long valueId) {
             this.address = address;
             this.end = end;
             this.valueId = valueId;
@@ -349,29 +297,31 @@ public class Triples implements AutoCloseable {
         public boolean advance() {
             if (address == end)
                 return false;
-            int pairWidth = idWidth.bytes() << 1;
-            while (address < end && idWidth.readNext(seg, address) != valueId)
+            int pairWidth = valWidth<<1;
+            while (address < end && readValue(address+valWidth) != valueId)
                 address += pairWidth;
             if (address == end)
                 return false;
-            subKeyId = idWidth.read(seg, address);
+            subKeyId = readValue(address);
             return true;
         }
     }
 
-    public static final class SubKeyIt4 extends SubKeyIt {
-        private SubKeyIt4(ValueWidth idWidth, MemorySegment seg,
-                          long address, long end, long valueId) {
-            super(idWidth, seg, address, end, valueId);
+    public final class SubKeyIt4 extends SubKeyIt {
+        private SubKeyIt4(long address, long end, long valueId) {
+            super(address, end, valueId);
         }
 
-        private static final long ODD = 0xaaaaaaaaaaaaaaaaL;
+        private static final boolean[] ODD = {
+                false, true, false, true, false, true, false, true,
+                false, true, false, true, false, true, false, true,
+                false, true, false, true, false, true, false, true};
         @Override public boolean advance() {
             if (address == end)
                 return false;
             long i = address, ve = i;
             if (end-i >= I_LEN) {
-                var expected = zero(I_SP).blend(valueId, VectorMask.fromLong(I_SP, ODD));
+                var expected = zero(I_SP).blend(valueId, VectorMask.fromArray(I_SP, ODD, 0));
                 for (ve = i+(I_SP.loopBound((end-i)>>2)<<2); i < ve ; i += (long)I_LEN <<2) {
                     var eq = fromMemorySegment(I_SP, seg, i, LITTLE_ENDIAN).eq(expected);
                     int lane = eq.firstTrue();
@@ -382,14 +332,14 @@ public class Triples implements AutoCloseable {
                 }
             }
             if (i == ve) { // not vectorized
-                while (i < end && idWidth.readNext(seg, i) != valueId)
+                while (i < end && readValue(i+valWidth) != valueId)
                     i += 8;
                 if (i >= end) {
                     address = i;
                     return false;
                 }
             }
-            subKeyId = idWidth.read(seg, i);
+            subKeyId = readValue(i);
             address = i+8;
             return true;
         }
