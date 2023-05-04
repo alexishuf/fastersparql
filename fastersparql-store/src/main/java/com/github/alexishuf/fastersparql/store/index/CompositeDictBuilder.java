@@ -43,7 +43,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         Path sharedPath = destDir.resolve("shared");
         sharedSorter.writeDict(sharedPath);
         sharedSorter.close();
-        return new SecondPass(new Dict(sharedPath));
+        return secondPass = new SecondPass(new Dict(sharedPath));
     }
 
     public class SecondPass implements AutoCloseable, NTVisitor {
