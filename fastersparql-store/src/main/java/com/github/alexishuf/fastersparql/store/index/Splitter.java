@@ -30,7 +30,6 @@ public class Splitter {
             char2value[BITS_2_BASE64[value]] = (byte) value;
         BASE64_2_BITS = char2value;
     }
-    public static final int MIN_SHARED_LEN = 6;
     public static final int MAX_SHARED_ID = 0x00ffffff;
 
     public SharedSide sharedSide = SharedSide.NONE;
@@ -154,7 +153,7 @@ public class Splitter {
         return sharedSide = switch (len == 0 ? 0 : str.get(0)) {
             case '"' -> {
                 int i = str.skipUntilLast(0, len, '"');
-                if (len-i < MIN_SHARED_LEN)
+                if (i >= len-1)
                     yield SharedSide.NONE;
                 suffixBegin = i;
                 yield SharedSide.SUFFIX;

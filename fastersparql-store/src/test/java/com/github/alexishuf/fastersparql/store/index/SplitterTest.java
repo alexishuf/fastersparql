@@ -46,7 +46,7 @@ class SplitterTest {
                 arguments(defSplit, "_:anon", "", "_:anon", NONE),
                 arguments(defSplit, "_:anon123456", "", "_:anon123456", NONE),
                 arguments(defSplit, "\"Bob\"", "", "\"Bob\"", NONE),
-                arguments(defSplit, "\"Alice\"@en", "", "\"Alice\"@en", NONE),
+                arguments(defSplit, "\"Alice\"@en", "\"@en", "\"Alice", SUFFIX),
                 arguments(defSplit, "\"Alice\"@en-US", "\"@en-US", "\"Alice", SUFFIX),
                 arguments(defSplit, "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"^^<http://www.w3.org/2001/XMLSchema#integer>", "\"23", SUFFIX),
                 arguments(defSplit, "<http://example.org/Alice>", "<http://example.org/", "Alice>", PREFIX),
