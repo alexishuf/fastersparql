@@ -68,8 +68,7 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
         } else if (shared == null) {
             throw new IllegalArgumentException("Dict at "+file+" requires a shared Dict");
         } else {
-            TwoSegmentRope r = shared.get(MIN_ID);
-            if (r == null || r.len != 0)
+            if (shared.emptyId == NOT_FOUND)
                 throw new IllegalArgumentException("Shared dict does not contain the empty string");
             this.shared = shared;
             this.sharedOverflow = (stringsAndFlags & SHARED_OVF_MASK) != 0;
@@ -110,9 +109,10 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
             prev.wrapSegment(seg, begin, (int) (end-begin));
         }
         if (shared != null) {
-            TwoSegmentRope t = new TwoSegmentRope();
+            Lookup lookup = lookup();
             for (long id = 1; id <= nStrings; id++) {
-                if (!get(id, t))
+                PlainRope t = lookup.get(id);
+                if (t == null)
                     throw new IOException("Malformed "+this+": could not get id "+id);
                 switch (t.len == 0 ? 0 : t.get(0)) {
                     case 0 -> {
@@ -142,11 +142,12 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
 
     public String dump() {
         var sb = new StringBuilder();
-        var tmp = new TwoSegmentRope();
+        Lookup lookup = lookup();
         for (long i = MIN_ID; i <= nStrings; i++) {
-            if (!get(i, tmp))
+            PlainRope r = lookup.get(i);
+            if (r == null)
                 throw new RuntimeException("Valid string not found");
-            sb.append(tmp).append('\n');
+            sb.append(r).append('\n');
         }
         sb.setLength(Math.max(0, sb.length()-1));
         return sb.toString();
@@ -160,67 +161,108 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
         return nStrings;
     }
 
-    /**
-     * Find an id such that {@code rope.equals(get(id))}.
-     *
-     * @param rope A rope to be searched in this dictionary
-     * @param split (optional). During search, if this {@link Dict} relies on a
-     *              separate dictionary for shared substrings, {@code split} will be
-     *              used to split {@code rope} into a shared and a local segment.
-     *              {@code split} will also be used to wrap memory segments of this
-     *              {@link Dict} to implement zero-copy string comparisong within the
-     *              binary search. If split is null, this method will create a new
-     *              short-lived instance for each invocation.
-     * @return If the string was found, an {@code id} such that {@link #get(long)} returns a
-     *         rope equals to {@code rope}. Else return {@link #NOT_FOUND}.
-     */
-    public long find(PlainRope rope, @Nullable Splitter split) {
-        if (rope.len == 0)
-            return emptyId;
-        if (shared != null) {
-            if (split == null)
-                split = new Splitter();
-            var b64 = split.b64(switch (split.split(rope)) {
-                case NONE -> MIN_ID;
-                case PREFIX,SUFFIX -> shared.find(split.shared(), split);
-            });
-            PlainRope local = split.local();
-            SegmentRope tmp = split.stealHandle(local);
-            long id = find(b64, split.local(), tmp);
-            if (id == NOT_FOUND && sharedOverflow)
-                id = find(split.b64(EMPTY_ID), rope, tmp);
-            return id;
-        } else {
-            SegmentRope tmp = split == null ? new SegmentRope() : split.stealHandle(rope);
+    public Lookup lookup() { return new Lookup(); }
+
+    public final class Lookup {
+        private final Lookup shared = Dict.this.shared == null ? null : Dict.this.shared.lookup();
+        private final SegmentRope tmp = new SegmentRope();
+        private final SegmentRope    out1 = shared == null ? tmp : new SegmentRope();
+        private final TwoSegmentRope out2 = new TwoSegmentRope();
+        private final Splitter split = new Splitter();
+
+        public Dict dict() { return Dict.this; }
+
+        /**
+         * Find an id such that {@code rope.equals(get(id))}.
+         *
+         * @param rope A rope to be searched in this dictionary
+         * @return If the string was found, an {@code id} such that {@link #get(long)} returns a
+         *         rope equals to {@code rope}. Else return {@link #NOT_FOUND}.
+         */
+        public long find(PlainRope rope) {
+            if (rope.len == 0)
+                return emptyId;
+            if (shared != null) {
+                var b64 = split.b64(switch (split.split(rope)) {
+                    case NONE -> MIN_ID;
+                    case PREFIX,SUFFIX -> shared.find(split.shared());
+                });
+                long id = find(b64, split.local());
+                if (id == NOT_FOUND && sharedOverflow)
+                    id = find(split.b64(EMPTY_ID), rope);
+                return id;
+            } else {
+                long lo = 0, hi = nStrings-1;
+                while (lo <= hi) {
+                    long mid = ((lo + hi) >>> 1);
+                    long off = readOff(mid);
+                    tmp.wrapSegment(seg, off, (int) (readOff(mid+1) - off));
+                    int diff = rope.compareTo(tmp);
+                    if      (diff < 0) hi   = mid - 1;
+                    else if (diff > 0) lo   = mid + 1;
+                    else               return mid + Dict.MIN_ID;
+                }
+                return NOT_FOUND;
+            }
+        }
+
+        private long find(SegmentRope b64, PlainRope local) {
             long lo = 0, hi = nStrings-1;
             while (lo <= hi) {
                 long mid = ((lo + hi) >>> 1);
                 long off = readOff(mid);
-                tmp.wrapSegment(seg, off, (int) (readOff(mid+1) - off));
-                int diff = rope.compareTo(tmp);
+                int len = (int) (readOff(mid+1) - off);
+                tmp.wrapSegment(seg, off, len);
+                int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
+                if (diff == 0)
+                    diff = local.compareTo(tmp, b64.len, len);
                 if      (diff < 0) hi   = mid - 1;
                 else if (diff > 0) lo   = mid + 1;
                 else               return mid + Dict.MIN_ID;
             }
             return NOT_FOUND;
         }
-    }
 
-    private long find(SegmentRope b64, PlainRope local, SegmentRope tmp) {
-        long lo = 0, hi = nStrings-1;
-        while (lo <= hi) {
-            long mid = ((lo + hi) >>> 1);
-            long off = readOff(mid);
-            int len = (int) (readOff(mid+1) - off);
-            tmp.wrapSegment(seg, off, len);
-            int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
-            if (diff == 0)
-                diff = local.compareTo(tmp, b64.len, len);
-            if      (diff < 0) hi   = mid - 1;
-            else if (diff > 0) lo   = mid + 1;
-            else               return mid + Dict.MIN_ID;
-        }
-        return NOT_FOUND;
+        /**
+         * Get the string corresponding to the given id in this dictionary. Valid ids are in the
+         * [{@link #MIN_ID}, {@link #MIN_ID}{@code +}{@link #strings()}) range.
+         *
+         * <p><strong>WARNING:</strong>. To provide zero-copy and zero-alloc guarantees, this
+         * method returns a reference to a {@link PlainRope} held by the {@link Lookup} instance.
+         * Such instance will be mutated by subsequent invocations of this method. If it is
+         * wrapped by another {@link SegmentRope} or {@link TwoSegmentRope}, then that wrapper
+         * will not observe changes from a new call to this method, since it will be pointing to
+         * read-only mapped memory.</p>
+         *
+         * <p>If {@link #shared()} is {@code null}, a non-null returns of this method will
+         * always be a {@link SegmentRope}. Else a non-null return will always be a instance
+         * of {@link TwoSegmentRope}.</p>
+         *
+         * @param id  id of the string to load.
+         * @return  {@code null} if {@code id < }{@link #MIN_ID} or
+         *          {@code id >= }{@link #MIN_ID}+{@link #nStrings}. Else get a {@link PlainRope}
+         *          containing the string. <strong>WARNING: </strong> contents of the returned
+         *          {@link PlainRope} may change on subsequent invocations of this method.
+         */
+       public PlainRope get(long id)  {
+           if (id < MIN_ID || id > nStrings) return null;
+           long off = readOff(id - 1);
+           int len = (int)(readOff(id) - off);
+           if (shared == null) {
+               out1.wrapSegment(seg, off, len);
+               return out1;
+           } else {
+               long sId = Splitter.decode(seg, off);
+               SegmentRope sharedRope = (SegmentRope) this.shared.get(sId);
+               if (sharedRope == null)
+                   throw new BadSharedId(id, Dict.this, off, len);
+               out2.wrapFirst(sharedRope);
+               out2.wrapSecond(seg, off+5, len-5);
+               if (SharedSide.fromConcatChar(seg.get(JAVA_BYTE, off+4)) == SUFFIX)
+                   out2.flipSegments();
+               return out2;
+           }
+       }
     }
 
     public static final class BadSharedId extends IllegalStateException {
@@ -230,61 +272,4 @@ public class Dict extends OffsetMappedLEValues implements AutoCloseable {
         }
     }
 
-    /**
-     * Get the string corresponding to the given id in this dictionary. Valid ids are in the
-     * [{@link #MIN_ID}, {@link #MIN_ID}{@code +}{@link #strings()}) range.
-     *
-     * @param id   id of the string to load.
-     * @param dest A {@link SegmentRope} that will be mutated to reflect the contends of the
-     *             string identified by {@code id} in this {@link Dict}
-     * @return {@code true} iff the id was in the allowed range. If the return is false,
-     * {@code dest} will not be modified.
-     */
-    public boolean get(long id, TwoSegmentRope dest) {
-        if (id < MIN_ID || id > nStrings) return false;
-        long off = readOff(id - 1);
-        int len = (int)(readOff(id) - off);
-        if (shared == null) {
-            dest.wrapFirst(seg, off, len);
-            dest.wrapSecond(seg, off, 0);
-        } else {
-            long sId = Splitter.decode(seg, off);
-            if (!shared.get(sId, dest))
-                throw new BadSharedId(id, this, off, len);
-            dest.wrapSecond(seg, off+5, len-5);
-            if (SharedSide.fromConcatChar(seg.get(JAVA_BYTE, off+4)) == SUFFIX)
-                dest.flipSegments();
-        }
-        return true;
-    }
-
-    /**
-     * Equivalent to {@link #get(long, TwoSegmentRope)} for {@link Dict}s that do not
-     * use a shared strings {@link Dict} and thus can wrap strings in a {@link SegmentRope}.
-     *
-     * @param id the string id to be loaded
-     * @param dest {@link SegmentRope} that will point to the shared memory region holding
-     *                                the string.
-     * @return {@code true} iff the id is in range (and therefore {@code dest} was mutated).
-     * @throws IllegalArgumentException if this Dict relies on a shared dictionary.
-     */
-    public boolean get(long id, SegmentRope dest) {
-        if (shared != null)
-            throw new IllegalArgumentException("SegmentRope cannot be used with shared strings");
-        if (id < MIN_ID || id > nStrings) return false;
-        long off = readOff(id-1);
-        dest.wrapSegment(seg, off, (int) (readOff(id) - off));
-        return true;
-    }
-
-    /**
-     * Equivalent to {@link #get(long, TwoSegmentRope)} but creates a new {@link TwoSegmentRope} or
-     * returns {@code null} if the id is not valid.
-     */
-    public @Nullable TwoSegmentRope get(long id) {
-        if (id < MIN_ID || id > nStrings) return null;
-        var dest = new TwoSegmentRope();
-        get(id, dest);
-        return dest;
-    }
 }

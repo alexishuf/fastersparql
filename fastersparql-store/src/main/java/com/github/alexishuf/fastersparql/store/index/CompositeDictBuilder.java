@@ -48,16 +48,17 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
 
     public class SecondPass implements AutoCloseable, NTVisitor {
         private final DictSorter sorter;
-        private final Dict shared;
+        private final Dict sharedDict;
+        private final Dict.Lookup shared;
         private boolean sharedOverflow;
 
         public SecondPass(Dict shared) {
             this.sorter = new DictSorter(tempDir);
-            this.shared = shared;
+            this.shared = (this.sharedDict = shared).lookup();
         }
 
         @Override public void close() {
-            shared.close();
+            sharedDict.close();
             sorter.close();
             secondPass = null;
         }
@@ -74,7 +75,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
 
         @Override public void visit(SegmentRope string) {
             split.split(string);
-            long shId = shared.find(split.shared(), split); // will not call split.split()
+            long shId = shared.find(split.shared()); // will not call split.split()
             if (shId == Dict.NOT_FOUND)
                 throw new IllegalStateException("shared string not found");
             else if (shId > Splitter.MAX_SHARED_ID)

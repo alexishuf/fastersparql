@@ -2,8 +2,7 @@ package com.github.alexishuf.fastersparql.store.index;
 
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.hdt.HDT;
 import org.rdfhdt.hdt.hdt.HDTManager;
@@ -112,8 +111,8 @@ public class IterationTester implements AutoCloseable {
         try (Dict shared = new Dict(dir.resolve("shared"));
              Dict strings = new Dict(dir.resolve("strings"), shared);
              HDT hdt = HDTManager.mapHDT(dir.resolve("origin.hdt").toString())) {
+            Dict.Lookup lookup = strings.lookup();
             dictId = IdAccess.register(hdt.getDictionary());
-            var split = new Splitter();
             for (var it = hdt.getTriples().searchAll(); it.hasNext(); ) {
                 TripleID triple = it.next();
                 var sNT = IdAccess.toNT(IdAccess.encode(triple.getSubject(),   dictId, SUBJECT));
@@ -121,9 +120,9 @@ public class IterationTester implements AutoCloseable {
                 var oNT = IdAccess.toNT(IdAccess.encode(triple.getObject(),    dictId, OBJECT));
                 if (sNT == null || pNT == null || oNT == null)
                     fail("Buggy IdAccess");
-                long s = strings.find(sNT, split);
-                long p = strings.find(pNT, split);
-                long o = strings.find(oNT, split);
+                long s = lookup.find(sNT);
+                long p = lookup.find(pNT);
+                long o = lookup.find(oNT);
                 if (s == NOT_FOUND || p == NOT_FOUND || o == NOT_FOUND)
                     fail("Terms missing from Dict");
                 triples.add(new TestTriple(s, p, o));
@@ -198,18 +197,11 @@ public class IterationTester implements AutoCloseable {
 
     public void testLoadAndLookupStrings() {
         assertNotNull(strings);
-        var split = new Splitter();
-        if (strings.shared() == null) {
-            SegmentRope nt = new SegmentRope();
-            for (int id : terms) {
-                assertTrue(strings.get(id, nt));
-                assertEquals(id, strings.find(nt, split));
-            }
-        }
-        TwoSegmentRope nt = new TwoSegmentRope();
+        Dict.Lookup lookup = strings.lookup();
         for (int id : terms) {
-            assertTrue(strings.get(id, nt));
-            assertEquals(id, strings.find(nt, split));
+            PlainRope string = lookup.get(id);
+            assertNotNull(string);
+            assertEquals(id, lookup.find(string));
         }
     }
 

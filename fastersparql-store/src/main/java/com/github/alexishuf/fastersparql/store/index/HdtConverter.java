@@ -167,7 +167,7 @@ public class HdtConverter {
         }
 
         private final class Translator extends RecursiveAction {
-            private final Splitter split = new Splitter();
+            private final Dict.Lookup lookup = strings.lookup();
 
             private long translate(long hdtId, TripleComponentRole role) {
                 long storeId = idCache.get(hdtId, role);
@@ -175,7 +175,7 @@ public class HdtConverter {
                     SegmentRope nt = toNT(encode(hdtId, dictId, role));
                     if (nt == null)
                         throw new RuntimeException("string for " + hdtId + " not found in HDT dict");
-                    storeId = strings.find(nt, split);
+                    storeId = lookup.find(nt);
                     if (storeId == Dict.NOT_FOUND)
                         throw new RuntimeException("String not found in strings dict: "+nt);
                     idCache.set(hdtId, role, storeId);

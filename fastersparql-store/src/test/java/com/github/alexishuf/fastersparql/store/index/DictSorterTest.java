@@ -51,21 +51,19 @@ class DictSorterTest {
         }
 
         try (var dict = new Dict(tempDir.resolve("merged"))) {
-            var split = new Splitter();
+            Dict.Lookup lookup = dict.lookup();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {
-                long id = dict.find(s, split);
+                long id = lookup.find(s);
                 assertTrue(id >= Dict.MIN_ID, "id="+id+", s="+s);
-                //noinspection AssertBetweenInconvertibleTypes
-                assertEquals(s, dict.get(id), "id=" + id + ", s=" + s);
+                assertEquals(s, lookup.get(id), "id=" + id + ", s=" + s);
             }
             // find strings in reverse direction without giving a tmp
             for (int i = strings.size()-1; i >= 0; i--) {
                 SegmentRope s = strings.get(i);
-                long id = dict.find(s, null);
-                //noinspection AssertBetweenInconvertibleTypes
-                assertEquals(s, dict.get(id), "id=" + id + ", s=" + s);
+                long id = lookup.find(s);
+                assertEquals(s, lookup.get(id), "id=" + id + ", s=" + s);
             }
 
             //test dump()

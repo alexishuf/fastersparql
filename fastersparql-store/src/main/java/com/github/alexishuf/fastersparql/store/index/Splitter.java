@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
@@ -95,15 +94,6 @@ public class Splitter {
             case PREFIX -> wrap(localView, str, suffixBegin, str.len-suffixBegin);
             case SUFFIX -> wrap(localView, str, 0, suffixBegin);
         };
-    }
-
-    public SegmentRope stealHandle(@Nullable PlainRope except) {
-        if (except == localView) {
-            if (except == sharedView)
-                return new SegmentRope();
-            return sharedView;
-        }
-        return localView;
     }
 
     @Override public String toString() {

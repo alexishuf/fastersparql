@@ -22,7 +22,6 @@ import java.util.Objects;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
-import static java.lang.System.arraycopy;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
@@ -180,27 +179,28 @@ public class DictSorter extends Sorter<Path> {
     /* --- --- --- internals --- --- --- */
 
     private static final class Merger implements AutoCloseable {
-        private final Dict[] blocks;
-        private final long[] currentStringIds;
-        private final SegmentRope[] currentStrings;
+        private final Dict.Lookup[] blocks;
+        private final SegmentRope[] currStrings;
+        private final long[] currIds;
         private final FileChannel destChannel;
         private final boolean usesShared, sharedOverflow;
+        private int currBlock;
 
         public Merger(List<Path> blockFiles, Path dest,
                       boolean usesShared, boolean sharedOverflow) throws IOException {
             this.usesShared = usesShared;
             this.sharedOverflow = sharedOverflow;
             int n = blockFiles.size();
-            blocks = new Dict[n];
+            blocks = new Dict.Lookup[n];
             FileChannel destChannel = null;
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
                 for (int i = 0; i < n; i++) //noinspection resource
-                    blocks[i] = new Dict(blockFiles.get(i));
+                    blocks[i] = new Dict(blockFiles.get(i)).lookup();
                 log.info("Validating block files: {}", blockFiles);
                 IntStream.range(0, n).mapToObj(i -> {
                     try {
-                        blocks[i].validate();
+                        blocks[i].dict().validate();
                         return null;
                     } catch (IOException e) {
                         log.error("{} is not valid: {}", blockFiles.get(i), e.getMessage());
@@ -210,7 +210,7 @@ public class DictSorter extends Sorter<Path> {
                 destChannel = FileChannel.open(dest, TRUNCATE_EXISTING,CREATE,WRITE);
             } catch (Throwable t) {
                 condenser.condense(t);
-                ExceptionCondenser.closeAll(Arrays.stream(blocks).iterator());
+                ExceptionCondenser.closeAll(Arrays.stream(blocks).map(Dict.Lookup::dict).iterator());
             }
             try {
                 condenser.throwIf();
@@ -220,34 +220,25 @@ public class DictSorter extends Sorter<Path> {
             }
             this.destChannel = destChannel;
             // init string pointers pointing to "before first"
-            currentStringIds = new long[n];
-            currentStrings   = new SegmentRope[n<<1];
-            fill(currentStringIds, MIN_ID-1);
-            for (int i = 0; i < blocks.length; i++)
-                currentStrings[blocks.length+i] = RopeHandlePool.segmentRope();
+            currIds = new long[n];
+            currStrings = new SegmentRope[n];
+            fill(currIds, MIN_ID-1);
         }
 
         @Override public void close() {
-            ExceptionCondenser.closeAll(Arrays.stream(blocks).iterator());
-            for (int i = 0; i < currentStrings.length; i++) {
-                SegmentRope r = currentStrings[i];
-                if (r == null) continue;
-                if (RopeHandlePool.offer(r) != null) break;
-                currentStrings[i] = null;
-            }
+            ExceptionCondenser.closeAll(Arrays.stream(blocks).map(Dict.Lookup::dict).iterator());
         }
 
         /** Merges the content of all sorted blocks writing then to the destination dict file. */
         public void write() throws IOException {
             resetIteration();
             long strings = 0, bytes = 0, visited = 0, last = Timestamp.nanoTime();
-            for (int i = 0; (i = nextBlock(i)) >= 0; ++strings)
-                bytes += currentStrings[i].len;
+            for (SegmentRope s; (s = nextString()) != null; ++strings) bytes += s.len;
 
             resetIteration();
             try (var w = new DictWriter(destChannel, strings, bytes, usesShared, sharedOverflow)) {
-                for (int i = 0; (i = nextBlock(i)) >= 0; ) {
-                    w.writeSorted(currentStrings[i]);
+                for (SegmentRope s; (s = nextString()) != null; ) {
+                    w.writeSorted(s);
                     ++visited;
                     if (Timestamp.nanoTime()-last > 10_000_000_000L) {
                         log.info("Wrote {}/{} strings ({}%)", visited, strings,
@@ -260,24 +251,21 @@ public class DictSorter extends Sorter<Path> {
 
         /** Move block 0 to "before first" and all others to "first" */
         private void resetIteration() {
-            fill(currentStringIds, Dict.MIN_ID-1);
-            arraycopy(currentStrings, blocks.length, currentStrings, 0, blocks.length);
+            currBlock = 0;
+            fill(currIds, Dict.MIN_ID-1);
             for (int i = 1; i < blocks.length; i++)
                 advance(i); // advance from "before first" to "first"
         }
 
         /** Advance to next id for the {@code block}-th block. Will return null if reached end. */
         private @Nullable SegmentRope advance(int block) {
-            SegmentRope s = currentStrings[block];
-            if (!blocks[block].get(++currentStringIds[block], s)) {
-                currentStrings[blocks.length+block] = currentStrings[block];
-                currentStrings[block] = s = null;
-            }
+            SegmentRope s = (SegmentRope) blocks[block].get(++currIds[block]);
+            currStrings[block] = s;
             return s;
         }
 
-        /** Advances the id of the current block and finds the block with lowest, novel string */
-        private int nextBlock(int currBlock) {
+        /** Advances the id of the current block and get the next lowest non-duplicate string  */
+        private SegmentRope nextString() {
             // advance position on currBlock, we may exhaust it with this
             advance(currBlock);
 
@@ -286,7 +274,7 @@ public class DictSorter extends Sorter<Path> {
             currBlock = -1;
             blocks:
             for (int i = 0; i < blocks.length; i++) {
-                SegmentRope candidate = currentStrings[i];
+                SegmentRope candidate = currStrings[i];
                 while (true) {
                     if (candidate == null) continue blocks; // block ended
                     if (min == null) break;                 // no min, make candidate the min
@@ -298,7 +286,7 @@ public class DictSorter extends Sorter<Path> {
                 min = candidate;
                 currBlock = i;
             }
-            return currBlock;
+            return min;
         }
     }
 
