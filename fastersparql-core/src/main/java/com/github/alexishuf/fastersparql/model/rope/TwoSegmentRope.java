@@ -37,6 +37,16 @@ public class TwoSegmentRope extends PlainRope {
         this.sndLen = sndLen;
     }
 
+    public void shallowCopy(TwoSegmentRope other) {
+        fst    = other.fst;
+        fstOff = other.fstOff;
+        fstLen = other.fstLen;
+        snd    = other.snd;
+        sndOff = other.sndOff;
+        sndLen = other.sndLen;
+        len    = other.len;
+    }
+
     public void wrapFirst(MemorySegment segment, long off, int len) {
         fst = segment;
         fstOff = off;
