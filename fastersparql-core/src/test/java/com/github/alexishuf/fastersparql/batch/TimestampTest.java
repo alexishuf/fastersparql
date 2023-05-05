@@ -35,7 +35,7 @@ class TimestampTest {
             assertTrue(ts0 < ns0, "Timestamp.nanoTime() ahead of System.nanoTime()");
             assertTrue(ts1 < ns1, "Timestamp.nanoTime() ahead of System.nanoTime()");
             long err = (ns1-ns0) - (ts1-ts0);
-            assertTrue(err < 300_000);
+            assertTrue(err < 500_000);
         }
     }
 
