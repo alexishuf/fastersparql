@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import jdk.incubator.vector.ByteVector;
-import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -14,7 +13,7 @@ import java.nio.ByteBuffer;
 
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.MemorySegment.mismatch;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.*;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
@@ -377,15 +376,21 @@ public class SegmentRope extends PlainRope {
         return super.toString(begin, end);
     }
 
-    private static final VectorSpecies<Short> S_SP = ShortVector.SPECIES_PREFERRED;
-    private static final int S_LEN = S_SP.length();
     static int compareTo(MemorySegment left, long lOff, int lLen,
                          MemorySegment right, long rOff, int rLen) {
-        //vectorization helps, but is slower than JAVA_LONG_UNALIGNED. Using Vector.lane() is
+        //vectorization helps, but is slower than JAVA_INT_UNALIGNED. Using Vector.lane() is
         // too slow. Best vector implementation consisted of left.compare(NE, right).firstTrue()
         // followed by JAVA_BYTE scalar accesses. ByteVector.sub() cannot be used as byte overflows
         // render the comparison invalid.
+
+        // On DictFindBench, reading ints is faster than reading longs. likely because most
+        // calls will mismatch in the first 4 bytes for CompositeDict.
+
         long lEnd = lOff+Math.min(lLen, rLen);
+        for (; lOff + 4 < lEnd; lOff += 4, rOff += 4) {
+            if (left.get(JAVA_INT_UNALIGNED, lOff) != right.get(JAVA_INT_UNALIGNED, rOff)) break;
+        }
+
         for (int diff; lOff < lEnd; lOff++, rOff++) {
             if ((diff = left.get(JAVA_BYTE, lOff) - right.get(JAVA_BYTE, rOff)) != 0) {
                 return diff;
