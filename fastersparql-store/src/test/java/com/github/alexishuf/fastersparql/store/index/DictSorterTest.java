@@ -50,7 +50,7 @@ class DictSorterTest {
             sorter.writeDict(tempDir.resolve("merged"));
         }
 
-        try (var dict = new Dict(tempDir.resolve("merged"))) {
+        try (var dict = new StandaloneDict(tempDir.resolve("merged"))) {
             Dict.Lookup lookup = dict.lookup();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict

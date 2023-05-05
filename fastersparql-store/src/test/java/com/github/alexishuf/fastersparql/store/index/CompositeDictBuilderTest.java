@@ -54,8 +54,8 @@ class CompositeDictBuilderTest {
         assertTrue(Files.isRegularFile(dest.resolve("strings")));
 
         //load dict
-        try (Dict shared = new Dict(dest.resolve("shared"));
-             Dict dict = new Dict(dest.resolve("strings"), shared)) {
+        try (var shared = new StandaloneDict(dest.resolve("shared"));
+             var dict = new CompositeDict(dest.resolve("strings"), shared)) {
             // check if dicts are valid
             shared.validate();
             dict.validate();

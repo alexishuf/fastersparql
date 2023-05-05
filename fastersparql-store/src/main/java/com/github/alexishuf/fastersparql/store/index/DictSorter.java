@@ -203,7 +203,7 @@ public class DictSorter extends Sorter<Path> {
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
                 for (int i = 0; i < n; i++) //noinspection resource
-                    blocks[i] = new Dict(blockFiles.get(i)).lookup();
+                    blocks[i] = new StandaloneDict(blockFiles.get(i)).lookup();
                 log.info("Validating block files: {}", blockFiles);
                 IntStream.range(0, n).mapToObj(i -> {
                     try {

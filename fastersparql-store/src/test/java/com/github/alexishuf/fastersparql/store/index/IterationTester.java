@@ -26,7 +26,7 @@ public class IterationTester implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(IterationTester.class);
     private final Path dir;
     private final Triples spo, pso, ops;
-    private final @Nullable Dict strings;
+    private final @Nullable CompositeDict strings;
     private final List<TestTriple> allTriples;
     private final List<TestTriple> triples;
     private final int[] terms;
@@ -34,7 +34,7 @@ public class IterationTester implements AutoCloseable {
     private static final ThreadLocal<ArrayList<TestTriple>> acTL = ThreadLocal.withInitial(ArrayList::new);
 
     private IterationTester(Path dir, List<TestTriple> allTriples,
-                            @Nullable Dict strings, Triples spo, Triples pso, Triples ops) {
+                            @Nullable CompositeDict strings, Triples spo, Triples pso, Triples ops) {
         this.dir = dir;
         this.strings = strings;
         this.spo = spo;
@@ -108,10 +108,10 @@ public class IterationTester implements AutoCloseable {
     public static List<TestTriple> triplesFromHDT(Path dir) throws IOException {
         List<TestTriple> triples = new ArrayList<>();
         int dictId = 0;
-        try (Dict shared = new Dict(dir.resolve("shared"));
-             Dict strings = new Dict(dir.resolve("strings"), shared);
+        try (var shared = new StandaloneDict(dir.resolve("shared"));
+             var strings = new CompositeDict(dir.resolve("strings"), shared);
              HDT hdt = HDTManager.mapHDT(dir.resolve("origin.hdt").toString())) {
-            Dict.Lookup lookup = strings.lookup();
+            var lookup = strings.lookup();
             dictId = IdAccess.register(hdt.getDictionary());
             for (var it = hdt.getTriples().searchAll(); it.hasNext(); ) {
                 TripleID triple = it.next();
@@ -135,16 +135,16 @@ public class IterationTester implements AutoCloseable {
     }
 
     private static IterationTester load(Path dir, List<TestTriple> triples) throws IOException {
-        Dict strings = null;
+        CompositeDict strings = null;
         Triples spo = null, pso = null, ops = null;
         try {
             Path sharedFile = dir.resolve("shared");
             Path stringsFile = dir.resolve("strings");
             if (Files.exists(stringsFile)) {
-                Dict shared = null;
+                StandaloneDict shared = null;
                 if (Files.exists(sharedFile))
-                    shared = new Dict(sharedFile);
-                strings = new Dict(stringsFile, shared);
+                    shared = new StandaloneDict(sharedFile);
+                strings = new CompositeDict(stringsFile, shared);
             }
             spo = new Triples(dir.resolve("spo"));
             pso = new Triples(dir.resolve("pso"));
@@ -197,7 +197,7 @@ public class IterationTester implements AutoCloseable {
 
     public void testLoadAndLookupStrings() {
         assertNotNull(strings);
-        Dict.Lookup lookup = strings.lookup();
+        var lookup = strings.lookup();
         for (int id : terms) {
             PlainRope string = lookup.get(id);
             assertNotNull(string);

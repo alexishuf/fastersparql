@@ -56,8 +56,8 @@ public class HdtConverter {
             log.info("{}: Second pass on HDT Dictionary...", destDir);
             commonPool().invoke(new VisitStringsAction(sndPass, dictId));
             sndPass.write();
-            try (var shared = new Dict(destDir.resolve("shared"));
-                 var strings = new Dict(destDir.resolve("strings"), shared);
+            try (var shared = new StandaloneDict(destDir.resolve("shared"));
+                 var strings = new CompositeDict(destDir.resolve("strings"), shared);
                  var sorter = new TriplesSorter(tempDir)) {
                 log.info("{}: iterating/sorting triples", destDir);
                 var it = hdt.getTriples().searchAll();
@@ -79,7 +79,7 @@ public class HdtConverter {
         private final IteratorTripleID it;
         private final TriplesSorter sorter;
         private final int dictId;
-        private final Dict strings;
+        private final CompositeDict strings;
         private final int translators = Math.max(1, Runtime.getRuntime().availableProcessors()-2);
         private final AtomicInteger activeTranslators = new AtomicInteger(translators);
         private final ArrayBlockingQueue<T> raw = new ArrayBlockingQueue<>(Q_SIZE);
@@ -88,7 +88,7 @@ public class HdtConverter {
         private final Hdt2StoreIdCache idCache = new Hdt2StoreIdCache();
 
         public TriplesAction(long triples, IteratorTripleID it, TriplesSorter sorter,
-                             int dictId, Dict strings) {
+                             int dictId, CompositeDict strings) {
             this.triples = triples;
             this.it = it;
             this.sorter = sorter;

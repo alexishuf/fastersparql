@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.store.index.Dict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.store.index.CompositeDict;
 import com.github.alexishuf.fastersparql.store.index.HdtConverter;
+import com.github.alexishuf.fastersparql.store.index.StandaloneDict;
 import org.openjdk.jmh.annotations.*;
 
 import java.io.FileOutputStream;
@@ -29,10 +31,10 @@ public class DictFindBench {
 
     private Path full;
     private Path dir;
-    private Dict dict;
-    private Dict.Lookup lookup;
-    private PlainRope[] segmentRopes;
-    private PlainRope[] twoSegmentRopes;
+    private CompositeDict dict;
+    private StandaloneDict.Lookup lookup;
+    private SegmentRope[] segmentRopes;
+    private TwoSegmentRope[] twoSegmentRopes;
     private int nextString = 0;
 
     @Setup(Level.Trial) public void setup() throws IOException {
@@ -45,18 +47,18 @@ public class DictFindBench {
         full = Files.createTempDirectory("fastersparql");
         new HdtConverter().convert(hdtPath, full);
         Random random = new Random(seed);
-        try (Dict shared = new Dict(full.resolve("shared"));
-             Dict d = new Dict(full.resolve("strings"), shared)) {
+        try (var shared = new StandaloneDict(full.resolve("shared"));
+             var d = new CompositeDict(full.resolve("strings"), shared)) {
             var lookup = d.lookup();
             int n = (int) d.strings();
-            segmentRopes = new PlainRope[n];
-            twoSegmentRopes = new PlainRope[n];
+            segmentRopes = new SegmentRope[n];
+            twoSegmentRopes = new TwoSegmentRope[n];
             List<Integer> ids = new ArrayList<>(IntStream.range(1, n + 1).boxed().toList());
             Collections.shuffle(ids, random);
             for (int i = 0; i < n; i++) {
                 var r = lookup.get(ids.get(i).longValue());
                 assert r != null;
-                twoSegmentRopes[i] = r;
+                (twoSegmentRopes[i] = new TwoSegmentRope()).shallowCopy((TwoSegmentRope) r);
                 segmentRopes[i] = new ByteRope(r.len).append(r);
             }
         }
@@ -76,9 +78,10 @@ public class DictFindBench {
         Path sharedCopy = dir.resolve("shared"), stringsCopy = dir.resolve("strings");
         Files.copy(shared, sharedCopy);
         Files.copy(strings, stringsCopy);
-        Dict sharedDict = new Dict(sharedCopy);
-        dict = new Dict(stringsCopy, sharedDict);
+        var sharedDict = new StandaloneDict(sharedCopy);
+        dict = new CompositeDict(stringsCopy, sharedDict);
         lookup = dict.lookup();
+        nextString = 0;
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() throws IOException {
@@ -89,16 +92,23 @@ public class DictFindBench {
         Files.deleteIfExists(dir);
     }
 
-    private long findAll(PlainRope[] strings) {
-        Dict.Lookup lookup = this.lookup;
+    @Benchmark public long find() {
+        var lookup = this.lookup;
         long xor = 0;
-        int i = nextString+10 > strings.length ? 0 : nextString;
+        int i = nextString+10 > segmentRopes.length ? 0 : nextString;
         for (int end = i+10; i < end; ++i)
-            xor ^= lookup.find(strings[i]);
+            xor ^= lookup.find(segmentRopes[i]);
         nextString = i;
         return xor;
     }
 
-    @Benchmark public long           find() { return findAll(segmentRopes); }
-    @Benchmark public long findTwoSegment() { return findAll(twoSegmentRopes); }
+    @Benchmark public long findTwoSegment() {
+        var lookup = this.lookup;
+        long xor = 0;
+        int i = nextString+10 > twoSegmentRopes.length ? 0 : nextString;
+        for (int end = i+10; i < end; ++i)
+            xor ^= lookup.find(twoSegmentRopes[i]);
+        nextString = i;
+        return xor;
+    }
 }

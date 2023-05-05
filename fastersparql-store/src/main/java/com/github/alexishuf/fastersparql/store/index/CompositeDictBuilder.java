@@ -44,16 +44,16 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         Path sharedPath = destDir.resolve("shared");
         sharedSorter.writeDict(sharedPath);
         sharedSorter.close();
-        return secondPass = new SecondPass(new Dict(sharedPath));
+        return secondPass = new SecondPass(new StandaloneDict(sharedPath));
     }
 
     public class SecondPass implements AutoCloseable, NTVisitor {
         private final DictSorter sorter;
-        private final Dict sharedDict;
-        private final Dict.Lookup shared;
+        private final StandaloneDict sharedDict;
+        private final StandaloneDict.Lookup shared;
         private boolean sharedOverflow;
 
-        public SecondPass(Dict shared) {
+        public SecondPass(StandaloneDict shared) {
             this.sorter = new DictSorter(tempDir);
             this.shared = (this.sharedDict = shared).lookup();
         }
@@ -89,8 +89,8 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
             sorter.sharedOverflow = sharedOverflow;
             sorter.split = split.mode();
             sorter.writeDict(destDir.resolve("strings"));
-            try (Dict shared = new Dict(destDir.resolve("shared"));
-                 Dict strings = new Dict(destDir.resolve("strings"), shared)) {
+            try (var shared = new StandaloneDict(destDir.resolve("shared"));
+                 var strings = new CompositeDict(destDir.resolve("strings"), shared)) {
                 shared.validate();
                 strings.validate();
             }
