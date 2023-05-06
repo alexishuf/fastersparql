@@ -100,7 +100,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
     }
 
 
-    public abstract static class Lookup {
+    protected abstract static class AbstractLookup {
 
         public abstract Dict dict();
 
@@ -118,7 +118,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
          * [{@link #MIN_ID}, {@link #MIN_ID}{@code +}{@link #strings()}) range.
          *
          * <p><strong>WARNING:</strong>. To provide zero-copy and zero-alloc guarantees, this
-         * method returns a reference to a {@link PlainRope} held by the {@link Lookup} instance.
+         * method returns a reference to a {@link PlainRope} held by the {@link AbstractLookup} instance.
          * Such instance will be mutated by subsequent invocations of this method. If it is
          * wrapped by another {@link SegmentRope} or {@link TwoSegmentRope}, then that wrapper
          * will not observe changes from a new call to this method, since it will be pointing to

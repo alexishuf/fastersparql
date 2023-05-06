@@ -11,9 +11,9 @@ public final class StandaloneDict extends Dict {
         super(file);
     }
 
-    public Lookup lookup() { return new StandaloneLookup(); }
+    public Lookup lookup() { return new Lookup(); }
 
-    public final class StandaloneLookup extends Lookup {
+    public final class Lookup extends AbstractLookup {
         private final SegmentRope tmp = new SegmentRope(), out = new SegmentRope();
 
         public StandaloneDict dict() { return StandaloneDict.this; }
@@ -34,7 +34,7 @@ public final class StandaloneDict extends Dict {
             return NOT_FOUND;
         }
 
-        public PlainRope get(long id)  {
+        public SegmentRope get(long id)  {
             if (id < MIN_ID || id > nStrings) return null;
             long off = readOff(id - 1);
             out.wrapSegment(seg, off, (int)(readOff(id) - off));

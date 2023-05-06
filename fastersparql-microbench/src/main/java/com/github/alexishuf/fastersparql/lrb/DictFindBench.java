@@ -32,7 +32,7 @@ public class DictFindBench {
     private Path full;
     private Path dir;
     private CompositeDict dict;
-    private StandaloneDict.Lookup lookup;
+    private CompositeDict.Lookup lookup;
     private SegmentRope[] segmentRopes;
     private TwoSegmentRope[] twoSegmentRopes;
     private int nextString = 0;
@@ -58,7 +58,7 @@ public class DictFindBench {
             for (int i = 0; i < n; i++) {
                 var r = lookup.get(ids.get(i).longValue());
                 assert r != null;
-                (twoSegmentRopes[i] = new TwoSegmentRope()).shallowCopy((TwoSegmentRope) r);
+                (twoSegmentRopes[i] = new TwoSegmentRope()).shallowCopy(r);
                 segmentRopes[i] = new ByteRope(r.len).append(r);
             }
         }

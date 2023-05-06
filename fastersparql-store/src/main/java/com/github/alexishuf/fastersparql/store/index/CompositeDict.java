@@ -76,10 +76,10 @@ public final class CompositeDict extends Dict {
     /** Get the shared strings {@link Dict} or {@code null} if this is a standalone dict. */
     public @Nullable Dict shared() { return shared; }
 
-    public Lookup lookup() { return new CompositeLookup(); }
+    public Lookup lookup() { return new Lookup(); }
 
-    public final class CompositeLookup extends Lookup {
-        private final Lookup shared = CompositeDict.this.shared == null
+    public final class Lookup extends AbstractLookup {
+        private final AbstractLookup shared = CompositeDict.this.shared == null
                                     ? null : CompositeDict.this.shared.lookup();
         private final SegmentRope tmp =  new SegmentRope();
         private final TwoSegmentRope out = new TwoSegmentRope();
@@ -87,8 +87,7 @@ public final class CompositeDict extends Dict {
 
         @Override public CompositeDict dict() { return CompositeDict.this; }
 
-
-        public long find(PlainRope rope) {
+        @Override public long find(PlainRope rope) {
             if (rope.len == 0)
                 return emptyId;
             var b64 = split.b64(switch (split.split(rope)) {
@@ -118,7 +117,7 @@ public final class CompositeDict extends Dict {
             return NOT_FOUND;
         }
 
-        public PlainRope get(long id)  {
+        @Override public TwoSegmentRope get(long id)  {
             if (id < MIN_ID || id > nStrings) return null;
             long off = readOff(id - 1);
             int len = (int)(readOff(id) - off);

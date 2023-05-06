@@ -50,7 +50,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
     public class SecondPass implements AutoCloseable, NTVisitor {
         private final DictSorter sorter;
         private final StandaloneDict sharedDict;
-        private final StandaloneDict.Lookup shared;
+        private final Dict.AbstractLookup shared;
         private boolean sharedOverflow;
 
         public SecondPass(StandaloneDict shared) {

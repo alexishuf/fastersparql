@@ -51,7 +51,7 @@ class DictSorterTest {
         }
 
         try (var dict = new StandaloneDict(tempDir.resolve("merged"))) {
-            Dict.Lookup lookup = dict.lookup();
+            Dict.AbstractLookup lookup = dict.lookup();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {

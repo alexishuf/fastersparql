@@ -168,7 +168,7 @@ public class HdtConverter {
         }
 
         private final class Translator extends RecursiveAction {
-            private final Dict.Lookup lookup = strings.lookup();
+            private final Dict.AbstractLookup lookup = strings.lookup();
 
             private long translate(long hdtId, TripleComponentRole role) {
                 long storeId = idCache.get(hdtId, role);

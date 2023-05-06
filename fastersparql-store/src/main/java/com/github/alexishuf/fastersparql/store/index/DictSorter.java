@@ -184,7 +184,7 @@ public class DictSorter extends Sorter<Path> {
     /* --- --- --- internals --- --- --- */
 
     private static final class Merger implements AutoCloseable {
-        private final Dict.Lookup[] blocks;
+        private final AbstractLookup[] blocks;
         private final SegmentRope[] currStrings;
         private final long[] currIds;
         private final FileChannel destChannel;
@@ -198,7 +198,7 @@ public class DictSorter extends Sorter<Path> {
             this.sharedOverflow = sharedOverflow;
             this.split = split;
             int n = blockFiles.size();
-            blocks = new Dict.Lookup[n];
+            blocks = new AbstractLookup[n];
             FileChannel destChannel = null;
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
@@ -207,6 +207,7 @@ public class DictSorter extends Sorter<Path> {
                 log.info("Validating block files: {}", blockFiles);
                 IntStream.range(0, n).mapToObj(i -> {
                     try {
+                        //noinspection resource
                         blocks[i].dict().validate();
                         return null;
                     } catch (IOException e) {
@@ -217,7 +218,7 @@ public class DictSorter extends Sorter<Path> {
                 destChannel = FileChannel.open(dest, TRUNCATE_EXISTING,CREATE,WRITE);
             } catch (Throwable t) {
                 condenser.condense(t);
-                ExceptionCondenser.closeAll(Arrays.stream(blocks).map(Dict.Lookup::dict).iterator());
+                ExceptionCondenser.closeAll(Arrays.stream(blocks).map(AbstractLookup::dict).iterator());
             }
             try {
                 condenser.throwIf();
@@ -233,7 +234,7 @@ public class DictSorter extends Sorter<Path> {
         }
 
         @Override public void close() {
-            ExceptionCondenser.closeAll(Arrays.stream(blocks).map(Dict.Lookup::dict).iterator());
+            ExceptionCondenser.closeAll(Arrays.stream(blocks).map(AbstractLookup::dict).iterator());
         }
 
         /** Merges the content of all sorted blocks writing then to the destination dict file. */
