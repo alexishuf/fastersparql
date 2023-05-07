@@ -58,7 +58,7 @@ public class HdtConverter {
         Path tempDir = this.tempDir == null ? destDir : this.tempDir;
         try {
             if (standaloneDict) {
-                try (DictSorter sorter = new DictSorter(tempDir, optimizeLocality)) {
+                try (DictSorter sorter = new DictSorter(tempDir, false, optimizeLocality)) {
                     log.info("{}: writing standalone dict...", destDir);
                     commonPool().invoke(new VisitStringsAction(sorter, dictId));
                     sorter.writeDict(destDir.resolve("strings"));

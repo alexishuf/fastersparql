@@ -24,7 +24,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         this.destDir = destDir;
         this.split = new Splitter(splitMode);
         this.optimizeLocality = optimizeLocality;
-        this.sharedSorter = new DictSorter(tempDir, optimizeLocality);
+        this.sharedSorter = new DictSorter(tempDir, false, optimizeLocality);
         this.sharedSorter.copy(EMPTY);
     }
 
@@ -57,7 +57,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         private boolean sharedOverflow;
 
         public SecondPass(Dict shared) {
-            this.sorter = new DictSorter(tempDir, optimizeLocality);
+            this.sorter = new DictSorter(tempDir, true, optimizeLocality);
             this.sharedDict = shared;
             if (shared instanceof LocalityStandaloneDict d)
                 this.shared = d.lookup();
@@ -94,7 +94,6 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         }
 
         public void write() throws IOException {
-            sorter.usesShared = true;
             sorter.sharedOverflow = sharedOverflow;
             sorter.split = split.mode();
             sorter.writeDict(destDir.resolve("strings"));

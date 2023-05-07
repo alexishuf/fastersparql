@@ -38,18 +38,20 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
     private final int bytesPerBlock;
 
     private boolean stringsClosed = false;
-    public boolean usesShared, sharedOverflow;
-    public final boolean optimizeLocality;
+    public boolean sharedOverflow;
+    private final boolean usesShared;
+    private final boolean optimizeLocality;
     public Splitter.Mode split = Splitter.Mode.LAST;
 
     private @Nullable DictBlock fillingBlock;
 
-    public DictSorter(Path tempDir, boolean optimizeLocality) {
-        this(tempDir, optimizeLocality, defaultBlockBytes());
+    public DictSorter(Path tempDir, boolean usesShared, boolean optimizeLocality) {
+        this(tempDir, usesShared, optimizeLocality, defaultBlockBytes());
     }
 
-    public DictSorter(Path tempDir, boolean optimizeLocality, int bytesPerBlock) {
+    public DictSorter(Path tempDir, boolean usesShared, boolean optimizeLocality, int bytesPerBlock) {
         super(tempDir, "dict", ".block");
+        this.usesShared = usesShared;
         this.optimizeLocality = optimizeLocality;
         this.bytesPerBlock = bytesPerBlock;
         this.fillingBlock = new DictBlock(bytesPerBlock);
@@ -90,7 +92,11 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
                     SmallBBPool.releaseSmallDirectBB(bb);
                 }
             } else {
-                try (Merger m = new Merger(sorted, dest, usesShared, sharedOverflow, split)) {
+                Comparator<SegmentRope> comparator = optimizeLocality && usesShared
+                        ? LocalityRopeComparator.INSTANCE
+                        : Comparator.naturalOrder();
+                try (Merger m = new Merger(sorted, dest, usesShared, sharedOverflow,
+                                           split, comparator)) {
                     m.write();
                 }
             }
@@ -191,37 +197,35 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
     /* --- --- --- internals --- --- --- */
 
     private static final class Merger implements AutoCloseable {
-        private final AbstractLookup[] blocks;
+        private final SortedStandaloneDict.Lookup[] blocks;
         private final SegmentRope[] currStrings;
         private final long[] currIds;
         private final FileChannel destChannel;
         private final boolean usesShared, sharedOverflow;
         private final Splitter.Mode split;
+        private final Comparator<SegmentRope> comparator;
         private int currBlock;
 
         public Merger(List<Path> blockFiles, Path dest, boolean usesShared,
-                      boolean sharedOverflow, Splitter.Mode split) throws IOException {
+                      boolean sharedOverflow, Splitter.Mode split,
+                      Comparator<SegmentRope> comparator) throws IOException {
             this.usesShared = usesShared;
             this.sharedOverflow = sharedOverflow;
             this.split = split;
+            this.comparator = comparator;
             int n = blockFiles.size();
-            blocks = new AbstractLookup[n];
+            blocks = new SortedStandaloneDict.Lookup[n];
             FileChannel destChannel = null;
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
                 for (int i = 0; i < n; i++) //noinspection resource
                     blocks[i] = new SortedStandaloneDict(blockFiles.get(i)).lookup();
                 log.info("Validating block files: {}", blockFiles);
-                IntStream.range(0, n).mapToObj(i -> {
-                    try {
-                        //noinspection resource
-                        blocks[i].dict().validate();
-                        return null;
-                    } catch (IOException e) {
-                        log.error("{} is not valid: {}", blockFiles.get(i), e.getMessage());
-                        return e;
-                    }
-                }).filter(Objects::nonNull).forEachOrdered(condenser::condense);
+                List<Path> invalid = IntStream.range(0, n).parallel()
+                        .mapToObj(i -> invalidBlock(blockFiles, i))
+                        .filter(Objects::nonNull).toList();
+                if (!invalid.isEmpty())
+                    throw new IOException("Invalid blocks: "+invalid);
                 destChannel = FileChannel.open(dest, TRUNCATE_EXISTING,CREATE,WRITE);
             } catch (Throwable t) {
                 condenser.condense(t);
@@ -238,6 +242,36 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
             currIds = new long[n];
             currStrings = new SegmentRope[n];
             fill(currIds, MIN_ID-1);
+        }
+
+        @Nullable private Path invalidBlock(List<Path> blockFiles, int i) {
+            Path path = blockFiles.get(i);
+            var lookup = blocks[i];
+            @SuppressWarnings("resource") long strings = lookup.dict().strings();
+            SegmentRope last = new SegmentRope(), curr = lookup.get(1);
+            if (curr == null) {
+                if (strings == 0) return null;
+                log.error("null string in non-empty block {}", path);
+                return path;
+            }
+            last.wrap(curr);
+            for (int id = 2; id <= strings; id++) {
+                if ((curr = lookup.get(id)) == null) {
+                    log.error("null string at id={} of {}", id, path);
+                    return path;
+                }
+                int diff = comparator.compare(curr, last);
+                if (diff > 0) {
+                    last.wrap(curr);
+                } else if (diff == 0) {
+                    log.error("duplicate string at id={} of {}", id, path);
+                    return path;
+                } else {
+                    log.error("smaller string at id={} of {}", id, path);
+                    return path;
+                }
+            }
+            return null;
         }
 
         @Override public void close() {
@@ -275,7 +309,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
 
         /** Advance to next id for the {@code block}-th block. Will return null if reached end. */
         private @Nullable SegmentRope advance(int block) {
-            SegmentRope s = (SegmentRope) blocks[block].get(++currIds[block]);
+            SegmentRope s = blocks[block].get(++currIds[block]);
             currStrings[block] = s;
             return s;
         }
@@ -294,10 +328,10 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
                 while (true) {
                     if (candidate == null) continue blocks; // block ended
                     if (min == null) break;                 // no min, make candidate the min
-                    int diff = candidate.compareTo(min);
+                    int diff = comparator.compare(candidate, min);
                     if (diff < 0) break;                    // candidate < min
                     if (diff > 0 || (candidate = advance(i)) == null)
-                        continue blocks; // candidate > min or block only had duplicates
+                        continue blocks; // candidate > min or block only had a duplicate
                 }
                 min = candidate;
                 currBlock = i;

@@ -52,7 +52,7 @@ class DictSorterTest {
 
         // build dict
         Path mergedPath = tempDir.resolve("merged");
-        try (var sorter = new DictSorter(tempDir, localityOptimized, 32)) {
+        try (var sorter = new DictSorter(tempDir, false, localityOptimized, 32)) {
             ByteRope tmp = new ByteRope();
             int i = 0;
             for (SegmentRope s : strings) {
