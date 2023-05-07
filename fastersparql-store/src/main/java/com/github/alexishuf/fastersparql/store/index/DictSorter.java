@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -17,18 +18,20 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.store.index.Dict.*;
 import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.*;
+import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.SUFFIX;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.nio.file.StandardOpenOption.*;
 import static java.util.Arrays.fill;
 
-public class DictSorter extends Sorter<Path> {
+public class DictSorter extends Sorter<Path> implements NTVisitor {
     private static final Logger log = LoggerFactory.getLogger(DictSorter.class);
     private static final boolean IS_DEBUG = log.isDebugEnabled();
 
@@ -36,16 +39,18 @@ public class DictSorter extends Sorter<Path> {
 
     private boolean stringsClosed = false;
     public boolean usesShared, sharedOverflow;
+    public final boolean optimizeLocality;
     public Splitter.Mode split = Splitter.Mode.LAST;
 
     private @Nullable DictBlock fillingBlock;
 
-    public DictSorter(Path tempDir) {
-        this(tempDir, defaultBlockBytes());
+    public DictSorter(Path tempDir, boolean optimizeLocality) {
+        this(tempDir, optimizeLocality, defaultBlockBytes());
     }
 
-    public DictSorter(Path tempDir, int bytesPerBlock) {
+    public DictSorter(Path tempDir, boolean optimizeLocality, int bytesPerBlock) {
         super(tempDir, "dict", ".block");
+        this.optimizeLocality = optimizeLocality;
         this.bytesPerBlock = bytesPerBlock;
         this.fillingBlock = new DictBlock(bytesPerBlock);
     }
@@ -89,6 +94,8 @@ public class DictSorter extends Sorter<Path> {
                     m.write();
                 }
             }
+            if (optimizeLocality)
+                DictLocalityOptimizer.convert(dest);
             if (IS_DEBUG)
                 logStats(dest);
         } finally {
@@ -148,9 +155,9 @@ public class DictSorter extends Sorter<Path> {
      *
      * @param string a string to be stored.
      */
-    public void copy(SegmentRope string) {
-        copy(string, ByteRope.EMPTY);
-    }
+    public void copy(SegmentRope string) { copy(string, ByteRope.EMPTY); }
+
+    @Override public void visit(SegmentRope string) { copy(string, ByteRope.EMPTY); }
 
     /**
      * Stores a copy of the string resulting from the concatenation of {@code prefix}
@@ -203,7 +210,7 @@ public class DictSorter extends Sorter<Path> {
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
                 for (int i = 0; i < n; i++) //noinspection resource
-                    blocks[i] = new StandaloneDict(blockFiles.get(i)).lookup();
+                    blocks[i] = new SortedStandaloneDict(blockFiles.get(i)).lookup();
                 log.info("Validating block files: {}", blockFiles);
                 IntStream.range(0, n).mapToObj(i -> {
                     try {
@@ -299,6 +306,25 @@ public class DictSorter extends Sorter<Path> {
         }
     }
 
+    private static final class LocalityRopeComparator implements Comparator<SegmentRope> {
+        public static final LocalityRopeComparator INSTANCE = new LocalityRopeComparator();
+
+        @Override public int compare(SegmentRope l, SegmentRope r) {
+            MemorySegment lSeg = l.segment(), rSeg = r.segment();
+            long lOff = l.offset(), rOff = r.offset();
+            int lFlaggedId = Splitter.decode(lSeg, lOff);
+            int rFlaggedId = Splitter.decode(rSeg, rOff);
+            if (SharedSide.fromConcatChar(l.get(4)) == SUFFIX)
+                lFlaggedId |= LocalityCompositeDict.SH_ID_SUFF;
+            if (SharedSide.fromConcatChar(r.get(4)) == SUFFIX)
+                rFlaggedId |= LocalityCompositeDict.SH_ID_SUFF;
+            int diff = lFlaggedId - rFlaggedId;
+            if (diff != 0) return diff;
+            return SegmentRope.compareTo(lSeg, lOff+5, l.len-5,
+                                         rSeg, rOff+5, r.len-5);
+        }
+    }
+
     private final class DictBlock implements BlockJob<Path> {
         private final Arena arena;
         private final MemorySegment bytes;
@@ -364,7 +390,11 @@ public class DictSorter extends Sorter<Path> {
             Path dest = createTempFile();
             int nRopes = this.nRopes, end = this.nRopes;
             // sort, then remove duplicates by writing nulls
-            Arrays.sort(ropes, 0, end);
+            if (optimizeLocality && usesShared) {
+                Arrays.sort(ropes, 0, end, LocalityRopeComparator.INSTANCE);
+            } else {
+                Arrays.sort(ropes, 0, end);
+            }
             SegmentRope last = null;
             for (int i = 0; i < end; i++) {
                 var r = ropes[i];

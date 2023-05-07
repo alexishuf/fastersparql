@@ -15,6 +15,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Objects;
 
 import static java.lang.foreign.ValueLayout.*;
 import static java.nio.ByteOrder.BIG_ENDIAN;
@@ -37,7 +38,10 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
     protected static final OfLong  LE_LONG  = IS_BE ?  JAVA_LONG.withOrder(LITTLE_ENDIAN) : JAVA_LONG;
     protected static final OfInt   LE_INT   = IS_BE ?   JAVA_INT.withOrder(LITTLE_ENDIAN) : JAVA_INT;
     protected static final OfShort LE_SHORT = IS_BE ? JAVA_SHORT.withOrder(LITTLE_ENDIAN) : JAVA_SHORT;
-    private static final @Nullable Unsafe UNSAFE;
+    protected static final OfLong  LE_LONG_UA  = IS_BE ?  JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_LONG_UNALIGNED;
+    protected static final OfInt   LE_INT_UA   = IS_BE ?   JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_INT_UNALIGNED;
+    protected static final OfShort LE_SHORT_UA = IS_BE ? JAVA_SHORT_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_SHORT_UNALIGNED;
+    protected static final @Nullable Unsafe UNSAFE;
 
     static {
         Unsafe u = null;
@@ -58,7 +62,7 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
     protected final MemorySegment seg;
     protected final @Nullable Arena arena;
     protected final Path path;
-    private final long offBase, valBase;
+    protected final long offBase, valBase;
     protected final long offsCount, valEnd;
     protected final int offShift, valShift;
     protected final int offWidth, valWidth;
@@ -195,6 +199,26 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
             case 3 -> UNSAFE.getLong(addr);
             default -> throw unreachable;
         };
+    }
+
+    protected int cmp(long lOff, int lLen, MemorySegment rhs, long rOff, int rLen) {
+        Unsafe u = Objects.requireNonNull(UNSAFE);
+        long lEnd = (lOff += valBase) + Math.min(lLen, rLen);
+        int diff = (int)((lOff|rOff)&7);
+        if (diff == 0) {
+            for (; lOff+8 < lEnd; lOff += 8, rOff += 8) {
+                if (u.getLong(lOff) != rhs.get(LE_LONG_UA, rOff)) break;
+            }
+        }
+        if ((diff&3) == 0) {
+            for (; lOff+4 < lEnd; lOff += 4, rOff += 4) {
+                if (u.getInt(lOff) != rhs.get(LE_INT_UA, rOff)) break;
+            }
+        }
+        for (; lOff < lEnd; ++lOff, ++rOff) {
+            if ((diff = u.getByte(lOff) - rhs.get(JAVA_BYTE, rOff)) != 0) return diff;
+        }
+        return lLen-rLen;
     }
 
     private long readFallbackOff(long index) {

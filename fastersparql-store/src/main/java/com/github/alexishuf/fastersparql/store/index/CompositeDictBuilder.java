@@ -15,13 +15,16 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
     private final Path tempDir, destDir;
     private final DictSorter sharedSorter;
     private SecondPass secondPass;
+    private final boolean optimizeLocality;
     private final Splitter split;
 
-    public CompositeDictBuilder(Path tempDir, Path destDir, Splitter.Mode splitMode) {
+    public CompositeDictBuilder(Path tempDir, Path destDir, Splitter.Mode splitMode,
+                                boolean optimizeLocality) {
         this.tempDir = tempDir;
         this.destDir = destDir;
         this.split = new Splitter(splitMode);
-        this.sharedSorter = new DictSorter(tempDir);
+        this.optimizeLocality = optimizeLocality;
+        this.sharedSorter = new DictSorter(tempDir, optimizeLocality);
         this.sharedSorter.copy(EMPTY);
     }
 
@@ -44,18 +47,24 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         Path sharedPath = destDir.resolve("shared");
         sharedSorter.writeDict(sharedPath);
         sharedSorter.close();
-        return secondPass = new SecondPass(new StandaloneDict(sharedPath));
+        return secondPass = new SecondPass(Dict.loadStandalone(sharedPath));
     }
 
     public class SecondPass implements AutoCloseable, NTVisitor {
         private final DictSorter sorter;
-        private final StandaloneDict sharedDict;
+        private final Dict sharedDict;
         private final Dict.AbstractLookup shared;
         private boolean sharedOverflow;
 
-        public SecondPass(StandaloneDict shared) {
-            this.sorter = new DictSorter(tempDir);
-            this.shared = (this.sharedDict = shared).lookup();
+        public SecondPass(Dict shared) {
+            this.sorter = new DictSorter(tempDir, optimizeLocality);
+            this.sharedDict = shared;
+            if (shared instanceof LocalityStandaloneDict d)
+                this.shared = d.lookup();
+            else if (shared instanceof SortedStandaloneDict d)
+                this.shared = d.lookup();
+            else
+                throw new IllegalArgumentException("Unexpected dict type");
         }
 
         @Override public void close() {
@@ -89,11 +98,6 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
             sorter.sharedOverflow = sharedOverflow;
             sorter.split = split.mode();
             sorter.writeDict(destDir.resolve("strings"));
-            try (var shared = new StandaloneDict(destDir.resolve("shared"));
-                 var strings = new CompositeDict(destDir.resolve("strings"), shared)) {
-                shared.validate();
-                strings.validate();
-            }
         }
     }
 }

@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.store.index;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,15 +18,25 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class CompositeDictBuilderTest {
 
-    @ParameterizedTest @EnumSource(Splitter.Mode.class)
-    void test(Splitter.Mode mode) throws IOException {
+    static Stream<Arguments> test() {
+        List<Arguments> list = new ArrayList<>();
+        for (Splitter.Mode mode : Splitter.Mode.values()) {
+            for (boolean optimizeLocality : List.of(false, true))
+                list.add(arguments(mode, optimizeLocality));
+        }
+        return list.stream();
+    }
+
+    @ParameterizedTest @MethodSource
+    void test(Splitter.Mode mode, boolean optimizeLocality) throws IOException {
         Path temp = Files.createTempDirectory("fastersparql-temp");
         Path dest = Files.createTempDirectory("fastersparql-dest");
         List<ByteRope> ropes;
-        try (var b = new CompositeDictBuilder(temp, dest, mode)) {
+        try (var b = new CompositeDictBuilder(temp, dest, mode, optimizeLocality)) {
             ropes = Stream.of(
                     "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>",
                     "\"bob\"",
@@ -50,21 +62,22 @@ class CompositeDictBuilderTest {
             assertEquals(List.of(), actual);
         }
         // has shared and strings files
-        assertTrue(Files.isRegularFile(dest.resolve("shared")));
-        assertTrue(Files.isRegularFile(dest.resolve("strings")));
+        Path sharedPath = dest.resolve("shared"), stringsPath = dest.resolve("strings");
+        assertTrue(Files.isRegularFile(sharedPath));
+        assertTrue(Files.isRegularFile(stringsPath));
 
         //load dict
-        try (var shared = new StandaloneDict(dest.resolve("shared"));
-             var dict = new CompositeDict(dest.resolve("strings"), shared)) {
+        try (var shared = Dict.loadStandalone(sharedPath);
+             var dict = Dict.loadComposite(stringsPath, shared)) {
             // check if dicts are valid
             shared.validate();
             dict.validate();
 
             // lookup all strings
-            var lookup = dict.lookup();
+            var lookup = dict.polymorphicLookup();
             var splitters = Arrays.stream(Splitter.Mode.values()).map(Splitter::new).toList();
             TwoSegmentRope tsr = new TwoSegmentRope();
-            for (ByteRope r : ropes) {
+            for (PlainRope r : ropes) {
                 long id = lookup.find(r);
                 assertTrue(id >= Dict.MIN_ID, "r="+r);
                 assertEquals(r, lookup.get(id));

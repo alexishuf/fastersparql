@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.util.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -9,13 +10,11 @@ import picocli.CommandLine.Option;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Random;
-import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
-import static java.lang.ProcessBuilder.Redirect.PIPE;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleSleep;
 import static java.lang.System.nanoTime;
 
 @Command
@@ -82,48 +81,6 @@ public class MeasureOptions {
             "number of milliseconds")
     public int cooldownMs = 1_000;
 
-
-    @SuppressWarnings("SameParameterValue")
-    private void uninterruptibleSleep(int ms) {
-        long start = nanoTime();
-        boolean interrupted = false;
-        while ((nanoTime()-start)/1_000_000L < ms) {
-            try { //noinspection BusyWait
-                Thread.sleep(ms);
-            } catch (InterruptedException e) {
-                interrupted = true;
-            }
-        }
-        if (interrupted)
-            Thread.currentThread().interrupt();
-    }
-
-    private void  fsync(int ms) {
-        Thread sync = Thread.startVirtualThread(() -> {
-            Process process = null;
-            try {
-                process = new ProcessBuilder("sync").redirectOutput(PIPE).redirectError(PIPE)
-                                                    .start();
-                process.waitFor(1, TimeUnit.MINUTES);
-            } catch (InterruptedException ignored) {
-            } catch (IOException e) {
-                log.info("Will not fsync(): sync command not found");
-            } finally {
-                if (process != null && process.isAlive()) {
-                    process.destroyForcibly();
-                    try {
-                        process.waitFor(1, TimeUnit.SECONDS);
-                    } catch (InterruptedException ignored) { }
-                }
-
-            }
-        });
-        try {
-            if (!sync.join(Duration.ofMillis(ms)))
-                sync.interrupt();
-        } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-    }
-
     public void cooldown(int ms) {
         if (ms > 1_000)
             log.info("cooldown({})", ms);
@@ -132,7 +89,7 @@ public class MeasureOptions {
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
         System.gc();
-        fsync((int)(ms-(nanoTime()-start)/1_000_000));
+        IOUtils.fsync(ms-(nanoTime()-start)/1_000_000);
         do {
             uninterruptibleSleep(250);
             System.gc();

@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.toNT;
@@ -36,9 +37,15 @@ public class HdtConverter {
 
     private Path tempDir;
     private Splitter.Mode splitMode = Splitter.Mode.LAST;
+    private boolean optimizeLocality = true;
+    private boolean validate = false;
+    private boolean standaloneDict = false;
 
-    public @This HdtConverter   tempDir(Path v)          { this.tempDir = v; return this; }
-    public @This HdtConverter splitMode(Splitter.Mode v) { this.splitMode = v; return this; }
+    public @This HdtConverter   tempDir(Path v)           { this.tempDir = v; return this; }
+    public @This HdtConverter splitMode(Splitter.Mode v)  { this.splitMode = v; return this; }
+    public @This HdtConverter  validate(boolean v)        { this.validate = v; return this; }
+    public @This HdtConverter optimizeLocality(boolean v) { this.optimizeLocality = v; return this; }
+    public @This HdtConverter standaloneDict(boolean v)   { this.standaloneDict = v; return this; }
 
     public void convert(Path hdtPath, Path destDir) throws IOException {
         try (HDT hdt = HDTManager.mapHDT(hdtPath.toString())) {
@@ -49,22 +56,55 @@ public class HdtConverter {
     public void convert(HDT hdt, Path destDir) throws IOException {
         int dictId = IdAccess.register(hdt.getDictionary());
         Path tempDir = this.tempDir == null ? destDir : this.tempDir;
-        try (var db = new CompositeDictBuilder(tempDir, destDir, splitMode)) {
-            commonPool().invoke(new VisitStringsAction(db, dictId));
-            log.info("{}: writing shared dict...", destDir);
-            var sndPass = db.nextPass();
-            log.info("{}: Second pass on HDT Dictionary...", destDir);
-            commonPool().invoke(new VisitStringsAction(sndPass, dictId));
-            sndPass.write();
-            try (var shared = new StandaloneDict(destDir.resolve("shared"));
-                 var strings = new CompositeDict(destDir.resolve("strings"), shared);
+        try {
+            if (standaloneDict) {
+                try (DictSorter sorter = new DictSorter(tempDir, optimizeLocality)) {
+                    log.info("{}: writing standalone dict...", destDir);
+                    commonPool().invoke(new VisitStringsAction(sorter, dictId));
+                    sorter.writeDict(destDir.resolve("strings"));
+                }
+            } else {
+                try (var db = new CompositeDictBuilder(tempDir, destDir, splitMode, optimizeLocality)) {
+                    commonPool().invoke(new VisitStringsAction(db, dictId));
+                    log.info("{}: writing shared dict...", destDir);
+                    var sndPass = db.nextPass();
+                    log.info("{}: Second pass on HDT Dictionary...", destDir);
+                    commonPool().invoke(new VisitStringsAction(sndPass, dictId));
+                    sndPass.write();
+                }
+            }
+            if (validate && !standaloneDict) {
+                try (Dict d = Dict.loadStandalone(destDir.resolve("shared"))) {
+                    log.info("{} Validating shared...", destDir);
+                    d.validate();
+                }
+            }
+            try (var strings = Dict.load(destDir.resolve("strings"));
                  var sorter = new TriplesSorter(tempDir)) {
+                if (validate) {
+                    log.info("{} Validating strings dict...", destDir);
+                    strings.validate();
+                }
                 log.info("{}: iterating/sorting triples", destDir);
                 var it = hdt.getTriples().searchAll();
                 long triples = hdt.getTriples().getNumberOfElements();
                 commonPool().invoke(new TriplesAction(triples, it, sorter, dictId, strings));
                 log.info("{}: writing spo, pso and ops indices...", destDir);
                 sorter.write(destDir);
+            }
+            if (validate) {
+                boolean valid = Stream.of("spo", "pso", "ops").parallel().map(name -> {
+                    Path path = destDir.resolve(name);
+                    try (var triples = new Triples(path)) {
+                        triples.validate();
+                        return true;
+                    } catch (Throwable t) {
+                        log.error("{}: {}", path, t.toString());
+                        return false;
+                    }
+                }).reduce(true, Boolean::logicalAnd);
+                if (!valid)
+                    throw new IOException("Some Triple index files are not valid");
             }
         } finally {
             IdAccess.release(dictId);
@@ -79,7 +119,7 @@ public class HdtConverter {
         private final IteratorTripleID it;
         private final TriplesSorter sorter;
         private final int dictId;
-        private final CompositeDict strings;
+        private final Dict strings;
         private final int translators = Math.max(1, Runtime.getRuntime().availableProcessors()-2);
         private final AtomicInteger activeTranslators = new AtomicInteger(translators);
         private final ArrayBlockingQueue<T> raw = new ArrayBlockingQueue<>(Q_SIZE);
@@ -88,7 +128,7 @@ public class HdtConverter {
         private final Hdt2StoreIdCache idCache = new Hdt2StoreIdCache();
 
         public TriplesAction(long triples, IteratorTripleID it, TriplesSorter sorter,
-                             int dictId, CompositeDict strings) {
+                             int dictId, Dict strings) {
             this.triples = triples;
             this.it = it;
             this.sorter = sorter;
@@ -168,7 +208,7 @@ public class HdtConverter {
         }
 
         private final class Translator extends RecursiveAction {
-            private final Dict.AbstractLookup lookup = strings.lookup();
+            private final Dict.AbstractLookup lookup = strings.polymorphicLookup();
 
             private long translate(long hdtId, TripleComponentRole role) {
                 long storeId = idCache.get(hdtId, role);
@@ -324,5 +364,4 @@ public class HdtConverter {
                       new Consumer(stringCount));
         }
     }
-
 }

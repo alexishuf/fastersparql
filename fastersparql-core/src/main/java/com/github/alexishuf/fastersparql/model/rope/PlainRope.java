@@ -8,7 +8,9 @@ public abstract class PlainRope extends Rope {
     public PlainRope(int len) { super(len); }
 
     /** Equivalent to {@link Rope#compareTo(Rope)} but helps the JIT skip some instanceof tests. */
-    public abstract int compareTo(PlainRope o);
+    public final int compareTo(PlainRope o) {
+        return o instanceof SegmentRope s ? compareTo(s) : compareTo((TwoSegmentRope)o);
+    }
     /** Equivalent to {@link Rope#compareTo(Rope)} but helps the JIT skip some instanceof tests. */
     public abstract int compareTo(SegmentRope o);
     /** Equivalent to {@link Rope#compareTo(Rope)} but helps the JIT skip some instanceof tests. */

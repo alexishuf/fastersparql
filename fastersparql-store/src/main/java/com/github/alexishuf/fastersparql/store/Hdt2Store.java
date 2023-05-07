@@ -46,6 +46,21 @@ public class Hdt2Store implements Callable<Void> {
             "strings that are only used once. This cannot be used together with --prolong")
     private boolean penultimateSplit = false;
 
+    @Option(names = "--optimize-locality", description = "Dictionaries will be optimized to " +
+            "improve spatial locality string -> id lookups assuming the order in which lookups " +
+            "arrive is random.", defaultValue = "true", fallbackValue = "true")
+    private boolean optimizeLocality = true;
+
+    @Option(names = "--standalone-dict", description = "Do not create a sub-dict for shared " +
+            "substrings, this will make the resulting dictionary bigger and likely less " +
+            "efficient to query (both id -> string and string -> id lookups) due to larger " +
+            "likelihood of cache misses and page faults.")
+    private boolean standaloneDict = false;
+
+    @Option(names = {"--validate"}, description = "After each index file is generated, validate " +
+            "its contents and query functionality")
+    private boolean validate = false;
+
     @Option(names = {"--force", "-f"}, description = "Rebuild indexes even if already existing " +
             "with matching number of triples.")
     private boolean force = false;
@@ -143,6 +158,9 @@ public class Hdt2Store implements Callable<Void> {
                 new HdtConverter()
                         .tempDir(tempDir == null ? destPath : tempDir)
                         .splitMode(prolongSplit ? PROLONG : penultimateSplit ? PENULTIMATE : LAST)
+                        .standaloneDict(standaloneDict)
+                        .optimizeLocality(optimizeLocality)
+                        .validate(validate)
                         .convert(hdt, destPath);
             }
         }

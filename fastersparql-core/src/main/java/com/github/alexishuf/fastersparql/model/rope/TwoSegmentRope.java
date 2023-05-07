@@ -257,9 +257,6 @@ public class TwoSegmentRope extends PlainRope {
         else                                    return super.compareTo(o);
     }
 
-    @Override public int compareTo(PlainRope o) {
-        return o instanceof SegmentRope s ? -s.compareTo(this) : compareTo((TwoSegmentRope) o);
-    }
 
     @Override public int compareTo(SegmentRope o) { return -o.compareTo(this); }
 

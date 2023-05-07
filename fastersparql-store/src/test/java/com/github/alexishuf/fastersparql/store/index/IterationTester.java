@@ -26,7 +26,7 @@ public class IterationTester implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(IterationTester.class);
     private final Path dir;
     private final Triples spo, pso, ops;
-    private final @Nullable CompositeDict strings;
+    private final @Nullable Dict strings;
     private final List<TestTriple> allTriples;
     private final List<TestTriple> triples;
     private final int[] terms;
@@ -34,7 +34,7 @@ public class IterationTester implements AutoCloseable {
     private static final ThreadLocal<ArrayList<TestTriple>> acTL = ThreadLocal.withInitial(ArrayList::new);
 
     private IterationTester(Path dir, List<TestTriple> allTriples,
-                            @Nullable CompositeDict strings, Triples spo, Triples pso, Triples ops) {
+                            @Nullable Dict strings, Triples spo, Triples pso, Triples ops) {
         this.dir = dir;
         this.strings = strings;
         this.spo = spo;
@@ -72,7 +72,7 @@ public class IterationTester implements AutoCloseable {
     }
 
     public static IterationTester
-    createFromHDT(Class<?> ref, String resourcePath) throws IOException {
+    createFromHDT(Class<?> ref, String resourcePath, HdtConverter converter) throws IOException {
         var tempDir = Files.createTempDirectory("fastersparql");
         Path hdtPath = tempDir.resolve("origin.hdt");
         List<TestTriple> triples;
@@ -82,7 +82,7 @@ public class IterationTester implements AutoCloseable {
                 assertNotNull(is);
                 is.transferTo(out);
             }
-            new HdtConverter().convert(hdtPath, tempDir);
+            converter.convert(hdtPath, tempDir);
             triples = triplesFromHDT(tempDir);
         } catch (Throwable t) {
             deleteDir(tempDir);
@@ -108,10 +108,9 @@ public class IterationTester implements AutoCloseable {
     public static List<TestTriple> triplesFromHDT(Path dir) throws IOException {
         List<TestTriple> triples = new ArrayList<>();
         int dictId = 0;
-        try (var shared = new StandaloneDict(dir.resolve("shared"));
-             var strings = new CompositeDict(dir.resolve("strings"), shared);
+        try (var strings = Dict.load(dir.resolve("strings"));
              HDT hdt = HDTManager.mapHDT(dir.resolve("origin.hdt").toString())) {
-            var lookup = strings.lookup();
+            var lookup = strings.polymorphicLookup();
             dictId = IdAccess.register(hdt.getDictionary());
             for (var it = hdt.getTriples().searchAll(); it.hasNext(); ) {
                 TripleID triple = it.next();
@@ -135,17 +134,12 @@ public class IterationTester implements AutoCloseable {
     }
 
     private static IterationTester load(Path dir, List<TestTriple> triples) throws IOException {
-        CompositeDict strings = null;
+        Dict strings = null;
         Triples spo = null, pso = null, ops = null;
         try {
-            Path sharedFile = dir.resolve("shared");
             Path stringsFile = dir.resolve("strings");
-            if (Files.exists(stringsFile)) {
-                StandaloneDict shared = null;
-                if (Files.exists(sharedFile))
-                    shared = new StandaloneDict(sharedFile);
-                strings = new CompositeDict(stringsFile, shared);
-            }
+            if (Files.exists(stringsFile))
+                strings = Dict.load(stringsFile);
             spo = new Triples(dir.resolve("spo"));
             pso = new Triples(dir.resolve("pso"));
             ops = new Triples(dir.resolve("ops"));
@@ -197,7 +191,7 @@ public class IterationTester implements AutoCloseable {
 
     public void testLoadAndLookupStrings() {
         assertNotNull(strings);
-        var lookup = strings.lookup();
+        var lookup = strings.polymorphicLookup();
         for (int id : terms) {
             PlainRope string = lookup.get(id);
             assertNotNull(string);

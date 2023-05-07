@@ -57,16 +57,19 @@ public class Splitter {
     public enum SharedSide {
         PREFIX, SUFFIX, NONE;
 
+        public static final byte PREFIX_CHAR = '.';
+        public static final byte SUFFIX_CHAR = '!';
+
         public byte concatChar() {
             return switch (this) {
-                case PREFIX,NONE -> '.';
-                case SUFFIX      -> '!';
+                case PREFIX,NONE -> PREFIX_CHAR;
+                case SUFFIX      -> SUFFIX_CHAR;
             };
         }
         public static SharedSide fromConcatChar(byte c) {
             return switch (c) {
-                case '.' -> PREFIX;
-                case '!' -> SUFFIX;
+                case PREFIX_CHAR -> PREFIX;
+                case SUFFIX_CHAR -> SUFFIX;
                 default -> throw new IllegalArgumentException("Only ! and . are allowed");
             };
         }
@@ -84,7 +87,9 @@ public class Splitter {
 
 
     public SegmentRope b64(long id) {
-        int iId = id > MAX_SHARED_ID || id < 0 ? (int)Dict.EMPTY_ID : (int)id;
+        if (id > MAX_SHARED_ID || id < 0)
+            throw new IllegalArgumentException("id too big");
+        int iId = (int)id;
         byte[] u8 = b64.u8();
         b64.len = 5;
         u8[4] = sharedSide.concatChar();

@@ -5,7 +5,8 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.File;
 import java.io.IOException;
@@ -13,8 +14,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class DictSorterTest {
     private static Path tempDir;
@@ -30,14 +33,26 @@ class DictSorterTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {0, 1, 2, 16, 32, 256, 1024})
-    void test(int nStrings) throws IOException {
+    static Stream<Arguments> test() {
+        List<Integer> sizes = List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                      15, 16, 17, 32, 255, 256, 257, 1024);
+        List<Arguments> list = new ArrayList<>();
+        for (int size : sizes) {
+            for (boolean localityOptimized : List.of(false, true))
+                list.add(arguments(size, localityOptimized));
+        }
+        return list.stream();
+    }
+
+    @ParameterizedTest @MethodSource
+    void test(int nStrings, boolean localityOptimized) throws IOException {
         List<SegmentRope> strings = new ArrayList<>(nStrings);
         for (int i = 0; i < nStrings; i++)
             strings.add(new ByteRope().append((long) nStrings - i));
 
         // build dict
-        try (var sorter = new DictSorter(tempDir, 32)) {
+        Path mergedPath = tempDir.resolve("merged");
+        try (var sorter = new DictSorter(tempDir, localityOptimized, 32)) {
             ByteRope tmp = new ByteRope();
             int i = 0;
             for (SegmentRope s : strings) {
@@ -47,11 +62,15 @@ class DictSorterTest {
             }
             for (SegmentRope s : strings)
                 sorter.copy(tmp.clear().append(s));
-            sorter.writeDict(tempDir.resolve("merged"));
+            sorter.writeDict(mergedPath);
         }
 
-        try (var dict = new StandaloneDict(tempDir.resolve("merged"))) {
-            Dict.AbstractLookup lookup = dict.lookup();
+        try (Dict dict = Dict.loadStandalone(mergedPath)) {
+            Dict.AbstractLookup lookup;
+            if (dict instanceof LocalityStandaloneDict d)
+                lookup = d.lookup();
+            else
+                lookup = ((SortedStandaloneDict)dict).lookup();
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {
@@ -67,10 +86,12 @@ class DictSorterTest {
             }
 
             //test dump()
-            var exBuilder = new StringBuilder();
-            strings.stream().sorted().forEach(r -> exBuilder.append(r).append('\n'));
-            exBuilder.setLength(Math.max(0, exBuilder.length()-1));
-            assertEquals(exBuilder.toString(), dict.dump());
+            if (dict.isSorted()) {
+                var exBuilder = new StringBuilder();
+                strings.stream().sorted().forEach(r -> exBuilder.append(r).append('\n'));
+                exBuilder.setLength(Math.max(0, exBuilder.length() - 1));
+                assertEquals(exBuilder.toString(), dict.dump());
+            }
         }
 
         String[] filenames = tempDir.toFile().list();

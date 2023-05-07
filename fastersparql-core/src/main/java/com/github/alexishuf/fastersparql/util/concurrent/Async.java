@@ -8,6 +8,8 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 
+import static java.lang.System.nanoTime;
+
 public class Async {
     private static final class StageSync<T> implements BiConsumer<T, Throwable> {
         T result;
@@ -83,6 +85,20 @@ public class Async {
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
+    }
+
+    public static void uninterruptibleSleep(int ms) {
+        long start = nanoTime();
+        boolean interrupted = false;
+        while ((nanoTime()-start)/1_000_000L < ms) {
+            try { //noinspection BusyWait
+                Thread.sleep(ms);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted)
+            Thread.currentThread().interrupt();
     }
 
 }

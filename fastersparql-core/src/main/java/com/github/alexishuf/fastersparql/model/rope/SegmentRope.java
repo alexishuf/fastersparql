@@ -13,7 +13,8 @@ import java.nio.ByteBuffer;
 
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.MemorySegment.mismatch;
-import static java.lang.foreign.ValueLayout.*;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
@@ -22,9 +23,9 @@ public class SegmentRope extends PlainRope {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
 
-    protected long offset;
+    public long offset;
     protected byte @Nullable [] utf8;
-    protected MemorySegment segment;
+    public MemorySegment segment;
 
     public SegmentRope() {
         this(ByteRope.EMPTY_SEGMENT, 0, 0);
@@ -87,6 +88,11 @@ public class SegmentRope extends PlainRope {
         this.utf8 = null;
         this.offset = other.offset;
         this.len = other.len;
+    }
+
+    public void slice(long offset, int len) {
+        this.offset = offset;
+        this.len = len;
     }
 
     public void wrapSegment(MemorySegment segment, long offset, int len) {
@@ -376,8 +382,8 @@ public class SegmentRope extends PlainRope {
         return super.toString(begin, end);
     }
 
-    static int compareTo(MemorySegment left, long lOff, int lLen,
-                         MemorySegment right, long rOff, int rLen) {
+    public static int compareTo(MemorySegment left, long lOff, int lLen,
+                                MemorySegment right, long rOff, int rLen) {
         //vectorization helps, but is slower than JAVA_INT_UNALIGNED. Using Vector.lane() is
         // too slow. Best vector implementation consisted of left.compare(NE, right).firstTrue()
         // followed by JAVA_BYTE scalar accesses. ByteVector.sub() cannot be used as byte overflows
@@ -426,10 +432,6 @@ public class SegmentRope extends PlainRope {
 
         // compare whatever remains on the left side with the second segment of o
         return compareTo(segment, offset, len, o.snd, o.sndOff, o.sndLen);
-    }
-    public final int compareTo(PlainRope o) {
-        return o instanceof SegmentRope s ? compareTo(s)
-                                          : compareTo((TwoSegmentRope)o);
     }
 
     @Override public int compareTo(Rope o, int begin, int end) {

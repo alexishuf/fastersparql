@@ -7,7 +7,11 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentScope;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable {
     public static final long     STRINGS_MASK = 0x00ffffffffffffffL;
@@ -17,15 +21,16 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
     public static final long  SHARED_OVF_MASK = 0x0400000000000000L;
     public static final long     PROLONG_MASK = 0x0800000000000000L;
     public static final long PENULTIMATE_MASK = 0x1000000000000000L;
+    public static final long    LOCALITY_MASK = 0x2000000000000000L;
     public static final int         FLAGS_BIT = Long.numberOfTrailingZeros(FLAGS_MASK);
-    private static final int OFFS_OFF         = 8;
+
+    static final int OFFS_OFF = 8;
 
     public static final long NOT_FOUND = 0;
     public static final long MIN_ID = 1;
-    public static final long EMPTY_ID = MIN_ID;
 
     protected final long nStrings;
-    protected final long emptyId;
+    protected final byte flags;
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -47,8 +52,51 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
     protected Dict(Path file) throws IOException {
         super(file, SegmentScope.auto());
         long stringsAndFlags = seg.get(LE_LONG, 0);
+        this.flags = (byte) (stringsAndFlags >>> FLAGS_BIT);
         this.nStrings = stringsAndFlags & STRINGS_MASK;
-        this.emptyId = nStrings > 0 && readOff(0) == readOff(1) ? MIN_ID : NOT_FOUND;
+    }
+
+    public static Dict loadStandalone(Path path) throws IOException {
+        return isLocality(path) ? new LocalityStandaloneDict(path) : new SortedStandaloneDict(path);
+    }
+
+    public static Dict loadComposite(Path path, Dict shared) throws IOException {
+        return isLocality(path) ? new LocalityCompositeDict(path, (LocalityStandaloneDict) shared)
+                                : new SortedCompositeDict(path, (SortedStandaloneDict) shared);
+    }
+
+    public static Dict load(Path path) throws IOException {
+        long hdr = readHeader(path);
+        if ((hdr & SHARED_MASK) != 0) {
+            if ((hdr & LOCALITY_MASK) != 0) return new LocalityCompositeDict(path);
+            else                            return new SortedCompositeDict(path);
+        } else {
+            if ((hdr & LOCALITY_MASK) != 0) return new LocalityStandaloneDict(path);
+            else                            return new SortedStandaloneDict(path);
+        }
+    }
+
+    private static long readHeader(Path path) throws IOException {
+        ByteBuffer bb = SmallBBPool.smallDirectBB().order(ByteOrder.LITTLE_ENDIAN).limit(8);
+        try (var ch = FileChannel.open(path, StandardOpenOption.READ)) {
+            if (ch.read(bb, 0) != 8) throw new IOException("Could not read 8 bytes from " + path);
+            return bb.getLong(0);
+        } finally {
+            SmallBBPool.releaseSmallDirectBB(bb);
+        }
+    }
+
+    private static boolean isLocality(Path path) throws IOException {
+
+        boolean isLocality;
+        ByteBuffer bb = SmallBBPool.smallDirectBB().order(ByteOrder.LITTLE_ENDIAN).limit(8);
+        try (var ch = FileChannel.open(path, StandardOpenOption.READ)) {
+            if (ch.read(bb, 0) != 8) throw new IOException("Could not read 8 bytes from " + path);
+            isLocality = (bb.getLong(0) & LOCALITY_MASK) != 0;
+        } finally {
+            SmallBBPool.releaseSmallDirectBB(bb);
+        }
+        return isLocality;
     }
 
     @Override protected void fillMetadata(MemorySegment seg, Metadata md) {
@@ -59,30 +107,23 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
         md.valueWidth   = 1;
     }
 
+    public abstract AbstractLookup polymorphicLookup();
     public void validate() throws IOException {
-        SegmentRope prev = new SegmentRope(), curr = new SegmentRope();
-        for (long i = 0; i < nStrings; i++) {
-            long begin = readOff(i), end = readOff(i+1);
-            if (end == begin && i != 0)
-                throw new IOException("Malformed "+this+": has empty string at id "+(i+1));
-            if (end < begin)
-                throw new IOException("Malformed "+this+": string with id "+(i+1)+" has negative length");
-            curr.wrapSegment(seg, begin, (int)(end-begin));
-            if (i > 0 ) {
-                int diff = curr.compareTo(prev);
-                if (diff < 0)
-                    throw new IOException("Malformed "+this+": string with id "+(i+1)+" ("+curr+") is smaller than previous ("+prev+")");
-                if (diff == 0)
-                    throw new IOException("Malformed "+this+": string with id "+(i+1)+" ("+curr+") is a duplicate of previous");
-            }
-            prev.wrapSegment(seg, begin, (int) (end-begin));
+        var lookup = polymorphicLookup();
+        for (int id = 1; id <= nStrings; id++) {
+            PlainRope str = lookup.get(id);
+            if (str.len < 0)
+                throw new IOException("Malformed "+this+": string with id "+id+" has negative length");
+            long found = lookup.find(str);
+            if (found != id)
+                throw new IOException("Malformed "+this+": expected "+id+" for find("+str+"), got"+found);
         }
     }
 
     public String dump() {
         var sb = new StringBuilder();
-        var lookup = this instanceof CompositeDict c ? c.lookup()
-                                                     : ((StandaloneDict)this).lookup();
+        var lookup = this instanceof SortedCompositeDict c ? c.lookup()
+                                                     : ((SortedStandaloneDict)this).lookup();
         for (long i = MIN_ID; i <= nStrings; i++) {
             PlainRope r = lookup.get(i);
             if (r == null)
@@ -99,8 +140,17 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
         return nStrings;
     }
 
+    /**
+     * Whether the ids in this dict enumerate a sorted list of strings.
+     *
+     * <p>This will return false if the dict uses a shared dict or if strings are
+     * stored in a layout that is optimized to improve spatial locality.</p>
+     */
+    public boolean isSorted() {
+        return (flags & (byte)((LOCALITY_MASK|SHARED_MASK) >>> FLAGS_BIT)) == 0;
+    }
 
-    protected abstract static class AbstractLookup {
+    public abstract static class AbstractLookup {
 
         public abstract Dict dict();
 
