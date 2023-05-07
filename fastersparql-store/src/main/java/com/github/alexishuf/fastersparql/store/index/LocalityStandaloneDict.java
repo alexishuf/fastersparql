@@ -4,8 +4,10 @@ import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.U8_UNSAFE_BASE;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.cmp;
 
 public class LocalityStandaloneDict extends Dict {
     final long emptyId;
@@ -31,7 +33,7 @@ public class LocalityStandaloneDict extends Dict {
         super(file);
         if ((flags & (byte)(LOCALITY_MASK >>> FLAGS_BIT)) == 0)
             throw new UnsupportedOperationException();
-        // the empty string is the aboslute minimal string, thus it is in the leftmost node
+        // the empty string is the absolute minimal string, thus it is in the leftmost node
         // of the tree. simulate moving left until we reach the leaf and check if it is the
         // empty string
         if (nStrings == 0) {
@@ -50,41 +52,41 @@ public class LocalityStandaloneDict extends Dict {
     public Lookup lookup() { return new Lookup(); }
 
     public final class Lookup extends AbstractLookup {
-        private final SegmentRope tmp = new SegmentRope(seg, 0, 0);
-        private final SegmentRope out = new SegmentRope(seg, 0, 0);
+        private final SegmentRope tmp = new SegmentRope(seg, 0, 1);
+        private final SegmentRope out = new SegmentRope(seg, 0, 1);
 
         @Override public LocalityStandaloneDict dict() { return LocalityStandaloneDict.this; }
 
         @Override public long find(PlainRope rope) {
             if (rope.len == 0) return emptyId;
-            if (UNSAFE != null && rope instanceof SegmentRope s)
-                return  find(s.segment, s.offset, s.len);
             long id = 1;
-            while (id <= nStrings) {
-                long off = readOff(id-1);
-                tmp.slice(off, (int)(readOff(id)-off));
-                int diff = tmp.compareTo(rope);
-                if (diff == 0) return id;
-                id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
-            }
-            return NOT_FOUND;
-        }
-
-        private long find(MemorySegment rSeg, long rOff, int rLen) {
-            long id = 1;
-            while (id <= nStrings) {
-                long off = readOff(id-1);
-                int diff = cmp(off, (int)(readOff(id)-off), rSeg, rOff, rLen);
-                if (diff == 0) return id;
-                id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+            if (UNSAFE != null && rope instanceof SegmentRope s) {
+                Object rBase = s.segment.array().orElse(null);
+                long rOff = s.segment.address() + (rBase == null ? 0 : U8_UNSAFE_BASE) + s.offset;
+                int rLen = s.len;
+                while (id <= nStrings) {
+                    long off = readOffUnsafe(id-1);
+                    int diff = cmp(null, valBase+off, (int)(readOffUnsafe(id)-off),
+                                   rBase, rOff, rLen);
+                    if (diff == 0) return id;
+                    id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+                }
+            } else {
+                while (id <= nStrings) {
+                    long off = readOffUnsafe(id - 1);
+                    tmp.slice(off, (int) (readOffUnsafe(id) - off));
+                    int diff = tmp.compareTo(rope);
+                    if (diff == 0) return id;
+                    id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+                }
             }
             return NOT_FOUND;
         }
 
         @Override public SegmentRope get(long id) {
             if (id < MIN_ID || id > nStrings) return null;
-            long off = readOff(id - 1);
-            out.slice(off, (int)(readOff(id)-off));
+            long off = readOffUnsafe(id - 1);
+            out.slice(off, (int)(readOffUnsafe(id)-off));
             return out;
         }
     }

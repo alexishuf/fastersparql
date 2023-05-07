@@ -6,9 +6,10 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.U8_UNSAFE_BASE;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.cmp;
 import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.SUFFIX_CHAR;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -88,9 +89,12 @@ public final class SortedCompositeDict extends Dict {
 
     public final class Lookup extends AbstractLookup {
         private final AbstractLookup shared = sharedDict == null ? null : sharedDict.lookup();
-        private final SegmentRope tmp =  new SegmentRope(seg, 0, 0);
+        private final SegmentRope tmp =  new SegmentRope(seg, 0, 1);
         private final TwoSegmentRope out = new TwoSegmentRope();
         private final Splitter split = new Splitter(splitMode);
+        private final Object b64Base = split.b64(MIN_ID).segment.array().orElse(null);
+        private final long b64Off = split.b64(MIN_ID).segment.address()
+                                  + (b64Base == null ? 0 : U8_UNSAFE_BASE);
 
         @Override public SortedCompositeDict dict() { return SortedCompositeDict.this; }
 
@@ -108,46 +112,44 @@ public final class SortedCompositeDict extends Dict {
         }
 
         private long find(SegmentRope b64, PlainRope local) {
-            if (UNSAFE == null || !(local instanceof SegmentRope s))
-                return findFallback(b64, local);
-            MemorySegment b64Seg = b64.segment, localSeg = s.segment;
-            long localOff = s.offset;
             long lo = 0, hi = nStrings-1;
-            while (lo <= hi) {
-                long mid = ((lo + hi) >>> 1);
-                long off = readOff(mid);
-                int len = (int) (readOff(mid+1) - off);
-                int diff = cmp(off, 5, b64Seg, 0, 5);
-                if (diff == 0)
-                    diff = cmp(off+5, len-5, localSeg, localOff, local.len);
-                if      (diff > 0) hi   = mid - 1;
-                else if (diff < 0) lo   = mid + 1;
-                else               return mid + Dict.MIN_ID;
+            if (UNSAFE != null && local instanceof SegmentRope s) {
+                Object lBase = s.segment.array().orElse(null);
+                long lOff = s.segment.address() + (lBase == null ? 0 : U8_UNSAFE_BASE) + s.offset;
+                int lLen = local.len;
+                while (lo <= hi) {
+                    long mid = ((lo + hi) >>> 1);
+                    long off = readOffUnsafe(mid);
+                    int len = (int) (readOffUnsafe(mid + 1) - off);
+                    int diff = cmp(null, valBase + off, 5, b64Base, b64Off, 5);
+                    if (diff == 0)
+                        diff = cmp(null, valBase + off + 5, len - 5, lBase, lOff, lLen);
+                    if      (diff > 0) hi = mid - 1;
+                    else if (diff < 0) lo = mid + 1;
+                    else               return mid + Dict.MIN_ID;
+                }
+            } else {
+                while (lo <= hi) {
+                    long mid = ((lo + hi) >>> 1);
+                    long off = readOffUnsafe(mid);
+                    int len = (int) (readOffUnsafe(mid+1) - off);
+                    tmp.wrapSegment(seg, off, len);
+                    int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
+                    if (diff == 0)
+                        diff = local.compareTo(tmp, b64.len, len);
+                    if      (diff < 0) hi   = mid - 1;
+                    else if (diff > 0) lo   = mid + 1;
+                    else               return mid + Dict.MIN_ID;
+                }
             }
             return NOT_FOUND;
         }
 
-        private long findFallback(SegmentRope b64, PlainRope local) {
-            long lo = 0, hi = nStrings-1;
-            while (lo <= hi) {
-                long mid = ((lo + hi) >>> 1);
-                long off = readOff(mid);
-                int len = (int) (readOff(mid+1) - off);
-                tmp.wrapSegment(seg, off, len);
-                int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
-                if (diff == 0)
-                    diff = local.compareTo(tmp, b64.len, len);
-                if      (diff < 0) hi   = mid - 1;
-                else if (diff > 0) lo   = mid + 1;
-                else               return mid + Dict.MIN_ID;
-            }
-            return NOT_FOUND;
-        }
 
         @Override public TwoSegmentRope get(long id)  {
             if (id < MIN_ID || id > nStrings) return null;
-            long off = readOff(id - 1);
-            int len = (int)(readOff(id) - off);
+            long off = readOffUnsafe(id - 1);
+            int len = (int)(readOffUnsafe(id) - off);
             long sId = Splitter.decode(seg, off);
             SegmentRope sharedRope = (SegmentRope) this.shared.get(sId);
             if (sharedRope == null)

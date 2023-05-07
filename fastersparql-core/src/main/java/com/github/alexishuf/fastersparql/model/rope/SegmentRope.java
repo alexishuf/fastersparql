@@ -5,14 +5,16 @@ import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import sun.misc.Unsafe;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 
 import static java.lang.Long.numberOfTrailingZeros;
-import static java.lang.foreign.MemorySegment.mismatch;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
@@ -22,6 +24,24 @@ import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 public class SegmentRope extends PlainRope {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
+    static final Unsafe U;
+    public static final int U8_UNSAFE_BASE;
+
+    static {
+        Unsafe u = null;
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            u = (Unsafe) field.get(null);
+        } catch (Throwable ignored) {
+            try {
+                Constructor<Unsafe> c = Unsafe.class.getDeclaredConstructor();
+                u = c.newInstance();
+            } catch (Throwable ignored1) {}
+        }
+        U = u;
+        U8_UNSAFE_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
+    }
 
     public long offset;
     protected byte @Nullable [] utf8;
@@ -40,8 +60,8 @@ public class SegmentRope extends PlainRope {
         if (offset+len > segment.byteSize())
             throw new IndexOutOfBoundsException("offset+len > segment.byteSize");
         this.offset = offset;
+        this.utf8 = len == 0 ? ByteRope.EMPTY_UTF8 : null;
         this.segment = segment;
-        this.utf8 = segment.byteSize() == 0 ? ByteRope.EMPTY_UTF8 : null;
     }
 
     public SegmentRope(byte @NonNull [] utf8, int offset, int len) {
@@ -76,6 +96,8 @@ public class SegmentRope extends PlainRope {
     public byte @Nullable [] backingArray()       { return utf8; }
     @Override public int     backingArrayOffset() { return (int)offset; }
 
+
+
     public ByteBuffer asBuffer() {
         int iOffset = (int) offset;
         if (utf8 != null)
@@ -85,7 +107,7 @@ public class SegmentRope extends PlainRope {
 
     public void wrap(SegmentRope other) {
         this.segment = other.segment;
-        this.utf8 = null;
+        this.utf8 = other.utf8;
         this.offset = other.offset;
         this.len = other.len;
     }
@@ -113,14 +135,14 @@ public class SegmentRope extends PlainRope {
 
     public void wrapEmptyBuffer() {
         segment = ByteRope.EMPTY_SEGMENT;
-        utf8 = null;
+        utf8 = ByteRope.EMPTY_UTF8;
         offset = 0;
         len = 0;
     }
 
     @Override public byte get(int i) {
         if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
-        return segment.get(JAVA_BYTE, offset + i);
+        return segment.get(JAVA_BYTE, offset+i);
     }
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
@@ -301,19 +323,34 @@ public class SegmentRope extends PlainRope {
 
     static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {
         long end = begin+rLen;
-        if (left != right)
-            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
-        // manually compare since MemorySegment.mismatch() on JDK 20 will assume
-        // any two ranges in the same segment to be equal.
-        for (long ve = pos+B_SP.loopBound(rLen); pos < ve; pos += B_LEN, begin += B_LEN) {
-            ByteVector v = fromMemorySegment(B_SP,  left,   pos, LITTLE_ENDIAN);
-            ByteVector u = fromMemorySegment(B_SP, right, begin, LITTLE_ENDIAN);
-            if (!v.eq(u).allTrue()) return false;
+//        if (left != right)
+//            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
+        // else: manually compare since due to JDK-8306866
+
+        if (rLen > B_LEN) {
+            for (long ve = pos+B_SP.loopBound(rLen); pos < ve; pos += B_LEN, begin += B_LEN) {
+                ByteVector l = fromMemorySegment(B_SP,  left, pos,   LITTLE_ENDIAN);
+                ByteVector r = fromMemorySegment(B_SP, right, begin, LITTLE_ENDIAN);
+                if (!l.eq(r).allTrue()) return false;
+            }
+            rLen = (int)(end-begin);
         }
-        while (begin < end) {
-            if (left.get(JAVA_BYTE, pos++) != right.get(JAVA_BYTE, begin++)) return false;
-        }
-        return true;
+
+        Object lBase =  left.array().orElse(null);
+        Object rBase = right.array().orElse(null);
+        pos += left.address() + (lBase == null ? 0 : U8_UNSAFE_BASE);
+        begin += right.address() + (rBase == null ? 0 : U8_UNSAFE_BASE);
+        end = begin + rLen;
+        for (; begin < end && U.getByte(lBase, pos) == U.getByte(rBase, begin); ++begin)
+            ++pos;
+        return begin == end;
+
+//        return compareTo(left, pos, rLen, right, begin, rLen) == 0;
+
+//        while (begin < end) {
+//            if (left.get(JAVA_BYTE, pos++) != right.get(JAVA_BYTE, begin++)) return false;
+//        }
+//        return true;
     }
 
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
@@ -371,6 +408,7 @@ public class SegmentRope extends PlainRope {
     }
 
     @Override public @NonNull String toString() {
+        if (len == 0) return "";
         if (utf8 != null)
             return new String(utf8, (int)offset, len, UTF_8);
         return super.toString();
@@ -382,8 +420,35 @@ public class SegmentRope extends PlainRope {
         return super.toString(begin, end);
     }
 
+    public static int cmp(Object lBase, long lOff, int lLen,
+                          Object rBase, long rOff, int rLen) {
+        long lEnd = lOff + Math.min(lLen, rLen);
+        int diff = (int)((lOff|rOff)&7);
+        if (diff == 0) {
+            for (; lOff+8 < lEnd; lOff += 8, rOff += 8) {
+                if (U.getLong(lBase, lOff) != U.getLong(rBase, rOff)) { diff = -1; break; }
+            }
+        }
+        if ((diff&3) == 0) {
+            for (; lOff+4 < lEnd; lOff += 4, rOff += 4) {
+                if (U.getInt(lBase, lOff) != U.getInt(rBase, rOff)) break;
+            }
+        }
+        for (; lOff < lEnd; ++lOff, ++rOff) {
+            if ((diff = U.getByte(lBase, lOff) - U.getByte(rBase, rOff)) != 0) return diff;
+        }
+        return lLen-rLen;
+    }
+
     public static int compareTo(MemorySegment left, long lOff, int lLen,
                                 MemorySegment right, long rOff, int rLen) {
+        if (U != null) {
+            Object lBase = left.array().orElse(null);
+            Object rBase = right.array().orElse(null);
+            lOff +=  left.address() + (lBase == null ? 0 : U8_UNSAFE_BASE);
+            rOff += right.address() + (rBase == null ? 0 : U8_UNSAFE_BASE);
+            return cmp(lBase, lOff, lLen, rBase, rOff, rLen);
+        }
         //vectorization helps, but is slower than JAVA_INT_UNALIGNED. Using Vector.lane() is
         // too slow. Best vector implementation consisted of left.compare(NE, right).firstTrue()
         // followed by JAVA_BYTE scalar accesses. ByteVector.sub() cannot be used as byte overflows
@@ -405,23 +470,16 @@ public class SegmentRope extends PlainRope {
         return lLen - rLen;
     }
 
-    @Override public int compareTo(@NonNull Rope o) {
-        if (o instanceof SegmentRope s)
-            return compareTo(segment, offset, len, s.segment, s.offset, s.len);
-        else if (o instanceof TwoSegmentRope t)
-            return compareTo(t);
-        return super.compareTo(o);
-    }
 
     public final int compareTo(SegmentRope o) {
         return compareTo(segment, offset, len, o.segment, o.offset, o.len);
     }
     public final int compareTo(TwoSegmentRope o) {
-        MemorySegment segment = this.segment;
+        MemorySegment seg = this.segment;
         // compare all we can on the left side with all we can of the right side
         long offset = this.offset;
         int fstLen = o.fstLen, len = Math.min(this.len, fstLen);
-        int diff = compareTo(segment, offset, len, o.fst, o.fstOff, len);
+        int diff = compareTo(seg, offset, len, o.fst, o.fstOff, len);
         if (diff != 0) return diff;
         if (fstLen > len)
             return -1; // left side exhausted before right side
@@ -431,21 +489,7 @@ public class SegmentRope extends PlainRope {
         len = this.len-len;
 
         // compare whatever remains on the left side with the second segment of o
-        return compareTo(segment, offset, len, o.snd, o.sndOff, o.sndLen);
-    }
-
-    @Override public int compareTo(Rope o, int begin, int end) {
-       if (o instanceof SegmentRope s)
-           return compareTo(segment, offset, len, s.segment, s.offset+begin, end-begin);
-       else if (o instanceof TwoSegmentRope t)
-           return compareTo(t, begin, end);
-       return super.compareTo(o, begin, end);
-    }
-
-    @Override public int compareTo(PlainRope o, int begin, int end) {
-        return o instanceof SegmentRope s
-                ? compareTo(segment, offset, len, s.segment, s.offset+begin, end-begin)
-                : compareTo((TwoSegmentRope) o, begin, end);
+        return compareTo(seg, offset, len, o.snd, o.sndOff, o.sndLen);
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
@@ -453,10 +497,11 @@ public class SegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
+        MemorySegment seg = this.segment;
         int fstLen = o.fstLen, oLen = fstLen-begin, len = Math.min(this.len, oLen);
         long offset = this.offset;
         if (len > 0) { // compare this vs fst segment
-            int diff = compareTo(segment, offset, len, o.fst, o.fstOff+begin, len);
+            int diff = compareTo(seg, offset, len, o.fst, o.fstOff+begin, len);
             if (diff != 0) return diff;
         }
         if (oLen > len)
@@ -472,6 +517,6 @@ public class SegmentRope extends PlainRope {
         oLen = end-begin;
 
         // compare [offset, offset+len) and [begin, end) unlike earlier, length may differ
-        return compareTo(segment, offset, len, o.snd, o.sndOff+begin, oLen);
+        return compareTo(seg, offset, len, o.snd, o.sndOff+begin, oLen);
     }
 }

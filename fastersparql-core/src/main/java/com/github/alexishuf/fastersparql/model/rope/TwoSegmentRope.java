@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
-import org.checkerframework.checker.nullness.qual.NonNull;
-
 import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -251,13 +249,6 @@ public class TwoSegmentRope extends PlainRope {
         return SegmentRope.hashCode(h, snd, sndOff, sndOff+sndLen);
     }
 
-    @Override public int compareTo(@NonNull Rope o) {
-        if      (o instanceof SegmentRope    s) return -s.compareTo(this);
-        else if (o instanceof TwoSegmentRope t) return compareTo(t);
-        else                                    return super.compareTo(o);
-    }
-
-
     @Override public int compareTo(SegmentRope o) { return -o.compareTo(this); }
 
     @Override public int compareTo(TwoSegmentRope o) {
@@ -288,18 +279,6 @@ public class TwoSegmentRope extends PlainRope {
             if (lLen == 0 && lFst) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false;}
             if (rLen == 0 && rFst) { rSeg = o.snd; rOff = o.sndOff; rLen = o.sndLen; rFst = false;}
         }
-    }
-
-    @Override public int compareTo(Rope o, int begin, int end) {
-        if      (o instanceof SegmentRope    s) return compareTo(s, begin, end);
-        else if (o instanceof TwoSegmentRope t) return compareTo(t, begin, end);
-        else                                    return super.compareTo(o, begin, end);
-    }
-
-    @Override public int compareTo(PlainRope o, int begin, int end) {
-        return o instanceof SegmentRope s
-                ? compareTo(s, begin, end)
-                : compareTo((TwoSegmentRope)o, begin, end);
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {

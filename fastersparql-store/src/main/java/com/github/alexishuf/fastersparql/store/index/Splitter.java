@@ -10,7 +10,6 @@ import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareTo;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class Splitter {

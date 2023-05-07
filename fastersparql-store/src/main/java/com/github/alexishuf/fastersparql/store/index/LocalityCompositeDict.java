@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.cmp;
 import static com.github.alexishuf.fastersparql.store.index.Splitter.SharedSide.SUFFIX;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -86,7 +87,7 @@ public class LocalityCompositeDict extends Dict {
     public Lookup lookup() { return new Lookup(); }
 
     public final class Lookup extends AbstractLookup {
-        private final SegmentRope tmp = new SegmentRope(seg, 0, 0);
+        private final SegmentRope tmp = new SegmentRope(seg, 0, 1);
         private final TwoSegmentRope out = new TwoSegmentRope();
         private final LocalityStandaloneDict.Lookup shared = sharedDict.lookup();
         private final Splitter split = new Splitter(splitMode);
@@ -110,42 +111,43 @@ public class LocalityCompositeDict extends Dict {
         }
 
         private long find(int flShId, PlainRope local) {
-            if (local instanceof SegmentRope s && UNSAFE != null)
-                return find(flShId, s.segment, s.offset, s.len);
-            int id = 1;
-            while (id <= nStrings) {
-                long off = readOff(id - 1);
-                int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
-                int diff = offerFlShId-flShId;
-                if (diff == 0) {
-                    off &= OFF_MASK;
-                    tmp.slice(off, (int)((readOff(id)&OFF_MASK) - off));
-                    diff = tmp.compareTo(local);
-                    if (diff == 0)
-                        return id;
+            long id = 1;
+            if (local instanceof SegmentRope s && UNSAFE != null) {
+                Object base = s.segment.array().orElse(null);
+                long rAddr = s.segment.address() + s.offset;
+                if (base != null)
+                    rAddr += UNSAFE.arrayBaseOffset(byte[].class);
+                while (id <= nStrings) {
+                    long off = readOffUnsafe(id - 1);
+                    int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
+                    int diff = offerFlShId- flShId;
+                    if (diff == 0) {
+                        off &= OFF_MASK;
+                        diff = (int) ((readOffUnsafe(id) & OFF_MASK) - off);
+                        diff = cmp(null, valBase+off, diff,
+                                base, rAddr, s.len);
+                        if (diff == 0)
+                            return id;
+                    }
+                    id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
                 }
-                id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
+            } else {
+                while (id <= nStrings) {
+                    long off = readOffUnsafe(id - 1);
+                    int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
+                    int diff = offerFlShId - flShId;
+                    if (diff == 0) {
+                        off &= OFF_MASK;
+                        tmp.slice(off, (int) ((readOffUnsafe(id) & OFF_MASK) - off));
+                        diff = tmp.compareTo(local);
+                        if (diff == 0)
+                            return id;
+                    }
+                    id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
+                }
             }
             return NOT_FOUND;
         }
-
-        private long find(int flShId, MemorySegment local, long localOff, int localLen) {
-            int id = 1;
-            while (id <= nStrings) {
-                long off = readOff(id - 1);
-                int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
-                int diff = offerFlShId-flShId;
-                if (diff == 0) {
-                    off &= OFF_MASK;
-                    diff = cmp(off, (int)((readOff(id)&OFF_MASK) - off), local, localOff, localLen);
-                    if (diff == 0)
-                        return id;
-                }
-                id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
-            }
-            return NOT_FOUND;
-        }
-
 
         private long findB64(PlainRope string, int flShId) {
             MemorySegment b64 = split.b64(flShId).segment();
@@ -172,7 +174,8 @@ public class LocalityCompositeDict extends Dict {
         }
 
         @Override public TwoSegmentRope get(long id) {
-            long off = readOff(id - 1);
+            if (id < MIN_ID || id > nStrings) return null;
+            long off = readOffUnsafe(id - 1);
             int len;
             SegmentRope sharedRope;
             boolean flip;
@@ -180,9 +183,9 @@ public class LocalityCompositeDict extends Dict {
                 flip = (off & SUFFIX_MASK) != 0;
                 sharedRope = shared.get((off & SH_ID_MASK) >>> SH_ID_BIT);
                 off &= OFF_MASK;
-                len = (int) ((readOff(id) & OFF_MASK) - off);
+                len = (int) ((readOffUnsafe(id) & OFF_MASK) - off);
             } else {
-                len = (int)(readOff(id) - off);
+                len = (int)(readOffUnsafe(id) - off);
                 flip = seg.get(JAVA_BYTE, off+4) == SharedSide.SUFFIX_CHAR;
                 sharedRope = shared.get(Splitter.decode(seg, off));
             }

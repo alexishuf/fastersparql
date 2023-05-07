@@ -15,7 +15,6 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Objects;
 
 import static java.lang.foreign.ValueLayout.*;
 import static java.nio.ByteOrder.BIG_ENDIAN;
@@ -151,11 +150,6 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
     /**
      * Read the index-th offset of the offsets list as a long (without sign-extension).
      *
-     * <p><strong>Warning</strong>: this method does not perform bounds check and out of bound
-     * checks will cause <strong>UNDEFINED BEHAVIOR</strong> was would happen with native code.
-     * Out of bound reads are most likely to either read garbage or kill the JVM, but anything
-     * could happen.</p>
-     *
      * @param index the zero-based index of the desired offset within the offsets list.
      * @return the byte offset into the mapped file that is stored at the index-th entry of
      *         the offsets list.
@@ -168,6 +162,32 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
             return readFallbackOff(index);
         if (index <  0 | index >= offsCount)
             throw new IndexOutOfBoundsException();
+        long addr = offBase + (index << offShift);
+        return switch (offShift) {
+            case 0  -> UNSAFE.getByte(addr)  & BYTE_MASK;
+            case 1  -> UNSAFE.getShort(addr) & SHORT_MASK;
+            case 2  -> UNSAFE.getInt(addr)   & INT_MASK;
+            case 3  -> UNSAFE.getLong(addr);
+            default -> throw unreachable;
+        };
+    }
+
+
+    /**
+     * Read the index-th offset of the offsets list as a long (without sign-extension).
+     *
+     * <p><strong>Warning</strong>: this method does not perform bounds check and out of bound
+     * checks will cause <strong>UNDEFINED BEHAVIOR</strong> was would happen with native code.
+     * Out of bound reads are most likely to either read garbage or kill the JVM, but anything
+     * could happen.</p>
+     *
+     * @param index the zero-based index of the desired offset within the offsets list.
+     * @return the byte offset into the mapped file that is stored at the index-th entry of
+     *         the offsets list.
+     */
+    protected long readOffUnsafe(long index) {
+        if (UNSAFE == null || IS_BE)
+            return readFallbackOff(index);
         long addr = offBase + (index << offShift);
         return switch (offShift) {
             case 0  -> UNSAFE.getByte(addr)  & BYTE_MASK;
@@ -199,26 +219,6 @@ abstract class OffsetMappedLEValues implements AutoCloseable {
             case 3 -> UNSAFE.getLong(addr);
             default -> throw unreachable;
         };
-    }
-
-    protected int cmp(long lOff, int lLen, MemorySegment rhs, long rOff, int rLen) {
-        Unsafe u = Objects.requireNonNull(UNSAFE);
-        long lEnd = (lOff += valBase) + Math.min(lLen, rLen);
-        int diff = (int)((lOff|rOff)&7);
-        if (diff == 0) {
-            for (; lOff+8 < lEnd; lOff += 8, rOff += 8) {
-                if (u.getLong(lOff) != rhs.get(LE_LONG_UA, rOff)) break;
-            }
-        }
-        if ((diff&3) == 0) {
-            for (; lOff+4 < lEnd; lOff += 4, rOff += 4) {
-                if (u.getInt(lOff) != rhs.get(LE_INT_UA, rOff)) break;
-            }
-        }
-        for (; lOff < lEnd; ++lOff, ++rOff) {
-            if ((diff = u.getByte(lOff) - rhs.get(JAVA_BYTE, rOff)) != 0) return diff;
-        }
-        return lLen-rLen;
     }
 
     private long readFallbackOff(long index) {

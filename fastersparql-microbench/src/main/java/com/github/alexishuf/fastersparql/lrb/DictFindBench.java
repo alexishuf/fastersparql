@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.store.index.*;
 import com.github.alexishuf.fastersparql.util.IOUtils;
@@ -77,14 +78,11 @@ public class DictFindBench {
                 queries[i] = switch (ropeType) {
                     case SEGMENT -> new ByteRope(r.len).append(r);
                     case TWO_SEGMENT -> {
-                        ByteRope fst = new ByteRope(r.len), snd = new ByteRope(r.len);
-                        switch (split.split(r)) {
-                            case PREFIX      -> { fst.append(split.shared()); snd.append(split.local()); }
-                            case SUFFIX,NONE ->  { fst.append(split.local()); snd.append(split.shared()); }
-                        }
-                        var tsr = new TwoSegmentRope();
-                        tsr.wrapFirst(fst);
-                        tsr.wrapSecond(snd);
+                        TwoSegmentRope tsr = new TwoSegmentRope();
+                        boolean flip = split.split(r) == Splitter.SharedSide.SUFFIX;
+                        tsr.wrapFirst((SegmentRope)split.shared());
+                        tsr.wrapSecond((SegmentRope)split.local());
+                        if (flip) tsr.flipSegments();
                         yield tsr;
                     }
                 };
