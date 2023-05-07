@@ -131,7 +131,7 @@ public class Splitter {
             if (begin + len <= fstLen) {
                 wrapper.wrapSegment(t.fst, t.fstOff + begin, len);
                 return wrapper;
-            } else if (begin > fstLen) {
+            } else if (begin >= fstLen) {
                 wrapper.wrapSegment(t.snd, t.sndOff + begin - fstLen, len);
                 return wrapper;
             } else {
