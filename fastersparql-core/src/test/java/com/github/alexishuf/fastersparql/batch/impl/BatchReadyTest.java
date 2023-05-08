@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.impl;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
@@ -63,7 +64,7 @@ public class BatchReadyTest {
         try (var helper = new ReadyHelper()) {
             helper.minBatch(min).maxBatch(max);
             helper.minWait(atLeast, NANOSECONDS).maxWait(atMost, NANOSECONDS);
-            assertEquals(expected, helper.readyInNanos(size, System.nanoTime() + startOffset) == 0);
+            assertEquals(expected, helper.readyInNanos(size, Timestamp.nanoTime() + startOffset) == 0);
         }
     }
 
