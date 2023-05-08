@@ -235,7 +235,7 @@ public class SegmentRope extends PlainRope {
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue();
                 if (lane >= 0) return end  + lane;
             }
-            end += B_LEN-1; // the while above always overdraws from end
+            end += B_LEN; // the while above always overdraws from end
         }
         end -= 1;
         for (byte c; end >= begin; --end) {
