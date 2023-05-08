@@ -27,6 +27,9 @@ In disk, a graph is store in a directory with the following files:
     STRING is the string prefix
   - prefixed strings are stored as ____STRING, where ____ are the 3-byte index 
     of the shared prefix string and STRING is the string suffix.
+  - If the dictionary is [locality-optimized](#dictionary) the base64 prefixes 
+    may not be present if the shared string ids could be saved together 
+    with the string offsets list.
 - `pso` a TriplesIndex with predicates as key and (subject,    object) as pairs.
 - `pos` a TriplesIndex with predicates as key and (object,    subject) as pairs.
 - `spo` a TriplesIndex with subjects   as key and (predicate,  object) as pairs.
@@ -45,14 +48,27 @@ A dictionary file consists of the following components laid out sequentially:
    - bit `0`: if set, `OFF_W=4`, else `OFF_W=8`. This controls whether 
      subsequent indices and lengths are 4B LE or 8-byte 
      little endian
-   - bit `1`: if set, all strings stored start with `____.` or `____!` where 
-     `____` is a base64-encoded id into a `shared` dict, `.` denotes that the 
-   - shared string is a prefix and `!` denotes that the shared string is a 
-   - suffix.
-   - bit `2`: if set, indicates that despite bit `1` being set, some 
-     there are shared strings whose id did not fit in 4 base64 characters
-     (24 bits). Such strings are stored as if prefixed by a shared empty 
-     string.
+   - bit `1` (uses shared): if set, all strings stored start with `____.` or 
+     `____!` where `____` is a base64-encoded id into a `shared` dict, `.` 
+     denotes that the - shared string is a prefix and `!` denotes that the 
+     shared string is a  suffix.
+   - bit `2` (shared overflow): if set, indicates that despite bit `1` being 
+     set, some there are shared strings whose id did not fit in 4 base64 
+     characters (24 bits). Such strings are stored as if prefixed by a shared 
+     empty string.
+   - bit `3` (prolong): if set, IRIs must be split not on the last `/` or `#`, 
+     but before the last word `[A-Za-z0-9]` after the last `/` or `#`. This 
+     is useful for datasets where there regular "local names" still share 
+     common prefixes, e.g., `.../TCGA-a-36-g156>` and `..../TCGA-a-36-h231>`.
+   - bit `4` (penultimate): if set, IRIS must be split at the penultimate `/`
+     or `#`. This is useful when the last two segments of an IRI are always 
+     unique, e.g., `.../123/london>`, `.../456/paris>`.
+   - bit `5` (locality): if set the dict entries will not be sorted. Instead, 
+     they will be sorted to reflect a preorder (bread-first) scan of a binary 
+     tree with all values in the dict. The first entry will be the root, the 
+     second will be left child and the third will be the right child. If the 
+     root node is indexed as `1`, the the left child of node `i` is at index 
+     `2*i` and the right child is at index `2*i + 1`.
 3. Offset `8`: `N_STRINGS` occurrences of `OFF_W`B LE integer with the 
    absolute offset within this file where the string starts:
 4. Offset `8+OFF_W * N_STRINGS`: index of the first byte after the end of the 
