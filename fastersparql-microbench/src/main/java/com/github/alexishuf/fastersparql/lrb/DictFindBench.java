@@ -1,12 +1,18 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
+import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.*;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+import org.rdfhdt.hdt.dictionary.Dictionary;
+import org.rdfhdt.hdt.enums.TripleComponentRole;
+import org.rdfhdt.hdt.hdt.HDT;
+import org.rdfhdt.hdt.hdt.HDTManager;
+import org.rdfhdt.hdt.util.string.ReplazableString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,25 +47,32 @@ public class DictFindBench {
     @Param({"false", "true"}) private boolean standalone;
     @Param({"false", "true"}) private boolean optimizeLocality;
     @Param({"SEGMENT", "TWO_SEGMENT"}) private RopeType ropeType;
+    @Param({"0"}) private int testHdt;
 
     private Path sourceDir, currentDir;
     private Dict dict;
     private Dict.AbstractLookup lookup;
+    private Path hdtSource;
+    private HDT hdt;
+    private Dictionary hdtDict;
+    private int hdtDictId;
 
     private PlainRope[] queries;
+    private Term[] hdtTerms;
+    private ReplazableString[] hdtQueries;
     private long expected;
 
     @Setup(Level.Trial) public void setup() throws IOException {
         long setupStart = System.nanoTime();
-        var hdtPath = Files.createTempFile("fastersparql-NYT", ".hdt");
+        sourceDir = Files.createTempDirectory("fastersparql");
+        hdtSource = sourceDir.resolve("NYT.hdt");
         try (var is = HdtBench.class.getResourceAsStream("NYT.hdt");
-             var out = new FileOutputStream(hdtPath.toFile())) {
+             var out = new FileOutputStream(hdtSource.toFile())) {
             if (is == null) throw new RuntimeException("Resource NYT.hdt not found");
             if (is.transferTo(out) == 0) throw new RuntimeException("Empty NYT.hdt");
         }
-        sourceDir = Files.createTempDirectory("fastersparql");
         new HdtConverter().optimizeLocality(optimizeLocality).standaloneDict(standalone)
-                .convert(hdtPath, sourceDir);
+                          .convert(hdtSource, sourceDir);
 
         Random random = new Random(seed);
         int nStrings;
@@ -87,11 +100,49 @@ public class DictFindBench {
                     }
                 };
             }
+            if (testHdt == 1) {
+                hdtQueries = new ReplazableString[nQueries];
+                for (int i = 0; i < nQueries; i++)
+                    hdtQueries[i] = term2hdtLookup(Term.valueOf(queries[i]));
+            }
+            if (testHdt >= 2) {
+                hdtTerms = new Term[nQueries];
+                for (int i = 0; i < nQueries; i++)
+                    hdtTerms[i] = Term.valueOf(queries[i]);
+            }
         }
         long us = System.nanoTime()-setupStart/1_000;
         log.info("setup in {}.{}ms, queries={}/{}. fsync()ing...",
                  us/1_000, us%1_000, queries.length, nStrings);
         IOUtils.fsync(1_000);
+    }
+
+    private static ReplazableString term2hdtLookup(Term t) {
+
+        ReplazableString rs  =switch (t.type()) {
+            case LIT -> {
+                int endLex = t.endLex(), required = 1 + t.unescapedLexicalSize() + t.len-endLex;
+                var str = new ReplazableString(required);
+                var unescaped = new ByteRope(str.getBuffer(), 0, 0);
+                unescaped.append('"');
+                t.unescapedLexical(unescaped);
+                unescaped.append(t, endLex, t.len);
+                yield str;
+            }
+            case IRI -> {
+                var str = new ReplazableString(t.len - 2);
+                t.copy(1, t.len-1, str.getBuffer(), 0);
+                yield str;
+            }
+            default -> {
+                var str = new ReplazableString(t.len);
+                t.copy(0, t.len, str.getBuffer(), 0);
+                yield str;
+            }
+        };
+        byte[] u8 = rs.getBuffer();
+        rs.replace(0, u8, 0, u8.length);
+        return rs;
     }
 
     private static void deleteDir(Path dir) throws IOException {
@@ -116,10 +167,25 @@ public class DictFindBench {
         Files.copy(strings, stringsCopy);
         IOUtils.fsync(10_000);
         lookup = (dict = Dict.load(currentDir.resolve("strings"))).polymorphicLookup();
+
+        if (testHdt > 0) {
+            Path hdtCopy = currentDir.resolve("NYT.hdt");
+            Files.copy(hdtSource, hdtCopy);
+            hdt = HDTManager.mapHDT(hdtCopy.toString());
+            hdtDict = hdt.getDictionary();
+            hdtDictId = IdAccess.register(hdtDict);
+        }
     }
 
     @TearDown(Level.Invocation) public void invocationTearDown() throws IOException {
+        if (hdtDictId != 0)
+            IdAccess.release(hdtDictId);
+        hdtDictId = 0;
         dict.close();
+        if (hdt != null) {
+            hdt.close();
+            hdt = null;
+        }
         deleteDir(currentDir);
     }
 
@@ -156,11 +222,43 @@ public class DictFindBench {
         return checkXor(xor);
     }
 
+    private long findHdt() {
+        long xor = 0;
+        Dictionary d = hdtDict;
+        for (var q : hdtQueries) {
+            long id = d.stringToId(q, TripleComponentRole.SUBJECT);
+            if (id <= 0) {
+                if ((id = d.stringToId(q, TripleComponentRole.OBJECT)) <= 0)
+                    id = d.stringToId(q, TripleComponentRole.PREDICATE);
+            }
+            xor ^= id;
+        }
+        return xor;
+    }
+
+    private long findHdtUnescape() {
+        long xor = 0;
+        Dictionary d = hdtDict;
+        for (var term : hdtTerms) {
+            var q = term2hdtLookup(term);
+            long id = d.stringToId(q, TripleComponentRole.SUBJECT);
+            if (id <= 0) {
+                if ((id = d.stringToId(q, TripleComponentRole.OBJECT)) <= 0)
+                    id = d.stringToId(q, TripleComponentRole.PREDICATE);
+            }
+            xor ^= id;
+        }
+        return xor;
+    }
+
     @Benchmark public long find() {
-        if      (lookup instanceof SortedStandaloneDict.Lookup         l) return find(l);
+        if      (testHdt == 1                                     ) return findHdt();
+        else if (testHdt == 2                                     ) return findHdtUnescape();
+        else if (lookup instanceof SortedStandaloneDict.Lookup   l) return find(l);
         else if (lookup instanceof LocalityStandaloneDict.Lookup l) return find(l);
-        else if (lookup instanceof SortedCompositeDict.Lookup          l) return find(l);
+        else if (lookup instanceof SortedCompositeDict.Lookup    l) return find(l);
         else if (lookup instanceof LocalityCompositeDict.Lookup  l) return find(l);
         throw new UnsupportedOperationException("Unexpected dict type");
     }
+
 }
