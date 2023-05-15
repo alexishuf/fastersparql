@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -10,7 +9,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_string;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -106,15 +105,15 @@ public class TermParserTest {
                 arguments(Term.lang("\\'", "en-US"), "'''\\''''@en-US"),
                 arguments(Term.lang("'", "en-US"), "'''''''@en-US"),
 
-                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(Term.typed("23", RopeDict.DT_INT), "\"\"\"23\"\"\"^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(Term.typed("23", RopeDict.DT_INT), "'23'^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(Term.typed("23", RopeDict.DT_INT), "'''23'''^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", DT_INT), "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", DT_INT), "\"\"\"23\"\"\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", DT_INT), "'23'^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(Term.typed("23", DT_INT), "'''23'''^^<http://www.w3.org/2001/XMLSchema#int>"),
 
-                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^xsd:int\t"),
-                arguments(Term.typed("23", RopeDict.DT_INT), "\"\"\"23\"\"\"^^xsd:int "),
-                arguments(Term.typed("23", RopeDict.DT_INT), "'23'^^xsd:int\n"),
-                arguments(Term.typed("23", RopeDict.DT_INT), "'''23'''^^xsd:int."),
+                arguments(Term.typed("23", DT_INT), "\"23\"^^xsd:int\t"),
+                arguments(Term.typed("23", DT_INT), "\"\"\"23\"\"\"^^xsd:int "),
+                arguments(Term.typed("23", DT_INT), "'23'^^xsd:int\n"),
+                arguments(Term.typed("23", DT_INT), "'''23'''^^xsd:int."),
 
                 //boolean literals (Turtle)
                 arguments(Term.TRUE, "true."),
@@ -125,20 +124,20 @@ public class TermParserTest {
                 arguments(Term.FALSE, "false\t"),
 
                 //number literals (Turtle)
-                arguments(Term.typed("23", RopeDict.DT_integer), "23,"),
-                arguments(Term.typed("-23", RopeDict.DT_integer), "-23;"),
-                arguments(Term.typed("23.5", RopeDict.DT_decimal), "23.5\t"),
-                arguments(Term.typed("-23.5", RopeDict.DT_decimal), "-23.5\n"),
-                arguments(Term.typed("23e+2", RopeDict.DT_DOUBLE), "23e+2 "),
-                arguments(Term.typed("23E-2", RopeDict.DT_DOUBLE), "23E-2\r"),
+                arguments(Term.typed("23", DT_integer), "23,"),
+                arguments(Term.typed("-23", DT_integer), "-23;"),
+                arguments(Term.typed("23.5", DT_decimal), "23.5\t"),
+                arguments(Term.typed("-23.5", DT_decimal), "-23.5\n"),
+                arguments(Term.typed("23e+2", DT_DOUBLE), "23e+2 "),
+                arguments(Term.typed("23E-2", DT_DOUBLE), "23E-2\r"),
 
                 //number literals followed by '.' (Turtle)
-                arguments(Term.typed("23", RopeDict.DT_integer), "23."),
-                arguments(Term.typed("-23", RopeDict.DT_integer), "-23."),
-                arguments(Term.typed("23.5", RopeDict.DT_decimal), "23.5."),
-                arguments(Term.typed("-23.5", RopeDict.DT_decimal), "-23.5."),
-                arguments(Term.typed("23e+2", RopeDict.DT_DOUBLE), "23e+2."),
-                arguments(Term.typed("23E-2", RopeDict.DT_DOUBLE), "23E-2."),
+                arguments(Term.typed("23", DT_integer), "23."),
+                arguments(Term.typed("-23", DT_integer), "-23."),
+                arguments(Term.typed("23.5", DT_decimal), "23.5."),
+                arguments(Term.typed("-23.5", DT_decimal), "-23.5."),
+                arguments(Term.typed("23e+2", DT_DOUBLE), "23e+2."),
+                arguments(Term.typed("23E-2", DT_DOUBLE), "23E-2."),
 
                 // vars
                 arguments(Term.valueOf("?x"), "?x"),
@@ -190,8 +189,8 @@ public class TermParserTest {
 
                 //prefixed datatypes
                 arguments(Term.typed("5", DT_string), "\"5\"^^xsd:string."),
-                arguments(Term.typed("23", RopeDict.DT_INT), "\"23\"^^xsd:int,"),
-                arguments(Term.typed("<p>", RopeDict.DT_HTML), "\"<p>\"^^rdf:HTML\n"),
+                arguments(Term.typed("23", DT_INT), "\"23\"^^xsd:int,"),
+                arguments(Term.typed("<p>", DT_HTML), "\"<p>\"^^rdf:HTML\n"),
 
                 //errors
                 arguments(ERROR, "\"\"\"a\""),
@@ -230,22 +229,22 @@ public class TermParserTest {
             assertEquals(expected.toString(), parser.asTerm().toString());
             assertEquals(expectedTermEnd, parser.termEnd(), "termEnd changed by as*() methods");
 
-            assertEquals(expected.flaggedDictId, parser.flaggedId());
+            assertEquals(expected.shared(), parser.shared());
             switch (parser.result()) {
                 case NT, VAR -> {
                     int begin = parser.localBegin(), end = parser.localEnd();
                     assertSame(inRope, parser.localBuf());
-                    assertEquals(new ByteRope(expected.local),
+                    assertEquals(new ByteRope(expected.local()),
                                  requireNonNull(parser.localBuf()).sub(begin, end));
                 }
             }
 
-            int fId = parser.flaggedId();
-            assertEquals(expected.flaggedDictId, fId);
+            var sh = parser.shared();
+            assertEquals(expected.shared(), sh);
             int localBegin = parser.localBegin(), localEnd = parser.localEnd();
             Rope local = parser.localBuf().sub(localBegin, localEnd);
-            Rope reassembled = fId < 0 ? Rope.of(local, RopeDict.getTolerant(fId))
-                                       : Rope.of(RopeDict.getTolerant(fId), local);
+            Rope reassembled = sh.len > 0 && sh.get(0) == '"' ? Rope.of(local, sh)
+                                                              : Rope.of(sh, local);
             assertEquals(expected.toString(), reassembled.toString());
         }
     }

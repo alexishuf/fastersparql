@@ -4,7 +4,9 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.foreign.MemorySegment;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class OutputStreamSink implements ByteSink<OutputStreamSink> {
@@ -40,6 +42,18 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
 
     @Override public @This OutputStreamSink append(byte c) {
         return write(c);
+    }
+
+    @Override public @This OutputStreamSink append(MemorySegment segment, long offset, int len) {
+        byte[] u8 = (byte[])segment.array().orElse(null);
+        int u8Off;
+        if (u8 != null) {
+            u8Off = (int) (segment.address()+offset);
+        } else {
+            u8 = new byte[len];
+            MemorySegment.copy(segment, JAVA_BYTE, offset, u8, u8Off = 0, len);
+        }
+        return write(u8, u8Off, len);
     }
 
     @Override public @This OutputStreamSink append(Rope rope, int begin, int end) {

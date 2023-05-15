@@ -1,30 +1,75 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
+import com.github.alexishuf.fastersparql.client.DummySparqlClient;
 import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.store.index.dict.DictSorter;
+import com.github.alexishuf.fastersparql.store.index.dict.LocalityStandaloneDict;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.fed.Selector.InitOrigin.QUERY;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static com.github.alexishuf.fastersparql.util.Results.results;
+import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class DictionarySelectorTest extends SelectorTestBase {
 
-    @Override protected Spec createSpec() {
-        return Spec.of(Selector.TYPE, DictionarySelector.NAME, "fetch-classes", true);
+    @Override protected Spec createSpec(File refDir) {
+        assertFalse(absStateFileOrDir.exists());
+        return Spec.of(Spec.PATHS_RELATIVE_TO, refDir,
+                Selector.TYPE, DictionarySelector.NAME,
+                DictionarySelector.FETCH_CLASSES, true,
+                DictionarySelector.STATE, Spec.of(
+                        DictionarySelector.STATE_DIR, absStateFileOrDir,
+                        Selector.STATE_INIT_SAVE, true));
+    }
+
+    private static final List<Path> tempDirs = Collections.synchronizedList(new ArrayList<>());
+
+    @AfterAll static void afterAll() throws IOException {
+        for (Path dir : tempDirs) {
+            try (var files = Files.newDirectoryStream(dir)) {
+                for (Path file : files)
+                    Files.deleteIfExists(file);
+            }
+        }
+        tempDirs.clear();
+    }
+
+    private static LocalityStandaloneDict createDict(String... ttlIris) throws IOException {
+        Path tempDir = Files.createTempDirectory("fastersparql");
+        Path dest = Files.createTempFile(tempDir, "iris", ".dict");
+        tempDirs.add(tempDir);
+        try (DictSorter sorter = new DictSorter(tempDir, false, true)) {
+            for (Term term : termList(ttlIris))
+                sorter.copy(requireNonNull(term).first(), term.second());
+            sorter.writeDict(dest);
+        }
+        var dict = new LocalityStandaloneDict(dest);
+        dict.validate();
+        return dict;
     }
 
     @Test void test() throws IOException {
         // build the selector
-        var predicates = new IriImmutableSet(termList("exns:p", "ex:p", "foaf:p"));
-        var classes = new IriImmutableSet(termList("exns:A", "exns:AB", "ex:C", "foaf:Person"));
-        Selector sel = saveAndLoad(new DictionarySelector(ENDPOINT, spec, predicates, classes));
+        var predicates = createDict("exns:p", "ex:p", "foaf:p");
+        var classes = createDict("exns:A", "exns:AB", "ex:C", "foaf:Person");
+        DummySparqlClient client = new DummySparqlClient(ENDPOINT);
+        Selector sel = new DictionarySelector(client, spec, predicates, classes);
 
         testTPs(sel, List.of(
                 // query indexed predicates
@@ -94,7 +139,7 @@ class DictionarySelectorTest extends SelectorTestBase {
                           results("?c", "ex:C", "foaf:Person"));
         var initSel = new DictionarySelector(client, spec);
         assertEquals(QUERY, Async.waitStage(initSel.initialization()));
-        Selector sel = saveAndLoad(initSel);
+        Selector sel = checkSavedOnInit(initSel);
 
         testTPs(sel,
                 List.of(

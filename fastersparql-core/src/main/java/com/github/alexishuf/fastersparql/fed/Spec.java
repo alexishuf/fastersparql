@@ -51,8 +51,10 @@ public final class Spec {
             }
         } else if (String.class.equals(cls)) {
             return (T) o.toString();
+        } else if (File.class.equals(cls)) {
+            return (T)(o instanceof File f ? f : new File(o.toString()));
         } else if (Path.class.equals(cls)) {
-            return (T) (o instanceof File f ? f : new File(o.toString())).toPath();
+            return (T)(o instanceof File f ? f.toPath() : Path.of(o.toString()));
         } else if (MediaType.class.equals(cls)) {
             return (T) MediaType.parse(o.toString());
         } else if (Spec.class.equals(cls)) {
@@ -351,12 +353,14 @@ public final class Spec {
     }
 
     public File getFile(List<String> path, Path refDir, String fallback) {
-        String value = getOr(path, fallback);
-        if (value == null) return null;
-        File file = new File(value);
-        if (!file.isAbsolute() && refDir != null)
-            file = refDir.resolve(value).toFile();
-        return file;
+        File file = get(path, File.class);
+        if (file == null) {
+            if      (fallback == null) return null;
+            else if (refDir ==   null) return new File(fallback);
+            else                       return refDir.resolve(fallback).toFile();
+        }
+        return file.isAbsolute() || refDir == null ? file
+                : refDir.resolve(file.toPath()).toFile();
     }
 
     public boolean equals(Object object) {

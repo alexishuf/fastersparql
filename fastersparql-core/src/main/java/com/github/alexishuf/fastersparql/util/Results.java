@@ -14,8 +14,8 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -43,12 +43,12 @@ public final class Results {
     public static final PrefixMap PREFIX_MAP;
     static {
         PrefixMap pm = new PrefixMap().resetToBuiltin();
-        pm.add(SegmentRope.of(""), Term.iri("http://example.org/"));
-        pm.add(SegmentRope.of("ex"), Term.iri("http://example.org/"));
-        pm.add(SegmentRope.of("exns"), Term.iri("http://www.example.org/ns#"));
-        pm.add(SegmentRope.of("rdfs"), Term.iri("http://www.w3.org/2000/01/rdf-schema#"));
-        pm.add(SegmentRope.of("owl"), Term.iri("http://www.w3.org/2002/07/owl#"));
-        pm.add(SegmentRope.of("foaf"), Term.iri("http://xmlns.com/foaf/0.1/"));
+        pm.add(SegmentRope.of(""), Term.valueOf("<http://example.org/>"));
+        pm.add(SegmentRope.of("ex"), Term.valueOf("<http://example.org/>"));
+        pm.add(SegmentRope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
+        pm.add(SegmentRope.of("rdfs"), Term.valueOf("<http://www.w3.org/2000/01/rdf-schema#>"));
+        pm.add(SegmentRope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
+        pm.add(SegmentRope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
         PREFIX_MAP = pm;
     }
 
@@ -558,7 +558,7 @@ public final class Results {
             case int[] a -> {
                 var terms = new ArrayList<Term>();
                 for (int i : a)
-                    terms.add(Term.typed(i, RopeDict.DT_integer));
+                    terms.add(Term.valueOf(Rope.of("\"",i, SharedRopes.DT_integer)));
                 yield terms;
             }
             case Object[] a -> {

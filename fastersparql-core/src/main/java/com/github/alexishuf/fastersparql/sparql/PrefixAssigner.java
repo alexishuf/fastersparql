@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.sparql;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -33,7 +34,11 @@ public class PrefixAssigner {
         prefix2name.put(new ByteRope(Term.RDF.toArray(0, Term.RDF.len-1)), PrefixMap.RDF_NAME);
     }
 
-    public @Nullable Rope nameFor(ByteRope prefix) {
+    public @Nullable Rope nameFor(SegmentRope prefix) {
         return prefix2name.get(prefix);
+    }
+
+    public @Nullable Rope nameFor(SegmentRope prefix, int begin, int end) {
+        return prefix2name.get(prefix, begin, end);
     }
 }

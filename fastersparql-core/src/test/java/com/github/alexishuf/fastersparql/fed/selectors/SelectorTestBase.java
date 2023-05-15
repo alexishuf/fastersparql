@@ -7,19 +7,18 @@ import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.util.BS;
-import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.fed.Selector.InitOrigin.*;
+import static com.github.alexishuf.fastersparql.fed.Selector.InitOrigin.LOAD;
+import static com.github.alexishuf.fastersparql.fed.Selector.InitOrigin.SPEC;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.waitStage;
 import static java.lang.System.arraycopy;
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,58 +26,75 @@ import static org.junit.jupiter.api.Assertions.*;
 public abstract class SelectorTestBase {
     protected static final SparqlEndpoint ENDPOINT = SparqlEndpoint.parse("http://example.org/sparql");
 
-    protected File absStateFile;
+    protected File absStateFileOrDir;
     protected Spec spec;
     protected ResultsSparqlClient client;
-    protected abstract Spec createSpec();
+    protected abstract Spec createSpec(File relTo);
 
     @BeforeEach
     void setUp() throws IOException {
-        absStateFile = Files.createTempFile("fastersparql", ".state").toFile().getAbsoluteFile();
-        assertTrue(absStateFile.delete());
-        absStateFile.deleteOnExit();
-        File refDir = absStateFile.getParentFile();
-        spec = new Spec(createSpec());
-        spec.set(Spec.PATHS_RELATIVE_TO, refDir.toString());
-        spec.set("state", Spec.of("file", absStateFile.getName(), "init-save", true));
+        absStateFileOrDir = Files.createTempFile("fastersparql", ".state").toFile().getAbsoluteFile();
+        assertTrue(absStateFileOrDir.delete());
+        absStateFileOrDir.deleteOnExit();
+        File refDir = absStateFileOrDir.getParentFile();
+        assertNotNull(refDir);
+        spec = new Spec(createSpec(refDir));
         client = new ResultsSparqlClient(true, ENDPOINT);
     }
 
     @AfterEach
     void tearDown() { //noinspection ResultOfMethodCallIgnored
-        absStateFile.delete();
+        absStateFileOrDir.delete();
         client.close();
     }
 
-    protected Selector saveAndLoad(Selector selector) throws IOException {
+    protected Selector checkSavedOnInit(Selector selector) throws IOException {
+        Spec stateSpec = spec.get(Selector.STATE, Spec.class);
+        assertNotNull(stateSpec, "no state spec");
+
         // wait and read auto-saved state
         var origin = waitStage(selector.initialization());
-        if (origin == QUERY)
-            assertTrue(absStateFile.exists());
-        else if (origin != LOAD)
-            assertFalse(absStateFile.exists());
-        String autoSavedState = null;
-        if (absStateFile.exists()) {
-            assertTrue(absStateFile.isFile());
-            autoSavedState = IOUtils.readAll(absStateFile);
+        switch (origin) {
+            case QUERY,LOAD -> assertTrue(absStateFileOrDir.exists());
+            case SPEC       -> assertFalse(absStateFileOrDir.exists());
         }
-
-        // corrupt auto-saved state
-        try (FileWriter w = new FileWriter(absStateFile, true)) {
-            w.append("garbage\n");
-        }
-
-        //explicitly save state and validate
-        File savedTo = waitStage(selector.saveIfEnabled(null));
-        assertNotNull(savedTo);
-        assertEquals(absStateFile.getAbsolutePath(), savedTo.getAbsolutePath());
-        if (autoSavedState != null)
-            assertEquals(autoSavedState, IOUtils.readAll(absStateFile));
 
         // load from state
         Selector loaded = Selector.load(client, spec);
         origin = waitStage(loaded.initialization());
-        assertTrue(origin == LOAD || origin == SPEC, "origin="+origin+", expected LOAD or SPEC");
+        assertTrue(origin == LOAD || origin == SPEC, "origin=" + origin + ", expected LOAD or SPEC");
+        return loaded;
+    }
+
+    protected Selector saveAndReload(Selector selector) throws IOException {
+        Spec stateSpec = spec.get(Selector.STATE, Spec.class);
+        assertNotNull(stateSpec, "no state spec");
+
+        // wait and read auto-saved state
+        var origin = waitStage(selector.initialization());
+        switch (origin) {
+            case QUERY,LOAD -> assertTrue(absStateFileOrDir.exists());
+            case SPEC       -> assertFalse(absStateFileOrDir.exists());
+        }
+
+        // delete auto-saved state
+        if (absStateFileOrDir.isDirectory()) {
+            File[] files = absStateFileOrDir.listFiles();
+            assertNotNull(files);
+            List<File> failed = Arrays.stream(files).filter(f -> !f.delete()).toList();
+            assertEquals(List.of(), failed, "Some files could not be deleted");
+        }
+        if (absStateFileOrDir.exists())
+            assertTrue(absStateFileOrDir.delete());
+
+        //explicitly save state and load from saved state
+        selector.saveIfEnabled();
+        selector.close();
+
+        // load from state
+        Selector loaded = Selector.load(client, spec);
+        origin = waitStage(loaded.initialization());
+        assertTrue(origin == LOAD || origin == SPEC, "origin=" + origin + ", expected LOAD or SPEC");
         return loaded;
     }
 

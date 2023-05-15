@@ -13,7 +13,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.util.Arrays.asList;
 import static org.junit.jupiter.api.Assertions.assertEquals;

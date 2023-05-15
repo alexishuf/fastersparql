@@ -18,7 +18,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.io.IOException;
 
 public abstract class CardinalityEstimator {
-    public static final Term GROUND = Term.iri("http://example.org/ground");
+    public static final Term GROUND = Term.valueOf("<http://example.org/ground>");
     public static final String TYPE = "type";
 
     /* --- --- --- load from spec --- --- --- */

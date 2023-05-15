@@ -4,148 +4,102 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.DT_MID;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
-import static java.lang.System.arraycopy;
+import static java.lang.Integer.numberOfTrailingZeros;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Arrays.copyOfRange;
-import static java.util.Arrays.stream;
 
 @SuppressWarnings("SpellCheckingInspection")
 public final class Term extends Rope implements Expr {
-    public static final int  SUFFIX_MASK   = 0x80000000;
-    public static final long SUFFIX_MASK_L = 0x80000000L;
+    private static final byte IS_READONLY = 0x0000010;
+    private static final byte   IS_SUFFIX = 0x0000001;
+    private static final byte   TYPE_MASK = 0x0000006;
+    private static final int     TYPE_BIT = numberOfTrailingZeros(TYPE_MASK);
 
-    public static final Term FALSE = new Term(DT_BOOLEAN|SUFFIX_MASK, "\"false".getBytes(UTF_8));
-    public static final Term TRUE = new Term(DT_BOOLEAN|SUFFIX_MASK, "\"true".getBytes(UTF_8));
-    public static final Term EMPTY_STRING = new Term(0, "\"\"".getBytes(UTF_8));
+    public static final Term FALSE = new Term(DT_BOOLEAN, "\"false", true);
+    public static final Term TRUE = new Term(DT_BOOLEAN, "\"true", true);
+    public static final Term EMPTY_STRING = new Term(EMPTY, "\"\"", true);
 
-    public static final byte[] CLOSE_IRI = {'>'};
-    public static final Term XSD = new Term(P_XSD, CLOSE_IRI);
-    public static final Term RDF = new Term(P_RDF, CLOSE_IRI);
+    public static final SegmentRope CLOSE_IRI = new SegmentRope(">".getBytes(UTF_8), 0, 1);
+    public static final Term EMPTY_IRI = new Term(new SegmentRope(MemorySegment.ofArray("<".getBytes(UTF_8)), 0, 1), CLOSE_IRI, false);
+    public static final Term XSD = new Term(P_XSD, CLOSE_IRI, false);
+    public static final Term RDF = new Term(P_RDF, CLOSE_IRI, false);
+    static {
+        XSD.flags |= IS_READONLY;
+        RDF.flags |= IS_READONLY;
+    }
 
-    public static final Term XSD_DURATION = new Term(P_XSD, "duration>".getBytes(UTF_8));
-    public static final Term XSD_DATETIME = new Term(P_XSD, "dateTime>".getBytes(UTF_8));
-    public static final Term XSD_TIME = new Term(P_XSD, "time>".getBytes(UTF_8));
-    public static final Term XSD_DATE = new Term(P_XSD, "date>".getBytes(UTF_8));
-    public static final Term XSD_GYEARMONTH = new Term(P_XSD, "gYearMonth>".getBytes(UTF_8));
-    public static final Term XSD_GYEAR = new Term(P_XSD, "gYear>".getBytes(UTF_8));
-    public static final Term XSD_GMONTHDAY = new Term(P_XSD, "gMonthDay>".getBytes(UTF_8));
-    public static final Term XSD_GDAY = new Term(P_XSD, "gDay>".getBytes(UTF_8));
-    public static final Term XSD_GMONTH = new Term(P_XSD, "gMonth>".getBytes(UTF_8));
-    public static final Term XSD_BOOLEAN = new Term(P_XSD, "boolean>".getBytes(UTF_8));
-    public static final Term XSD_BASE64BINARY = new Term(P_XSD, "base64Binary>".getBytes(UTF_8));
-    public static final Term XSD_HEXBINARY = new Term(P_XSD, "hexBinary>".getBytes(UTF_8));
-    public static final Term XSD_FLOAT = new Term(P_XSD, "float>".getBytes(UTF_8));
-    public static final Term XSD_DECIMAL = new Term(P_XSD, "decimal>".getBytes(UTF_8));
-    public static final Term XSD_DOUBLE = new Term(P_XSD, "double>".getBytes(UTF_8));
-    public static final Term XSD_ANYURI = new Term(P_XSD, "anyURI>".getBytes(UTF_8));
-    public static final Term XSD_STRING = new Term(P_XSD, "string>".getBytes(UTF_8));
-    public static final Term XSD_INTEGER = new Term(P_XSD, "integer>".getBytes(UTF_8));
-    public static final Term XSD_NONPOSITIVEINTEGER = new Term(P_XSD, "nonPositiveInteger>".getBytes(UTF_8));
-    public static final Term XSD_LONG = new Term(P_XSD, "long>".getBytes(UTF_8));
-    public static final Term XSD_NONNEGATIVEINTEGER = new Term(P_XSD, "nonNegativeInteger>".getBytes(UTF_8));
-    public static final Term XSD_NEGATIVEINTEGER = new Term(P_XSD, "negativeInteger>".getBytes(UTF_8));
-    public static final Term XSD_INT = new Term(P_XSD, "int>".getBytes(UTF_8));
-    public static final Term XSD_UNSIGNEDLONG = new Term(P_XSD, "unsignedLong>".getBytes(UTF_8));
-    public static final Term XSD_POSITIVEINTEGER = new Term(P_XSD, "positiveInteger>".getBytes(UTF_8));
-    public static final Term XSD_SHORT = new Term(P_XSD, "short>".getBytes(UTF_8));
-    public static final Term XSD_UNSIGNEDINT = new Term(P_XSD, "unsignedInt>".getBytes(UTF_8));
-    public static final Term XSD_BYTE = new Term(P_XSD, "byte>".getBytes(UTF_8));
-    public static final Term XSD_UNSIGNEDSHORT = new Term(P_XSD, "unsignedShort>".getBytes(UTF_8));
-    public static final Term XSD_UNSIGNEDBYTE = new Term(P_XSD, "unsignedByte>".getBytes(UTF_8));
-    public static final Term XSD_NORMALIZEDSTRING = new Term(P_XSD, "normalizedString>".getBytes(UTF_8));
-    public static final Term XSD_TOKEN = new Term(P_XSD, "token>".getBytes(UTF_8));
-    public static final Term XSD_LANGUAGE = new Term(P_XSD, "language>".getBytes(UTF_8));
+    public static final Term XSD_DURATION = new Term(P_XSD, "duration>", false);
+    public static final Term XSD_DATETIME = new Term(P_XSD, "dateTime>", false);
+    public static final Term XSD_TIME = new Term(P_XSD, "time>", false);
+    public static final Term XSD_DATE = new Term(P_XSD, "date>", false);
+    public static final Term XSD_GYEARMONTH = new Term(P_XSD, "gYearMonth>", false);
+    public static final Term XSD_GYEAR = new Term(P_XSD, "gYear>", false);
+    public static final Term XSD_GMONTHDAY = new Term(P_XSD, "gMonthDay>", false);
+    public static final Term XSD_GDAY = new Term(P_XSD, "gDay>", false);
+    public static final Term XSD_GMONTH = new Term(P_XSD, "gMonth>", false);
+    public static final Term XSD_BOOLEAN = new Term(P_XSD, "boolean>", false);
+    public static final Term XSD_BASE64BINARY = new Term(P_XSD, "base64Binary>", false);
+    public static final Term XSD_HEXBINARY = new Term(P_XSD, "hexBinary>", false);
+    public static final Term XSD_FLOAT = new Term(P_XSD, "float>", false);
+    public static final Term XSD_DECIMAL = new Term(P_XSD, "decimal>", false);
+    public static final Term XSD_DOUBLE = new Term(P_XSD, "double>", false);
+    public static final Term XSD_ANYURI = new Term(P_XSD, "anyURI>", false);
+    public static final Term XSD_STRING = new Term(P_XSD, "string>", false);
+    public static final Term XSD_INTEGER = new Term(P_XSD, "integer>", false);
+    public static final Term XSD_NONPOSITIVEINTEGER = new Term(P_XSD, "nonPositiveInteger>", false);
+    public static final Term XSD_LONG = new Term(P_XSD, "long>", false);
+    public static final Term XSD_NONNEGATIVEINTEGER = new Term(P_XSD, "nonNegativeInteger>", false);
+    public static final Term XSD_NEGATIVEINTEGER = new Term(P_XSD, "negativeInteger>", false);
+    public static final Term XSD_INT = new Term(P_XSD, "int>", false);
+    public static final Term XSD_UNSIGNEDLONG = new Term(P_XSD, "unsignedLong>", false);
+    public static final Term XSD_POSITIVEINTEGER = new Term(P_XSD, "positiveInteger>", false);
+    public static final Term XSD_SHORT = new Term(P_XSD, "short>", false);
+    public static final Term XSD_UNSIGNEDINT = new Term(P_XSD, "unsignedInt>", false);
+    public static final Term XSD_BYTE = new Term(P_XSD, "byte>", false);
+    public static final Term XSD_UNSIGNEDSHORT = new Term(P_XSD, "unsignedShort>", false);
+    public static final Term XSD_UNSIGNEDBYTE = new Term(P_XSD, "unsignedByte>", false);
+    public static final Term XSD_NORMALIZEDSTRING = new Term(P_XSD, "normalizedString>", false);
+    public static final Term XSD_TOKEN = new Term(P_XSD, "token>", false);
+    public static final Term XSD_LANGUAGE = new Term(P_XSD, "language>", false);
 
-    public static final Term RDF_LANGSTRING = new Term(P_RDF, "langString>".getBytes(UTF_8));
-    public static final Term RDF_HTML = new Term(P_RDF, "HTML>".getBytes(UTF_8));
-    public static final Term RDF_XMLLITERAL = new Term(P_RDF, "XMLLiteral>".getBytes(UTF_8));
-    public static final Term RDF_JSON = new Term(P_RDF, "JSON>".getBytes(UTF_8));
+    public static final Term RDF_LANGSTRING = new Term(P_RDF, "langString>", false);
+    public static final Term RDF_HTML = new Term(P_RDF, "HTML>", false);
+    public static final Term RDF_XMLLITERAL = new Term(P_RDF, "XMLLiteral>", false);
+    public static final Term RDF_JSON = new Term(P_RDF, "JSON>", false);
 
-    public static final Term RDF_TYPE = new Term(P_RDF, new ByteRope("type>").u8());
-    public static final Term RDF_FIRST = new Term(P_RDF, new ByteRope("first>").u8());
-    public static final Term RDF_REST = new Term(P_RDF, new ByteRope("rest>").u8());
-    public static final Term RDF_NIL = new Term(P_RDF, new ByteRope("nil>").u8());
-    public static final Term RDF_VALUE = new Term(P_RDF, new ByteRope("value>").u8());
-    public static final Term RDF_PROPERTY = new Term(P_RDF, new ByteRope("Property>").u8());
-    public static final Term RDF_LIST = new Term(P_RDF, new ByteRope("List>").u8());
-    public static final Term RDF_BAG = new Term(P_RDF, new ByteRope("Bag>").u8());
-    public static final Term RDF_SEQ = new Term(P_RDF, new ByteRope("Seq>").u8());
-    public static final Term RDF_ALT = new Term(P_RDF, new ByteRope("Alt>").u8());
-    public static final Term RDF_STATEMENT = new Term(P_RDF, new ByteRope("Statement>").u8());
-    public static final Term RDF_SUBJECT = new Term(P_RDF, new ByteRope("subject>").u8());
-    public static final Term RDF_PREDICATE = new Term(P_RDF, new ByteRope("predicate>").u8());
-    public static final Term RDF_OBJECT = new Term(P_RDF, new ByteRope("object>").u8());
-    public static final Term RDF_DIRECTION = new Term(P_RDF, new ByteRope("direction>").u8());
-
-    private static final Term[] SRT_RDF = new Term[] {
-            RDF_ALT,
-            RDF_BAG,
-            RDF_HTML,
-            RDF_JSON,
-            RDF_LIST,
-            RDF_PROPERTY,
-            RDF_SEQ,
-            RDF_STATEMENT,
-            RDF_XMLLITERAL,
-            RDF_DIRECTION,
-            RDF_FIRST,
-            RDF_LANGSTRING,
-            RDF_NIL,
-            RDF_OBJECT,
-            RDF_PREDICATE,
-            RDF_REST,
-            RDF_SUBJECT,
-            RDF_TYPE,
-            RDF_VALUE,
-    };
-
-    private static final Term[] SRT_XSD = new Term[] {
-            XSD_ANYURI,
-            XSD_BASE64BINARY,
-            XSD_BOOLEAN,
-            XSD_BYTE,
-            XSD_DATE,
-            XSD_DATETIME,
-            XSD_DECIMAL,
-            XSD_DOUBLE,
-            XSD_DURATION,
-            XSD_FLOAT,
-            XSD_GDAY,
-            XSD_GMONTH,
-            XSD_GMONTHDAY,
-            XSD_GYEAR,
-            XSD_GYEARMONTH,
-            XSD_HEXBINARY,
-            XSD_INT,
-            XSD_INTEGER,
-            XSD_LANGUAGE,
-            XSD_LONG,
-            XSD_NEGATIVEINTEGER,
-            XSD_NONNEGATIVEINTEGER,
-            XSD_NONPOSITIVEINTEGER,
-            XSD_NORMALIZEDSTRING,
-            XSD_POSITIVEINTEGER,
-            XSD_SHORT,
-            XSD_STRING,
-            XSD_TIME,
-            XSD_TOKEN,
-            XSD_UNSIGNEDBYTE,
-            XSD_UNSIGNEDINT,
-            XSD_UNSIGNEDLONG,
-            XSD_UNSIGNEDSHORT
-    };
+    public static final Term RDF_TYPE = new Term(P_RDF, "type>", false);
+    public static final Term RDF_FIRST = new Term(P_RDF, "first>", false);
+    public static final Term RDF_REST = new Term(P_RDF, "rest>", false);
+    public static final Term RDF_NIL = new Term(P_RDF, "nil>", false);
+    public static final Term RDF_VALUE = new Term(P_RDF, "value>", false);
+    public static final Term RDF_PROPERTY = new Term(P_RDF, "Property>", false);
+    public static final Term RDF_LIST = new Term(P_RDF, "List>", false);
+    public static final Term RDF_BAG = new Term(P_RDF, "Bag>", false);
+    public static final Term RDF_SEQ = new Term(P_RDF, "Seq>", false);
+    public static final Term RDF_ALT = new Term(P_RDF, "Alt>", false);
+    public static final Term RDF_STATEMENT = new Term(P_RDF, "Statement>", false);
+    public static final Term RDF_SUBJECT = new Term(P_RDF, "subject>", false);
+    public static final Term RDF_PREDICATE = new Term(P_RDF, "predicate>", false);
+    public static final Term RDF_OBJECT = new Term(P_RDF, "object>", false);
+    public static final Term RDF_DIRECTION = new Term(P_RDF, "direction>", false);
 
     public static final Term[] FREQ_XSD_DT = new Term[] {
             XSD_INTEGER,
@@ -187,7 +141,7 @@ public final class Term extends Rope implements Expr {
             XSD_TOKEN
     };
 
-    public static final int[] FREQ_XSD_DT_ID = {
+    public static final SegmentRope[] FREQ_XSD_DT_SUFF = {
             DT_integer,
             DT_decimal,
             DT_BOOLEAN,
@@ -227,55 +181,36 @@ public final class Term extends Rope implements Expr {
             DT_token
     };
 
-    static {
-        assert stream(SRT_RDF).map(Rope::toString).sorted().toList()
-                .equals(stream(SRT_RDF).map(Rope::toString).toList())
-                : "SORTED_RDF_TERMS is not sorted";
-        assert stream(SRT_XSD).map(Rope::toString).sorted().toList()
-                .equals(stream(SRT_XSD).map(Rope::toString).toList())
-                : "SORTED_XSD_TERMS is not sorted";
-
-        Map<Byte, Integer> freq = new HashMap<>();
-        stream(SRT_RDF).forEach(t -> freq.put(t.local[0], freq.getOrDefault(t.local[0], 0)+1));
-        assert freq.values().stream().noneMatch(e -> e > 8)
-                : "There are local[0] values with more than 8 occurrences in SRT_RDF ";
-
-        freq.clear();
-        stream(SRT_XSD).forEach(t -> freq.put(t.local[0], freq.getOrDefault(t.local[0], 0)+1));
-        assert freq.values().stream().noneMatch(e -> e > 8)
-                : "There are local[0] values with more than 8 occurrences in SRT_XSD ";
-    }
-
     private static final byte[] INTERN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".getBytes(UTF_8);
     private static final int INTERN_W = 62;
     private static final Term[][] PLAIN = {
             new Term[INTERN_W],
             new Term[INTERN_W*INTERN_W],
     };
-    private static final byte[][][] IRI_LOCALS = {
-            new byte[INTERN_W][],
-            new byte[INTERN_W*INTERN_W][],
+    private static final SegmentRope[][] IRI_LOCALS = {
+            new SegmentRope[INTERN_W],
+            new SegmentRope[INTERN_W*INTERN_W],
      };
 
     static {
         assert INTERN_W == INTERN_ALPHABET.length;
         for (int i0 = 0; i0 < INTERN_W; i0++) {
             char c0 = (char) INTERN_ALPHABET[i0];
-            Term t = new Term(0, ("\"" + c0 + "\"").getBytes(UTF_8));
-            byte[] l = (c0+">").getBytes(UTF_8);
-            PLAIN[0][internIdx(t.local, 1, 1)] = t;
+            Term t = new Term(EMPTY, Rope.of('"', c0, '"'), true);
+            SegmentRope l = Rope.of(c0, '>');
+            PLAIN[0][internIdx(t.local(), 1, 1)] = t;
             IRI_LOCALS[0][internIdx(l, 0, 1)] = l;
             for (int i1 = 0; i1 < INTERN_W; i1++) {
                 char c1 = (char) INTERN_ALPHABET[i1];
-                t = new Term(0, ("\""+c0+c1+"\"").getBytes(UTF_8));
-                l = (String.valueOf(c0)+c1+">").getBytes(UTF_8);
-                PLAIN[1][internIdx(t.local, 1, 2)] = t;
+                t = new Term(EMPTY, Rope.of('"',c0,c1,'"'), true);
+                l = Rope.of(c0, c1, '>');
+                PLAIN[1][internIdx(t.local(), 1, 2)] = t;
                 IRI_LOCALS[1][internIdx(l, 0, 2)] = l;
             }
         }
     }
 
-    private static int internCharIdx(Object src, int i) {
+    private static int internCharIdx(SegmentRope src, int i) {
         byte c = get(src, i);
         if      (c >= 'a') return c > 'z' ? -1 : 36-'a'+c;
         else if (c >= 'A') return c > 'Z' ? -1 : 10-'A'+c;
@@ -283,7 +218,7 @@ public final class Term extends Rope implements Expr {
         return -1;
     }
 
-    private static int internIdx(Object src, int begin, int n) {
+    private static int internIdx(SegmentRope src, int begin, int n) {
         return switch (n) {
             case -2, -1, 0 -> -2;
             case 1 -> internCharIdx(src, begin);
@@ -295,410 +230,470 @@ public final class Term extends Rope implements Expr {
         };
     }
 
-    private static byte[] internIriLocal(Object src, int begin, int end) {
-        int n = end-begin;
-        if (n <= 3) {
-            if (get(src, end-1) == '>') --n;
-            int i = internIdx(src, begin, n);
+    private static SegmentRope internIriLocal(SegmentRope src, int begin, int len, boolean copy) {
+        if (len <= 3) {
+            if (get(src, begin+len-1) == '>') --len;
+            int i = internIdx(src, begin, len);
             if      (i == -2) return CLOSE_IRI;
-            else if (i >= 0) return IRI_LOCALS[n-1][i];
+            else if (i >=  0) return IRI_LOCALS[len-1][i];
         }
-        return asCloseIriU8(src, begin, end);
+        if (copy)
+            return new ByteRope(src.toArray(begin, begin+len));
+        return src;
     }
 
-    private static Term internPlain(Object src, int begin, int end) {
-        int n = end-begin-2;
+    private static Term internPlain(SegmentRope src, int begin, int len, boolean copy) {
+        int n = len-2;
         if (n <= 2) {
             int i = internIdx(src, begin+1, n);
             if      (i == -2) return EMPTY_STRING;
             else if (i >=  0) return PLAIN[n-1][i];
         }
-        return new Term(0, asLitU8(src, begin, end));
+        var w = forLit(src, begin, begin+len);
+        if (!copy && (w != NONE || begin != 0 || len != src.len)) copy = true;
+        var local = copy ? new ByteRope(w.toArray(src, begin, begin + len)) : src;
+        return new Term(EMPTY, local, true);
     }
 
-    /**
-     * Gets the term in {@code sorted} whose local name matches
-     * {@code [localBegin, localBegin+localLen)} in {@code utf8} or {@code null} if no such
-     * term exists
-     */
-    private static Term intern(int id, Rope rope, int localBegin, int localLen) {
-        Term[] sorted = id == P_XSD ? SRT_XSD : id == P_RDF ? SRT_RDF : null;
-        if (sorted != null) {
-            if (localLen == 0 || (localLen == 1 && rope.get(localBegin) == '>'))
-                return id == P_XSD ? XSD : RDF;
-            int b = 0, e = sorted.length;
-            byte first = rope.get(localBegin);
-            Term t;
-            // binary search for a range < 8
-            for (int m = e >> 1; e - b > 8; m = (b + e) >> 1) {
-                byte actual = sorted[m].local[0];
-                if (actual < first) {
-                    b = m;
-                } else if (actual > first) {
-                    e = m;
-                } else {
-                    b = e = m;
-                    while (b > 0 && sorted[b-1].local[0] == first) --b;
-                    while (e < sorted.length && sorted[e].local[0] == first) ++e;
-                    break;
-                }
-            }
-            //linear search
-            if (rope.get(localBegin + localLen - 1) != '>')
-                return internUnclosed(id, sorted, rope, localBegin, localLen, first, b, e);
-            for (byte c = -1; c <= first && b < e; ++b) {
-                c = (t = sorted[b]).local[0];
-                if (c == first && t.local.length == localLen && rope.has(localBegin, t.local))
-                    return t;
-            }
-        }
-        return new Term(id, rope.toArray(localBegin, localBegin+localLen));
+    private static Term internRdf(SegmentRope local, int begin, int end) {
+        Term candidate = switch (local.get(begin)) {
+            case '>' -> RDF;
+            case 'A' -> RDF_ALT;
+            case 'B' -> RDF_BAG;
+            case 'H' -> RDF_HTML;
+            case 'J' -> RDF_JSON;
+            case 'L' -> RDF_LIST;
+            case 'P' -> RDF_PROPERTY;
+            case 'S' -> switch (begin+1 < end ? local.get(begin+1) : 0) {
+                case 'e' -> RDF_SEQ;
+                case 't' -> RDF_STATEMENT;
+                default -> null;
+            };
+            case 'X' -> RDF_XMLLITERAL;
+            case 'd' -> RDF_DIRECTION;
+            case 'f' -> RDF_FIRST;
+            case 'l' -> RDF_LANGSTRING;
+            case 'n' -> RDF_NIL;
+            case 'o' -> RDF_OBJECT;
+            case 'p' -> RDF_PREDICATE;
+            case 'r' -> RDF_REST;
+            case 's' -> RDF_SUBJECT;
+            case 't' -> RDF_TYPE;
+            case 'v' -> RDF_VALUE;
+            default -> null;
+        };
+        if (candidate != null && candidate.second.compareTo(local, begin, end) == 0)
+            return candidate;
+        return new Term(P_RDF, new ByteRope(local.toArray(begin, end)), false);
     }
 
-    private static Term internUnclosed(int id, Term[] sorted, Rope rope, int localBegin,
-                                       int localLen, byte first, int b, int e) {
-        int base = RopeDict.get(id).len, localEnd = localBegin+localLen;
-        Term t;
-        for (byte c = -1; c <= first && b < e; ++b) {
-            c = (t = sorted[b]).local[0];
-            if (c == first && t.local.length == localLen + 1 && t.has(base, rope, localBegin, localEnd))
-                return t;
-        }
-        return new Term(id, asCloseIriU8(rope, localBegin, localBegin+localLen));
+    private static Term internXsd(SegmentRope local, int begin, int end) {
+        byte c1 = begin+1 < end ? local.get(begin+1) : (byte)'\0';
+        Term candidate = switch (local.get(begin)) {
+            case '>' -> XSD;
+            case 'a' -> XSD_ANYURI;
+            case 'b' -> switch (c1) {
+                case 'a' -> XSD_BASE64BINARY;
+                case 'o' -> XSD_BOOLEAN;
+                case 'y' -> XSD_BYTE;
+                default -> null;
+            };
+            case 'd' -> switch (c1) {
+                case 'a' -> local.len > 5 /*date>*/ ? XSD_DATETIME : XSD_DATE;
+                case 'e' -> XSD_DECIMAL;
+                case 'o' -> XSD_DOUBLE;
+                case 'u' -> XSD_DURATION;
+                default -> null;
+            };
+            case 'f' -> XSD_FLOAT;
+            case 'g' -> switch (c1) {
+                case 'd' -> XSD_GDAY;
+                case 'm' -> local.len > 7 /*gMonth>*/ ? XSD_GMONTHDAY : XSD_GMONTH;
+                case 'y' -> local.len > 6 /*gYear>*/ ? XSD_GYEARMONTH : XSD_GYEAR;
+                default -> null;
+            };
+            case 'h' -> XSD_HEXBINARY;
+            case 'i' -> local.len > 4 /*int>*/ ? XSD_INTEGER : XSD_INT;
+            case 'l' -> switch (c1) {
+                case 'a' -> XSD_LANGUAGE;
+                case 'o' -> XSD_LONG;
+                default -> null;
+            };
+            case 'n' -> switch (c1) {
+                case 'e' -> XSD_NEGATIVEINTEGER;
+                case 'o' -> switch (local.get(3)) {
+                    case 'N' -> XSD_NONNEGATIVEINTEGER;
+                    case 'P' -> XSD_NONPOSITIVEINTEGER;
+                    default -> null;
+                };
+                default -> null;
+            };
+            case 'p' -> XSD_POSITIVEINTEGER;
+            case 's' -> switch (c1) {
+                case 'h' -> XSD_SHORT;
+                case 't' -> XSD_STRING;
+                default -> null;
+            };
+            case 't' -> switch (c1) {
+                case 'i' -> XSD_TIME;
+                case 'o' -> XSD_TOKEN;
+                default -> null;
+            };
+            case 'u' -> switch (local.len > 8 ? local.get(8) : 0) {
+                case 'B' -> XSD_UNSIGNEDBYTE;
+                case 'I' -> XSD_UNSIGNEDINT;
+                case 'L' -> XSD_UNSIGNEDLONG;
+                case 'S' -> XSD_UNSIGNEDSHORT;
+                default -> null;
+            };
+            default -> null;
+        };
+        if (candidate != null && candidate.second.compareTo(local, begin, end) == 0)
+            return candidate;
+        return new Term(P_XSD, new ByteRope(local.sub(begin, end)), false);
     }
 
-    /** If negative, {@code RopeDict.get(0x7fffffff&flaggedDictId)} is prefixed to the
-     *  local bytes. If positive, {@code RopeDict.get(flaggedDictId)} is suffixed. If zero, the
-     *  local bytes are the whole Term representation. */
-    public final int flaggedDictId;
-    /** Array containing UTF-8 bytes to be prefixed or suffixed to {@code flaggedDictId} */
-    public final byte[] local;
 
+    private @NonNull SegmentRope first, second;
+    private byte flags, cachedEndLex;
     private @Nullable Number number;
     private int hash;
 
-    private Term(int flaggedDictId, byte[] local) {
-        super(local.length + RopeDict.getTolerant(flaggedDictId).len);
-        this.flaggedDictId = flaggedDictId;
-        this.local = local;
-        assert isValidTermConstruction(flaggedDictId, local) : "invalid term";
+
+    /** Construct an interned {@link Term} */
+    private Term(@NonNull SegmentRope shared, @NonNull String local, boolean suffixShared) {
+        this(shared, new ByteRope(local), suffixShared);
+    }
+    /**
+     * Build a term for {@code shared+local} or {@code local+shared},
+     * if {@code suffixShared == true}.
+     *
+     * <p> Both {@link SegmentRope}s are held by reference, thus changes to them will be
+     * reflected on the {@link Term}.</p>
+     *
+     * <p>The new {@link Term} instance will be read-only, disallowing
+     * {@link #set(SegmentRope, SegmentRope, boolean)} calls. To create a mutable {@link Term},
+     * see {@link Term#Term()}.</p>
+     *
+     * @param shared a shared segment, ideally this should  be interned and shared among multiple
+     *               Term instances. This may be null
+     * @param local a segment that comes after or before (if {@code suffixShared}) {@code shared}
+     *              This must not be {@code null} nor empty.
+     * @param suffixShared whether {@code shared} is a suffix to {@code local}
+     */
+    public Term(@Nullable SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
+        super((shared == null ? 0 : shared.len) + local.len);
+        if (shared == null) shared = EMPTY;
+        if (suffixShared) {
+            first  = local;
+            second = shared;
+            flags  = IS_READONLY|IS_SUFFIX;
+        } else {
+            first  = shared;
+            second = local;
+            flags  = IS_READONLY;
+        }
+        assert validate();
     }
 
-    @SuppressWarnings("RedundantIfStatement")
-    private boolean isValidTermConstruction(int flaggedId, byte[] local) {
-        if (local == null)
-            return false; // local/localOff/localLen issues
-        if (local.length == 0)
-            return false; // local cannot be empty, local[0] is used for type detection
-        if (flaggedId == SUFFIX_MASK)
-            return false; // "suffix id zero" is not a valid flaggedId
-        if (flaggedId == (SUFFIX_MASK|DT_langString))
-            return false; // lang-tagged literals do not take "^^rdf:langString" suffix
-        if ((flaggedId == P_XSD || flaggedId == P_RDF)
-                && new ByteRope(local).skip(0, local.length, ALPHANUMERIC) != local.length-1)
-            return false; // no weird chars in xsd: or rdf: iris
-        if (len() < 2)
-            return false; // too short for an RDF term
-        if ("<\"?$_".indexOf((char) get(0)) < 0)
-            return false; // bad first char
-        ByteRope suffix = RopeDict.getTolerant(flaggedId);
-        if (suffix.backingArrayOffset() != 0)
-            return false; // RopeDict ByteRopes MUST have offset==0
-        if (flaggedId > 0 && suffix.get(0) != '<')
-            return false; // IRI prefix does start with '<'
-        if (flaggedId < 0) {
-            if (!suffix.has(0, DT_MID))
-                return false; // literal suffix does not start with \"^^
-            if (suffix.get(suffix.len-1) != '>')
-                return false; // literal suffix does not end with '>'
+    /**
+     * Create a term to be later {@link #set(SegmentRope, SegmentRope, boolean)}.
+     *
+     * <p>Since it is impossible to construct an invalid {@link Term}, This will produce a
+     * {@link Term} instance equals to {@link #EMPTY_STRING} (but with {@code set()} enabled).</p>
+     */
+    public Term() {
+        super(2);
+        first  = EMPTY_STRING.first;
+        second = EMPTY;
+        flags  = IS_SUFFIX;
+    }
+
+    public void set(@NonNull SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
+        if ((flags & IS_READONLY) != 0)
+            throw new UnsupportedOperationException("This term instance is read-only.");
+        this.len = shared.len + local.len;
+        if (suffixShared) {
+            this.first = local;
+            this.second = shared;
+        } else {
+            this.first = shared;
+            this.second = local;
         }
-        if (flaggedId == (DT_string|SUFFIX_MASK))
-            return false; // should store "lexical", not "lexical"^^<...#string>
+        this.hash = 0;
+        this.number = null;
+        this.flags = suffixShared ? IS_SUFFIX : 0;
+        this.cachedEndLex = 0;
+        assert validate();
+    }
+
+    @SuppressWarnings("ConstantValue") private boolean validate() {
+        if (first == null) throw new AssertionError("first is null");
+        if (second == null) throw new AssertionError("second is null");
+        if (first.len + second.len < 2)
+            throw new AssertionError("term len < 2");
+        if ((flags & IS_SUFFIX) != 0) {
+            if (second() != shared() || second != shared())
+                throw new AssertionError("sharedSuffixed, but second != shared");
+            if (first.len == 0)
+                throw new AssertionError("first/local() is empty");
+            if (second.len > 0) {
+                if (second.get(0) != '"')
+                    throw new AssertionError("suffixed shared does not start with \"");
+                if (second.len > 1) {
+                    if (second.get(1) == '^') {
+                        if (second.len < 5)
+                            throw new AssertionError("shared suffix has ^ but is too short");
+                        if (second.get(2) != '^' || second.get(3) != '<' || second.get(second.len-1) != '>')
+                            throw new AssertionError("shared suffix is not a valid datatype");
+                    } else if (second.get(1) == '@') {
+                        if (second.len < 3)
+                            throw new AssertionError("empty lang tag");
+                    } else {
+                        throw new AssertionError("shared suffix is not closing quote followed by lang trag or datatype");
+                    }
+                }
+            }
+        } else {
+            if (first() != shared() || first != shared())
+                throw new AssertionError("first != shared in prefixed term");
+            if (second.len == 0)
+                throw new AssertionError("EMpty local segment");
+            if (first.len > 0 && first.get(0) != '<')
+                throw new AssertionError("shared prefix does not start with <");
+        }
+        if (local().len == 0)
+            throw new AssertionError("empty local segment");
+        if (shared() == DT_langString)
+            throw new AssertionError("explicit rdf:langString datatype");
+        if (shared() == DT_string)
+            throw new AssertionError("explicit xsd:string datatype");
+        if ((shared() == P_XSD || shared() == P_RDF)
+                && second.skip(0, second.len, ALPHANUMERIC) != second.len-1)
+            throw new AssertionError("Unexpected chars in local segment of rdf:/xsd:Term");
+        if ("<\"?$_".indexOf((char) get(0)) < 0)
+            throw new AssertionError("Unexpected start char ");
 
         if (get(0) == '<') { // IRI
             if (get(len()-1) != '>')
-                return false; // no closing '>'
+                throw new AssertionError("no closing '>'");
             if (len() > 2 && get(len()-2) == '>')
-                return false; // something went wrong upstream: IRI ending in >>
+                throw new AssertionError("IRI ending in >>");
             if (len() > 2 && get(1) == '<')
-                return false; // something went wrong upstream: IRI starting with <<
+                throw new AssertionError("IRI starting with <<");
             if (skipUntil(1, len()-1, '<', '>') != len()-1)
-                return false; // <> within IRI
+                throw new AssertionError("<> within IRI");
             if (skip(0, len(), UNTIL_SPECIAL_WS) != len())
-                return false; // suspicious non-' ' whitespace. ' ' is invalid but tolerable
+                throw new AssertionError("suspicious control char in term");
         } else if (get(0) == '"') { // literal
             int endLex = reverseSkip(0, len(), UNTIL_DQ);
-            if (endLex == 0) {
-                return false; // no closing '"'
-            } else if (endLex+1 < len()) {
-                if (get(endLex+1) == '@') {
-                    if (len() == endLex + 2)
-                        return false; // empty lang tag
-                    if (skip(endLex + 2, len(), SparqlSkip.LANGTAG) < len())
-                        return false; // invalid lang tag
-                } else if (endLex+3 >= len() || get(endLex+1) != '^' || get(endLex+2) != '^' || get(endLex+3) != '<') {
-                    return false; // expected ^^< after closing '"'
-                } else if (get(len()-1) != '>') {
-                    return false; // no closing '>' in typed literal
-                }
-            }
-            if (!validEscapes(endLex))
-                return false;
+            if (endLex == 0)
+                throw new AssertionError("no closign \"");
+            validateEscapes(endLex);
         } else if (get(0) == '?' || get(0) == '?') {
             if (skip(1, len(), SparqlSkip.VARNAME) < len())
-                return false; // bad char in var name
+                throw new AssertionError("bad char in var name");
         } else if (get(0) == '_') {
             if (get(1) != ':')
-                return false; // expected ':'
+                throw new AssertionError("expected :");
             if (skip(2, len(), SparqlSkip.BN_LABEL) < len())
-                return false; // invalid character in bnode label
+                throw new AssertionError("invalid character in bnode label");
         }
         return true;
     }
 
-    private boolean validEscapes(int lexEnd) {
+    private void validateEscapes(int lexEnd) {
         for (int i = 1; i < lexEnd; i = skip(i+1, lexEnd, UNTIL_DQ_OR_BACKSLASH)) {
             byte c = get(i);
-            if      (c ==  '"') return false;
+            if      (c ==  '"') throw new AssertionError("unescaped \"");
             else if (c == '\\') ++i;
         }
-        return true;
     }
 
     /**
-     * Create a Term from the SPARQL var or N-Triples UTF-8 string in the
-     * {@code [offset, offset+len)} range of {@code utf8}.
+     * Wraps the given prefix and suffix into a Term. Both may be changed by this call and may be
+     * kept by reference in the resulting {@link Term}.
      *
-     * <p>{@code utf8} will be kept by reference, thus changes to the bytes will be visible
-     * from the returned {@link Term} instance.</p>
-     *
-     * In the general case, prefer using {@link Term#valueOf(Rope)} and its overloads, as
-     * {@code valueOf()} will try to use {@link RopeDict} compression and may also intern some
-     * frequently used known {@link Term} instances.
-     *
-     * @param utf8 Array of UTF-8 bytes
-     * @return a new {@link Term instance}
+     * @param prefix prefix of the N-Triples RDF term or SPARQL variable or null. If {@code suffix}
+     *               is non-null and the RDF term is an IRI, this will be kept as the
+     *               {@link #shared} segment.
+     * @param suffix suffix of the N-Triples RDF term or SPARQL variable or null.
+     *               If the RDF term is a literal and prefix was also given, this will be kept as
+     *               the {@link #shared} segment.
+     * @return A possibly interned {@link Term} instance representing the N-Triples term or
+     *         SPARQL var denoted by {@code prefix+suffix}.
      */
-    public static Term wrap(byte[] utf8) {
-        return new Term(0, utf8);
-    }
-
-    /**
-     * Create a Term for an N-Triples plain or lang-tagged string in {@code r.sub(begin, end)}.
-     */
-    public static Term copy(Rope r, int begin, int end) {
-        return r.get(end-1) == '"' && end-begin <= 4 ? internPlain(r, begin, end)
-                                                     : new Term(0, r.toArray(begin, end));
-    }
-
-    /**
-     * Equivalent to {@code wrap(r.utf8)}, cropping {@code r.utf8} if necessary.
-     *
-     * <p><strong>Important:</strong> {@code r.utf8} is taken by reference, thus changes to
-     * {@code r} will be visible in ther {@link Term} instance.</p>
-     */
-    public static Term wrap(ByteRope r) {
-        byte[] u8 = r.u8();
-        if (r.len != u8.length)
-            u8 = Arrays.copyOf(u8, r.len);
-        return new Term(0, u8);
-    }
-
-    /**
-     * Create a {@link Term} instance using a suffix/prefix id and copying the local part
-     * from {@code source}.
-     *
-     * <p>In the general case, this will simply call {@link Term#Term(int, byte[])}.
-     * However, short local parts (up to 2 bytes when using a suffix/prefix or 3 bytes
-     * when not using one), instead of creating a new {@code byte[]} instance, a
-     * {@code byte[]} instance will be used from a static-initialized set.</p>
-     *
-     * @param flaggedId the suffix/prefix id. {@code flaggedDictId&0x7fffffff} is the id
-     *                      in {@link RopeDict#get(int)}, while the most significant bit indicates
-     *                      whether this is a prefix (0) or a suffix (1). If
-     *                      {@code flaggedDictId == 0}, no prefix/suffix will be used and
-     *                      {@code source} contains a full N-Triples
-     * @param src from where the local part of the {@link Term} shall be copied
-     * @param off index of the first byte that is part of the term
-     * @param len number of bytes which are part of this {@link Term#local}
-     * @return a new {@link Term} instance, which may be interned.
-     */
-    public static Term make(int flaggedId, byte[] src, int off, int len) {
-        int end = off+len;
-        if (flaggedId == 0 || flaggedId == (DT_string|SUFFIX_MASK)) {
-            if (len == 0) return null;
-            return src[end-1] == '"' && len <= 4 ? internPlain(src, off, end)
-                                                 : new Term(0, copyOfRange(src, off, end));
-        } else if (flaggedId == (DT_BOOLEAN|SUFFIX_MASK)) {
-            return switch (src[off+1]) {
-                case 't' -> TRUE;
-                case 'f' -> FALSE;
-                default -> throw new InvalidTermException(new String(src, off, len, UTF_8), 1, "expected true or false for ^^xsd:boolean");
-            };
-        } else if (flaggedId == P_XSD || flaggedId == P_RDF) {
-            return intern(flaggedId, new ByteRope(src), off, len);
-        }
-        byte[] local = flaggedId > 0 ? internIriLocal(src, off, end) : copyOfRange(src, off, end);
-        return new Term(flaggedId, local);
-    }
-
-    /**
-     * Create a {@link Term} for a typed literal.
-     *
-     * <p><strong>Important: </strong>{@code lex} is kept by reference, thus changes to
-     * it will be visible in the {@link Term} instance.</p>
-     *
-     * @param lex UTF-8 array containing the escaped (as enclosed in {@code ""}) lexical
-     *            form, maybe surrounded by '"'. If suffixId is zero or {@code DT_string},
-     *            lex SHOULD be enclosed by '"'. Else, {@code lex} SHOULD start with a single '"',
-     *            not including the closing '"', which is part of the suffixId. If {@code lex} is
-     *            not quoted as it should, quotes will be inserted.
-     * @param offset Index of the first byte in lex to consider
-     * @param len Size of the lexical form (or {@code "\""+lexicalForm}) in bytes.
-     * @param suffixId Value such that suffixing the given range inside
-     *                 {@code lex} with {@link RopeDict#get(int)} yields a
-     *                 valid N-Triples serialization of the term.
-     * @return A {@link Term} for the term. {@code lex} is held by reference,
-     *         thus it MUST not be mutated, else changes might feed users of the {@link Term}
-     *         with garbage.
-     */
-    public static Term typed(byte[] lex, int offset, int len, int suffixId) {
-        if ((suffixId&0x7fffffff) == DT_string || suffixId == 0)
-            return typedCold(lex, offset, len);
-        var w = forOpenLit(lex, offset, len);
-        if (w != NONE)
-            lex = w.toArray(lex, offset, offset+len);
-        else if (offset > 0 || len != lex.length)
-            lex = copyOfRange(lex, offset, len);
-        return new Term(suffixId|SUFFIX_MASK, lex);
-    }
-
-    /** Equivalent to {@code typed(lex.toARray(begin, end), suffixId)}. */
-    public static Term typed(SegmentRope lex, int begin, int end, int suffixId) {
-        if ((suffixId&0x7fffffff) == DT_string || suffixId == 0)
-            return typedCold(lex.toArray(begin, end), 0, end-begin);
-        return new Term(suffixId|SUFFIX_MASK, asOpenLitU8(lex, begin, end));
-    }
-
-    private static Term typedCold(byte[] lex, int offset, int len) {
-        int e = offset + len;
-        return new Term(0, forLit(lex, offset, e).toArray(lex, offset, e));
-    }
-
-    /** Equivalent to {@code typed(lex, 0, lex.length, suffixId)} */
-    public static Term typed(byte[] lex, int suffixId) {
-        return typed(lex, 0, lex.length, suffixId);
-    }
-
-    /** Equivalent to {@code typed(lex.toString().getBytes(UTF_8), suffixId)}. */
-    public static Term typed(Object lex, int suffixId) {
-        if (!(lex instanceof CharSequence) && !(lex instanceof byte[]))
-            lex = lex.toString();
-        boolean string = suffixId == 0 || (suffixId & 0x7fffffff) == DT_string;
-        byte[] u8 = (string ? forLit(lex) : forOpenLit(lex)).toArray(lex);
-        return typed(u8, 0, u8.length, suffixId);
-    }
-
-    /**
-     * Create an N-Triples term for {@code new String(RopeDict.get(prefixId), UTF_8)
-     * + new String(suffix, suffixOffset, suffixLen, UTF_8)}.
-     *
-     * @param prefixId An integer {@code > 0} such that {@link RopeDict#get(int)} yields
-     *                 the prefix of the N-Triples term
-     * @param suffix {@code byte[]} where there is a UTF-8 representation of the term suffix
-     * @return A {@link Term} instance for the term in N-Triples syntax. {@code suffix}
-     *         is held by reference, thus changes to it will be reflected on the {@link Term}
-     *         and might cause clients of the {@link Term} object to consume garbage.
-     */
-    public static Term prefixed(int prefixId, byte[] suffix) {
-        if (prefixId == P_XSD || prefixId == P_RDF)
-            return intern(prefixId, new ByteRope(suffix), 0, suffix.length);
-        byte[] l = suffix.length > 4 ? suffix : internIriLocal(suffix, 0, suffix.length);
-        return new Term(prefixId, l);
-    }
-
-    /**
-     * Create a {@link Term} holding the IRI obtained by concatenating
-     * {@code RopeDict.get(prefixId)} with {@code suffix.sub(begin, end)} and '>'
-     * (if the suffix slice does not already end in {@code >}).
-     *
-     * <p>Unlike {@link Term#prefixed(int, byte[])}, suffix is not held by reference, thus it
-     * can be safely mutated after this call returns. Also note that this method is preferred
-     * over the aforementioned one since it will try to use static initialized arrays before
-     * copying a new {@code byte[]} out of {@code suffix}.</p>
-     *
-     *
-     * @param prefixId An id such that {@link RopeDict#get(int)} yields the prefix of the IRI.
-     *                 Such prefix must start with {@code <} and must not end with {@code >}
-     * @param suffix Rope holding the local portion of the IRI
-     * @param begin where the local portion of the IRI starts (inclusive) in {@code suffix}
-     * @param end where the local portion of the IRI ends (non-inclusive) in {@code suffix}
-     * @return a new {@link Term} instance.
-     */
-    public static Term prefixed(int prefixId, SegmentRope suffix, int begin, int end) {
-        if (prefixId == P_XSD || prefixId == P_RDF)
-            return intern(prefixId, suffix, begin, end-begin);
-        return new Term(prefixId, internIriLocal(suffix, begin, end));
-    }
-
-    /** Create an IRI Term for an optionally or partially {@code <>}-wrapped iri. */
-    public static Term iri(CharSequence iriCS) {
-        return valueOf(forIri(iriCS).toRope(iriCS));
-    }
-
-    /** Equivalent to {@code valueOf("\""+escLex+"\"@"+lang)}.*/
-    public static Term lang(CharSequence escLex, CharSequence lang) {
-        var w = forLit(escLex);
-        var r = new ByteRope(escLex.length() + w.extraBytes() + 1 + lang.length());
-        return new Term(0, w.append(r, escLex).append('@').append(lang).fitBytes());
-    }
-
-    public static Term valueOf(SegmentRope r, int begin, int end) {
-        if (r == null || end <= begin)  return null;
-        return switch (r.get(begin)) {
+    public static Term wrap(@Nullable SegmentRope prefix, @Nullable SegmentRope suffix) {
+        if (prefix == null) prefix = EMPTY;
+        if (suffix == null) suffix = EMPTY;
+        return switch (prefix.len > 0 ? prefix.get(0) : suffix.len > 0 ? suffix.get(0) : 0) {
+            case 0 -> throw new InvalidTermException(ByteRope.EMPTY, 0, "empty input");
             case '"' -> {
-                if (end-begin < 2) throw new InvalidTermException("\"", 0, "Unclosed literal");
-                long localAndId = internLit(r, begin, end);
-                if ((int)localAndId == DT_string)
-                    localAndId = ((localAndId>>>32) + 1) << 32;
-                else if ((int)localAndId != 0)
-                    localAndId |= SUFFIX_MASK_L;
-                yield new Term((int)localAndId, r.toArray(begin, (int)(localAndId>>>32)));
+                if (prefix.len == 0) {
+                    prefix = suffix;
+                    suffix = EMPTY;
+                }
+                if (suffix.len > 0) {
+                    if (suffix.get(0) != '"')
+                        throw new IllegalArgumentException("suffix must start with \"");
+                    // ensure suffix is interned as some methods rely on reference equality.
+                    if (suffix.len >= MIN_INTERNED_LEN)
+                        suffix = SHARED_ROPES.internDatatype(suffix, 0, suffix.len);
+                } else if (prefix.len <= 4) {
+                    yield internPlain(prefix, 0, prefix.len, false);
+                } else if (prefix.reverseSkipUntil(0, prefix.len, '"') == 0) {
+                    throw new InvalidTermException(prefix, prefix.len, "No closing \"");
+                }
+                if (suffix == DT_string) {
+                    suffix = null;
+                    prefix = new ByteRope(prefix.len+1).append(prefix).append('"');
+                } else if (suffix == DT_langString) {
+                    throw new IllegalArgumentException("got ^^rdf:langString suffix instead of lang tag");
+                } else if (suffix == DT_BOOLEAN) {
+                    yield switch (prefix.get(1)) {
+                        case 't' -> TRUE;
+                        case 'f' -> FALSE;
+                        default -> throw new InvalidTermException(prefix, 1, "boolean must be true or false");
+                    };
+                }
+                yield new Term(suffix, prefix, true);
             }
             case '<' -> {
-                long localAndId = internIri(r, begin, end);
-                int id = (int)localAndId;
-                if (id == P_RDF || id == P_XSD) {
-                    localAndId >>>= 32;
-                    yield intern(id, r, (int)localAndId, end-(int)localAndId);
+                if (suffix.len == 0) {
+                    suffix = prefix;
+                    prefix = EMPTY;
+                } else if (prefix == P_RDF) {
+                    yield internRdf(suffix, 0, suffix.len);
+                } else if (prefix == P_XSD) {
+                    yield internXsd(suffix, 0, suffix.len);
                 }
-                yield new Term((int)localAndId, internIriLocal(r, (int)(localAndId>>>32), end));
+                if (suffix.len <= 3) {
+                    suffix = internIriLocal(suffix, 0, suffix.len, false);
+                } else if (suffix.get(suffix.len-1) != '>') {
+                    throw new InvalidTermException(suffix, suffix.len - 1, "No closing >");
+                }
+                yield new Term(prefix, suffix, false);
             }
-            case '?', '$', '_' -> new Term(0, r.toArray(begin, end));
-            default -> throw new InvalidTermException(r.sub(begin, end).toString(), 0, "Does not start with <, \", ?, $ or _");
+            case '?', '$', '_' -> {
+                if (suffix.len == 0)
+                    suffix = prefix;
+                else if (prefix.len > 0)
+                    suffix = new ByteRope(prefix.len + suffix.len).append(prefix).append(suffix);
+                yield new Term(EMPTY, suffix, false);
+            }
+            default -> throw new InvalidTermException(Rope.of(prefix, suffix), 0, "Not a NT start");
         };
     }
 
-    /** Equivalent to {@link Term#valueOf(SegmentRope, int, int)} from {@code 0} to {@code r.len()}. */
-    public static Term valueOf(Rope r) {
-        return r == null ? null : r instanceof Term t ? t : valueOf((SegmentRope) r, 0, r.len());
-    }
-
-    /** Equivalent to {@link Term#valueOf(Rope)} over the UTF-8 encoding of {@code string}. */
-    public static Term valueOf(@Nullable CharSequence string) {
-        if (string == null || string.isEmpty())
-            return null;
-        if (string instanceof Rope)
-            return valueOf((Rope) string);
-        return switch (string.charAt(0)) {
-            case '?', '$', '_' -> new Term(0, string.toString().getBytes(UTF_8));
-            default -> {
-                ByteRope br = new ByteRope(string);
-                yield Term.valueOf(br, 0, br.len);
+    /**
+     * Creates a {@link Term} that refers to a copy of the bytes in {@code r.sub(begin, end)},
+     * which must contain a valid N-Triples RDF term or a SPARQL variable.
+     *
+     * @param r The rope containing an RDF term or variable.
+     * @param begin the index where the RDF term or var starts in {@code r}
+     * @param end {@code r.len} or the index of the first byte in {@code r} after the term or var.
+     * @return a possibly interned Term instance.
+     * @throws InvalidTermException if there is a syntax error in the N-Triples term or SPARQL var.
+     *                              only cheap checks are executed, since this method is not a
+     *                              parser and should be called with already valid data.
+     */
+    public static Term valueOf(SegmentRope r, int begin, int end) {
+        if (r == null || end <= begin)  return null;
+        int len = end - begin;
+        if (len < 2) throw new InvalidTermException(r, 1, "input is too short");
+        return switch (r.get(begin)) {
+            case '"' -> {
+                SegmentRope suffix = SHARED_ROPES.internDatatypeOf(r, begin, end);
+                if (suffix == DT_BOOLEAN) {
+                    yield switch (r.get(begin+1)) {
+                        case 't' -> TRUE;
+                        case 'f' -> FALSE;
+                        default -> throw new InvalidTermException(r.sub(begin, end), 1, "boolean must be true or false");
+                    };
+                } else if (suffix.len == 0 && end-begin <=4) {
+                    yield internPlain(r, begin, end - suffix.len - begin, true);
+                }
+                yield wrap(new ByteRope(r.toArray(begin, end-suffix.len)), suffix);
             }
+            case '<' -> {
+                SegmentRope prefix = SHARED_ROPES.internPrefixOf(r, begin, end);
+                if (prefix == P_RDF)
+                    yield internRdf(r, begin+P_RDF.len, end);
+                if (prefix == P_XSD)
+                    yield internXsd(r, begin+P_XSD.len, end);
+                int suffixLen = end-begin-prefix.len;
+                SegmentRope suffix;
+                if (prefix.len > 0 && suffixLen <=3)
+                    suffix = internIriLocal(r, begin+prefix.len, suffixLen, true);
+                else
+                    suffix = new ByteRope(r.toArray(begin+prefix.len, end));
+                yield new Term(prefix, suffix, false);
+            }
+            case '?', '$', '_' -> wrap(null, new ByteRope(r.toArray(begin, end)));
+            default -> throw new InvalidTermException(r.sub(begin, end).toString(), 0,
+                                                      "Does not start with <, \", ?, $ or _");
         };
     }
 
+    /**
+     * Similar to {@link #valueOf(SegmentRope, int, int)}, but will take ownership of
+     * {@code rope}, possibly mutating it and keeping a reference to it in the built {@link Term}.
+     *
+     * @param rope a valid N-Triples RDF term or SPARQL var
+     * @return A {@link Term} for the given RDF term or SPARQL var
+     * @throws InvalidTermException if there is a syntax error in the N-Triples term or SPARQL var.
+     *                              only cheap checks are executed, since this method is not a
+     *                              parser and should be called with already valid data.
+     */
+    public static Term splitAndWrap(SegmentRope rope) {
+        if (rope.len == 0) return null;
+        else if (rope.len < 2) throw new InvalidTermException(rope, 0, "input too short");
+        return switch (rope.get(0)) {
+            case '"' -> {
+                SegmentRope suffix = SHARED_ROPES.internDatatypeOf(rope, 0, rope.len);
+                if (suffix != null) rope.len -= suffix.len;
+                yield wrap(rope, suffix);
+            }
+            case '<' -> {
+                SegmentRope prefix = SHARED_ROPES.internPrefixOf(rope, 0, rope.len);
+                if (prefix != null) {
+                    rope.offset += prefix.len;
+                    rope.len -= prefix.len;
+                }
+                yield wrap(prefix, rope);
+            }
+            default -> wrap(null, rope);
+        };
+    }
+
+    /** Equivalent to {@link #valueOf(SegmentRope, int, int)} from {@code 0} to {@code r.len()}. */
+    public static Term valueOf(CharSequence cs) {
+        if (cs == null) return null;
+        if (cs instanceof SegmentRope s) return valueOf(s, 0, s.len);
+        else return splitAndWrap(new ByteRope(cs));
+    }
+
+
+    public static Term prefixed(SegmentRope prefix, String local) {
+        return Term.wrap(prefix, new ByteRope(local));
+    }
+    public static Term typed(Object lex, SegmentRope datatype) {
+        if (lex instanceof byte[] b)
+            lex = new String(b, UTF_8);
+        String lexS = lex.toString();
+        return Term.wrap(RopeWrapper.forOpenLit(lexS).toRope(lexS), datatype);
+    }
+    public static Term iri(Object iri) {
+        return Term.splitAndWrap(RopeWrapper.forIri(iri).toRope(iri));
+    }
+    public static Term plainString(String lex) {
+        return Term.wrap(RopeWrapper.forLit(lex).toRope(lex), null);
+    }
+    public static Term lang(String lex, String lang) {
+        ByteRope tmp = new ByteRope();
+        RopeWrapper.forLit(lex).append(tmp, lex).append('@').append(lang);
+        return Term.wrap(tmp, null);
+    }
 
     /** Get an array of terms where the i-th element is the result of {@code valueOf(terms[i])} */
     public static @Nullable Term[] array(Object... terms) {
@@ -708,39 +703,197 @@ public final class Term extends Rope implements Expr {
             terms = arr;
         Term[] a = new Term[terms.length];
         TermParser termParser = new TermParser().eager();
-        termParser.prefixMap.add(Rope.of("owl"), Term.iri("http://www.w3.org/2002/07/owl#"));
-        termParser.prefixMap.add(Rope.of("foaf"), Term.iri("http://xmlns.com/foaf/0.1/"));
-        termParser.prefixMap.add(Rope.of(""), Term.iri("http://example.org/"));
-        termParser.prefixMap.add(Rope.of("ex"), Term.iri("http://example.org/"));
-        termParser.prefixMap.add(Rope.of("exns"), Term.iri("http://www.example.org/ns#"));
+        termParser.prefixMap.add(Rope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
+        termParser.prefixMap.add(Rope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
+        termParser.prefixMap.add(Rope.of(""), Term.valueOf("<http://example.org/>"));
+        termParser.prefixMap.add(Rope.of("ex"), Term.valueOf("<http://example.org/>"));
+        termParser.prefixMap.add(Rope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
         for (int i = 0; i < terms.length; i++)
             a[i] = terms[i] == null ? null : termParser.parseTerm(SegmentRope.of(terms[i]));
         return a;
     }
 
-    /** Equivalent to {@link Term#array(Object...)} but yields a {@link List} instead of an array. */
+    /** Equivalent to {@link #array(Object...)} but yields a {@link List} instead of an array. */
     public static List<@Nullable Term> termList(Object... terms) { return Arrays.asList(array(terms)); }
     public static List<@Nullable Term> termList(CharSequence... terms) { return Arrays.asList(array((Object[]) terms)); }
 
-    /**
-     * Create a plain string whose lexical for is {@code escapedLex}, which MAY be already
-     * surrounded by {@code '"'}s.
-     */
-    public static Term plainString(Object escapedLex) {
-        byte[] u8 = forLit(escapedLex).toArray(escapedLex);
-        return internPlain(u8, 0, u8.length);
-    }
 
     /* --- --- --- Rope implementation --- --- --- */
 
+    private void checkRange(int begin, int end) {
+        int len = this.len;
+        String msg;
+        if      (end   < begin) msg = "Range with end < begin";
+        else if (begin <     0) msg = "Negative begin";
+        else if (end   >   len) msg = "Range overflows Rope end";
+        else return;
+        throw new IndexOutOfBoundsException(msg);
+    }
+
     @Override public byte get(int i) {
-        if (flaggedDictId == 0) return local[i];
-        if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
-        byte[] shared = RopeDict.get(flaggedDictId & 0x7fffffff).u8();
-        if (flaggedDictId > 0)
-            return i < shared.length ? shared[i] : local[i-shared.length];
-        else
-            return i < local.length  ? local[i]  : shared[i-local.length];
+        if (i < 0 || i >= len) throw new IndexOutOfBoundsException();
+        SegmentRope fst = this.first, snd = this.second;
+        int fstLen = fst.len;
+        return i < fstLen ? fst.get(i) : snd.get(i-fstLen);
+    }
+
+    @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        if (begin < fstLen) {
+            int e = Math.min(end, fstLen);
+            fst.copy(begin, e, dest, offset);
+            offset += e-begin;
+            begin = e;
+        }
+        if (end > fstLen)
+            snd.copy(begin-fstLen, end-fstLen, dest, offset);
+        return dest;
+    }
+
+    @Override public int write(OutputStream out) throws IOException {
+        first.write(out);
+        second.write(out);
+        return len;
+    }
+
+    @Override public PlainRope sub(int begin, int end) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        if      (end   <= fstLen) return fst.sub(begin, end);
+        else if (begin >= fstLen) return snd.sub(begin-fstLen, end-fstLen);
+        var tsr = new TwoSegmentRope();
+        tsr.wrapFirst(fst.segment, fst.offset+begin, fstLen-begin);
+        tsr.wrapSecond(snd.segment, snd.offset+Math.max(0, begin-fstLen), end-fstLen);
+        return tsr;
+    }
+
+    @Override public int skipUntil(int begin, int end, char c0) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+
+        int e = Math.min(end, fstLen), i;
+        if (begin < fstLen && (i = fst.skipUntil(begin, e, c0)) < e) return i;
+        if ((e = end-fstLen) > 0) {
+            i = Math.max(0, begin-fstLen);
+            return fstLen + snd.skipUntil(i, e, c0);
+        }
+        return end;
+    }
+
+    @Override public int skipUntil(int begin, int end, char c0, char c1) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = Math.min(end, fstLen), i;
+        if (begin < fstLen && (i = fst.skipUntil(begin, e, c0, c1)) < e) return i;
+        if ((e = end-fstLen) > 0) {
+            i = Math.max(0, begin-fstLen);
+            return fstLen + snd.skipUntil(i, e, c0, c1);
+        }
+        return end;
+    }
+
+
+    @Override public int skipUntilLast(int begin, int end, char c0) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        if (e > 0 && (i = snd.skipUntilLast(i, e, c0)) < e) return fstLen+i;
+        if (begin < fstLen) {
+            e = Math.min(fstLen, end);
+            if ((i = fst.skipUntilLast(begin, e, c0)) < e) return i;
+        }
+        return end;
+    }
+
+    @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        if (e > 0 && (i = snd.skipUntilLast(i, e, c0, c1)) < e) return fstLen+i;
+        if (begin < fstLen) {
+            e = Math.min(fstLen, end);
+            if ((i = fst.skipUntilLast(begin, e, c0, c1)) < e) return i;
+        }
+        return end;
+    }
+
+    @Override public int skip(int begin, int end, int[] alphabet) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = Math.min(end, fstLen), i;
+        if (begin < fstLen && (i = fst.skip(begin, e, alphabet)) < e) return i;
+        if ((e = Math.max(0, end-fstLen)) > 0) {
+            i = Math.max(0, begin-fstLen);
+            return fstLen + snd.skip(i, e, alphabet);
+        }
+        return end;
+    }
+
+    @Override public boolean has(int pos, Rope rope, int begin, int end) {
+        if (pos < 0 || begin < 0 || pos > len || end > rope.len)
+            throw new IndexOutOfBoundsException();
+        int rLen = end-begin;
+        if (pos+rLen > len) return false;
+        return cmp(pos, pos+rLen, rope, begin, end) == 0;
+    }
+
+    @Override public int compareTo(@NonNull Rope o) {
+        return cmp(0, len, o, 0, o.len);
+    }
+
+    public int compareTo(MemorySegment segment, long off, int len) {
+        // collect segments and ranges for this
+        SegmentRope fst = first, snd = second;
+        return -SegmentRope.compare1_2(segment, off, len,
+                                       fst.segment, fst.offset, fst.len,
+                                       snd.segment, snd.offset, snd.len);
+    }
+
+    @Override public int compareTo(Rope o, int begin, int end) {
+        return cmp(0, len, o, begin, end);
+    }
+
+    public int cmp(int begin, int end, Rope rope, int rBegin, int rEnd) {
+        if (begin < 0 || end > len || rBegin < 0 || rEnd > rope.len)
+            throw new IndexOutOfBoundsException();
+
+        // collect segments and ranges for this
+        SegmentRope fst = first, snd = second;
+        int      fstLen = Math.min(fst.len, end)-begin;
+
+        // collect segments and ranges for rope
+        MemorySegment ofst, osnd;
+        long ofstOff, osndOff;
+        int ofstLen, osndLen;
+        if (rope instanceof Term t) {
+            SegmentRope f = t.first, s = t.second;
+            ofst = f.segment; ofstOff = f.offset; ofstLen = f.len;
+            osnd = s.segment; osndOff = s.offset; osndLen = s.len;
+        } else if (rope instanceof SegmentRope s) {
+            ofst = s.segment; ofstOff = s.offset; ofstLen = s.len;
+            osnd = null;      osndOff = 0;        osndLen = 0;
+        } else {
+            TwoSegmentRope t = (TwoSegmentRope) rope;
+            ofst = t.fst; ofstOff = t.fstOff; ofstLen = t.fstLen;
+            osnd = t.snd; osndOff = t.sndOff; osndLen = t.sndLen;
+        }
+
+        // crop segments to [rBegin, rEnd)
+        if (rBegin < ofstLen)  ofstOff += rBegin;
+        if (rEnd > ofstLen)  { osndOff += Math.max(0, rBegin-ofstLen); osndLen = rEnd - ofstLen; }
+        else                   ofstLen = rEnd;
+
+        return compare2_2(fst.segment, fst.offset+begin, fstLen,
+                          snd.segment, snd.offset+Math.max(0, begin-fst.len), len-fstLen,
+                          ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
     }
 
     /* --- --- --- Expr implementation --- --- --- */
@@ -759,43 +912,45 @@ public final class Term extends Rope implements Expr {
     }
 
     /**
-     * Get the SPARQL preferred representation of this {@link Term}. {@link Term#RDF_TYPE}
+     * Get the SPARQL preferred representation of this {@link Term}. {@link #RDF_TYPE}
      * becomes "a" and literals typed as XSD integer, decimal double and boolean are replaced by
      * their lexical forms (without quotes and datatype suffix).
      */
     @Override public void toSparql(ByteSink<?> dest, PrefixAssigner assigner) {
-        toSparql(dest, assigner, flaggedDictId, local, 0, local.length);
+        SegmentRope local = local();
+        toSparql(dest, assigner, shared(),
+                 local.segment, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
-    public static void toSparql(ByteSink<?> dest, PrefixAssigner assigner,
-                                int flaggedDictId, byte[] local, int localOff, int localLen) {
-        ByteRope shared = RopeDict.getTolerant(flaggedDictId);
-        if (flaggedDictId < 0) {
-            int id = flaggedDictId & 0x7fffffff;
-            if (id == DT_integer || id == DT_decimal || id == DT_DOUBLE || id == DT_BOOLEAN) {
-                --localLen;
-                ++localOff;
+    public static void toSparql(ByteSink<?> dest, PrefixAssigner assigner, SegmentRope shared,
+                                MemorySegment local, long localOff, int localLen, boolean isLit) {
+        if (shared == null || shared.len == 0) {
+            dest.append(local, localOff, localLen);
+            return;
+        }
+        if (isLit) {
+            if (shared == DT_integer || shared == DT_decimal || shared == DT_DOUBLE
+                                     || shared == DT_BOOLEAN) {
+                dest.append(local, localOff+1, localLen-1);
             } else {
                 dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
-                // will finalize writing shared
-                localLen = (local = shared.u8()).length;
-                localOff = 0;
-                // try to find a prefix name for PREFIX in shared="\"^^<PREFIX...>
-                long localAndId = internIri(shared, 3, shared.len);
-                Rope name = (int) localAndId == 0 ? null
-                        : assigner.nameFor(RopeDict.get((int) localAndId));
-                if (name != null) { // have a prefix name for the datatype IRI
-                    dest.append(DT_MID).append(name).append(':');
-                    // do not write trailing '>' and start from where PREFIX ended
-                    localLen = localLen - 1 - (localOff = (int) (localAndId >>> 32));
+                if (shared.get(1) == '^') {
+                    SegmentRope prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
+                    Rope name = prefix == null ? null : assigner.nameFor(prefix);
+                    if (name == null) {
+                        dest.append(shared);
+                    } else {
+                        dest.append(shared, 0, 3).append(name).append(':')
+                            .append(shared, 3+prefix.len, shared.len-1);
+                    }
+                } else {
+                    dest.append(shared);
                 }
             }
-        } else if (flaggedDictId > 0) {
-            if (flaggedDictId == P_RDF && localLen == 5
-                    && Arrays.equals(local, localOff, localOff+localLen,
-                                     Term.RDF_TYPE.local, 0, Term.RDF_TYPE.local.length)) {
-                localLen = (local = ByteRope.A.u8()).length;
-                localOff = 0;
+        } else {
+            if (shared == P_RDF && localLen == 5 /*type>*/
+                    && SegmentRope.has(local, localOff, RDF_TYPE.local().segment, 0, 5)) {
+                dest.append('a');
             } else {
                 Rope name = assigner.nameFor(shared);
                 if (name == null) {
@@ -803,162 +958,151 @@ public final class Term extends Rope implements Expr {
                 } else {
                     dest.append(name).append(':');
                     --localLen; // do not write trailing >
-                    int last = localOff + localLen - 1;
-                    if (localLen > 0 && !Rope.contains(PN_LOCAL_LAST, local[last])) {
-                        if (!Rope.isEscaped(local, localOff, last)) {
+                    byte last = localLen == 0 ? (byte)'a'
+                                  : local.get(JAVA_BYTE, localOff+localLen-1);
+                    if (!Rope.contains(PN_LOCAL_LAST, last)) {
+                        if (!new SegmentRope(local, localOff, localLen).isEscaped(localLen-1)) {
                             dest.append(local, localOff, localLen - 1)
-                                    .append('\\').append(local[last]);
+                                    .append('\\').append(last);
                             localLen = 0;
                         }
                     }
                 }
+                dest.append(local, localOff, localLen);
             }
         }
-        dest.append(local, localOff, localLen);
     }
 
     /* --- --- --- term methods --- --- --- */
 
     public enum Type {
+        VAR,
         LIT,
         IRI,
-        BLANK,
-        VAR
+        BLANK
     }
+    private static final Type[] TYPES  = Type.values();
 
-    public boolean isIri() { return flaggedDictId > 0 || local[0] == '<'; }
-
-    public boolean isVar() {
-        byte f = flaggedDictId == 0 ? local[0] : 0;
-        return f == '?' || f == '$';
-    }
+    public boolean isIri() { return type() == Type.IRI; }
+    public boolean isVar() { return type() == Type.VAR; }
 
     public Type type() {
-        if (flaggedDictId > 0) {
-            return Type.IRI;
-        } else if (flaggedDictId < 0) {
-            return Type.LIT;
+        int ordinal = (flags & TYPE_MASK) >>> TYPE_BIT;
+        if (ordinal == 0) {
+            ordinal = (flags & IS_SUFFIX) != 0 ? Type.LIT.ordinal() : switch (get(0)) {
+                case '"'      -> Type.LIT.ordinal();
+                case '_'      -> Type.BLANK.ordinal();
+                case '<'      -> Type.IRI.ordinal();
+                case '?', '$' -> Type.VAR.ordinal();
+                default       -> throw new InvalidTermException(toString(), 0, "bad start");
+            };
+            flags |= (ordinal << TYPE_BIT);
         }
-        return switch (local[0]) {
-            case '"'      -> Type.LIT;
-            case '_'      -> Type.BLANK;
-            case '<'      -> Type.IRI;
-            case '?', '$' -> Type.VAR;
-            default       -> throw new InvalidTermException(toString(), 0, "bad start");
-        };
-    }
+        return TYPES[ordinal];
+   }
+
+    public SegmentRope          first() { return first; }
+    public SegmentRope         second() { return second; }
+    public SegmentRope         shared() { return (flags & IS_SUFFIX) != 0 ? second : first; }
+    public SegmentRope          local() { return (flags & IS_SUFFIX) != 0 ? first  : second; }
+    public boolean     sharedSuffixed()  { return (flags & IS_SUFFIX) != 0; }
 
 
     /** If this is a var, gets its name (without leading '?'/'$'). Else, return {@code null}. */
     public @Nullable Rope name() {
-        byte c = local.length == 0 ? 0 : local[0];
-        return c == '?' || c == '$' ? new ByteRope(local, 1, local.length-1) : null;
+        return type() == Type.VAR ? second.sub(1, len) : null;
     }
 
     /** {@code lang} if this is a literal tagged with {@code @lang}, else {@code null}. */
     public @Nullable Rope lang() {
         int i = endLex();
-        if (i > 0 && i+1 < local.length && local[i+1] == '@')
-            return new ByteRope(local, i+2, local.length-(i+2));
+        if (i > 0 && i+1 < len && get(i+1) == '@') return sub(i+2, len);
         return null;
     }
 
     /** Index of closing {@code "} if this is a literal, else {@code -1} */
     public int endLex() {
-        if (local[0] != '"') return -1;
-        return RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ);
-    }
-
-    /**
-     * If {@link Term#type()} is {@link Type#LIT}, get the {@link RopeDict} {@code DT_} id for the
-     * explicit (or implicit {@code DT_string}/{@code DT_langString}) datatype.
-     * @return The {@code DT_} id from {@link RopeDict} or zero if this is not a literal.
-     */
-    public @NonNegative int datatypeId() {
-        if (local.length == 0 || local[0] != '"' || flaggedDictId > 0)
-            return 0;
-        if (flaggedDictId == 0) {
-            int i = RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ);
-            if (i+2 < local.length && local[i+1] == '@') // has @ and >= 1 char after it
-                return DT_langString;
-            else if (local.length < 2 || local[i] != '"' || i+1 < local.length)
-                throw new InvalidTermException(toString(), i, "No closing \" or garbage after it");
-            else
-                return DT_string;
+        if (type() != Type.LIT) return -1;
+        int endLex = cachedEndLex;
+        if (endLex == -1 || endLex == 0) {
+            endLex = reverseSkip(1, len, UNTIL_DQ);
+            cachedEndLex = (byte)Math.min(endLex, 255);
         }
-        return flaggedDictId & 0x7fffffff;
+        return endLex;
     }
 
     /**
-     * If this is an IRI of an XML schema or RDF datatype, get a {@code DT_} id from
-     * {@link RopeDict} such that {@code new String(RopeDict.get(id), UTF_8).equals("\"^^"+this)}.
-     *
-     * @return the aforementioned {@code id} or zero if {@link RopeDict} is full or if
-     *         {@code this} is not an XSD/RDF IRI.
+     * If {@link #type()} is {@link Type#LIT}, get the explicit or implicit (i.e.,
+     * {@code xsd:string} and {@code rdf:langString}) type suffix ({@code "^^<...>)}.
      */
-    public @NonNegative int asKnownDatatypeId() {
-        if (flaggedDictId == P_XSD) {
-            for (int i = 0; i < FREQ_XSD_DT.length; ++i) {
-                if (FREQ_XSD_DT[i] == this) return FREQ_XSD_DT_ID[i];
+    public @Nullable SegmentRope datatypeSuff() {
+        int endLex = endLex();
+        if (endLex < 0) return null;
+        return switch (endLex+1 == len ? 0 : get(endLex+1)) {
+            case 0   -> DT_string;
+            case '@' -> SharedRopes.DT_langString;
+            case '^' -> {
+                if (second.len > 0) yield second;
+                yield SHARED_ROPES.internDatatypeOf(first, endLex, first.len);
             }
-        } else if (flaggedDictId == P_RDF) {
+            default -> throw new InvalidTermException(this, endLex, "garbage after lexical form");
+        };
+    }
+
+    /**
+     * If this is an IRI of an XML schema or RDF datatype, get a {@code DT_} suffix from
+     * {@link SharedRopes} such that it equals {@code Rope.of("\"^^", this)}.
+     */
+    public @Nullable SegmentRope asKnownDatatypeSuff() {
+        if (first == SharedRopes.P_XSD) {
+            for (int i = 0; i < FREQ_XSD_DT.length; ++i) {
+                if (FREQ_XSD_DT[i] == this) return FREQ_XSD_DT_SUFF[i];
+            }
+        } else if (first == SharedRopes.P_RDF) {
             if      (this == RDF_LANGSTRING) return DT_langString;
             else if (this == RDF_HTML)       return DT_HTML;
             else if (this == RDF_JSON)       return DT_JSON;
             else if (this == RDF_XMLLITERAL) return DT_XMLLiteral;
         }
-        return 0;
+        return null;
     }
 
-    public @NonNegative int asDatatypeId() {
-        int id = asKnownDatatypeId();
-        return id > 0 ? id : asDatatypeIdCold();
+    public @Nullable SegmentRope asDatatypeSuff() {
+        var suff = asKnownDatatypeSuff();
+        return suff == null && type() == Type.IRI ? asDatatypeSuffCold() : suff;
     }
 
-    private @NonNegative int asDatatypeIdCold() {
-        if (type() != Type.IRI) return 0;
+    private @Nullable SegmentRope asDatatypeSuffCold() {
         var r = new ByteRope(3 + len()).append("\"^^").append(this);
-        return RopeDict.internDatatype(r, 0, r.len);
+        return SHARED_ROPES.internDatatype(r, 0, r.len);
     }
 
     /**
      * Get the (explicit or implicit) datatype IRI or {@code null} if this is not a literal.
      */
     public @Nullable Term datatypeTerm() {
-        if (flaggedDictId > 0 || local.length == 0 || local[0] != '"') {
-            return null;
-        } else if (flaggedDictId < 0) {
-            var suffix = RopeDict.get(flaggedDictId & 0x7fffffff);
-            return Term.valueOf(suffix, 3/*"^^*/, suffix.len);
-        } else {
-            int i = RopeSupport.reverseSkip(local, 0, local.length, UNTIL_DQ);
-            if      (i+1 == local.length) return XSD_STRING;
-            else if (local[i+1] == '@') return RDF_LANGSTRING;
-            throw new InvalidTermException(this, i, "Unexpected suffix");
-        }
+        SegmentRope suff = datatypeSuff();
+        return suff == null ? null : valueOf(suff, 3/*"^^*/, suff.len);
     }
 
     /**
-     * Get the lexical form of the literal with escapes as required by {@code "}-quoted
-     * N-Triples literals.
+     * Get the lexical form of  this literal with escapes as required by {@code "}-quoted
+     * N-Triples literals but without the surrounding quotes.
      */
     public @Nullable SegmentRope escapedLexical() {
-        if (local.length == 0 || local[0] != '"') return null;
-        if (flaggedDictId < 0)
-            return new ByteRope(local, 1, local.length-1);
-        int endLex = RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ);
-        if (local.length < 2 || local[endLex] != '"')
-            throw new InvalidTermException(toString(), 0, "Unclosed \"");
-        return new ByteRope(local, 1, endLex-1);
+        int endLex = endLex();
+        if (endLex < 0) return null;
+        return first.sub(1, endLex);
     }
 
     /** The number of UTF-8 bytes that would be output by {@link #unescapedLexical(ByteRope)}. */
     public int unescapedLexicalSize() {
         int endLex = endLex(), required = 0;
+        if (endLex == 0) return 0;
         for (int i = 1, j, n; i < endLex; i += n) {
             j = skipUntil(i, endLex, '\\');
             n = j-i;
-            byte c = j == endLex ? 0 : local[j + 1];
+            byte c = j == endLex ? 0 : first.get(j + 1);
             required += n + switch (c) {
                 case 0 -> 0;
                 case 'u', 'U' -> {
@@ -988,11 +1132,12 @@ public final class Term extends Rope implements Expr {
     public int unescapedLexical(ByteRope dest) {
         int endLex = endLex();
         int before = dest.len;
-        for (int i = 1, j, n; i < endLex; i = j+2) {
-            n = (j = skipUntil(i, endLex, '\\')) - i;
-            dest.append(local, i, n);
+        SegmentRope local = first;
+        for (int i = 1, j; i < endLex; i = j+2) {
+            j = skipUntil(i, endLex, '\\');
+            dest.append(local, i, j);
             if (j >= endLex) break;
-            byte c = local[j+1];
+            byte c = local.get(j+1);
             switch (c) {
                 case 'n'           -> dest.append('\n');
                 case 'r'           -> dest.append('\r');
@@ -1007,7 +1152,6 @@ public final class Term extends Rope implements Expr {
                 default            -> dest.appendCodePoint('\\');
             }
         }
-
         return dest.len-before;
     }
 
@@ -1029,62 +1173,60 @@ public final class Term extends Rope implements Expr {
      * @return a Term with given lexical form and this {@link Term} lang or datatype.
      */
     public Term withLexical(Rope lex) {
-        byte[] l;
-        if (flaggedDictId == 0) {
+        SegmentRope nLocal;
+        if (second.len == 0) {
             var w = forLit(lex);
-            if (local[local.length-1] == '"') {
-                l = w.toArray(lex);
+            int tail = endLex()+1;
+            if (tail == 0) {
+                throw new InvalidTermException(this, 0, "not a literal");
+            } else if (tail == len-1) {
+                nLocal = w.toRope(lex);
             } else {
-                int tail = RopeSupport.reverseSkip(local, 1, local.length, UNTIL_DQ)+1;
-                int tailLen = local.length-tail;
-                var tmp = new ByteRope(w.extraBytes() + lex.len() + tailLen);
-                l = w.append(tmp, lex).append(local, tail, tailLen).u8();
+                var tmp = new ByteRope(w.extraBytes() + lex.len + (len - tail));
+                nLocal = w.append(tmp, lex).append(first, tail, len);
             }
-        } else if (flaggedDictId < 0) {
-            l = forOpenLit(lex).toArray(lex);
+        } else if (type() == Type.LIT) {
+            nLocal = forOpenLit(lex).toRope(lex);
         } else {
             throw new InvalidExprTypeException(this, this, "literal");
         }
-        return new Term(flaggedDictId, l);
+        return new Term(second, nLocal, true);
     }
 
-    public static boolean isNumericDatatype(int maybeFlaggedId) {
-        int id = maybeFlaggedId & 0x7fffffff;
-        return id == DT_INT || id == DT_unsignedShort || id == DT_DOUBLE || id == DT_FLOAT ||
-               id == DT_integer || id == DT_positiveInteger || id == DT_nonPositiveInteger ||
-               id == DT_nonNegativeInteger || id == DT_unsignedLong || id == DT_decimal ||
-               id == DT_LONG || id == DT_unsignedInt || id == DT_SHORT || id == DT_unsignedByte ||
-               id == DT_BYTE;
+    public static boolean isNumericDatatype(SegmentRope suff) {
+        return suff == DT_INT || suff == DT_unsignedShort || suff == DT_DOUBLE || suff == DT_FLOAT ||
+               suff == DT_integer || suff == DT_positiveInteger || suff == DT_nonPositiveInteger ||
+               suff == DT_nonNegativeInteger || suff == DT_unsignedLong || suff == DT_decimal ||
+               suff == DT_LONG || suff == DT_unsignedInt || suff == DT_SHORT || suff == DT_unsignedByte ||
+               suff == DT_BYTE;
     }
 
 
     /** Get the {@link Number} for this term, or {@code null} if it is not a number. */
     public Number asNumber() {
-        if (number != null || flaggedDictId >= 0)
+        if (number != null || second.len == 0 || !isNumericDatatype(second))
             return number;
-        int id = flaggedDictId & 0x7fffffff;
-        String lexical = new String(local, 1, local.length-1);
+        String lexical = first.toString(1, first.len);
         try {
-            if (id == DT_INT || id == DT_unsignedShort) {
+            if (second == DT_INT || second == DT_unsignedShort) {
                 number = Integer.valueOf(lexical);
-            } else if (id == DT_DOUBLE) {
+            } else if (second == DT_DOUBLE) {
                 number = Double.valueOf(lexical);
-            } else if (id == DT_FLOAT) {
+            } else if (second == DT_FLOAT) {
                 number = Float.valueOf(lexical);
-            } else if (id == DT_integer || id == DT_positiveInteger || id ==DT_nonPositiveInteger || id == DT_unsignedLong) {
+            } else if (second == DT_integer || second == DT_positiveInteger || second ==DT_nonPositiveInteger || second == DT_unsignedLong) {
                 number = new BigInteger(lexical);
-            } else if (id == DT_decimal) {
+            } else if (second == DT_decimal) {
                 number = new BigDecimal(lexical);
-            } else if (id == DT_LONG || id == DT_unsignedInt) {
+            } else if (second == DT_LONG || second == DT_unsignedInt) {
                 number = Long.valueOf(lexical);
-            } else if (id == DT_SHORT || id == DT_unsignedByte) {
+            } else if (second == DT_SHORT || second == DT_unsignedByte) {
                 number = Short.valueOf(lexical);
-            } else if (id == DT_BYTE) {
+            } else if (second == DT_BYTE) {
                 number = (byte)Integer.parseInt(lexical);
             }
         } catch (NumberFormatException e) {
-            Rope dt = RopeDict.get(id);
-            dt = dt.sub(4, dt.len()-5);
+            Rope dt = second.sub(4, second.len);
             throw new ExprEvalException("Lexical form " + lexical + " is not valid for " + dt + ": " + e.getMessage());
         }
         return number;
@@ -1148,44 +1290,43 @@ public final class Term extends Rope implements Expr {
     public Term add(Term rhs) {
         Number l = requireNumeric("add"), r = rhs.requireNumeric("add");
         Number result;
-        int datatype;
+        SegmentRope suffix;
         if (l instanceof BigDecimal || r instanceof BigDecimal) {
             result = asBigDecimal(l, r).add(asBigDecimal(r, l));
-            datatype = DT_decimal;
+            suffix = DT_decimal;
         } else if (l instanceof BigInteger || r instanceof BigInteger) {
             result = asBigInteger(l).add(asBigInteger(r));
-            datatype = DT_integer;
+            suffix = DT_integer;
         } else if (l instanceof Double || r instanceof Double) {
             result = l.doubleValue() + r.doubleValue();
-            datatype = DT_DOUBLE;
+            suffix = DT_DOUBLE;
         } else if (l instanceof Float || r instanceof Float) {
             result = l.floatValue() + r.floatValue();
-            datatype = DT_FLOAT;
+            suffix = DT_FLOAT;
         } else if (l instanceof Long || r instanceof Long) {
             result = l.longValue() + r.longValue();
-            datatype = DT_LONG;
+            suffix = DT_LONG;
         } else if (l instanceof Integer || r instanceof Integer) {
             result = l.intValue() + r.intValue();
-            datatype = DT_INT;
+            suffix = DT_INT;
         } else if (l instanceof Short || r instanceof Short) {
             result = l.shortValue() + r.shortValue();
-            datatype = DT_SHORT;
+            suffix = DT_SHORT;
         } else if (l instanceof Byte || r instanceof Byte) {
             result = l.byteValue() + r.byteValue();
-            datatype = DT_BYTE;
+            suffix = DT_BYTE;
         } else {
             result = l.doubleValue() + r.doubleValue();
-            datatype = DT_DOUBLE;
+            suffix = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return typed(u8, 0, u8.length, datatype);
+        return new Term(suffix, new ByteRope().append('"').append(result), true);
     }
 
     public Term subtract(Term rhs) {
         Number l = requireNumeric("subtract"), r = rhs.requireNumeric("subtract");
         Number result;
-        int datatype;
+        SegmentRope datatype;
         if (l instanceof BigDecimal || r instanceof BigDecimal) {
             result = asBigDecimal(l, r).subtract(asBigDecimal(r, l));
             datatype = DT_decimal;
@@ -1215,25 +1356,20 @@ public final class Term extends Rope implements Expr {
             datatype = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return typed(u8, 0, u8.length, datatype);
+        return new Term(datatype, new ByteRope().append('"').append(result), true);
     }
 
     public Term negate() {
         Number n = asNumber();
         if (n != null) {
-            byte[] u8;
-            if (local[1] == '-') {
-                u8 = new byte[local.length-1];
-                u8[0] = '"';
-                arraycopy(local, 2, u8, 1, local.length-2);
-            } else {
-                u8 = new byte[local.length+1];
-                u8[0] = '"';
-                u8[1] = '-';
-                arraycopy(local, 1, u8, 2, local.length-1);
-            }
-            return new Term(flaggedDictId, u8);
+            if (first.get(1) == '-')
+                return new Term(second, first.sub(1, first.len-1), true);
+            ByteRope tmp = new ByteRope(first.len + 1);
+            byte[] u8 = tmp.u8();
+            u8[0] = '"';
+            u8[1] = '-';
+            tmp.append(first, 1, first.len);
+            return new Term(second, tmp, true);
         }
         return asBool() ? FALSE : TRUE;
     }
@@ -1241,7 +1377,7 @@ public final class Term extends Rope implements Expr {
     public Term multiply(Term rhs) {
         Number l = requireNumeric("multiply"), r = rhs.requireNumeric("multiply");
         Number result;
-        int datatype;
+        SegmentRope datatype;
         if (l instanceof BigDecimal || r instanceof BigDecimal) {
             result = asBigDecimal(l, r).multiply(asBigDecimal(r, l));
             datatype = DT_decimal;
@@ -1271,14 +1407,13 @@ public final class Term extends Rope implements Expr {
             datatype = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return typed(u8, 0, u8.length, datatype);
+        return new Term(datatype, new ByteRope().append('"').append(result), true);
     }
 
     public Term divide(Term rhs) {
         Number l = requireNumeric("divide"), r = rhs.requireNumeric("divide");
         Number result;
-        int datatype;
+        SegmentRope datatype;
         if (l instanceof BigDecimal || r instanceof BigDecimal) {
             result = asBigDecimal(l, r).divide(asBigDecimal(r, l), RoundingMode.HALF_DOWN);
             datatype = DT_decimal;
@@ -1308,13 +1443,12 @@ public final class Term extends Rope implements Expr {
             datatype = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return typed(u8, 0, u8.length, datatype);
+        return new Term(datatype, new ByteRope().append('"').append(result), true);
     }
 
     public Term abs() {
         requireNumeric("abs");
-        return local[1] == '-' ? negate() : this;
+        return first.get(1) == '-' ? negate() : this;
     }
 
     public Term ceil() {
@@ -1326,8 +1460,7 @@ public final class Term extends Rope implements Expr {
             default           -> n;
         });
         if (result.equals(n)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return new Term(flaggedDictId, u8);
+        return new Term(second, new ByteRope().append('"').append(result), true);
     }
 
     public Term floor() {
@@ -1339,8 +1472,7 @@ public final class Term extends Rope implements Expr {
             default           -> n;
         });
         if (result.equals(n)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return new Term(flaggedDictId, u8);
+        return new Term(second, new ByteRope().append('"').append(result), true);
     }
 
     public Term round() {
@@ -1352,21 +1484,19 @@ public final class Term extends Rope implements Expr {
             default           -> n;
         });
         if (result.equals(n)) return this;
-        byte[] u8 = ("\"" + result).getBytes(UTF_8);
-        return new Term(flaggedDictId, u8);
+        return new Term(second, new ByteRope().append('"').append(result), true);
     }
 
     /** Evaluate this term as a Boolean, per the SPARQL boolean value rules. */
     public boolean asBool() {
         return switch (type()) {
             case LIT -> {
-                int id = flaggedDictId & 0x7fffffff;
-                if (id == DT_BOOLEAN) {
-                    yield local[1] == 't';
-                } else if (id == DT_string) {
-                    yield local.length > 1;
-                } else if (id == 0) {
-                    yield reverseSkip(0, local.length, UNTIL_DQ) > 1;
+                if (second == DT_BOOLEAN) {
+                    yield first.get(1) == 't';
+                } else if (second == DT_string) {
+                    yield first.len > 1;
+                } else if (second.len == 0) {
+                    yield endLex() > 1;
                 } else {
                     Number n = asNumber();
                     yield switch (n) {
@@ -1391,19 +1521,53 @@ public final class Term extends Rope implements Expr {
             Number n = asNumber(), tn = t.asNumber();
             if      ( n != null) return tn != null && compareTo(t) == 0;
             else if (tn != null) return false;
-            return t.flaggedDictId == flaggedDictId && RopeSupport.arraysEqual(local, t.local);
+            return len == t.len && cmp(0, len, t, 0, t.len) == 0;
         }
         return super.equals(o);
     }
 
+    @Override public int fastHash(int begin, int end) {
+        SegmentRope fst = first, snd = second;
+        int h = FNV_BASIS, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
+        if (begin+nFst < fst.len) {
+            h = SegmentRope.hashCode(FNV_BASIS, fst.segment, fst.offset+begin, nFst);
+        } else {
+            for (int i = 0; i < nFst; i++)
+                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+        }
+        begin = end-nSnd;
+        if (begin > fst.len) {
+            h = SegmentRope.hashCode(h, snd.segment, snd.offset+(begin-fst.len), nSnd);
+        } else {
+            for (int i = 0; i < nFst; i++)
+                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+        }
+        return h;
+    }
+
     @Override public int hashCode() {
+        int hash = this.hash;
         if (hash == 0)  {
             Number n = asNumber();
-            if (n == null)
-                hash = 31*flaggedDictId + RopeSupport.hash(local, 0, local.length);
-            else
+            if (n == null) {
+                SegmentRope fst = first, snd = second;
+                hash = SegmentRope.hashCode(FNV_BASIS, fst.segment, fst.offset, fst.len);
+                hash = SegmentRope.hashCode(hash, snd.segment, snd.offset, snd.len);
+            } else {
                 hash = n.hashCode();
+            }
+            this.hash = hash;
         }
         return hash;
+    }
+
+    static {
+        int maxType = TYPES.length - 1;
+        if (((maxType << TYPE_BIT) & TYPE_MASK) != TYPE_MASK)
+            throw new AssertionError("TYPE_MASK too narrow");
+        //noinspection ConstantValue
+        if ((TYPE_MASK & IS_SUFFIX) != 0)
+            throw new AssertionError("masks overlap");
+
     }
 }

@@ -12,7 +12,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -132,11 +132,11 @@ class SparqlClientHelpersTest {
     static Stream<Arguments> testFormString() {
         String sparql = "SELECT ?x WHERE { ?x a <http://schema.org/Person>}";
         String escaped = UriUtils.escapeQueryParam(sparql).toString();
-        Map<String, List<String>> singleParam = new HashMap<>();
+        Map<String, List<String>> singleParam = new LinkedHashMap<>();
         singleParam.put("x", List.of("1"));
-        Map<String, List<String>> singleList = new HashMap<>();
+        Map<String, List<String>> singleList = new LinkedHashMap<>();
         singleList.put("x", List.of("11", "test"));
-        Map<String, List<String>> multiParams = new HashMap<>();
+        Map<String, List<String>> multiParams = new LinkedHashMap<>();
         multiParams.put("x", List.of("11", "test"));
         multiParams.put("y", List.of("23"));
         return Stream.of(
@@ -150,7 +150,7 @@ class SparqlClientHelpersTest {
     @ParameterizedTest @MethodSource
     void testFormString(String sparqlStr, Map<String, List<String>> paramsStr, String expectedStr) {
         Rope sparql = Rope.of(sparqlStr);
-        Map<Rope, List<Rope>> params = new HashMap<>();
+        Map<Rope, List<Rope>> params = new LinkedHashMap<>();
         for (var e : paramsStr.entrySet())
             params.put(Rope.of(e.getKey()), Rope.ropeList(e.getValue()));
         Rope expected = Rope.of(expectedStr);

@@ -3,10 +3,7 @@ package com.github.alexishuf.fastersparql.util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
@@ -18,8 +15,15 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 public class IOUtils {
     private static final Logger log = LoggerFactory.getLogger(IOUtils.class);
 
+    public static void ensureDir(File dir) throws IOException {
+        if (dir.exists() && !dir.isDirectory())
+            throw new IOException(dir+" exists as non-dir");
+        else if (!dir.exists() && !dir.mkdirs())
+            throw new IOException("Could not mkdir "+dir);
+    }
+
     public static void writeWithTmp(File destination,
-                             ThrowingConsumer<FileOutputStream, IOException> writer)
+                                    ThrowingConsumer<OutputStream, IOException> writer)
             throws IOException {
         File parent = destination.getParentFile();
         if (parent == null) parent = new File("");

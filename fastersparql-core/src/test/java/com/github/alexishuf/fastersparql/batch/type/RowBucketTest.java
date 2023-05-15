@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -15,10 +15,10 @@ import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RowBucketTest {
-    private static final Term i1 = Term.typed("1", RopeDict.DT_integer);
-    private static final Term i2 = Term.typed("2", RopeDict.DT_integer);
-    private static final Term i3 = Term.typed("3", RopeDict.DT_integer);
-    private static final Term i4 = Term.typed("4", RopeDict.DT_integer);
+    private static final Term i1 = Term.typed("1", SharedRopes.DT_integer);
+    private static final Term i2 = Term.typed("2", SharedRopes.DT_integer);
+    private static final Term i3 = Term.typed("3", SharedRopes.DT_integer);
+    private static final Term i4 = Term.typed("4", SharedRopes.DT_integer);
 
     static Stream<Arguments> test() {
         return Stream.of(Batch.TERM, Batch.COMPRESSED).map(Arguments::arguments);

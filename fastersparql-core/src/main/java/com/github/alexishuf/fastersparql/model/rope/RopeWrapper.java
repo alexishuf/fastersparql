@@ -156,13 +156,13 @@ public enum RopeWrapper {
     }
 
     @SuppressWarnings("unused")
-    public Rope toRope(Object o, int begin, int end) {
-        if (o instanceof Rope r && end-begin == r.len()) return r;
+    public SegmentRope toRope(Object o, int begin, int end) {
+        if (o instanceof SegmentRope  r && end-begin == r.len) return r;
         return new ByteRope(toArray(o, begin, end));
     }
 
-    public Rope toRope(Object o) {
-        if (this == NONE && o instanceof Rope r) return r;
+    public SegmentRope toRope(Object o) {
+        if (this == NONE && o instanceof SegmentRope r) return r;
         return new ByteRope(toArray(o, 0, naturalLen(o)));
     }
 

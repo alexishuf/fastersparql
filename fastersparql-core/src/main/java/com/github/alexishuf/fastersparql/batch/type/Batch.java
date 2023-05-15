@@ -6,13 +6,18 @@ import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.index.qual.NonNegative;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static java.util.Objects.requireNonNull;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
@@ -190,10 +195,86 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public abstract @Nullable Term get(@NonNegative int row, @NonNegative int col);
 
-    /** Null-safe equivalent to {@code get(row, col).flaggedDictId}. */
-    public int flaggedId(@NonNegative int row, @NonNegative int col) {
+    /**
+     * Analogous to {@link #get(int, int)}, but gets a {@link SegmentRope} or
+     * {@link TwoSegmentRope} rope instance, which are cheaper to produce than {@link Term}.
+     *
+     * @param row the row index
+     * @param col the column index
+     * @return A {@link PlainRope} with the same bytes as a {@link Term}
+     * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)} or
+     *                                   {@code col} is not  in {@code [0, cols)}
+     */
+    public @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        return t == null ? null : new TwoSegmentRope(t.first(), t.second());
+    }
+
+    /**
+     * Get the {@link Term} at column {@code col} of row {@code row} into {@code dest}.
+     *
+     * <p><strong>WARNING:</strong> If the batch is mutated after this method returns,
+     * the contents of {@code dest.local()} MAY change. Use {@link #get(int, int)} to avoid
+     * this.</p>
+     *
+     * @param row the row of the desired term.
+     * @param col the column of the desired term
+     * @param dest where the term will be mapped to there will be no copy of UTF-8 bytes, only
+     *             pointers to the term stored in this batch will be copied into {@code dest}.
+     *             <strong>Warning:</strong> if the batch is mutated/recycled, {@code dest}
+     *             might then be pointing to garbage.
+     * @return {@code true} if there is a term set at the requested row and column. {@code false}
+     *         if the row and column where within bounds but there was no value set (e.g., an
+     *         unbound variable)
+     * @throws IndexOutOfBoundsException if {@code row} or {@code col} are negative or above the
+     *                                   number of rows (or columns) in this batch.
+     */
+    public boolean getView(@NonNegative int row, @NonNegative int col, Term dest)  {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.set(t.shared(), t.local(), t.sharedSuffixed());
+        return true;
+    }
+
+    /**
+     * Analogous to {@link #getRope(int, int)}, but modifies {@code dest}
+     * instead of spawning a new {@link SegmentRope} or {@link TwoSegmentRope} instance.
+     *
+     * <p><strong>Warning:</strong>If the batch is mutated after this method returns, the contents
+     * of {@code dest.local()} MAY change. To avoid this behavior, use
+     * {@link #getRope(int, int)}.</p>
+     *
+     * @param row the row index
+     * @param col the column index
+     * @return {@code true} iff there was a term defined at {@code (row, col)} and therefore
+     *         {@code dest} was mutated.
+     * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)} or
+     *                                   {@code col} is not  in {@code [0, cols)}
+     */
+    public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
+        PlainRope r = getRope(row, col);
+        if (r == null) return false;
+        if (r instanceof SegmentRope s) {
+            dest.wrapFirst(s);
+            dest.wrapSecond(EMPTY);
+        } else {
+            TwoSegmentRope t = (TwoSegmentRope) r;
+            dest.wrapFirst(t.fst, t.fstOff, t.fstLen);
+            dest.wrapSecond(t.snd, t.sndOff, t.sndLen);
+        }
+        return true;
+    }
+
+    /** Null-safe equivalent to {@code get(row, col).shared()}. */
+    public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         Term term = get(row, col);
-        return term == null ? 0 : term.flaggedDictId;
+        return term == null ? EMPTY : term.shared();
+    }
+
+    /** Null-safe equivalent to {@code get(row, col).shared()}. */
+    public boolean sharedSuffixed(@NonNegative int row, @NonNegative int col) {
+        Term term = get(row, col);
+        return term != null && term.sharedSuffixed();
     }
 
     /** Null-safe equivalent to {@code get(row, col).len}. */
@@ -206,15 +287,12 @@ public abstract class Batch<B extends Batch<B>> {
      * closing {@code "}-quote. Else, return zero. */
     public int lexEnd(@NonNegative int row, @NonNegative int col) {
         Term t = get(row, col);
-        if (t == null || t.type() != Term.Type.LIT) return 0;
-        if (t.flaggedDictId == 0)
-            return RopeSupport.reverseSkip(t.local, 0, t.local.length, Rope.UNTIL_DQ);
-        return t.local.length;
+        return Math.max(t == null ? 0 : t.endLex(), 0);
     }
 
     public int localLen(@NonNegative int row, @NonNegative int col) {
         Term t = get(row, col);
-        return t == null ? 0 : t.local.length;
+        return t == null ? 0 : t.local().len;
     }
 
     /** Null-safe equivalent to {@code get(row, col).type()}. */
@@ -224,9 +302,9 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /** Null-safe equivalent to {@code get(row, col).asDatatypeId()}. */
-    public @NonNegative int asDatatypeId(int row, int col) {
+    public @Nullable SegmentRope asDatatypeSuff(int row, int col) {
         var t = get(row, col);
-        return t == null ? 0 : t.asDatatypeId();
+        return t == null ? null : t.asDatatypeSuff();
     }
 
     /** Null-safe equivalent to {@code get(row, col).datatypeTerm()}. */
@@ -266,8 +344,11 @@ public abstract class Batch<B extends Batch<B>> {
      * @param col see {@link #get(int, int)}
      */
     public void writeNT(ByteSink<?> dest, int row, int col) {
-        Term t = get(row, col);
-        if (t != null) dest.append(t);
+        TwoSegmentRope tmp = new TwoSegmentRope();
+        if (getRopeView(row, col, tmp)) {
+            dest.append(tmp.fst, tmp.fstOff, tmp.fstLen);
+            dest.append(tmp.snd, tmp.sndOff, tmp.sndLen);
+        }
     }
 
     /**
@@ -281,7 +362,7 @@ public abstract class Batch<B extends Batch<B>> {
     /** Get a hash code for the term at column {@code col} of row {@code row}. */
     public int hash(int row, int col) {
         Term t = get(row, col);
-        return t == null ? 0 : t.hashCode();
+        return t == null ? Rope.FNV_BASIS : t.hashCode();
     }
 
     /** Equivalent to {@code Objects.equals(get(row, col), other)} */
@@ -382,26 +463,42 @@ public abstract class Batch<B extends Batch<B>> {
      * @return {@code true} iff the row offer may continue.
      */
     public boolean offerTerm(int col, TermParser termParser) {
-        return offerTerm(col, termParser.asTerm());
+        var local = termParser.localBuf();
+        int begin = termParser.localBegin;
+        return offerTerm(col, termParser.shared(), local.segment, local.offset+begin,
+                         termParser.localEnd - begin, termParser.sharedSuffixed());
     }
 
     /**
-     * Equivalent offering a term built with {@code flaggedId}, and
-     * {@code localRope.sub(localOff, localEnd)}
+     * Equivalent building a term with the given {@code shared*} and {@code local*} arguments
+     * and then calling {@link #offerTerm(int, Term)}.
      *
      * @param col destination column of the term
-     * @param flaggedId Value for {@link Term#flaggedDictId} of the built term
-     * @param localRope Rope that contains bytes that shall constitute {@link Term#local}
-     * @param localOff Index of first byte in {@code localRope} that goes into {@link Term#local}
-     * @param localEnd {@code localOff + term.local.length}
+     * @param shared A prefix or suffix to be kept by reference
+     * @param local Where the local (i.e., non-shared) prefix/suffix of this term is stored.
+     * @param localOff Index of first byte in {@code local} that is part of the term
+     * @param localLen number of bytes in {@code local} that constitute the local segment.
+     * @param sharedSuffix Whether the shared segment is a suffix
      * @return {@code true} iff the row offer may continue
      */
-    public boolean offerTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localEnd) {
-        Term term;
-        if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
-        else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);
-        else                    term = Term. valueOf(localRope, localOff,  localEnd);
-        return offerTerm(col, term);
+    public boolean offerTerm(int col, SegmentRope shared, MemorySegment local,
+                             long localOff, int localLen, boolean sharedSuffix) {
+        return offerTerm(col, shared, local, null, localOff, localLen, sharedSuffix);
+    }
+
+    protected boolean offerTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
+                                long localOff, int localLen, boolean sharedSuffix) {
+        return offerTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
+    }
+
+    /**
+     * Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)},
+     * but uses a {@code byte[]} instead of a {@link MemorySegment} as the source of the UTF-8
+     * bytes of the local segment.
+     */
+    public boolean offerTerm(int col, SegmentRope shared, byte[] local, int localOff,
+                             int localLen, boolean sharedSuffix) {
+        return offerTerm(col, shared, null, local, localOff, localLen, sharedSuffix);
     }
 
     /**
@@ -471,25 +568,54 @@ public abstract class Batch<B extends Batch<B>> {
      * @param termParser A {@link TermParser} that just parsed some input.
      */
     public void putTerm(int col, TermParser termParser) {
-        putTerm(col, termParser.asTerm());
+        var local = termParser.localBuf();
+        int begin = termParser.localBegin;
+        putTerm(col, termParser.shared(), local.segment, local.offset+begin,
+                  termParser.localEnd - begin, termParser.sharedSuffixed());
     }
 
     /**
-     * Equivalent offering a term built with {@code flaggedId}, and
-     * {@code localRope.sub(localOff, localEnd)}
+     * Equivalent building a term with the given {@code shared*} and {@code local*} arguments
+     * and then calling {@link #putTerm(int, Term)}.
      *
      * @param col destination column of the term
-     * @param flaggedId Value for {@link Term#flaggedDictId} of the built term
-     * @param localRope Rope that contains bytes that shall constitute {@link Term#local}
-     * @param localOff Index of first byte in {@code localRope} that goes into {@link Term#local}
-     * @param localEnd {@code localOff + term.local.length}
+     * @param shared A prefix or suffix to be kept by reference
+     * @param local Where the local (i.e., non-shared) prefix/suffix of this term is stored.
+     * @param localOff Index of first byte in {@code local} that is part of the term
+     * @param localLen number of bytes in {@code local} that constitute the local segment.
+     * @param sharedSuffix Whether the shared segment is a suffix
      */
-    public void putTerm(int col, int flaggedId, SegmentRope localRope, int localOff, int localEnd) {
-        Term term;
-        if      (flaggedId < 0) term = Term.   typed(localRope, localOff,  localEnd, flaggedId);
-        else if (flaggedId > 0) term = Term.prefixed(flaggedId, localRope, localOff, localEnd);
-        else                    term = Term. valueOf(localRope, localOff,  localEnd);
-        putTerm(col, term);
+    public void putTerm(int col, SegmentRope shared, MemorySegment local,
+                        long localOff, int localLen, boolean sharedSuffix) {
+        putTerm(col, shared, local, null, localOff, localLen, sharedSuffix);
+    }
+
+    private Term makeTerm(SegmentRope shared, MemorySegment local, byte[] localU8, long localOff,
+                          int localLen, boolean sharedSuffix) {
+        if ((shared == null || shared.len == 0) && localLen == 0) {
+            return null;
+        }
+        ByteRope localRope = new ByteRope(localLen);
+        if (localU8 != null) localRope.append(localU8, (int)localOff, localLen);
+        else                 localRope.append(requireNonNull(local), localOff, localLen);
+        SegmentRope fst, snd;
+        if (sharedSuffix) { fst = localRope; snd =    shared; }
+        else              { fst =    shared; snd = localRope; }
+        return Term.wrap(fst, snd);
+    }
+
+    protected void putTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
+                           long localOff, int localLen, boolean sharedSuffix) {
+        putTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
+    }
+
+    /**
+     * Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)}, but
+     * uses a {@code byte[]} instead of {@link MemorySegment} for the local UTF-8 source.
+     */
+    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen,
+                        boolean sharedSuffix) {
+        putTerm(col, shared, null, local, localOff, localLen, sharedSuffix);
     }
 
     /** Version of {@link #commitOffer()} that never rejects. For use with
@@ -522,7 +648,7 @@ public abstract class Batch<B extends Batch<B>> {
         if (row.length != cols) throw new IllegalArgumentException();
         int bytes = 0;
         for (Term t : row)
-            bytes += t == null ? 0 : t.local.length;
+            bytes += t == null ? 0 : t.local().len;
         reserve(1, bytes);
         beginPut();
         for (int c = 0; c < row.length; c++)
@@ -534,11 +660,11 @@ public abstract class Batch<B extends Batch<B>> {
      * Equivalent to {@link #putRow(Term[])}, but with a {@link Collection}
      *
      * <p>If collection items are non-null and non-{@link Term}, they will be converted using
-     * {@link Rope#of(Object)} and {@link Term#valueOf(Rope)}.</p>
+     * {@link Rope#of(Object)} and {@link Term#valueOf(CharSequence)}.</p>
      *
      * @param row single row to be added
      * @throws IllegalArgumentException if {@code row.size() != this.cols}
-     * @throws InvalidTermException if {@link Term#valueOf(Rope)} fails to convert a non-null,
+     * @throws InvalidTermException if {@link Term#valueOf(CharSequence)} fails to convert a non-null,
      *                              non-Term row item
      */
     public void putRow(Collection<?> row) {

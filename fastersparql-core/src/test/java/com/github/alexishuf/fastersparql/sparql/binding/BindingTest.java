@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,15 +18,16 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class BindingTest {
-    private static final Term one = Term.typed(1, RopeDict.DT_integer);
-    private static final Term two = Term.typed(2, RopeDict.DT_integer);
-    private static final Term three = Term.typed(3, RopeDict.DT_integer);
+    private static final Term one = Term.typed(1, DT_integer);
+    private static final Term two = Term.typed(2, DT_integer);
+    private static final Term three = Term.typed(3, DT_integer);
 
     @BeforeAll
     static void beforeAll() {
@@ -125,9 +125,9 @@ class BindingTest {
         assertEquals(Term.iri("<a>"), b.get(Term.valueOf("?x")));
         assertEquals(Term.iri("<a>"), b.get(0));
 
-        assertEquals(Term.typed(23, RopeDict.DT_integer), b.get(1));
-        assertEquals(Term.typed(23, RopeDict.DT_integer), b.get(Rope.of("y")));
-        assertEquals(Term.typed(23, RopeDict.DT_integer), b.get(Term.valueOf("?y")));
+        assertEquals(Term.typed(23, DT_integer), b.get(1));
+        assertEquals(Term.typed(23, DT_integer), b.get(Rope.of("y")));
+        assertEquals(Term.typed(23, DT_integer), b.get(Term.valueOf("?y")));
 
         assertEquals(Term.lang("bob", "en"), b.get(2));
         assertEquals(Term.lang("bob", "en"), b.get(Rope.of("zzz")));

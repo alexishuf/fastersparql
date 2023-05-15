@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import org.junit.jupiter.api.Test;
@@ -11,13 +10,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.get;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.CANON;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.NOP;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
@@ -42,8 +41,8 @@ class TermTest {
                 arguments(false, Term.typed("0", DT_LONG)),
                 arguments(false, Term.typed("0", DT_SHORT)),
                 arguments(false, Term.typed("0", DT_BYTE)),
-                arguments(false, Term.typed("0", RopeDict.DT_integer)),
-                arguments(false, Term.typed("0", RopeDict.DT_decimal)),
+                arguments(false, Term.typed("0", DT_integer)),
+                arguments(false, Term.typed("0", DT_decimal)),
                 arguments(null, valueOf("<http://example.org/Alice>")),
                 arguments(null, valueOf("_:asd"))
         );
@@ -216,8 +215,8 @@ class TermTest {
     }
 
     @Test void testTypedOmitsStringDatatype() {
-        assertEquals("\"bob\"", Term.typed("\"bob\"", DT_string).toString());
-        assertEquals("\"\"", Term.typed("\"\"", DT_string).toString());
+        assertEquals("\"bob\"", Term.typed("\"bob", DT_string).toString());
+        assertEquals("\"\"", Term.typed("\"", DT_string).toString());
     }
 
     @Test void testTypedClosedQuote() {
@@ -225,83 +224,47 @@ class TermTest {
     }
 
     @Test void testTypedBadSuffix() {
-        assertEquals(Term.plainString("0"), Term.typed("\"0\"", 0));
-        assertThrows(AssertionError.class, () -> Term.typed("\"0\"", P_XSD));
+        assertEquals(Term.plainString("0"), Term.wrap(new ByteRope("\"0\""), EMPTY));
+        assertEquals(Term.plainString("0"), Term.wrap(new ByteRope("\"0\""), null));
+        assertThrows(IllegalArgumentException.class, () -> Term.wrap(new ByteRope("\"0\""), P_XSD));
     }
 
     @Test void testPrefixed() {
         assertEquals("<http://www.w3.org/2001/XMLSchema#integer>",
-                     Term.prefixed(P_XSD, "integer>".getBytes(UTF_8)).toString());
-        assertEquals(XSD_INTEGER, Term.prefixed(P_XSD, "integer".getBytes(UTF_8)));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, "integer>".getBytes(UTF_8)));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, "integer".getBytes(UTF_8)));
+                     Term.wrap(P_XSD, new ByteRope("integer>")).toString());
+        assertEquals(XSD_INTEGER, Term.wrap(P_XSD, new ByteRope("integer>")));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, new ByteRope("integer>")));
     }
 
     @Test void testPrefixedRopeInterns() {
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer>"), 0, 8));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer>"), 0, 7));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("integer"), 0, 7));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer>"), 4, 12));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer>"), 4, 11));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer"), 4, 11));
-        assertSame(XSD_INTEGER, Term.prefixed(P_XSD, SegmentRope.of("xsd:integer,"), 4, 11));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, SegmentRope.of("integer>")));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, SegmentRope.of("xsd:integer>").sub(4, 12)));
 
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of(">"), 0, 1));
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of(""), 0, 0));
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:>"), 4, 5));
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:>"), 4, 4));
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:"), 4, 4));
-        assertSame(XSD, Term.prefixed(P_XSD, SegmentRope.of("xsd:."), 4, 4));
+        assertSame(XSD, Term.wrap(P_XSD, SegmentRope.of(">")));
+        assertSame(XSD, Term.wrap(P_XSD, SegmentRope.of("xsd:>").sub(4, 5)));
 
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type>"), 1, 6));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type>"), 1, 5));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of(".type"), 1, 5));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type>"), 4, 9));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type"), 4, 8));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, SegmentRope.of("xsd:type;"), 4, 8));
+        assertSame(RDF_TYPE, Term.wrap(P_RDF, SegmentRope.of("type>")));
+        assertSame(RDF_TYPE, Term.wrap(P_RDF, SegmentRope.of(".type>").sub(1, 6)));
     }
 
-    @Test void testPrefixedBytesInterns() {
-        assertSame(XSD_INT, Term.prefixed(P_XSD, "int>".getBytes(UTF_8)));
-        assertSame(XSD, Term.prefixed(P_XSD, ">".getBytes(UTF_8)));
-        assertSame(RDF_TYPE, Term.prefixed(P_RDF, "type>".getBytes(UTF_8)));
-        assertSame(RDF, Term.prefixed(P_RDF, ">".getBytes(UTF_8)));
-    }
 
     @Test void testPrefixedInternShortLocal() {
-        int id = (int)internIri(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
-        assertTrue(id > 0);
+        var sh = SHARED_ROPES.internPrefixOf(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
+        assertEquals(SegmentRope.of("<http://www.example.org/ns#"), sh);
 
-        assertSame(CLOSE_IRI, prefixed(id, ">".getBytes(UTF_8)).local);
-        assertSame(CLOSE_IRI, prefixed(id, SegmentRope.of(">"), 0, 1).local);
-        assertSame(CLOSE_IRI, prefixed(id, SegmentRope.of(".>,"), 1, 2).local);
+        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(">")).local());
+        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(">.").sub(0, 1)).local());
+        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(".>,").sub(1, 2)).local());
 
-        Term x = prefixed(id, "x>".getBytes(UTF_8));
-        Term xy = prefixed(id, "xy>".getBytes(UTF_8));
+        Term xy = Term.wrap(sh, SegmentRope.of("xy>"));
+        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of("xy>")).local());
+        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of("xy>.").sub(0, 3)).local());
+        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of(":xy>").sub(1, 4)).local());
 
-        assertSame(xy.local, prefixed(id, "xy>".getBytes(UTF_8)).local);
-
-        assertSame(xy.local, prefixed(id, SegmentRope.of("xy>"), 0, 3).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of("xy>"), 0, 2).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of("xy" ), 0, 2).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of("xy,"), 0, 2).local);
-
-        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy>"), 1, 4).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy>"), 1, 3).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy" ), 1, 3).local);
-        assertSame(xy.local, prefixed(id, SegmentRope.of(":xy,"), 1, 3).local);
-
-        assertSame(x.local, prefixed(id, "x>".getBytes(UTF_8)).local);
-
-        assertSame(x.local, prefixed(id, SegmentRope.of("x>"), 0, 2).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of("x>"), 0, 1).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of("x" ), 0, 1).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of("x,"), 0, 1).local);
-
-        assertSame(x.local, prefixed(id, SegmentRope.of(":x>"), 1, 3).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of(":x>"), 1, 2).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of(":x" ), 1, 2).local);
-        assertSame(x.local, prefixed(id, SegmentRope.of(":x,"), 1, 2).local);
+        Term x = Term.wrap(sh, SegmentRope.of("x>"));
+        assertSame(x.local(), Term.wrap(sh, SegmentRope.of("x>")).local());
+        assertSame(x.local(), Term.wrap(sh, SegmentRope.of("x>.").sub(0, 2)).local());
+        assertSame(x.local(), Term.wrap(sh, SegmentRope.of(":x>").sub(1, 3)).local());
     }
 
     @Test void testLang() {
@@ -314,21 +277,24 @@ class TermTest {
 
     @Test void testIri() {
         for (var iri : List.of("http://example.org/Bob", "http://example.org/1", "http://example.org/aB")) {
-            assertEquals("<"+iri+">", Term.iri(iri).toString());
-            assertEquals("<"+iri+">", Term.iri("<"+iri+">").toString());
-            assertEquals("<"+iri+">", Term.iri("<"+iri).toString());
-            assertEquals("<"+iri+">", Term.iri(iri+">").toString());
+            String wrapped = "<" + iri + ">";
+            assertEquals(wrapped, requireNonNull(splitAndWrap(new ByteRope(wrapped))).toString());
+            assertEquals(wrapped, Term.valueOf(wrapped).toString());
+            assertEquals(wrapped, Term.iri(wrapped).toString());
+            assertEquals(wrapped, Term.iri("<"+iri).toString());
+            assertEquals(wrapped, Term.iri(iri+">").toString());
+            assertEquals(wrapped, Term.iri(iri).toString());
         }
     }
 
     @Test void testWrap() {
         String bob = "\"bob\"";
-        byte[] u8 = bob.getBytes(UTF_8);
-        Term term = wrap(u8);
+        var r = new ByteRope(bob);
+        Term term = wrap(r, null);
         assertEquals(bob, term.toString());
         assertEquals(Term.Type.LIT, term.type());
 
-        u8[1] = 'r';
+        r.u8()[1] = 'r';
         assertEquals("\"rob\"", term.toString()); // change reflects in term
     }
 
@@ -355,7 +321,8 @@ class TermTest {
                 arguments("<http://www.w3.org/2001/XMLSchema#integer>", null),
 
                 arguments("\"", "ERROR"),
-                arguments("<", "<>"),
+                arguments("<", "ERROR"),
+                arguments("<>", "<>"),
                 arguments("*", "ERROR"),
                 arguments("_", "ERROR"),
                 arguments("_X", "ERROR"),
@@ -374,13 +341,11 @@ class TermTest {
 
         if (ex.equals("ERROR")) {
             assertThrows(Throwable.class, () -> Term.valueOf(br));
-            assertThrows(Throwable.class, () -> Term.valueOf((CharSequence) br));
             assertThrows(Throwable.class, () -> Term.valueOf(in));
             assertThrows(Throwable.class, () -> Term.valueOf(br, 0, u8.length));
             assertThrows(Throwable.class, () -> Term.valueOf(padded, 1, 1+u8.length));
         } else {
             assertEquals(ex, Term.valueOf(br).toString());
-            assertEquals(ex, Term.valueOf((CharSequence) br).toString());
             assertEquals(ex, Term.valueOf(in).toString());
             assertEquals(ex, Term.valueOf(br, 0, u8.length).toString());
             assertEquals(ex, Term.valueOf(padded, 1, 1+u8.length).toString());
@@ -392,7 +357,9 @@ class TermTest {
         assertNull(Term.valueOf((Rope)null));
         assertNull(Term.valueOf(null, 0, 0));
         assertNull(Term.valueOf(null, 0, 23));
+        //noinspection RedundantCast
         assertNull(Term.valueOf((CharSequence) null));
+        //noinspection RedundantCast
         assertNull(Term.valueOf((String) null));
 
         assertNull(Term.valueOf(EMPTY));
@@ -415,15 +382,15 @@ class TermTest {
                 arguments(DT_decimal, "\"23.5", Term.typed("23.5", DT_decimal)),
                 arguments(DT_DOUBLE, "\"-1.2e+2", Term.typed("-1.2e+2", DT_DOUBLE)),
 
-                arguments(0, "\"\"", EMPTY_STRING),
-                arguments(0, "\"a\"", plainString("a")),
-                arguments(0, "\" \"", plainString(" ")),
-                arguments(0, "\"as\"", plainString("as")),
-                arguments(0, "\"asd\"", plainString("asd")),
-                arguments(0, "\"Alice\"", plainString("Alice")),
+                arguments(EMPTY, "\"\"", EMPTY_STRING),
+                arguments(EMPTY, "\"a\"", plainString("a")),
+                arguments(EMPTY, "\" \"", plainString(" ")),
+                arguments(EMPTY, "\"as\"", plainString("as")),
+                arguments(EMPTY, "\"asd\"", plainString("asd")),
+                arguments(EMPTY, "\"Alice\"", plainString("Alice")),
 
-                arguments(0, "\"\"@en", Term.lang("", "en")),
-                arguments(0, "\"\"@pt-BR", Term.lang("", "pt-BR")),
+                arguments(EMPTY, "\"\"@en", Term.lang("", "en")),
+                arguments(EMPTY, "\"\"@pt-BR", Term.lang("", "pt-BR")),
 
                 arguments(P_XSD, "string>", Term.XSD_STRING),
                 arguments(P_XSD, "short>", Term.XSD_SHORT),
@@ -433,69 +400,75 @@ class TermTest {
         );
     }
 
-    @ParameterizedTest @MethodSource void testMake(int id, String local, Term expected) {
-        int flaggedId = id | (id > 0 && RopeDict.get(id).get(0) == '\"' ? 0x80000000 : 0);
-        byte[] u8 = local.getBytes(UTF_8);
-        Term term = Term.make(flaggedId, u8, 0, u8.length);
+    @ParameterizedTest @MethodSource void testMake(SegmentRope sh, String local, Term expected) {
+        var localRope = new ByteRope(local);
+        var localRope2 = new ByteRope("("+local+")").sub(1, 1+local.length());
+        boolean suffix = local.charAt(0) == '"';
+        Term term = wrap(suffix ? localRope : sh, suffix ? sh : localRope);
+        Term term2 = wrap(suffix ? localRope2 : sh, suffix ? sh : localRope2);
         assertEquals(expected, term);
-        assertEquals(expected, Term.make(flaggedId, ("." + local + ".").getBytes(UTF_8), 1, u8.length));
+        assertEquals(expected, term2);
 
-        if (id == 0) {
+        if (sh == null) {
             assertEquals(local, expected.toString());
-        } else if (id == DT_string) {
+        } else if (sh == DT_string) {
             assertEquals(local+"\"", requireNonNull(term).toString());
         } else {
-            String shared = get(id).toString();
-            assertEquals(flaggedId > 0 ? shared + local : local + shared, requireNonNull(term).toString());
+            assertEquals(suffix ? local+sh : sh+local, term.toString());
         }
     }
 
     @Test void testMakeInvalid() {
-        assertThrows(Throwable.class, () -> Term.make(DT_string, "\"asd".getBytes(UTF_8), 0, 4));
-        assertThrows(Throwable.class, () -> Term.make(P_XSD|0x80000000, ">".getBytes(UTF_8), 0, 1));
-        assertThrows(Throwable.class, () -> Term.make(P_XSD, "\"".getBytes(UTF_8), 0, 1));
-        assertThrows(Throwable.class, () -> Term.make(P_XSD, ".".getBytes(UTF_8), 0, 1));
-        assertThrows(Throwable.class, () -> Term.make(P_XSD, "<\"".getBytes(UTF_8), 0, 2));
-        assertThrows(Throwable.class, () -> Term.make(P_XSD, "<\".".getBytes(UTF_8), 0, 3));
-        assertThrows(Throwable.class, () -> Term.make(DT_integer, ">".getBytes(UTF_8), 0, 1));
-        assertThrows(Throwable.class, () -> Term.make(DT_integer, ".".getBytes(UTF_8), 0, 1));
-        assertThrows(Throwable.class, () -> Term.make(DT_integer, "<.".getBytes(UTF_8), 0, 2));
-        assertThrows(Throwable.class, () -> Term.make(DT_integer, ">..".getBytes(UTF_8), 0, 2));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_string, new ByteRope("\"asd")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("\"")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope(".")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("<\"")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("<\".")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(">")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(".")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope("<.")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(">..")));
+
+        assertThrows(Throwable.class, () -> new Term(P_XSD, new ByteRope(">"), true));
     }
 
-    static Stream<Arguments> testMakeInterns() {
+    static Stream<Arguments> testWrapInterns() {
         return Stream.of(
-                arguments(0, "\"\"", EMPTY_STRING),
-                arguments(P_XSD, "anyURI>", XSD_ANYURI),
-                arguments(P_XSD, "unsignedInt>", XSD_UNSIGNEDINT),
-                arguments(P_RDF, "type>", RDF_TYPE),
-                arguments(P_RDF, "Property>", RDF_PROPERTY),
-                arguments(0, "\"1\"", Term.make(0, "\"1\"".getBytes(UTF_8), 0, 3)),
-                arguments(0, "\"aZ\"", Term.make(0, "\"aZ\"".getBytes(UTF_8), 0, 4))
+                arguments(null, new ByteRope("\"\""), EMPTY_STRING),
+                arguments(P_XSD, new ByteRope("anyURI>"), XSD_ANYURI),
+                arguments(P_XSD, new ByteRope(".anyURI>)").sub(1, 8), XSD_ANYURI),
+                arguments(P_XSD, new ByteRope("unsignedInt>"), XSD_UNSIGNEDINT),
+                arguments(P_RDF, new ByteRope("type>"), RDF_TYPE),
+                arguments(P_RDF, new ByteRope("\"type>)").sub(1, 6), RDF_TYPE),
+                arguments(P_RDF, new ByteRope("Property>"), RDF_PROPERTY),
+                arguments(null, new ByteRope("\"1\""), Term.wrap(null, new ByteRope("\"1\""))),
+                arguments(EMPTY, new ByteRope("\"aZ\""), Term.wrap(null, new ByteRope("\"aZ\"")))
         );
     }
 
-    @ParameterizedTest @MethodSource void testMakeInterns(int id, String local, Term expected) {
-        int flaggedId = id | (id > 0 && local.charAt(0) == '"' ? 0x80000000 : 0);
-        byte[] u8 = local.getBytes(UTF_8);
-        assertEquals(expected, Term.make(flaggedId, u8, 0, u8.length));
-        assertSame(expected, Term.make(flaggedId, u8, 0, u8.length));
-        assertSame(expected, Term.make(flaggedId, ("."+local+".").getBytes(UTF_8), 1, u8.length));
+    @ParameterizedTest @MethodSource void testWrapInterns(SegmentRope sh, SegmentRope local,
+                                                          Term expected) {
+        SegmentRope fst, snd;
+        if (local.get(0) == '"') { fst = local; snd =    sh; }
+        else                     { fst =    sh; snd = local; }
+
+        assertEquals(expected, Term.wrap(fst, snd));
+        assertSame(expected, Term.wrap(fst, snd));
     }
 
     @Test
     void testMakeInternsIriLocal() {
         var iri = SegmentRope.of("<http://www.example.org/ns#>");
-        int id = (int)RopeDict.internIri(iri, 0, iri.len());
-        assertTrue(id > 0);
+        SegmentRope sh = SHARED_ROPES.internPrefixOf(iri, 0, iri.len);
+        assertNotNull(sh);
 
-        assertSame(CLOSE_IRI, requireNonNull(make(id, "#>".getBytes(UTF_8), 1, 1)).local);
-        Term one = make(id, "#1>".getBytes(UTF_8), 1, 2);
-        Term ab = make(id, "#ab>".getBytes(UTF_8), 1, 3);
+        assertSame(CLOSE_IRI, requireNonNull(wrap(sh, new ByteRope(">")).local()));
+        Term one = wrap(sh, new ByteRope("1>"));
+        Term ab = wrap(sh, new ByteRope("ab>"));
         assertNotNull(one);
         assertNotNull(ab);
-        assertSame(one.local, requireNonNull(make(id, "1>".getBytes(UTF_8), 0, 2)).local);
-        assertSame(ab.local, requireNonNull(make(id, "ab>".getBytes(UTF_8), 0, 3)).local);
+        assertSame(one.local(), requireNonNull(wrap(sh, new ByteRope("1>")).local()));
+        assertSame(ab.local(), requireNonNull(wrap(sh, new ByteRope("ab>")).local()));
     }
 
     static Stream<Arguments> testValueOfReversible() {
@@ -575,18 +548,18 @@ class TermTest {
         customMap.put(new ByteRope("<http://example.org/"), EMPTY);
         customMap.put(new ByteRope("<http://xmlns.com/foaf/0.1/"), Rope.of("foaf"));
         var custom = new PrefixAssigner(customMap);
-        int foaf = (int)internIri(SegmentRope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
-        assertTrue(foaf > 0);
+        SegmentRope foaf = SHARED_ROPES.internPrefixOf(SegmentRope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
+        assertNotNull(foaf);
 
         return Stream.of(
-                arguments(NOP, 0, "_:bn", "_:bn"),
-                arguments(NOP, 0, "\"bob\"", "\"bob\""),
-                arguments(NOP, 0, "\"bob\"@en", "\"bob\"@en"),
-                arguments(NOP, 0, "\"bob\"@en-US", "\"bob\"@en-US"),
-                arguments(NOP, 0, "\"\\\"\"", "\"\\\"\""),
-                arguments(NOP, 0, "<>", "<>"),
-                arguments(NOP, 0, "<rel>", "<rel>"),
-                arguments(NOP, 0, "<http://example.org/>", "<http://example.org/>"),
+                arguments(NOP, EMPTY, "_:bn", "_:bn"),
+                arguments(NOP, EMPTY, "\"bob\"", "\"bob\""),
+                arguments(NOP, EMPTY, "\"bob\"@en", "\"bob\"@en"),
+                arguments(NOP, EMPTY, "\"bob\"@en-US", "\"bob\"@en-US"),
+                arguments(NOP, EMPTY, "\"\\\"\"", "\"\\\"\""),
+                arguments(NOP, EMPTY, "<>", "<>"),
+                arguments(NOP, EMPTY, "<rel>", "<rel>"),
+                arguments(NOP, EMPTY, "<http://example.org/>", "<http://example.org/>"),
 
                 arguments(NOP, P_XSD, "int>", "<http://www.w3.org/2001/XMLSchema#int>"),
                 arguments(NOP, P_RDF, "object>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#object>"),
@@ -596,17 +569,17 @@ class TermTest {
                 arguments(CANON, P_RDF, "object>", "rdf:object"),
                 arguments(CANON, P_RDF, "type>", "a"),
 
-                arguments(NOP, DT_integer|SUFFIX_MASK, "\"7", "7"),
-                arguments(NOP, DT_integer|SUFFIX_MASK, "\"23", "23"),
-                arguments(NOP, DT_integer|SUFFIX_MASK, "\"-23", "-23"),
-                arguments(NOP, DT_decimal|SUFFIX_MASK, "\"2.3", "2.3"),
-                arguments(NOP, DT_decimal|SUFFIX_MASK, "\"1.999", "1.999"),
-                arguments(NOP, DT_decimal|SUFFIX_MASK, "\"-0.33", "-0.33"),
-                arguments(NOP, DT_DOUBLE|SUFFIX_MASK, "\"+2.3e-02", "+2.3e-02"),
-                arguments(NOP, DT_DOUBLE|SUFFIX_MASK, "\"2.3", "2.3"),
+                arguments(NOP, DT_integer, "\"7", "7"),
+                arguments(NOP, DT_integer, "\"23", "23"),
+                arguments(NOP, DT_integer, "\"-23", "-23"),
+                arguments(NOP, DT_decimal, "\"2.3", "2.3"),
+                arguments(NOP, DT_decimal, "\"1.999", "1.999"),
+                arguments(NOP, DT_decimal, "\"-0.33", "-0.33"),
+                arguments(NOP, DT_DOUBLE, "\"+2.3e-02", "+2.3e-02"),
+                arguments(NOP, DT_DOUBLE, "\"2.3", "2.3"),
 
-                arguments(NOP,   DT_INT|SUFFIX_MASK, "\"23", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
-                arguments(CANON, DT_INT|SUFFIX_MASK, "\"23", "\"23\"^^xsd:int"),
+                arguments(NOP,   DT_INT, "\"23", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
+                arguments(CANON, DT_INT, "\"23", "\"23\"^^xsd:int"),
 
                 arguments(NOP, foaf, "knows>", "<http://xmlns.com/foaf/0.1/knows>"),
                 arguments(custom, foaf, "knows>", "foaf:knows")
@@ -614,15 +587,17 @@ class TermTest {
     }
 
     @ParameterizedTest @MethodSource
-    void testToSparql(PrefixAssigner assigner, int flaggedId, String local, String expected) {
+    void testToSparql(PrefixAssigner assigner, SegmentRope sh, String local, String expected) {
         for (String padLeft : List.of("", "<", "\"<")) {
             for (String padRight : List.of("", "\"", ">", ">\"")) {
                 var ctx = "padLeft=" + padLeft + ", padRight=" + padRight
-                        + ", flaggedId=" + flaggedId + ", local=" + local;
+                        + ", sh=" + sh + ", local=" + local;
                 int off = padLeft.length(), len = local.getBytes(UTF_8).length;
                 ByteRope actual = new ByteRope();
                 byte[] u8 = (padLeft + local + padRight).getBytes(UTF_8);
-                Term.toSparql(actual, assigner, flaggedId, u8, off, len);
+                MemorySegment seg = MemorySegment.ofArray(u8);
+                Term.toSparql(actual, assigner, sh, seg, off, len,
+                              sh.len > 0 && sh.get(0) == '"');
                 assertEquals(expected, actual.toString(), ctx);
             }
         }

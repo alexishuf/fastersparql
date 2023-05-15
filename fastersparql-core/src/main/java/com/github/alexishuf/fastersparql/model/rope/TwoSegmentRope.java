@@ -1,7 +1,11 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+
 import java.lang.foreign.MemorySegment;
 
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
@@ -20,9 +24,9 @@ public class TwoSegmentRope extends PlainRope {
         this.fst = first.segment;
         this.fstOff = first.offset;
         this.fstLen = first.len;
-        this.snd = first.segment;
-        this.sndOff = first.offset;
-        this.sndLen = first.len;
+        this.snd = snd.segment;
+        this.sndOff = snd.offset;
+        this.sndLen = snd.len;
     }
 
     public TwoSegmentRope(MemorySegment fst, long fstOff, int fstLen, MemorySegment snd, long sndOff, int sndLen) {
@@ -212,131 +216,85 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
         int rLen = end - begin;
-        long physPos;
-        MemorySegment lSeg;
-        if (pos+ rLen <= fstLen) {
-            lSeg = fst;
-            physPos = fstOff+pos;
-        } else if (pos >= fstLen) {
-            lSeg = snd;
-            physPos = sndOff+pos;
-        } else {
-            return super.has(pos, rope, begin, end);
-        }
-        MemorySegment rSeg;
-        long physBegin;
+        if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
+        if (pos+rLen > len) return false;
+
+        long fstOff = this.fstOff+pos, sndOff = this.sndOff+Math.max(0, pos-this.fstLen);
+        int fstLen = Math.min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
+
+        //noinspection IfCanBeSwitch
         if (rope instanceof SegmentRope s) {
-            rSeg = s.segment;
-            physBegin = s.offset + begin;
-        } else if (rope instanceof TwoSegmentRope t) {
-            boolean onFirst = begin < t.fstLen;
-            if (onFirst && end > t.fstLen) return super.has(pos, rope, begin, end);
-            if (onFirst) {
-                rSeg = t.fst;
-                physBegin = t.fstOff+begin;
-            } else {
-                rSeg = t.snd;
-                physBegin = t.sndOff+begin;
-            }
+            return compare1_2(s.segment, s.offset+begin, rLen,
+                              fst, fstOff, fstLen, snd, sndOff, sndLen) == 0;
         } else {
-            return super.has(pos, rope, begin, end);
+            MemorySegment o_fst, o_snd;
+            long o_fstOff, o_sndOff;
+            int o_fstLen;
+            if (rope instanceof TwoSegmentRope t) {
+                o_fst = t.fst; o_fstOff = t.fstOff; o_fstLen = t.fstLen;
+                o_snd = t.snd; o_sndOff = t.sndOff;
+            } else {
+                Term t = (Term) rope;
+                SegmentRope r;
+                o_fst = (r = t. first()).segment; o_fstOff = r.offset; o_fstLen = r.len;
+                o_snd = (r = t.second()).segment; o_sndOff = r.offset;
+            }
+            o_fstOff += begin;
+            o_sndOff += Math.max(0, begin-o_fstLen);
+            o_fstLen = Math.min(o_fstLen, end)-begin;
+            return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
+                              o_fst, o_fstOff, o_fstLen,
+                              o_snd, o_sndOff, rLen-o_fstLen) == 0;
         }
-        return SegmentRope.has(lSeg, physPos, rSeg, physBegin, rLen);
+    }
+
+    @Override public int fastHash(int begin, int end) {
+        int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
+        if (begin+nFst < fstLen) {
+            h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff+begin, nFst);
+        } else {
+            h = FNV_BASIS;
+            for (int i = 0; i < nFst; i++)
+                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+        }
+        begin = end-nSnd;
+        if (begin > fstLen) {
+            h = SegmentRope.hashCode(h, snd, sndOff+(begin-fstLen), nSnd);
+        } else {
+            for (int i = 0; i < nSnd; i++)
+                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+        }
+        return h;
     }
 
     @Override public int hashCode() {
-        int h = SegmentRope.hashCode(0, fst, fstOff, fstOff + fstLen);
-        return SegmentRope.hashCode(h, snd, sndOff, sndOff+sndLen);
+        int h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
+        return SegmentRope.hashCode(h, snd, sndOff, sndLen);
     }
 
-    @Override public int compareTo(SegmentRope o) { return -o.compareTo(this); }
+    @Override public int compareTo(SegmentRope o) {
+        return -compare1_2(o.segment, o.offset, o.len,
+                           fst, fstOff, fstLen, snd, sndOff, sndLen);
+    }
 
     @Override public int compareTo(TwoSegmentRope o) {
-        // keep two ranges, defined by:
-        //   - lSeg, lOff, lLen
-        //   - rSeg, rOff, rLen
-        //
-        MemorySegment lSeg = fst,      rSeg = o.fst;
-        long          lOff = fstOff,   rOff = o.fstOff;
-        int           lLen = fstLen,   rLen = o.fstLen;
-        boolean       lFst = true,     rFst = true;
-
-        // if any of the ranges starts empty, advance it instead of exiting due to common == 0
-        if (lLen == 0) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false;}
-        if (rLen == 0) { rSeg = o.snd; rOff = o.sndOff; rLen = o.sndLen; rFst = false;}
-
-        // iterate comparing the common length between the ranges and then moving one
-        // (or both ranges they had the same length)
-        int common, diff;
-        while (true) {
-            if ((common = Math.min(lLen, rLen)) == 0)
-                return lLen - rLen; // one side exhausted, largest wins
-            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
-                return diff; // found a mismatching byte
-            // advance ranges
-            lOff += common; lLen -= common;
-            rOff += common; rLen -= common;
-            if (lLen == 0 && lFst) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false;}
-            if (rLen == 0 && rFst) { rSeg = o.snd; rOff = o.sndOff; rLen = o.sndLen; rFst = false;}
-        }
+        return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
+                          o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
-        MemorySegment lSeg = fst,      rSeg = o.segment;
-        long          lOff = fstOff,   rOff = o.offset+begin;
-        int           lLen = fstLen,   rLen = end-begin;
-        boolean lFst = true;
-
-        // maybe our first segment is empty, then we should start at snd
-        if (lLen == 0) { lSeg = snd; lOff = sndOff; lLen = sndLen; lFst = false; }
-
-        // iterate comparing the common length between the ranges and then moving one
-        // (or both ranges they had the same length)
-        int common, diff;
-        while (true) {
-            if ((common = Math.min(lLen, rLen)) == 0)
-                return lLen - rLen; // one side exhausted, largest wins
-            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
-                return diff; // found a mismatching byte
-            // advance ranges
-            lOff += common; lLen -= common;
-            rOff += common; rLen -= common;
-            if (lLen == 0 && lFst) { lSeg = snd; lOff = sndOff; lLen = sndLen; lFst = false; }
-        }
+        if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
+        return -compare1_2(o.segment, o.offset+begin, end-begin,
+                           fst, fstOff, fstLen, snd, sndOff, sndLen);
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
+        if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)
         long o_fstOff = o.fstOff+begin, o_sndOff = o.sndOff+Math.max(0, begin-o.fstLen);
         int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
              o_sndLen = end-begin-o_fstLen;
-
-        // keep two ranges, defined by:
-        //   - lSeg, lOff, lLen
-        //   - rSeg, rOff, rLen
-        //
-        MemorySegment lSeg = fst,      rSeg = o.fst;
-        long          lOff = fstOff,   rOff = o_fstOff;
-        int           lLen = fstLen,   rLen = o_fstLen;
-        boolean       lFst = true,     rFst = true;
-
-        // if any of the ranges starts empty, advance it instead of exiting due to common == 0
-        if (lLen == 0) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false; }
-        if (rLen == 0) { rSeg = o.snd; rOff = o_sndOff; rLen = o_sndLen; rFst = false; }
-
-        // iterate comparing the common length between the ranges and then moving one
-        // (or both ranges they had the same length)
-        int common, diff;
-        while (true) {
-            if ((common = Math.min(lLen, rLen)) == 0)
-                return lLen - rLen; // one side exhausted, largest wins
-            if ((diff = SegmentRope.compareTo(lSeg, lOff, common, rSeg, rOff, common)) != 0)
-                return diff; // found a mismatching byte
-            // advance ranges
-            lOff += common; lLen -= common;
-            rOff += common; rLen -= common;
-            if (lLen == 0 && lFst) { lSeg =   snd; lOff =   sndOff; lLen =   sndLen; lFst = false; }
-            if (rLen == 0 && rFst) { rSeg = o.snd; rOff = o_sndOff; rLen = o_sndLen; rFst = false; }
-        }
+        return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
+                                     o.fst, o_fstOff, o_fstLen, o.snd, o_sndOff, o_sndLen);
     }
 }

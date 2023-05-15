@@ -4,7 +4,8 @@ import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector;
 
-import static com.github.alexishuf.fastersparql.fed.Selector.*;
+import static com.github.alexishuf.fastersparql.fed.Selector.STATE;
+import static com.github.alexishuf.fastersparql.fed.Selector.TYPE;
 import static com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector.FETCH_CLASSES;
 import static com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector.FETCH_PREDICATES;
 
@@ -14,21 +15,21 @@ public enum SelectorKind {
     DICT_WITH_CLASSES;
 
     public Spec createSpec(SourceHandle source) {
-        String filename = source.source.name()+name().toLowerCase();
+        String fileOrDirName = source.source.name()+name().toLowerCase();
         return switch (this) {
             case ASK -> Spec.of(
                     TYPE, AskSelector.NAME,
-                    STATE, Spec.of(STATE_FILE, filename));
+                    STATE, Spec.of(AskSelector.STATE_FILE, fileOrDirName));
             case DICT -> Spec.of(
                     TYPE,             DictionarySelector.NAME,
                     FETCH_PREDICATES, true,
                     FETCH_CLASSES,    false,
-                    STATE, Spec.of(STATE_FILE, filename));
+                    STATE, Spec.of(DictionarySelector.STATE_DIR, fileOrDirName));
             case DICT_WITH_CLASSES -> Spec.of(
                     TYPE,             DictionarySelector.NAME,
                     FETCH_PREDICATES, true,
                     FETCH_CLASSES,    true,
-                    STATE, Spec.of(STATE_FILE, filename));
+                    STATE, Spec.of(DictionarySelector.STATE_DIR, fileOrDirName));
         };
     }
 

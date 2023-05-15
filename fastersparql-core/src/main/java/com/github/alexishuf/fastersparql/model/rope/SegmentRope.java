@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
@@ -25,7 +26,7 @@ public class SegmentRope extends PlainRope {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     static final Unsafe U;
-    public static final int U8_UNSAFE_BASE;
+    public static final int U8_BASE;
 
     static {
         Unsafe u = null;
@@ -40,7 +41,7 @@ public class SegmentRope extends PlainRope {
             } catch (Throwable ignored1) {}
         }
         U = u;
-        U8_UNSAFE_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
+        U8_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
     }
 
     public long offset;
@@ -48,31 +49,32 @@ public class SegmentRope extends PlainRope {
     public MemorySegment segment;
 
     public SegmentRope() {
-        this(ByteRope.EMPTY_SEGMENT, 0, 0);
+        this(ByteRope.EMPTY_SEGMENT, ByteRope.EMPTY_UTF8, 0, 0);
     }
     public SegmentRope(ByteBuffer buffer) {
         this(MemorySegment.ofBuffer(buffer), 0, buffer.remaining());
     }
-    public SegmentRope(MemorySegment segment, long offset, int len) {
+
+    public SegmentRope(MemorySegment segment, byte @Nullable[] utf8, long offset, int len) {
         super(len);
         if (offset < 0 || len < 0)
             throw new IllegalArgumentException("Negative offset/len");
         if (offset+len > segment.byteSize())
             throw new IndexOutOfBoundsException("offset+len > segment.byteSize");
         this.offset = offset;
-        this.utf8 = len == 0 ? ByteRope.EMPTY_UTF8 : null;
+        if (utf8 == null)
+            this.utf8 = len == 0 ? ByteRope.EMPTY_UTF8 : (byte[]) segment.array().orElse(null);
+        else
+            this.utf8 = utf8;
         this.segment = segment;
     }
 
+    public SegmentRope(MemorySegment segment, long offset, int len) {
+        this(segment, len == 0 ? ByteRope.EMPTY_UTF8 : null, offset, len);
+    }
+
     public SegmentRope(byte @NonNull [] utf8, int offset, int len) {
-        super(len);
-        if (offset < 0 || len < 0)
-            throw new IllegalArgumentException("Negative offset/len");
-        if (offset+len > utf8.length)
-            throw new IndexOutOfBoundsException("offset+len > utf8.length");
-        this.segment = MemorySegment.ofArray(utf8);
-        this.utf8 = utf8;
-        this.offset = offset;
+        this(MemorySegment.ofArray(utf8), utf8, offset, len);
     }
 
     public static SegmentRope of(Object cs) {
@@ -94,15 +96,17 @@ public class SegmentRope extends PlainRope {
     public MemorySegment     segment()            { return segment; }
     public long               offset()            { return offset; }
     public byte @Nullable [] backingArray()       { return utf8; }
-    @Override public int     backingArrayOffset() { return (int)offset; }
+    @Override public int     backingArrayOffset() { return (int)(segment.address() + offset); }
 
 
 
     public ByteBuffer asBuffer() {
-        int iOffset = (int) offset;
         if (utf8 != null)
-            return ByteBuffer.wrap(utf8, iOffset, len);
-        return segment.asByteBuffer().position(iOffset).limit(iOffset+len);
+            return ByteBuffer.wrap(utf8, backingArrayOffset(), len);
+        long end = offset + len;
+        if (end >= Integer.MAX_VALUE)
+            return segment.asSlice(offset, len).asByteBuffer();
+        return segment.asByteBuffer().position((int) offset).limit((int) end);
     }
 
     public void wrap(SegmentRope other) {
@@ -154,7 +158,7 @@ public class SegmentRope extends PlainRope {
 
     @Override public int write(OutputStream out) throws IOException {
         if (utf8 != null) {
-            out.write(utf8, (int)offset, len);
+            out.write(utf8, backingArrayOffset(), len);
             return len;
         }
         return super.write(out);
@@ -321,11 +325,11 @@ public class SegmentRope extends PlainRope {
         return true;
     }
 
-    static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {
+    public static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {
         long end = begin+rLen;
 //        if (left != right)
 //            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
-        // else: manually compare since due to JDK-8306866
+        // else: manually compare due to JDK-8306866
 
         if (rLen > B_LEN) {
             for (long ve = pos+B_SP.loopBound(rLen); pos < ve; pos += B_LEN, begin += B_LEN) {
@@ -336,13 +340,19 @@ public class SegmentRope extends PlainRope {
             rLen = (int)(end-begin);
         }
 
-        Object lBase =  left.array().orElse(null);
-        Object rBase = right.array().orElse(null);
-        pos += left.address() + (lBase == null ? 0 : U8_UNSAFE_BASE);
-        begin += right.address() + (rBase == null ? 0 : U8_UNSAFE_BASE);
-        end = begin + rLen;
-        for (; begin < end && U.getByte(lBase, pos) == U.getByte(rBase, begin); ++begin)
-            ++pos;
+        if (U == null) {
+            end = begin + rLen;
+            for (; begin < end && left.get(JAVA_BYTE, pos) == right.get(JAVA_BYTE, begin); ++begin)
+                ++pos;
+        } else {
+            Object lBase = left.array().orElse(null);
+            Object rBase = right.array().orElse(null);
+            pos += left.address() + (lBase == null ? 0 : U8_BASE);
+            begin += right.address() + (rBase == null ? 0 : U8_BASE);
+            end = begin + rLen;
+            for (; begin < end && U.getByte(lBase, pos) == U.getByte(rBase, begin); ++begin)
+                ++pos;
+        }
         return begin == end;
 
 //        return compareTo(left, pos, rLen, right, begin, rLen) == 0;
@@ -358,18 +368,30 @@ public class SegmentRope extends PlainRope {
         if (pos < 0 || rLen < 0) throw new IndexOutOfBoundsException();
         if (pos + rLen > len) return false;
 
-        long i = pos+offset;
-        MemorySegment seg = this.segment;
-        if (rope instanceof TwoSegmentRope t) {
-            return t.has(begin, this, pos, pos+rLen);
-        } else if (rope instanceof SegmentRope s) {
-            return has(seg, i, s.segment, s.offset+begin, rLen);
+        if (rope instanceof SegmentRope s) {
+            return compare1_1(segment, offset+pos, rLen,
+                              s.segment, s.offset+begin, rLen) == 0;
         } else {
-            while (begin < end) {
-                if (seg.get(JAVA_BYTE, i++) != rope.get(begin++)) return false;
+            MemorySegment fst, snd;
+            long fstOff, sndOff;
+            int fstLen;
+            if (rope instanceof TwoSegmentRope t) {
+                fst = t.fst; fstOff = t.fstOff; fstLen = t.fstLen;
+                snd = t.snd; sndOff = t.sndOff;
+            } else if (rope instanceof Term t) {
+                SegmentRope fr = t.first(), sr = t.second();
+                fst = fr.segment; fstOff = fr.offset; fstLen = fr.len;
+                snd = sr.segment; sndOff = sr.offset;
+            } else {
+                if (rope == null) throw new NullPointerException("rope");
+                throw new UnsupportedOperationException("Unsupported Rope type");
             }
+            fstOff += begin;
+            sndOff += Math.max(0, begin-fstLen);
+            fstLen = Math.min(fstLen, end)-begin;
+            return compare1_2(segment, pos, rLen, fst, fstOff, fstLen,
+                              snd, sndOff, rLen-fstLen) == 0;
         }
-        return true;
     }
 
     @Override public boolean hasAnyCase(int position, byte[] uppercaseSequence) {
@@ -392,36 +414,197 @@ public class SegmentRope extends PlainRope {
             begin = end - (bits = 32);
         long physBegin = begin + offset;
         MemorySegment s = this.segment;
-        while (bit < bits)
-            h |= (s.get(JAVA_BYTE, physBegin + bit) & 1) << bit++;
+        if (U != null) {
+            byte[] base = utf8; //(byte[]) s.array().orElse(null);
+            physBegin += s.address() + (base == null ? 0 : U8_BASE);
+            while (bit < bits)
+                h |= (U.getByte(base, physBegin++)&1) << bit++;
+        } else {
+            while (bit < bits)
+                h |= (s.get(JAVA_BYTE, physBegin + bit) & 1) << bit++;
+        }
         return h;
     }
 
-    static int hashCode(int h, MemorySegment segment, long begin, long end) {
-        for (long i = begin; i < end; i++)
-            h = 31 * h + segment.get(JAVA_BYTE, i);
+
+    @Override public int fastHash(int begin, int end) {
+        int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
+        long phys = offset+begin;
+        if (U != null) {
+//            byte[] base = (byte[]) segment.array().orElse(null);
+            byte[] base = utf8;
+            phys += segment.address() + (base == null ? 0 : U8_BASE);
+            h = hashCode(FNV_BASIS, base, phys, nFst);
+            h = hashCode(h, base, phys+(end-nSnd)-begin, nSnd);
+        } else {
+            h = hashCode(FNV_BASIS, segment, phys, nFst);
+            h = hashCode(h, segment, offset+(end-nSnd), nSnd);
+        }
+        return h;
+    }
+
+    public static int hashCode(int h, byte[] base, long offset, int len) {
+        for (int i = 0; i < len; i++)
+            h = FNV_PRIME * (h ^ (0xff&U.getByte(base, offset+i)));
+        return h;
+    }
+
+    public static int hashCode(int h, MemorySegment seg, long off, int len) {
+//        if (U != null) {
+//            if (len == 0) return h;
+//            byte[] base = (byte[])seg.array().orElse(null);
+//            return hashCode(h, base, off+seg.address() + (base == null ? 0 : U8_BASE), len);
+//        }
+
+        for (int i = 0; i < len; i++)
+            h = FNV_PRIME * (h ^ (0xff&seg.get(JAVA_BYTE, off+i)));
         return h;
     }
 
     @Override public int hashCode() {
-        return hashCode(0, segment, offset, offset+len);
+        return hashCode(FNV_BASIS, segment, offset, len);
     }
 
     @Override public @NonNull String toString() {
         if (len == 0) return "";
         if (utf8 != null)
-            return new String(utf8, (int)offset, len, UTF_8);
+            return new String(utf8, backingArrayOffset(), len, UTF_8);
         return super.toString();
     }
 
     @Override public String toString(int begin, int end) {
-        if (utf8 != null)
-            return new String(utf8, (int)offset+begin, end-begin, UTF_8);
+        if (utf8 != null && end-begin > 0)
+            return new String(utf8, backingArrayOffset()+begin, end-begin, UTF_8);
         return super.toString(begin, end);
     }
 
-    public static int cmp(Object lBase, long lOff, int lLen,
-                          Object rBase, long rOff, int rLen) {
+    public static int compare2_2(MemorySegment lSeg, long lOff, int lLen,
+                                 MemorySegment lSnd, long lSndOff, int lSndLen,
+                                 MemorySegment rSeg, long rOff, int rLen,
+                                 MemorySegment rSnd, long rSndOff, int rSndLen) {
+//        if (U != null) {
+//            // unwrap MemorySegments for unsafe access
+//            byte[] lBase = (byte[])lSeg.array().orElse(null);
+//            byte[] rBase = (byte[])rSeg.array().orElse(null);
+//            byte[] lSndBase = (byte[])lSnd.array().orElse(null);
+//            byte[] rSndBase = (byte[])rSnd.array().orElse(null);
+//            lOff    += lSeg.address();
+//            rOff    += rSeg.address();
+//            lSndOff += lSnd.address();
+//            rSndOff += rSnd.address();
+//
+//            boolean lFst = true, rFst = true;
+//            // move to second segment if first is empty
+//            if (lLen <= 0) { lBase = lSndBase; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+//            if (rLen <= 0) { rBase = rSndBase; rOff = rSndOff; rLen = rSndLen; rFst = false; }
+//
+//            for (int common, diff; true; ) {
+//                if ((common = Math.min(lLen, rLen)) <= 0)
+//                    return lLen - rLen; // one side exhausted, largest wins
+//                if ((diff = compare1_1(lBase, lOff, common, rBase, rOff, common)) != 0)
+//                    return diff; // found a mismatching byte
+//                // advance ranges
+//                lOff += common; lLen -= common;
+//                rOff += common; rLen -= common;
+//                if (lLen == 0 && lFst) { lBase = lSndBase; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+//                if (rLen == 0 && rFst) { rBase = rSndBase; rOff = rSndOff; rLen = rSndLen; rFst = false; }
+//            }
+//        }
+
+        MemorySegment lSeg1 = lSeg;
+        long lOff1 = lOff;
+        int lLen1 = lLen;
+        MemorySegment rSeg1 = rSeg;
+        long rOff1 = rOff;
+        int rLen1 = rLen;
+        boolean lFst = true, rFst = true;
+        // move to second segment if first is empty
+        if (lLen1 <= 0) { lSeg1 = lSnd; lOff1 = lSndOff; lLen1 = lSndLen; lFst = false; }
+        if (rLen1 <= 0) { rSeg1 = rSnd; rOff1 = rSndOff; rLen1 = rSndLen; rFst = false; }
+
+        for (int common, diff; true; ) {
+            if ((common = Math.min(lLen1, rLen1)) <= 0)
+                return lLen1 - rLen1; // one side exhausted, largest wins
+            if ((diff = compare1_1(lSeg1, lOff1, common, rSeg1, rOff1, common)) != 0)
+                return diff; // found a mismatching byte
+            // advance ranges
+            lOff1 += common; lLen1 -= common;
+            rOff1 += common; rLen1 -= common;
+            if (lLen1 == 0 && lFst) { lSeg1 = lSnd; lOff1 = lSndOff; lLen1 = lSndLen; lFst = false; }
+            if (rLen1 == 0 && rFst) { rSeg1 = rSnd; rOff1 = rSndOff; rLen1 = rSndLen; rFst = false; }
+        }
+    }
+
+    public static int compare1_2(MemorySegment lSeg, long lOff, int lLen,
+                                 MemorySegment rFst, long rFstOff, int rFstLen,
+                                 MemorySegment rSnd, long rSndOff, int rSndLen) {
+//        if (U != null) {
+//            byte[] lBase = (byte[]) lSeg.array().orElse(null);
+//            byte[] rBase = (byte[]) rFst.array().orElse(null);
+//            lOff += lSeg.address();
+//            rFstOff += rFst.address();
+//
+//            // compare all we can on the left side with all we can of the right side
+//            int common = Math.min(lLen, rFstLen);
+//            int diff = compare1_1(lBase, lOff, common, rBase, rFstOff, common);
+//            if (diff != 0) return diff;
+//            if (rFstLen > common)
+//                return -1; // left side exhausted before right side
+//
+//            // update [lOff, lOff+lLen) range
+//            lOff += common;
+//            lLen -= common;
+//
+//            // compare whatever remains on the left side with the second segment of o
+//            return compare1_1(lBase, lOff, lLen, (byte[]) rSnd.array().orElse(null),
+//                              rSndOff + rSnd.address(), rSndLen);
+//        }
+        long lOff1 = lOff;
+        int lLen1 = lLen;
+        // compare all we can on the left side with all we can of the right side
+        int common = Math.min(lLen1, rFstLen);
+        int diff = compare1_1(lSeg, lOff1, common, rFst, rFstOff, common);
+        if (diff != 0) return diff;
+        if (rFstLen > common)
+            return -1; // left side exhausted before right side
+
+        // update [lOff, lOff+lLen) range
+        lOff1 += common;
+        lLen1 -= common;
+
+        // compare whatever remains on the left side with the second segment of o
+        return compare1_1(lSeg, lOff1, lLen1, rSnd, rSndOff, rSndLen);
+    }
+
+    public static int compare1_2(byte[] lBase, long lOff, int lLen,
+                                 byte[] rFst, long rFstOff, int rFstLen,
+                                 byte[] rSnd, long rSndOff, int rSndLen) {
+        if (U == null)
+            throw new IllegalStateException("no unsafe");
+
+        // compare all we can on the left side with all we can of the right side
+        int common = Math.min(lLen, rFstLen);
+        int diff = compare1_1(lBase, lOff, common, rFst, rFstOff, common);
+        if (diff != 0) return diff;
+        if (rFstLen > common)
+            return -1; // left side exhausted before right side
+
+        // update [lOff, lOff+lLen) range
+        lOff += common;
+        lLen -= common;
+
+        // compare whatever remains on the left side with the second segment of o
+        return compare1_1(lBase, lOff, lLen, rSnd, rSndOff, rSndLen);
+    }
+
+    public static int compare1_1(byte[] lBase, long lOff, int lLen,
+                                 byte[] rBase, long rOff, int rLen) {
+        if (lOff == rOff && lBase == rBase && lLen == rLen)
+            return 0;
+        if (lBase != null)
+            lOff += U8_BASE;
+        if (rBase != null)
+            rOff += U8_BASE;
         long lEnd = lOff + Math.min(lLen, rLen);
         int diff = (int)((lOff|rOff)&7);
         if (diff == 0) {
@@ -440,15 +623,15 @@ public class SegmentRope extends PlainRope {
         return lLen-rLen;
     }
 
-    public static int compareTo(MemorySegment left, long lOff, int lLen,
-                                MemorySegment right, long rOff, int rLen) {
-        if (U != null) {
-            Object lBase = left.array().orElse(null);
-            Object rBase = right.array().orElse(null);
-            lOff +=  left.address() + (lBase == null ? 0 : U8_UNSAFE_BASE);
-            rOff += right.address() + (rBase == null ? 0 : U8_UNSAFE_BASE);
-            return cmp(lBase, lOff, lLen, rBase, rOff, rLen);
-        }
+    public static int compare1_1(MemorySegment left, long lOff, int lLen,
+                                 MemorySegment right, long rOff, int rLen) {
+//        if (U != null) {
+//            byte[] lBase = (byte[]) left.array().orElse(null);
+//            byte[] rBase = (byte[]) right.array().orElse(null);
+//            lOff +=  left.address();
+//            rOff += right.address();
+//            return compare1_1(lBase, lOff, lLen, rBase, rOff, rLen);
+//        }
         //vectorization helps, but is slower than JAVA_INT_UNALIGNED. Using Vector.lane() is
         // too slow. Best vector implementation consisted of left.compare(NE, right).firstTrue()
         // followed by JAVA_BYTE scalar accesses. ByteVector.sub() cannot be used as byte overflows
@@ -456,6 +639,9 @@ public class SegmentRope extends PlainRope {
 
         // On DictFindBench, reading ints is faster than reading longs. likely because most
         // calls will mismatch in the first 4 bytes for CompositeDict.
+
+        if (lOff == rOff && left == right && lLen == rLen)
+            return 0;
 
         long lEnd = lOff+Math.min(lLen, rLen);
         for (; lOff + 4 < lEnd; lOff += 4, rOff += 4) {
@@ -472,51 +658,22 @@ public class SegmentRope extends PlainRope {
 
 
     public final int compareTo(SegmentRope o) {
-        return compareTo(segment, offset, len, o.segment, o.offset, o.len);
+        return compare1_1(segment, offset, len, o.segment, o.offset, o.len);
     }
+
     public final int compareTo(TwoSegmentRope o) {
-        MemorySegment seg = this.segment;
-        // compare all we can on the left side with all we can of the right side
-        long offset = this.offset;
-        int fstLen = o.fstLen, len = Math.min(this.len, fstLen);
-        int diff = compareTo(seg, offset, len, o.fst, o.fstOff, len);
-        if (diff != 0) return diff;
-        if (fstLen > len)
-            return -1; // left side exhausted before right side
-
-        // update [offset, offset+len) range
-        offset += len;
-        len = this.len-len;
-
-        // compare whatever remains on the left side with the second segment of o
-        return compareTo(seg, offset, len, o.snd, o.sndOff, o.sndLen);
+        return compare1_2(segment, offset, len,
+                          o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
-        return compareTo(segment, offset, len, o.segment, o.offset+begin, end-begin);
+        return compare1_1(segment, offset, len, o.segment, o.offset+begin, end-begin);
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
-        MemorySegment seg = this.segment;
-        int fstLen = o.fstLen, oLen = fstLen-begin, len = Math.min(this.len, oLen);
-        long offset = this.offset;
-        if (len > 0) { // compare this vs fst segment
-            int diff = compareTo(seg, offset, len, o.fst, o.fstOff+begin, len);
-            if (diff != 0) return diff;
-        }
-        if (oLen > len)
-            return -1; // left side is already exhausted, right is larger.
-
-        // advance [offset, offset+len) on our side
-        offset += len;
-        len = this.len-len;
-        // make [begin, end) relative to o.snd
-        if ((end -= fstLen) < 0)
-            return len; // o is exhausted, will return 0 if equal, >0 if this is larger
-        begin = Math.max(0, begin-fstLen);
-        oLen = end-begin;
-
-        // compare [offset, offset+len) and [begin, end) unlike earlier, length may differ
-        return compareTo(seg, offset, len, o.snd, o.sndOff+begin, oLen);
+        if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
+        return compare1_2(segment, offset, len,
+                          o.fst, o.fstOff+begin, Math.min(o.fstLen,end)-begin,
+                          o.snd, o.sndOff+Math.max(0, begin-o.fstLen), end-o.fstLen);
     }
 }

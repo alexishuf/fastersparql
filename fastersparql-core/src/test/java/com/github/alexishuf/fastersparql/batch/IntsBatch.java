@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.opentest4j.AssertionFailedError;
@@ -10,6 +10,7 @@ import org.opentest4j.AssertionFailedError;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.util.Arrays.copyOf;
 
 public class IntsBatch {
@@ -20,7 +21,7 @@ public class IntsBatch {
 
     static {
         for (int i = 0; i < 128; i++) {
-            TERM_POOL[i] = Term.typed(i, RopeDict.DT_integer);
+            TERM_POOL[i] = Term.typed(i, DT_integer);
             INT_SEQUENCES[i] = new int[i];
             for (int j = 0; j < i; j++) INT_SEQUENCES[i][j] = j;
         }
@@ -47,7 +48,7 @@ public class IntsBatch {
         boolean pooled = i >= 0 && i < TERM_POOL.length;
         Term t = pooled ? TERM_POOL[i] : null;
         if (t == null) {
-            t = Term.typed(i, RopeDict.DT_integer);
+            t = Term.typed(i, DT_integer);
             if (pooled)
                 TERM_POOL[i] = t;
         }
@@ -57,13 +58,14 @@ public class IntsBatch {
     public static int parse(@Nullable Term t) {
         if (t == null)
             throw new IllegalArgumentException("Expected non-null Term");
-        int val = 0, i = t.local.length-1;
-        int begin = t.local.length > 2 && t.local[1] == '+' || t.local[1] == '-' ? 2 : 1;
-        int m = t.local.length > 2 && t.local[1] == '-' ? -1 : 1;
+        SegmentRope local = t.local();
+        int val = 0, i = local.len-1;
+        int begin = local.len > 2 && local.get(1) == '+' || local.get(1) == '-' ? 2 : 1;
+        int m = local.len > 2 && local.get(1) == '-' ? -1 : 1;
         for (; i >= begin ; i--, m *= 10) {
-            if (t.local[i] < '0' || t.local[i] > '9')
+            if (local.get(i) < '0' || local.get(i) > '9')
                 throw new IllegalArgumentException("Expected xsd:integer, got "+t);
-            val += m * (t.local[i]-'0');
+            val += m * (local.get(i)-'0');
         }
         return val;
     }

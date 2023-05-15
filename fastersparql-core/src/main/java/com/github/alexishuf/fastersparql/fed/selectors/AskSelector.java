@@ -14,9 +14,8 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
+import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.askNegativeCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.askPositiveCapacity;
@@ -27,6 +26,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class AskSelector extends Selector {
     private static final Term X = Term.valueOf("?x");
     public static final String NAME = "ask";
+    public static final String STATE_FILE = "file";
+    public static final List<String> STATE_FILE_P = List.of(STATE, STATE_FILE);
     private static final byte[] TYPE_LINE_U8 = (NAME+'\n').getBytes(UTF_8);
     private static final LIFOPool<TermBatch> TRIPLE_POOL
             = LIFOPool.perProcessor(TermBatch.class, 1);
@@ -52,31 +53,35 @@ public class AskSelector extends Selector {
     public static final class AskLoader implements Loader {
         @Override public String name() { return NAME; }
 
-        @Override public Selector create(SparqlClient client, Spec spec) {
-            return new AskSelector(client, spec);
-        }
-
         @Override public Selector
-        load(SparqlClient client, Spec spec, InputStream in) throws IOException, BadSerializationException {
-            var r = new ByteRope(64);
-            var termParser = new TermParser();
-            StrongDedup<TermBatch> positive = null, negative = null, current = null;
-            while (r.clear().readLine(in)) {
-                if (r.get(0) == '@') {
-                    current = parseHeader(r);
-                    if (r.get(1) == 'P') positive = current;
-                    else                 negative = current;
-                } else if (current == null) {
-                    throw new BadSerializationException("Expected @POSITIVE/@NEGATIVE header");
-                } else {
-                    parseRow(current, termParser, r);
-                }
+        load(SparqlClient client, Spec spec) throws IOException, BadSerializationException {
+            File file = spec.getFile(STATE_FILE_P, null);
+            if (file == null) {
+                return new AskSelector(client, spec);
             }
-            if (positive == null)
-                positive = StrongDedup.strongUntil(TERM, askPositiveCapacity(), 3);
-            if (negative == null)
-                negative = StrongDedup.strongUntil(TERM, askNegativeCapacity(), 3);
-            return new AskSelector(client, spec, positive, negative);
+            try (var in = new FileInputStream(file)) {
+                var r = new ByteRope(64);
+                if (!r.clear().readLine(in) || !r.trim().toString().equalsIgnoreCase(NAME))
+                    throw new BadSerializationException.SelectorTypeMismatch(NAME, r.toString());
+                var termParser = new TermParser();
+                StrongDedup<TermBatch> positive = null, negative = null, current = null;
+                while (r.clear().readLine(in)) {
+                    if (r.get(0) == '@') {
+                        current = parseHeader(r);
+                        if (r.get(1) == 'P') positive = current;
+                        else negative = current;
+                    } else if (current == null) {
+                        throw new BadSerializationException("Expected @POSITIVE/@NEGATIVE header");
+                    } else {
+                        parseRow(current, termParser, r);
+                    }
+                }
+                if (positive == null)
+                    positive = StrongDedup.strongUntil(TERM, askPositiveCapacity(), 3);
+                if (negative == null)
+                    negative = StrongDedup.strongUntil(TERM, askNegativeCapacity(), 3);
+                return new AskSelector(client, spec, positive, negative);
+            }
         }
 
         private static void parseRow(StrongDedup<TermBatch> dedup,
@@ -117,10 +122,14 @@ public class AskSelector extends Selector {
         notifyInit(InitOrigin.LOAD, null);
     }
 
-    @Override public void save(OutputStream out) throws IOException {
-        out.write(TYPE_LINE_U8);
-        saveSection(out, POSITIVE_HDR, positive);
-        saveSection(out, NEGATIVE_HDR, negative);
+    @Override public void saveIfEnabled() throws IOException {
+        File dest = spec.getFile(STATE_FILE_P, null);
+        if (dest == null) return;
+        try (var out = new FileOutputStream(dest)) {
+            out.write(TYPE_LINE_U8);
+            saveSection(out, POSITIVE_HDR, positive);
+            saveSection(out, NEGATIVE_HDR, negative);
+        }
     }
 
     private void saveSection(OutputStream out, byte[] hdr, Dedup<TermBatch> set)

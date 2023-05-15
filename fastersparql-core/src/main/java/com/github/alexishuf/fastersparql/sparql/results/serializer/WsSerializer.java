@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
@@ -76,7 +77,7 @@ public class WsSerializer extends ResultsSerializer {
             super(new RopeArrayMap());
         }
 
-        @Override public Rope nameFor(ByteRope prefix) {
+        @Override public Rope nameFor(SegmentRope prefix) {
             Rope name = prefix2name.get(prefix);
             if (name == null) {
                 name = new ByteRope().append('p').append(prefix2name.size());
@@ -84,6 +85,20 @@ public class WsSerializer extends ResultsSerializer {
                 dest.ensureFreeCapacity(PREFIX_CMD.len+name.len()+ prefix.len()+3)
                       .append(PREFIX_CMD).append(name).append(':')
                       .append(prefix).append('>').append('\n');
+            }
+            return name;
+        }
+
+
+        @Override public Rope nameFor(SegmentRope prefix, int begin, int end) {
+            Rope name = prefix2name.get(prefix, begin, end);
+            if (name == null) {
+                name = new ByteRope().append('p').append(prefix2name.size());
+                prefix = prefix.sub(begin, end);
+                prefix2name.put(prefix, name);
+                dest.ensureFreeCapacity(PREFIX_CMD.len+name.len()+ prefix.len()+3)
+                        .append(PREFIX_CMD).append(name).append(':')
+                        .append(prefix).append('>').append('\n');
             }
             return name;
         }

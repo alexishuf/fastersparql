@@ -173,7 +173,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             return end;
         }
 
-        protected int handleControl(Rope rope, int begin) { return begin; }
+        protected int handleControl(SegmentRope rope, int begin) { return begin; }
     }
 
     public final static class Csv<B extends Batch<B>> extends SVParserBIt<B> {

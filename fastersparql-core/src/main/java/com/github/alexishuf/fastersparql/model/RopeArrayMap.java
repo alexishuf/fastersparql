@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.model;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static java.lang.System.arraycopy;
@@ -17,7 +18,7 @@ public class RopeArrayMap {
 
     public int size() { return keys; }
 
-    public void put(ByteRope key, @Nullable Rope value) {
+    public void put(SegmentRope key, @Nullable Rope value) {
         int size = this.keys;
         if (size > SORT_THRESHOLD) {
             putSorted(key, value);

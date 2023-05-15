@@ -4,17 +4,29 @@ import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
+import com.github.alexishuf.fastersparql.store.index.dict.*;
 import jdk.incubator.vector.ByteVector;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
@@ -22,7 +34,9 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,12 +45,15 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class BatchTest {
     private static final List<BatchType<?>> TYPES = List.of(
             TermBatchType.INSTANCE,
-            CompressedBatchType.INSTANCE
+            CompressedBatchType.INSTANCE,
+            StoreBatchType.INSTANCE
     );
+    private static LocalityCompositeDict storeDict;
+    private static int storeDictId;
 
     static final class Size {
         private static final int ALIGNMENT = ByteVector.SPECIES_PREFERRED.length();
-        private static final int P_EX = (int) RopeDict.internIri(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
+        private static final SegmentRope P_EX = SHARED_ROPES.internPrefix("<http://www.example.org/ns#");
         public final int rows;
         public final int cols;
         private final int requiredBytesUnaligned;
@@ -52,14 +69,14 @@ class BatchTest {
                 for (int c = 0; c < cols; c++) {
                     this.terms[r][c] = switch (c % 4) {
                         case 0 -> Term.valueOf("\"R"+r+"C"+c+"\"");
-                        case 1 -> Term.prefixed(P_EX, ("R"+r+"C"+c+">").getBytes(UTF_8));
+                        case 1 -> Term.prefixed(P_EX, ("R"+r+"C"+c+">"));
                         case 2 -> Term.typed("\""+(r*cols + c), DT_integer);
                         case 3 -> null;
                         default -> throw new IllegalArgumentException();
                     };
                     if (terms[r][c] != null) {
-                        unaligned += terms[r][c].local.length;
-                        aligned   += terms[r][c].local.length;
+                        unaligned += terms[r][c].local().len;
+                        aligned   += terms[r][c].local().len;
                     }
                 }
                 int floor = aligned & -ALIGNMENT;
@@ -125,6 +142,45 @@ class BatchTest {
             new Size(256, 8)
     );
 
+    @BeforeAll static void beforeAll() throws IOException  {
+        Path tmp = Files.createTempDirectory("fastersparql-BatchTest");
+        try (var b = new CompositeDictBuilder(tmp, tmp, Splitter.Mode.LAST, true)) {
+            visitStrings(b);
+            var second = b.nextPass();
+            visitStrings(second);
+            second.write();
+        }
+        storeDict = (LocalityCompositeDict)Dict.load(tmp.resolve("strings"));
+        StoreBatch.TEST_DICT = storeDictId = IdTranslator.register(storeDict);
+    }
+
+    @AfterAll static void afterAll() {
+        IdTranslator.deregister(storeDictId, storeDict);
+        StoreBatch.TEST_DICT = storeDictId = 0;
+        storeDict = null;
+    }
+
+    private static void visitStrings(NTVisitor visitor) {
+        for (Size s : SIZES) {
+            for (int r = 0; r < s.rows; r++) {
+                for (int c = 0; c < s.cols; c++) {
+                    Term term = s.terms[r][c];
+                    if (term != null)
+                        visitor.visit(SegmentRope.of(term));
+                }
+            }
+        }
+        visitor.visit(SegmentRope.of("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
+        visitor.visit(SegmentRope.of("\"bob\"@en"));
+        visitor.visit(SegmentRope.of("\"bob\"@en-US"));
+        visitor.visit(SegmentRope.of("\"bob\""));
+        visitor.visit(SegmentRope.of("<http://www.w3.org/2001/XMLSchema#string>"));
+        visitor.visit(SegmentRope.of("\"alice\""));
+        visitor.visit(SegmentRope.of("\"\""));
+        visitor.visit(SegmentRope.of("\"\"@en"));
+        visitor.visit(SegmentRope.of("\"\"@en-US"));
+    }
+
     private interface ForEachSizeTest {
         <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx);
     }
@@ -183,33 +239,66 @@ class BatchTest {
         });
     }
 
+    static <B extends Batch<B>> void
+    checkTerm(String ctx, B batch, int r, int c, Term t, Term tmpTerm,
+              TwoSegmentRope expectedTSR, TwoSegmentRope tmpTSR, PrefixAssigner assigner) {
+        if (t == null) {
+            expectedTSR = null;
+        } else {
+            expectedTSR.wrapFirst(t.first());
+            expectedTSR.wrapSecond(t.second());
+        }
+
+        assertEquals(t, batch.get(r, c), ctx);
+        assertEquals(t != null, batch.getView(r, c, tmpTerm));
+        if (t != null) assertEquals(t, tmpTerm, ctx);
+
+        assertEquals(expectedTSR, batch.getRope(r, c), ctx);
+        assertEquals(expectedTSR != null, batch.getRopeView(r, c, tmpTSR), ctx);
+        if (t != null) assertEquals(expectedTSR, tmpTSR, ctx);
+
+        assertEquals(t == null ? EMPTY : t.shared(), batch.shared(r, c), ctx);
+        if (t == null) {
+            assertFalse(batch.sharedSuffixed(r, c), ctx);
+        } else if (t.sharedSuffixed() && t.shared().len <= 7 && batch.shared(r, c).len == 0) {
+            // for short lit suffixes (i.e., no suffix or lang tags), if th batch reports
+            // no shared, tolerate both true and false for sharedSuffix()
+            batch.sharedSuffixed(r, c); // simply check if it throws
+        } else {
+            assertEquals(t.sharedSuffixed(), batch.sharedSuffixed(r, c), ctx);
+        }
+        assertEquals(t == null ? 0 : t.len, batch.len(r, c), ctx);
+        assertEquals(t == null ? null : t.type(), batch.termType(r, c), ctx);
+        assertEquals(t == null ? 0 : Math.max(0, t.endLex()), batch.lexEnd(r, c), ctx);
+        assertEquals(t == null ? 0 : t.local().len, batch.localLen(r, c), ctx);
+        assertEquals(t == null ? null : t.asDatatypeSuff(), batch.asDatatypeSuff(r, c), ctx);
+        assertEquals(t == null ? null : t.datatypeTerm(), batch.datatypeTerm(r, c), ctx);
+        assertEquals(t == null ? Rope.FNV_BASIS : t.hashCode(), batch.hash(r, c), ctx);
+
+        ByteRope ex = new ByteRope(), ac = new ByteRope();
+        if (t != null) t.toSparql(ex, assigner);
+        batch.writeSparql(ac, r, c, assigner);
+        assertEquals(ex, ac, ctx);
+
+        ex.clear().append(t == null ? EMPTY : t);
+        batch.writeNT(ac.clear(), r, c);
+        assertEquals(ex, ac, ctx);
+    }
+
     @SuppressWarnings("SimplifiableAssertion")
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
+        Term tmpTerm = new Term();
+        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
         var assigner = new PrefixAssigner(new RopeArrayMap());
         assertEquals(expected.rows, batch.rows, outerCtx);
         assertEquals(expected.cols, batch.cols, outerCtx);
         for (int r = 0, rows = expected.rows, cols = expected.cols; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 String ctx = ", r=" + r + ", c=" + c+", "+outerCtx;
-                assertEquals(expected.get(r, c), batch.get(r, c), ctx);
                 assertTrue(batch.equals(r, c, expected, r, c), ctx);
                 assertEquals(expected.hash(r, c), batch.hash(r, c), ctx);
-
-                Term t = expected.get(r, c);
-                assertEquals(t == null ? 0 : t.flaggedDictId, batch.flaggedId(r, c), ctx);
-                assertEquals(t == null ? null : t.type(), batch.termType(r, c), ctx);
-                assertEquals(t == null ? 0 : t.asDatatypeId(), batch.asDatatypeId(r, c), ctx);
-                assertEquals(t == null ? null : t.datatypeTerm(), batch.datatypeTerm(r, c), ctx);
-                assertEquals(t == null ? 0 : t.hashCode(), batch.hash(r, c), ctx);
-
-                ByteRope ex = new ByteRope(), ac = new ByteRope();
-                if (t != null) t.toSparql(ex, assigner);
-                batch.writeSparql(ac, r, c, assigner);
-                assertEquals(ex, ac, ctx);
-
-                ex.clear().append(t == null ? ByteRope.EMPTY : t);
-                batch.writeNT(ac.clear(), r, c);
-                assertEquals(ex, ac, ctx);
+                checkTerm(ctx, batch, r, c, expected.get(r, c),
+                          tmpTerm, expectedTSR, tmpTSR, assigner);
             }
             assertTrue(batch.equals(r, expected, r), "r="+r+", "+outerCtx);
             assertEquals(expected.hash(r), batch.hash(r), "r="+r+", "+outerCtx);
@@ -219,37 +308,22 @@ class BatchTest {
         assertEquals(expected.hashCode(), batch.hashCode());
     }
 
-    static void assertBatchesEquals(Size size, Batch<?> batch, String outerCtx) {
+    static <B extends Batch<B>> void assertBatchesEquals(Size size,
+                                                         B batch, String outerCtx) {
+        Term tmpTerm = new Term();
+        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
         PrefixAssigner assigner = new PrefixAssigner(new RopeArrayMap());
         for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 Term t = size.terms[r][c];
-                String ctx = "r=" + r + ", c=" + c+", "+outerCtx;
-                assertEquals(t, batch.get(r, c), ctx);
+                String ctx = "r=" + r + ", c=" + c+",t="+t+", "+outerCtx;
                 assertTrue(batch.equals(r, c, t), ctx);
 
-                assertEquals(t == null ? 0 : t.flaggedDictId, batch.flaggedId(r, c), ctx);
-                assertEquals(t == null ? 0 : t.flaggedDictId, batch.flaggedId(r, c), ctx);
-                assertEquals(t == null ? null : t.type(), batch.termType(r, c), ctx);
-                assertEquals(t == null ? 0 : t.asDatatypeId(), batch.asDatatypeId(r, c), ctx);
-                assertEquals(t == null ? null : t.datatypeTerm(), batch.datatypeTerm(r, c), ctx);
-                assertEquals(t == null ? 0 : t.hashCode(), batch.hash(r, c), ctx);
-
-                ByteRope ex = new ByteRope(), ac = new ByteRope();
-                if (t != null)
-                    t.toSparql(ex, assigner);
-                batch.writeSparql(ac, r, c, assigner);
-                assertEquals(ex, ac, ctx);
-
-                ex.clear().append(t == null ? ByteRope.EMPTY : t);
-                batch.writeNT(ac.clear(), r, c);
-                assertEquals(ex, ac, ctx);
+                checkTerm(ctx, batch, r, c, t, tmpTerm, expectedTSR, tmpTSR, assigner);
             }
             assertTrue(batch.equals(r, size.terms[r]), "r="+r+", "+outerCtx);
         }
     }
-
-
 
     @Test void testPut() {
         forEachSize(new ForEachSizeTest() {
@@ -263,26 +337,42 @@ class BatchTest {
                 B b6_ = type.create(0, size.cols, 0);
                 B b4 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
                 B b5 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
+                B b7 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
+                B b8 = type.create(1, size.cols, 1);
+                B b9 = type.create(1, size.cols, 0);
                 b4.clear(size.cols*2);
                 b5.clear(size.cols*2);
                 b4.clear(size.cols);
                 b5.clear(size.cols);
+                b7.clear(size.cols);
+                TermParser termParser = new TermParser();
+                List<B> putBatches = List.of(b2, b4, b5, b7, b8, b9);
                 for (int r = 0; r < size.rows; r++) {
                     b1.beginPut();
-                    for (int c = 0; c < size.cols; c++) b1.putTerm(c, size.terms[r][c]);
+                    for (B b : putBatches) b.beginPut();
+                    for (int c = 0; c < size.cols; c++) {
+                        Term t = size.terms[r][c];
+                        b1.putTerm(c, t);
+                        b4.putTerm(c, t);
+                        byte[] u8 = ("(" + (t == null ? "" : t.local()) + ")").getBytes(UTF_8);
+                        SegmentRope sh = t == null ? null : t.shared();
+                        boolean sharedSuffixed = t != null && t.sharedSuffixed();
+                        MemorySegment u8Seg = MemorySegment.ofArray(u8);
+                        b7.putTerm(c, sh, u8, 1, u8.length-2, sharedSuffixed);
+                        b8.putTerm(c, sh, u8Seg, 1, u8.length-2, sharedSuffixed);
+                    }
                     b1.commitPut();
-
-                    b2.beginPut();
-                    for (int c = 0; c < size.cols; c++) b2.putTerm(c, b1, r, c);
-                    b2.commitPut();
-
-                    b4.beginPut();
-                    for (int c = 0; c < size.cols; c++) b4.putTerm(c, size.terms[r][c]);
-                    b4.commitPut();
-
-                    b5.beginPut();
-                    for (int c = 0; c < size.cols; c++) b5.putTerm(c, size.terms[r][c]);
-                    b5.commitPut();
+                    for (int c = size.cols-1; c >= 0; c--) {
+                        Term t = size.terms[r][c];
+                        b2.putTerm(c, b1, r, c);
+                        b5.putTerm(c, t);
+                        if (t != null) {
+                            ByteRope in = new ByteRope(t.len + 2).append('(').append(t).append(')');
+                            assertTrue(termParser.parse(in, 1, in.len - 1).isValid());
+                            b9.putTerm(c, termParser);
+                        }
+                    }
+                    for (B b : putBatches) b.commitPut();
                 }
                 b3.put(b1);
                 if (size.rows > 0)
@@ -296,11 +386,17 @@ class BatchTest {
                 assertBatchesEquals(size, b4, ctx);
                 assertBatchesEquals(size, b5, ctx);
                 assertBatchesEquals(size, b6, ctx);
+                assertBatchesEquals(size, b7, ctx);
+                assertBatchesEquals(size, b8, ctx);
+                assertBatchesEquals(size, b9, ctx);
                 assertBatchesEquals(b1, b2, ctx);
                 assertBatchesEquals(b2, b3, ctx);
                 assertBatchesEquals(b3, b4, ctx);
                 assertBatchesEquals(b4, b5, ctx);
                 assertBatchesEquals(b5, b6, ctx);
+                assertBatchesEquals(b6, b7, ctx);
+                assertBatchesEquals(b7, b8, ctx);
+                assertBatchesEquals(b8, b9, ctx);
             }
         });
     }
@@ -315,6 +411,9 @@ class BatchTest {
                 B b3 = type.create(size.rows, size.cols, reqBytes);
                 B b4 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
                 B b5 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
+                B b6 = type.create(size.rows, size.cols, reqBytes);
+                B b7 = type.create(size.rows, size.cols, reqBytes);
+                B b8 = type.create(size.rows, size.cols, reqBytes);
                 b4.clear(size.cols*2);
                 b5.clear(size.cols*2);
                 b4.clear(size.cols);
@@ -323,12 +422,19 @@ class BatchTest {
                 b1.reserve(size.rows, reqBytes);
                 b2.reserve(size.rows, reqBytes);
                 b3.reserve(size.rows, reqBytes);
+                b6.reserve(size.rows, reqBytes);
+                b7.reserve(size.rows, reqBytes);
+                b8.reserve(size.rows, reqBytes);
 
                 assertTrue(b1.hasCapacity(size.rows, reqBytes));
                 assertTrue(b2.hasCapacity(size.rows, reqBytes));
                 assertTrue(b3.hasCapacity(size.rows, reqBytes));
                 assertTrue(b4.hasCapacity(size.rows, reqBytes));
                 assertTrue(b5.hasCapacity(size.rows, reqBytes));
+                assertTrue(b6.hasCapacity(size.rows, reqBytes));
+                assertTrue(b7.hasCapacity(size.rows, reqBytes));
+                assertTrue(b8.hasCapacity(size.rows, reqBytes));
+                TermParser termParser = new TermParser();
                 for (int r = 0; r < size.rows; r++) {
                     assertTrue(b1.beginOffer());
                     for (int c = 0; c < size.cols; c++)
@@ -347,6 +453,25 @@ class BatchTest {
                     for (int c = 0; c < size.cols; c++)
                         assertTrue(b5.offerTerm(c, b1, r, c), "r= "+r+",c="+c);
                     assertTrue(b5.commitOffer());
+
+                    b6.beginOffer();
+                    b7.beginOffer();
+                    b8.beginOffer();
+                    for (int c = 0; c < size.cols; c++) {
+                        Term t = size.terms[r][c];
+                        if (t == null) continue;
+                        byte[] u8 = ("("+t.local()+")").getBytes(UTF_8);
+                        MemorySegment u8Seg = MemorySegment.ofArray(u8);
+                        ByteRope rope = new ByteRope(t);
+                        assertTrue(termParser.parse(rope, 0, rope.len).isValid());
+                        assertTrue(b6.offerTerm(c,  t.shared(), u8, 1, u8.length-2, t.sharedSuffixed()));
+                        assertTrue(b7.offerTerm(c, t.shared(), u8Seg, 1, u8.length-2, t.sharedSuffixed()));
+                        assertTrue(b8.offerTerm(c, termParser));
+                        Arrays.fill(u8, (byte)'#');
+                    }
+                    b6.commitOffer();
+                    b7.commitOffer();
+                    b8.commitOffer();
                 }
                 assertTrue(b3.offer(b1), ctx);
                 assertBatchesEquals(size, b1, ctx);
@@ -358,6 +483,9 @@ class BatchTest {
                 assertBatchesEquals(b2, b3, ctx);
                 assertBatchesEquals(b3, b4, ctx);
                 assertBatchesEquals(b4, b5, ctx);
+                assertBatchesEquals(b5, b6, ctx);
+                assertBatchesEquals(b6, b7, ctx);
+                assertBatchesEquals(b7, b8, ctx);
             }
         });
     }
@@ -772,7 +900,7 @@ class BatchTest {
         uo0.putTerm(0, sz.terms[0][0]);
         uo0.commitPut();
         uo0.putRow(n, 0);
-        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)uo0).corrupted());
+        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)uo0).validate());
 
         B uo1 = type.create(2, 2, 0);
         uo1.beginPut();
@@ -781,18 +909,18 @@ class BatchTest {
         uo1.commitPut();
         uo1.beginPut();
         uo1.commitPut();
-        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)uo1).corrupted());
+        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)uo1).validate());
 
         B o0 = type.create(2, 2, 0);
         o0.putRow(sz.terms[0]);
         o0.putRow(n, 0);
-        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)o0).corrupted());
+        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)o0).validate());
 
         B o1 = type.create(1, 2, 0);
         o1.putRow(sz.terms[0]);
         o1.beginPut();
         o1.commitPut();
-        if (type == Batch.COMPRESSED) assertFalse(((CompressedBatch)o1).corrupted());
+        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)o1).validate());
 
         B expected = type.create(2, 2, 0);
         expected.putRow(sz.terms[0]);

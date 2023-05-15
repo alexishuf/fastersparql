@@ -575,7 +575,7 @@ class SparqlQueryTest {
                       "SELECT REDUCED\n?o WHERE {<a> :p ?o}")
         );
         List<T> list = new ArrayList<>();
-        for (String prologue : List.of("", "PREFIX : <select>\nBASE <select?s>\n#?s\n# select ?s {\n")) {
+        for (String prologue : List.of("", "PREFIX random: <select>\n#BASE <select?s>\n#?s\n# select ?s {\n")) {
             for (T t : base)
                 list.add(new T(prologue+t.in, t.type, prologue+t.expected));
         }

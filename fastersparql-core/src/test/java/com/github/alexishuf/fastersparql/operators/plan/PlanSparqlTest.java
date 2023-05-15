@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
 
@@ -83,7 +83,7 @@ public class PlanSparqlTest {
                           ?s ?p <s> .
                          }
                         }"""),
-                new D(FS.join(FS.values(Vars.of("p", "x"), List.of(asList(Term.valueOf("<p>"), null), List.of(Term.valueOf("<q>"), Term.typed(23, RopeDict.DT_integer)))),
+                new D(FS.join(FS.values(Vars.of("p", "x"), List.of(asList(Term.valueOf("<p>"), null), List.of(Term.valueOf("<q>"), Term.typed(23, SharedRopes.DT_integer)))),
                               new Join(t1, t2)), """
                         SELECT *
                         {

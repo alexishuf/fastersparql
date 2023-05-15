@@ -5,7 +5,8 @@ import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -54,7 +55,7 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
             case Collection<?> coll -> dest.putRow(coll);
             case Integer i when dest.cols == 1 -> { // test cases compatibility
                 dest.beginPut();
-                dest.putTerm(0, Term.typed(i, RopeDict.DT_integer));
+                dest.putTerm(0, Term.splitAndWrap(Rope.of('"', i, SharedRopes.DT_integer)));
                 dest.commitPut();
             }
             case Term term -> {

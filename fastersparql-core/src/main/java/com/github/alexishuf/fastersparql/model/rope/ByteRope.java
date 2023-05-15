@@ -218,6 +218,12 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope> {
         return this;
     }
 
+    @Override public @This ByteRope append(MemorySegment segment, long offset, int len) {
+        int out = postIncLen(len);
+        MemorySegment.copy(segment,  offset, this.segment, out, len);
+        return this;
+    }
+
     @Override public @This ByteRope append(byte[] utf8, int offset, int len) {
         int out = postIncLen(len);
         arraycopy(utf8, offset, u8(), out, len);

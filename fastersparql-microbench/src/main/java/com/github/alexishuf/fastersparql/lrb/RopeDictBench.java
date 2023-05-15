@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.lrb.Workloads.fromName;
 import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
 @State(Scope.Thread)
@@ -66,7 +67,7 @@ public class RopeDictBench {
         ropes = null;
     }
 
-    @Benchmark public long internAll() {
+    @Benchmark public long dictInternAll() {
         long acc = 0;
         for (int rep = 0; rep < startsArray.length; rep++) {
             int[] starts = startsArray[rep];
@@ -76,6 +77,23 @@ public class RopeDictBench {
                 acc ^= switch (begin < end ? rope.get(begin) : 0) {
                     case '<' -> RopeDict.internIri(rope, begin, end);
                     case '"' -> RopeDict.internLit(rope, begin, end);
+                    default -> 0;
+                };
+            }
+        }
+        return acc;
+    }
+
+    @Benchmark public long internAll() {
+        long acc = 0;
+        for (int rep = 0; rep < startsArray.length; rep++) {
+            int[] starts = startsArray[rep];
+            var rope = ropes[rep];
+            for (int i = 0, last = starts.length-1; i < last; i++) {
+                int begin = starts[i], end = starts[i+1];
+                acc ^= switch (begin < end ? rope.get(begin) : 0) {
+                    case '<' -> SHARED_ROPES.internPrefixOf(rope, begin, end).len;
+                    case '"' -> SHARED_ROPES.internDatatypeOf(rope, begin, end).len;
                     default -> 0;
                 };
             }

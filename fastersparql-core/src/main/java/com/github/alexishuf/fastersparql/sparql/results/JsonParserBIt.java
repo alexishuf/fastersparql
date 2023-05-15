@@ -7,7 +7,6 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -15,6 +14,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayDeque;
 
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.String.format;
 import static java.lang.String.join;
 
@@ -251,29 +251,33 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                                 throw p.noType();
                         }
                         case IRI -> {
-                            long localAndId = RopeDict.internIri(v, 0, v.len);
-                            rb.putTerm(col, (int)localAndId, v, (int)(localAndId>>>32), v.len);
+                            var prefix = SHARED_ROPES.internPrefixOf(v, 0, v.len);
+                            int prefixLen = prefix == null ? 0 : prefix.len;
+                            rb.putTerm(col, prefix, v.u8(), prefixLen, v.len-prefixLen, false);
                         }
                         case LIT -> {
                             byte[] u8 = v.u8();
                             u8[0] = '"';  u8[v.len-1] = '"'; //replace <> with ""
+                            SegmentRope sh;
+                            int localLen;
                             if (p.dtSuffix.len == 0) {
+                                sh = null;
                                 if (p.lang.len > 0) {
                                     p.lang.replace('_', '-');
                                     v.append('@').append(p.lang);
                                 }
-                                rb.putTerm(col, 0, v, 0, v.len);
+                                localLen = v.len;
                             } else  {
-                                int fId = RopeDict.internDatatype(p.dtSuffix, 0, p.dtSuffix.len);
-                                if (fId == 0) p.value.append(p.dtSuffix);
-                                else          fId |= 0x80000000;
-                                rb.putTerm(col, fId, v, 0, v.len-1);
+                                sh = SHARED_ROPES.internDatatype(p.dtSuffix, 0, p.dtSuffix.len);
+                                localLen = sh == null ? v.len : v.len-1;
                             }
+                            rb.putTerm(col, sh, v.u8(), 0, localLen, true);
                         }
                         case BLANK -> {
                             p.dtSuffix.clear().append('_').append(':')
-                                    .append(v, 1, v.len-1);
-                            rb.putTerm(col, 0, p.dtSuffix, 0, p.dtSuffix.len);
+                                      .append(v, 1, v.len-1);
+                            rb.putTerm(col, null, p.dtSuffix.u8(),
+                                       0, p.dtSuffix.len, false);
                         }
                         default -> throw new UnsupportedOperationException();
                     }

@@ -8,6 +8,8 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import static java.lang.String.format;
@@ -67,7 +69,7 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
 
     /* --- --- --- implementations --- --- --- */
 
-    @Override protected final int handleControl(Rope rope, int begin) {
+    @Override protected final int handleControl(SegmentRope rope, int begin) {
         for (int end = rope.len(), eol; begin < end && rope.get(begin) == '!'; begin = eol+1) {
             if ((eol = rope.skipUntil(begin, end, '\n')) == end)
                 return suspend(rope, begin, end);
@@ -95,11 +97,27 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
 
     /* --- --- --- helper methods --- --- --- */
 
-    private void handlePrefix(Rope rope, int begin, int eol) {
-        int nameBegin = begin+PREFIX.length, colon = rope.skipUntil(nameBegin, eol, ':');
-        if (nameBegin >= eol || colon >= eol) throw badPrefix(rope, begin, colon);
-        termParser.prefixMap.add(rope.sub(nameBegin, colon),
-                                 Term.iri(rope.sub(colon+1, eol)));
+    private void handlePrefix(SegmentRope r, int begin, int eol) {
+        int nameBegin = begin+PREFIX.length, colon = r.skipUntil(nameBegin, eol, ':');
+        if (nameBegin >= eol || colon >= eol) throw badPrefix(r, begin, colon);
+
+        Term iri = null;
+        int iriBegin = colon+1;
+        if (eol-iriBegin >= 2) {
+            try {
+                if (r.get(colon + 1) == '<')
+                    iri = Term.valueOf(r, iriBegin, eol);
+                else {
+                    var wrapped = new ByteRope(eol - iriBegin + 2)
+                            .append('<').append(r, colon + 1, eol).append('>');
+                    iri = Term.splitAndWrap(wrapped);
+                }
+            } catch (InvalidTermException ignored) { }
+        }
+        if (iri == null)
+            throw badPrefix(r, begin, eol);
+        var name = new ByteRope(colon - nameBegin).append(r, nameBegin, colon);
+        termParser.prefixMap.addRef(name, iri);
     }
 
     private void handleCancelled() {

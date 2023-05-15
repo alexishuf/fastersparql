@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.store;
 
 import com.github.alexishuf.fastersparql.store.index.HdtConverter;
-import com.github.alexishuf.fastersparql.store.index.Triples;
+import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import org.rdfhdt.hdt.hdt.HDT;
 import org.rdfhdt.hdt.hdt.HDTManager;
 import org.slf4j.Logger;
@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.store.index.Splitter.Mode.*;
+import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.Mode.*;
 
 @Command(name = "hdt2store",
         description = "Convert an HDT file into a directory with the fastersparql-store indexes",

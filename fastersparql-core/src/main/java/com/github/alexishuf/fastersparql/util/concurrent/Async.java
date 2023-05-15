@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.LockSupport;
@@ -40,6 +41,37 @@ public class Async {
             if (err == null) completable.complete(value);
             else             completable.completeExceptionally(err);
         });
+    }
+
+
+    public static <T> CompletionStage<T> async(Callable<T> task) {
+        CompletableFuture<T> future = new CompletableFuture<>();
+        Thread.startVirtualThread(() -> {
+            try {
+                future.complete(task.call());
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
+            }
+        });
+        return future;
+    }
+
+    @FunctionalInterface
+    public interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    public static  CompletionStage<Void> async(ThrowingRunnable task) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Thread.startVirtualThread(() -> {
+            try {
+                task.run();
+                future.complete(null);
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
+            }
+        });
+        return future;
     }
 
     public static void uninterruptibleJoin(Thread thread) {

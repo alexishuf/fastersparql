@@ -152,8 +152,12 @@ class RopeTest {
             byte[] u8 = string.getBytes(UTF_8);
             list.add(Term.valueOf(new ByteRope(u8)));
             list.add(Term.valueOf(new SegmentRope(ByteBuffer.wrap(u8))));
-            if (string.startsWith("\"") && string.matches("\"(@[a-zA-Z\\-]+)?$"))
-                list.add(Term.make(0, u8, 0, u8.length));
+            if (string.startsWith("\"") && string.matches("\"(@[a-zA-Z\\-]+)?$")) {
+                list.add(Term.wrap(new ByteRope(u8), null));
+                list.add(Term.wrap(null, new ByteRope(u8)));
+                list.add(Term.wrap(new ByteRope(u8), ByteRope.EMPTY));
+                list.add(Term.wrap(ByteRope.EMPTY, new ByteRope(u8)));
+            }
             ByteRope padded = Rope.of(".", string, ".");
             list.add(Term.valueOf(padded, 1, padded.len()-1));
             assertTrue(list.stream().noneMatch(Objects::isNull), "null ropes generated");
@@ -171,6 +175,13 @@ class RopeTest {
             TWO_SEGMENT_ROPE_FAC,
             new TermRopeFac()
     );
+
+    private static int fnv(StringBuilder sb) {
+        int h = Rope.FNV_BASIS;
+        for (int i = 0; i < sb.length(); i++)
+            h = Rope.FNV_PRIME * (h ^ (0xff&sb.charAt(i)));
+        return h;
+    }
 
     static Stream<Arguments> factories() { return FACTORIES.stream().map(Arguments::arguments); }
 
@@ -217,7 +228,7 @@ class RopeTest {
                 var lhs = new ByteRope(rope.toArray(0, len));
                 assertTrue(lhs.equals(rope));
                 assertTrue(rope.equals(lhs));
-                assertEquals(sb.toString().hashCode(), rope.hashCode());
+                assertEquals(fnv(sb), rope.hashCode());
                 assertEquals(lhs.toString(), rope.toString());
                 assertEquals(sb.toString(), rope.toString());
 
@@ -732,6 +743,30 @@ class RopeTest {
             data.get(row).test(fac, row);
     }
 
+    @ParameterizedTest @MethodSource("factories")
+    void testFastHash(Factory fac) {
+        var sb = new StringBuilder();
+        for (int i = 0; i < 32; i++) {
+            sb.setLength(0);
+            for (int j = 0; j < i; j++) sb.append((char)('0'+j));
+            int expected = Rope.FNV_BASIS;
+            for (int j = 0; j < 4 && j < i; j++)
+                expected = Rope.FNV_PRIME * (expected ^ (0xff&sb.charAt(j)));
+            for (int j = Math.max(i-12, 4); j < i; j++)
+                expected = Rope.FNV_PRIME * (expected ^ (0xff&sb.charAt(j)));
+
+            for (Rope r : fac.create(sb.toString()))
+                assertEquals(expected, r.fastHash(0, r.len));
+            for (Rope r : fac.create(sb + ")"))
+                assertEquals(expected, r.fastHash(0, r.len-1));
+            for (Rope r : fac.create("(" + sb))
+                assertEquals(expected, r.fastHash(1, r.len));
+            for (Rope r : fac.create("(" + sb + ")"))
+                assertEquals(expected, r.fastHash(1, r.len-1));
+            for (Rope r : fac.create("{([<:" + sb + ":>])}"))
+                assertEquals(expected, r.fastHash(5, r.len-5));
+        }
+    }
     @ParameterizedTest @MethodSource("factories")
     void testLsbHash(Factory fac) {
         record D(String in, int expected) {

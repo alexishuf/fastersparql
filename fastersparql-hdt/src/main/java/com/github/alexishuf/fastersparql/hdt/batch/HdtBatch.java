@@ -122,21 +122,26 @@ public class HdtBatch extends Batch<HdtBatch> {
             return null;
 
         // try returning a cached value
+        int cachedAddr;
+        Term cachedTerm;
         while (!CACHED_LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
         try {
-            if (cachedAddr == addr) return cachedTerm;
+            cachedAddr = this.cachedAddr;
+            cachedTerm = this.cachedTerm;
         } finally { CACHED_LOCK.setRelease(this, 0); }
+        if (cachedAddr == addr) return cachedTerm;
 
         // create a Term instance and cache it
 
         Term term = IdAccess.toTerm(id);
         while (CACHED_LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
         try {
-            cachedAddr = addr;
-            cachedTerm = term;
+            this.cachedAddr = addr;
+            this.cachedTerm = term;
         } finally { CACHED_LOCK.setRelease(this, 0); }
         return term;
     }
+
 
     /* --- --- --- mutators --- --- --- */
 

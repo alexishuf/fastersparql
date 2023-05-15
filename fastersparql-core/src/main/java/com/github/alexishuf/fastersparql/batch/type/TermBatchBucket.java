@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -12,7 +12,7 @@ import java.util.Objects;
 import static java.lang.System.arraycopy;
 
 public class TermBatchBucket implements RowBucket<TermBatch> {
-    private static final Term NULL = Term.iri(Rope.of("urn:fastersparql:null"));
+    private static final Term NULL = Term.splitAndWrap(new ByteRope("<urn:fastersparql:null>"));
     private final TermBatch b;
 
     public TermBatchBucket(int rowsCapacity, int cols) {

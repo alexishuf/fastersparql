@@ -37,6 +37,7 @@ import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.util.BS.*;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.runtimeExceptionCondenser;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.async;
 import static java.lang.Long.bitCount;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.System.nanoTime;
@@ -137,17 +138,16 @@ public class Federation extends AbstractSparqlClient {
     /* --- --- --- sources and state management --- --- --- */
 
     /**
-     * Calls {@link Selector#saveIfEnabled(Path)} for all sources and return a
+     * Calls {@link Selector#saveIfEnabled()} for all sources and return a
      *
-     * @param pathsRelativeTo see {@link Selector#saveIfEnabled(Path)}.
+     * @param pathsRelativeTo see {@link Selector#saveIfEnabled()}.
      * @return {@link CompletionStage} with either a {@link Throwable} or the return from
-     *         {@link Selector#saveIfEnabled(Path)} for each {@link Source}. The
+     *         {@link Selector#saveIfEnabled()} for each {@link Source}. The
      *         {@link CompletionStage} itself never fails, since failures are individual
      *         to each source.
      */
     public CompletionStage<Void> saveIfEnabled(@Nullable Path pathsRelativeTo) {
-        return this.forEachSource((source, h) ->
-                source.selector().saveIfEnabled(pathsRelativeTo).handle(h));
+        return this.forEachSource((src, h) -> async(src.selector()::saveIfEnabled).handle(h));
     }
 
     /**

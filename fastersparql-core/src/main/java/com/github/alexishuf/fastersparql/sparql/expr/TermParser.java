@@ -1,12 +1,17 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.*;
+import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.asOpenLitU8;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Range;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.invert;
@@ -36,9 +41,10 @@ public final class TermParser {
     private int begin, end;
     private int stopped, lexEnd;
     private byte qLen, ttlKind;
-    boolean typed, eager;
+    boolean typed, eager, sharedSuffixed;
     private Result result;
-    public int localBegin, localEnd, flaggedId;
+    public int localBegin, localEnd;
+    private SegmentRope shared;
 
     /**
      * Map from prefixes (e.g., @code rdf:) to IRI prefixes (e.g., {@code http://...}) used to
@@ -89,7 +95,8 @@ public final class TermParser {
         if (ntBuf != null) ntBuf.clear();
         stopped = this.begin = begin;
         this.end = end;
-        flaggedId = 0x80000000;
+        shared = ByteRope.EMPTY;
+        sharedSuffixed = false;
         localBegin = localEnd = -1;
         qLen = -1;
         typed = false;
@@ -101,9 +108,7 @@ public final class TermParser {
             case '$', '?' -> {
                 stopped = in.skip(begin+1, end, VARNAME);
                 if (stopped - begin > 1) {
-                    localBegin = begin;
-                    localEnd = stopped;
-                    flaggedId = 0;
+                    shared = ByteRope.EMPTY;
                     yield Result.VAR;
                 }
                 yield Result.EOF;
@@ -220,14 +225,20 @@ public final class TermParser {
     }
 
     /**
-     * Equivalent to {@link Term#flaggedDictId} of {@link #asTerm()}.
+     * Equivalent to {@link Term#shared()} of {@link #asTerm()}.
      *
-     * @return the {@link Term#flaggedDictId} of {@link #asTerm()}  or 0 if {@link #asTerm()}
+     * @return the {@link Term#shared()} of {@link #asTerm()}  or 0 if {@link #asTerm()}
      *         would raise an exception.
      */
-    public int flaggedId() {
-        if (flaggedId == 0x80000000) postParse();
-        return flaggedId;
+    public SegmentRope shared() {
+        if (localBegin == -1) postParse();
+        return shared;
+    }
+
+   /** Equivalent to {@link Term#sharedSuffixed()} of {@link #asTerm()}. */
+    public boolean sharedSuffixed() {
+        if (localBegin == -1) postParse();
+        return sharedSuffixed;
     }
 
     /** Sets {@code flaggedId}, {@code localBegin} and {@code localEnd} after
@@ -236,60 +247,64 @@ public final class TermParser {
         if (result == null) throw new IllegalStateException("parse() not called");
         switch (in.get(begin)) {
             case '<' -> {
-                long suffixAndId = RopeDict.internIri(in, begin, stopped);
-                flaggedId  = (int)suffixAndId;
-                localBegin = (int)(suffixAndId >>> 32);
+                var s      = SHARED_ROPES.internPrefixOf(in, begin, stopped);
+                shared     = s;
+                sharedSuffixed = false;
+                localBegin = begin + s.len;
                 localEnd   = stopped;
             }
             case '"', '\'' -> {
+                sharedSuffixed = true;
                 if (result == Result.NT) {
                     localBegin = begin;
-                    int id = typed ? RopeDict.internDatatype(in, lexEnd, stopped) : 0;
-                    if (id == 0 || id == DT_langString) {
+                    var sh = typed ? SHARED_ROPES.internDatatype(in, lexEnd, stopped) : null;
+                    if (sh == null || sh == SharedRopes.DT_langString) {
                         localEnd = stopped;
-                        flaggedId = 0;
-                    } else if (id == DT_string) {
+                        shared = ByteRope.EMPTY;
+                    } else if (sh == SharedRopes.DT_string) {
                         localEnd = lexEnd+1;
-                        flaggedId = 0;
+                        shared = ByteRope.EMPTY;
                     } else {
                         localEnd = lexEnd;
-                        flaggedId = 0x80000000 | id;
+                        shared = sh;
                     }
                 } else {
                     if (ntBuf == null) ntBuf = new ByteRope(stopped - begin);
                     toNT();
                     localBegin = 0;
                     if (typed) {
-                        int id = flaggedId;
-                        if (id != 0x80000000) {
+                        var sh = shared;
+                        if (sh.len > 0) {
                             localEnd = ntBuf.len-1;
-                            id &= 0x7fffffff;
                         } else {
-                            long suffixAndId = RopeDict.internLit(ntBuf, 0, ntBuf.len);
-                            localEnd  = (int)(suffixAndId >>> 32);
-                            id = (int)suffixAndId;
+                            sh = SHARED_ROPES.internDatatypeOf(ntBuf, 0, ntBuf.len);
+                            localEnd = ntBuf.len - (sh == null ? 0 : sh.len);
                         }
-                        if (id == DT_string || id == DT_langString) {
+                        if (sh == SharedRopes.DT_string || sh == SharedRopes.DT_langString) {
                             localEnd++; // include closing "
-                            id = 0;
+                            sh = ByteRope.EMPTY;
                         }
-                        flaggedId = id == 0 ? 0 : (id | 0x80000000);
+                        shared = sh;
                     } else {
                         localEnd = ntBuf.len;
-                        flaggedId = 0;
+                        shared = ByteRope.EMPTY;
                     }
                 }
+            }
+            case '?', '$' -> {
+                localBegin = begin;
+                localEnd = stopped;
             }
             default -> {
                 ByteRope buf = ntBuf == null ? ntBuf = new ByteRope(32) : ntBuf.clear();
                 localBegin = 0;
                 switch (ttlKind) {
                     case TTL_KIND_NUMBER  -> buf.append('"').append(in, begin, stopped);
-                    case TTL_KIND_TRUE    -> buf.append( TRUE.local);
-                    case TTL_KIND_FALSE   -> buf.append(FALSE.local);
-                    case TTL_KIND_TYPE    -> buf.append(RDF_TYPE.local);
+                    case TTL_KIND_TRUE    -> buf.append( TRUE.local());
+                    case TTL_KIND_FALSE   -> buf.append(FALSE.local());
+                    case TTL_KIND_TYPE    -> buf.append(RDF_TYPE.local());
                     case TTL_KIND_BNODE   -> {
-                        flaggedId = 0;
+                        shared = ByteRope.EMPTY;
                         localBegin = begin;
                         localEnd = stopped;
                     }
@@ -299,8 +314,9 @@ public final class TermParser {
                         Term term = prefixMap.expand(in, begin, colon, colon + 1);
                         if (term == null)
                             throw new InvalidTermException(in, begin, "Unresolved prefix");
-                        if ((flaggedId = term.flaggedDictId) == 0)
-                            buf.append(term.local, 0, term.local.length-1);
+                        shared = term.shared();
+                        SegmentRope local = term.local();
+                        buf.append(local, 0, local.len-1);
                         unescapePrefixedLocal(buf, colon+1);
                     }
                     default -> throw new IllegalStateException("corrupted");
@@ -312,14 +328,14 @@ public final class TermParser {
     }
 
     /**
-     * Offset into {@link #localBuf()} where the {@link Term#local} will begin if {@link #result()}
+     * Offset into {@link #localBuf()} where the {@link Term#local()} will begin if {@link #result()}
      * was {@link Result#NT} or {@link Result#VAR}. If {@link #result()} was {@link Result#TTL},
      * this will point to the first byte of the TTL string, which may refer to a subsequence of
-     * {@link Term#local} or not even appear in {@link Term#local} (e.g., {@code a}).
+     * {@link Term#local()} or not even appear in {@link Term#local()} (e.g., {@code a}).
      *
      * @return -1 if {@link #result()} is {@code null}, {@link Result#MALFORMED} or
      *         {@link Result#EOF}. Else an absolute index into {@link #localBuf()} that corresponds to
-     *         the index where {@link Term#local} or an TTL term begins.
+     *         the index where {@link Term#local()} or an TTL term begins.
      */
     public int localBegin() {
         if (localBegin == -1) postParse();
@@ -340,34 +356,33 @@ public final class TermParser {
      * get a {@link Term} for the parsed RDF term/var.
      *
      * @return a {@link Term} instance
-     * @throws InvalidTermException if there is no such term/var or it uses a prefix
+     * @throws InvalidTermException if there is no such term/var, or it uses a prefix
      *                              not defined in {@code prefixMap}
      */
     public Term asTerm() {
         if (result == null || !result.isValid()) throw explain();
+        SegmentRope lBuf = localBuf();
+        final SegmentRope sh = shared();
         return switch (in.get(begin)) {
-            case '?', '$', '_' -> Term.valueOf(in, begin, stopped);
-            case '<'           -> Term.prefixed(flaggedId(), in, localBegin, localEnd);
-            case '"', '\''     -> {
-                int flaggedId = flaggedId();
-                if (flaggedId == 0)
-                    yield Term.wrap(localBuf().toArray(localBegin(), localEnd));
-                yield Term.typed(localBuf(), localBegin(), localEnd, flaggedId);
-            }
+            case '?', '$'  -> Term.valueOf(in, begin, stopped);
+            case '<'       -> Term.wrap(sh, in.sub(localBegin, localEnd));
+            case '"', '\'' -> Term.wrap(new ByteRope(lBuf.toArray(localBegin, localEnd)), sh);
             default -> switch (ttlKind) {
                 case TTL_KIND_NUMBER   -> {
-                    if (flaggedId == DT_integer && stopped-begin <= 4)
-                        yield cachedInteger((int)in.parseLong(begin));
-                    yield Term.typed(RopeWrapper.asOpenLitU8(in, begin, stopped), this.flaggedId);
+                    if (sh == DT_integer && localEnd-localBegin <= 4) {
+                        Term term = cachedInteger((int) in.parseLong(begin));
+                        if (term != null)
+                            yield term;
+                    }
+                    var local = new ByteRope(asOpenLitU8(in, begin, stopped));
+                    yield Term.wrap(local, sh);
                 }
                 case TTL_KIND_TRUE     -> TRUE;
                 case TTL_KIND_FALSE    -> FALSE;
                 case TTL_KIND_TYPE     -> RDF_TYPE;
-                case TTL_KIND_BNODE    -> Term.valueOf(in, begin, end);
-                case TTL_KIND_PREFIXED -> {
-                    Rope buf = localBuf();
-                    yield  Term.make(flaggedId, buf.toArray(0, buf.len), 0, buf.len);
-                }
+                case TTL_KIND_PREFIXED -> Term.wrap(sh, new ByteRope(lBuf.toArray(0, lBuf.len)));
+                case TTL_KIND_BNODE    ->
+                        Term.splitAndWrap(new ByteRope(stopped-begin).append(in, begin, stopped));
                 default -> throw new IllegalStateException("corrupted");
             };
         };
@@ -457,7 +472,7 @@ public final class TermParser {
             if (Rope.contains(A_FOLLOW, follow)) {
                 stopped = begin+1;
                 ttlKind = TTL_KIND_TYPE;
-                flaggedId = P_RDF;
+                shared = SharedRopes.P_RDF;
                 return Result.TTL;
             }
             return Result.MALFORMED;
@@ -481,9 +496,10 @@ public final class TermParser {
             if (p < end && in.get(p) == '.') --dot;
             if (p <= end && p > begin && in.get(p-1) == '.') { --p; --dot; }
             stopped = p;
-            if      (exp == 1                           ) flaggedId = 0x80000000|DT_DOUBLE;
-            else if (dot >= 1                           ) flaggedId = 0x80000000|DT_decimal;
-            else if (exp == 0 && expSig == 0 && dot == 0) flaggedId = 0x80000000|DT_integer;
+            sharedSuffixed = true;
+            if      (exp == 1                           ) shared = SharedRopes.DT_DOUBLE;
+            else if (dot >= 1                           ) shared = SharedRopes.DT_decimal;
+            else if (exp == 0 && expSig == 0 && dot == 0) shared = DT_integer;
             else                                          return Result.MALFORMED;
             ttlKind = TTL_KIND_NUMBER;
             return !eager && p == end ? Result.EOF : Result.TTL;
@@ -501,7 +517,8 @@ public final class TermParser {
         if ((i < end && contains(BOOL_FOLLOW, in.get(i))) || (i == end && eager)) {
             stopped = i;
             ttlKind = exFirst == 't' ? TTL_KIND_TRUE : TTL_KIND_FALSE;
-            flaggedId = DT_BOOLEAN | 0x80000000;
+            sharedSuffixed = true;
+            shared = SharedRopes.DT_BOOLEAN;
             return true;
         }
         return false;
@@ -513,7 +530,7 @@ public final class TermParser {
         if (value < cache.length) {
             Term term = cache[pos];
             if (term == null)
-                cache[pos] = term = Term.typed(in, begin, stopped, DT_integer);
+                cache[pos] = term = Term.wrap(new ByteRope(localBuf().toArray(localBegin(), localEnd())), DT_integer);
             return term;
         }
         return null;
@@ -550,7 +567,8 @@ public final class TermParser {
             if (iri == null)
                 throw new InvalidTermException(in.sub(p, stopped), 0, "Unresolved prefix");
             // if iri is not a xsd: or rdf: iri, flaggedId will remain "unset"
-            if ((flaggedId = iri.asKnownDatatypeId() | 0x80000000) == 0x80000000)
+            sharedSuffixed = true;
+            if ((shared = iri.asKnownDatatypeSuff()) == null)
                 esc.append('^').append('^').append(iri);
         } // else: plain string
     }

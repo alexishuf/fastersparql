@@ -3,6 +3,9 @@ package com.github.alexishuf.fastersparql.store.index;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.store.index.dict.Dict;
+import com.github.alexishuf.fastersparql.store.index.triples.Triples;
+import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.hdt.HDT;
 import org.rdfhdt.hdt.hdt.HDTManager;
@@ -17,7 +20,7 @@ import java.nio.file.Path;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
-import static com.github.alexishuf.fastersparql.store.index.Dict.NOT_FOUND;
+import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static java.util.stream.Collectors.joining;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;

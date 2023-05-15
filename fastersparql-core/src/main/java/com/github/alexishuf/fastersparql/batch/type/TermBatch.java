@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -169,6 +170,11 @@ public final class TermBatch extends Batch<TermBatch> {
     @Override public void beginPut() {
         reserve(1, 0);
         beginOffer();
+    }
+
+    @Override
+    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
+        super.putTerm(col, shared, local, localOff, localLen, sharedSuffix);
     }
 
     @Override public void putTerm(int col, Term t) { offerTerm(col, t); }

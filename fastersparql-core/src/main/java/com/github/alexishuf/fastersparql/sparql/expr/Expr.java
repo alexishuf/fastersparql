@@ -11,16 +11,17 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
-import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.of;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static java.util.UUID.randomUUID;
 
 @SuppressWarnings("SpellCheckingInspection")
 public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
@@ -434,13 +435,19 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             Term term = in.eval(b);
             return switch (term.type()) {
                 case LIT -> {
-                    if (term.datatypeId() == RopeDict.DT_string)
+                    if (term.datatypeSuff() == SharedRopes.DT_string)
                         yield term;
-                    Rope lexical = term.escapedLexical();
-                    assert lexical != null;
-                    yield Term.plainString(lexical);
+                    int endLex = term.endLex();
+                    ByteRope tmp = new ByteRope(endLex + 1).append(term.first(), 0, endLex).append('"');
+                    yield new Term(EMPTY, tmp, true);
                 }
-                case IRI -> Term.plainString(term.sub(1, term.len()-1));
+                case IRI -> {
+                    ByteRope tmp = new ByteRope(term.toArray(0, term.len));
+                    byte[] u8 = tmp.u8();
+                    u8[0] = '"';
+                    u8[term.len-1] = '"';
+                    yield new Term(EMPTY, tmp, true);
+                }
                 default -> throw new InvalidExprTypeException(in, term, "literal/IRI");
             };
         }
@@ -455,7 +462,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public Term eval(Binding binding) {
             Term term = Expr.requireLiteral(in, binding);
             Rope lang = term.lang();
-            return lang == null ? EMPTY_STRING : Term.plainString(lang);
+            if (lang == null) return EMPTY_STRING;
+            return Term.wrap(new ByteRope().append('"').append(lang).append('"'), null);
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -512,7 +520,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             Term value = in.eval(binding);
             return switch (value.type()) {
                 case IRI -> value;
-                case LIT -> Term.iri(value.escapedLexical());
+                case LIT -> {
+                    int endLex = value.endLex();
+                    var tmp = new ByteRope(endLex + 1);
+                    tmp.append('<').append(value.first(), 1, endLex).append('>');
+                    yield new Term(null, tmp, false);
+                }
                 default -> throw new InvalidExprTypeException(in, value, "IRI or string literal");
             };
         }
@@ -524,8 +537,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
     class Rand extends Supplier {
         @Override public Term eval(Binding ignored) {
-            byte[] u8 = ("\"" + Math.random()).getBytes(UTF_8);
-            return typed(u8, 0, u8.length, RopeDict.DT_DOUBLE);
+            return Term.wrap(new ByteRope().append('"').append(Math.random()), DT_DOUBLE);
         }
     }
 
@@ -575,12 +587,16 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             }
             if (first == null)
                 return EMPTY_STRING;
-            int dt = first.datatypeId();
-            if (dt == RopeDict.DT_langString) {
+            SegmentRope dt = first.datatypeSuff();
+            if (dt == DT_langString) {
                 result.append('"').append('@').append(requireNonNull(first.lang()));
-                return Term.wrap(result);
+                return Term.splitAndWrap(result);
             }
-            return Term.typed(result, dt);
+            if (dt == null || dt == DT_string) {
+                dt = null;
+                result.append('"');
+            }
+            return new Term(dt, result, true);
         }
         @Override public Expr bound(Binding binding) {
             Expr[] b = boundArgs(binding);
@@ -591,7 +607,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strlen extends UnaryFunction {
         public Strlen(Expr in) { super(in); }
         @Override public Term eval(Binding binding) {
-            return Term.typed(Expr.requireLexical(in, binding), DT_integer);
+            Term term = in.eval(binding);
+            int endLex = term.endLex();
+            if (endLex < 0) throw new InvalidExprTypeException(in, term, "literal");
+            return Term.wrap(new ByteRope().append('"').append(endLex-1), DT_integer);
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -796,15 +815,18 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
     }
 
+
     class Uuid extends Supplier {
+        private static final SegmentRope UUID_IRI_PREF = new ByteRope("<urn:uuid:");
+
         @Override public Term eval(Binding binding) {
-            return Term.wrap(("<urn:uuid:" + UUID.randomUUID() + ">").getBytes(UTF_8));
+            return Term.wrap(UUID_IRI_PREF, new ByteRope(36+1).append(randomUUID()).append('>'));
         }
     }
 
     class Struuid extends Supplier {
         @Override public Term eval(Binding binding) {
-            return Term.wrap(("\"" + UUID.randomUUID() + '"').getBytes(UTF_8));
+            return Term.wrap(new ByteRope().append('"').append(randomUUID()).append('"'), null);
         }
     }
 
@@ -852,7 +874,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strlang extends BinaryFunction {
         public Strlang(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Binding b) {
-            return Term.lang(requireLexical(l, b), requireLexical(r, b));
+            Rope lex = requireLexical(l, b);
+            Rope tag = requireLexical(r, b);
+            var nt = new ByteRope(lex.len+3+tag.len).append('"').append(lex).append('"')
+                                                    .append('@').append(tag);
+            return Term.wrap(nt, null);
         }
         @Override public Expr bound(Binding binding) {
             Expr bl = l.bound(binding), br = r.bound(binding);
@@ -868,7 +894,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return Term.valueOf(of(ByteRope.DQ, requireLexical(l, b),
                                 isIRI ? ByteRope.DT_MID : ByteRope.DT_MID_LT,
                                 isIRI ? dtTerm : dtTerm.escapedLexical(),
-                                isIRI ? ByteRope.EMPTY : ByteRope.GT));
+                                isIRI ? EMPTY : ByteRope.GT));
         }
         @Override public Expr bound(Binding binding) {
             Expr bl = l.bound(binding), br = r.bound(binding);

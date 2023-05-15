@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.List;
 
@@ -11,8 +12,12 @@ import static com.github.alexishuf.fastersparql.util.Results.*;
 
 class AskSelectorTest extends SelectorTestBase {
 
-    @Override protected Spec createSpec() {
-        return Spec.of(Selector.TYPE, AskSelector.NAME);
+    @Override protected Spec createSpec(File refDir) {
+        return Spec.of(Spec.PATHS_RELATIVE_TO, refDir,
+                Selector.TYPE, AskSelector.NAME,
+                Selector.STATE, Spec.of(
+                        Selector.STATE_INIT_SAVE, true,
+                        AskSelector.STATE_FILE, absStateFileOrDir));
     }
 
     @Test void test() throws IOException {
@@ -26,7 +31,7 @@ class AskSelectorTest extends SelectorTestBase {
         client.answerWith(parseTP("ex:t   exns:p1 ?x").toAsk(),      negativeResult());
         client.answerWith(parseTP("?s     ex:p2   ?o").toAsk(),      negativeResult());
 
-        testTPs(saveAndLoad(new AskSelector(client, spec)),
+        testTPs(saveAndReload(new AskSelector(client, spec)),
                 List.of(
                         "ex:s   a       exns:A1", // queries
                         "?s     a       exns:A1", // answer from cache

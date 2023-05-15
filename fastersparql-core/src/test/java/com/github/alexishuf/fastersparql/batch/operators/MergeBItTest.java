@@ -357,8 +357,8 @@ class MergeBItTest extends AbstractMergeBItTest {
 
                     for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
                         for (int r = 0; r < b.rows; r++) {
-                            byte[] local = Objects.requireNonNull(b.get(r, 0)).local;
-                            consumed[nConsumed++] = local[1] - '0';
+                            var local = Objects.requireNonNull(b.get(r, 0)).local();
+                            consumed[nConsumed++] = local.get(1) - '0';
                         }
                     }
                     boolean s1running = s1Feeder.await(10_000_000);

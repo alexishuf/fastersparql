@@ -2,11 +2,14 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.lang.foreign.MemorySegment;
+
 @SuppressWarnings("unchecked")
 public interface ByteSink<B extends ByteSink<B>> {
     boolean isEmpty();
     int len();
 
+    @This B append(MemorySegment segment, long offset, int len);
     @This B append(byte[] arr, int begin, int len);
     default @This B append(byte[] arr) { return append(arr, 0, arr.length); }
     default @This B append(char c) {

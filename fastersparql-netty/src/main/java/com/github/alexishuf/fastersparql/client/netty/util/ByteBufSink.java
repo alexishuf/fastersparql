@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
@@ -11,7 +11,6 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 
-import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink> {
@@ -79,33 +78,35 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
 
     @Override public @This ByteBufSink append(Rope rope, int begin, int end) {
         int len = end - begin;
-        bb.ensureWritable(len);
-        if (rope instanceof SegmentRope sr) {
-            long physBegin = sr.offset() + begin;
-            byte[] u8 = sr.backingArray();
-            if (u8 == null) {
-                int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
-                MemorySegment dst = MemorySegment.ofBuffer(bb.internalNioBuffer(wIdx, free));
-                MemorySegment.copy(sr.segment(), physBegin, dst, 0, len);
-            } else {
-                bb.writeBytes(u8, (int)physBegin, len);
-            }
-        } else if (rope instanceof Term t) {
-            var shared = RopeDict.getTolerant(t.flaggedDictId).u8();
-            var fst = t.flaggedDictId < 0 ? t.local :  shared;
-            var snd = t.flaggedDictId < 0 ?  shared : t.local;
-            if (begin < fst.length) {
-                bb.writeBytes(fst, begin, min(fst.length, end)-begin);
-                begin = 0;
-            } else {
-                begin -= fst.length;
-            }
-            end -= fst.length;
-            if (begin < end)
-                bb.writeBytes(snd, begin, end-begin);
+        if (rope == null || len <= 0) {
+            return this;
+        } else if (rope instanceof SegmentRope sr) {
+            append(sr.segment, sr.offset+begin, len);
         } else {
-            throw new UnsupportedOperationException();
+            MemorySegment fst, snd;
+            long fstOff, sndOff;
+            int fstLen;
+            if (rope instanceof TwoSegmentRope t) {
+                fst = t.fst; fstOff = t.fstOff; fstLen = t.fstLen;
+                snd = t.snd;
+            } else if (rope instanceof Term t) {
+                SegmentRope fr = t.first();
+                fst = fr.segment; fstOff = fr.offset; fstLen = fr.len;
+                snd = t.second().segment;
+            } else {
+                throw new UnsupportedOperationException("Unsupported Rope type: "+rope.getClass());
+            }
+            fstOff += begin;
+            sndOff = Math.max(0, begin-fstLen);
+            fstLen = Math.max(0, Math.min(fstLen, end)-begin);
+            append(fst, fstOff, fstLen);
+            append(snd, sndOff, len-fstLen);
         }
+        return this;
+    }
+
+    @Override public @This ByteBufSink append(MemorySegment segment, long offset, int len) {
+        NettyRopeUtils.write(bb, segment, offset, len);
         return this;
     }
 

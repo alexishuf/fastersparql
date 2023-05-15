@@ -1,21 +1,13 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.foreign.ValueLayout;
-import java.nio.ByteOrder;
 import java.util.*;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_UTF8;
 import static java.lang.System.arraycopy;
-import static java.lang.foreign.ValueLayout.JAVA_INT;
-import static java.lang.foreign.ValueLayout.JAVA_LONG;
-import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused")
@@ -77,18 +69,13 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * {@link #backingArrayOffset()}{@code + }{@link #len()} correspond to the UTF-8 bytes
      * of {@code this} rope.
      */
-    public byte @Nullable[] backingArray() {
-        if (this instanceof Term t && t.flaggedDictId == 0) return t.local;
-        return null;
-    }
+    public byte @Nullable[] backingArray() { return null; }
 
     /**
      * If {@link #backingArray()} is not null, this is the index into it where the
      * {@link #len()} bytes of {@code this} rope are stored.
      */
-    public int backingArrayOffset() {
-        return 0;
-    }
+    public int backingArrayOffset() { return 0; }
 
     /**
      * Get a {@code byte[]} with {@code length == end-begin} containing bytes from {@code begin} to
@@ -109,29 +96,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @param offset {@code get(begin)} will be written to {@code dest[offset]} and so on.
      * @return {@code dest};
      */
-    public byte[] copy(int begin, int end, byte[] dest, int offset) {
-        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
-        int len = end - begin;
-        if (this instanceof Term t) {
-            int fId = t.flaggedDictId;
-            if (fId == 0) {
-                arraycopy(t.local, begin, dest, offset, len);
-            } else {
-                byte[] f = fId < 0 ? t.local : RopeDict.get(fId&0x7fffffff).u8();
-                int written = 0;
-                if (begin < f.length)
-                    arraycopy(f, begin, dest, offset, written += Math.min(end, f.length)-begin);
-                if (end > f.length) {
-                    byte[] s = fId < 0 ? RopeDict.get(fId&0x7fffffff).u8() : t.local;
-                    int srcPos = Math.max(begin, f.length) - f.length;
-                    arraycopy(s, srcPos, dest, offset+written, len - written);
-                }
-            }
-        } else {
-            while (begin < end) dest[offset++] = get(begin++);
-        }
-        return dest;
-    }
+    public abstract byte[] copy(int begin, int end, byte[] dest, int offset);
 
     /** Equivalent to {@code out.write(toArray(0, len())); return len}. */
     public int write(OutputStream out) throws IOException {
@@ -151,29 +116,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return a {@link Rope} {@code sub} with {@code len()==end-begin} where
      *         {@code sub.get(i) == this.get(begin+i)}.
      */
-    public Rope sub(int begin, int end) {
-        if (!(this instanceof Term t)) throw new UnsupportedOperationException();
-        if (begin < 0 || end > len || end < begin) raiseBadRange(begin, end);
-        if (begin == 0 && end == len) return this;
-        int rLen = end-begin;
-        if (t.flaggedDictId == 0) {
-            return new ByteRope(t.local, begin, rLen);
-        } else if (t.flaggedDictId > 0) {
-            byte[] prefix = RopeDict.get(t.flaggedDictId).u8();
-            if (begin >= prefix.length)
-                return new ByteRope(t.local, begin - prefix.length, rLen);
-            else if (end <= prefix.length)
-                return new ByteRope(prefix, begin, rLen);
-        } else {
-            byte[] suffix = RopeDict.get(t.flaggedDictId & 0x7fffffff).u8();
-            if (end <= t.local.length)
-                return new ByteRope(t.local, begin, rLen);
-            else if (begin >= t.local.length)
-                return new ByteRope(suffix, begin - t.local.length, rLen);
-        }
-        // substring crosses shared/local segments
-        return new ByteRope(toArray(begin, end));
-    }
+    public abstract Rope sub(int begin, int end);
 
     public static List<Rope> ropeList(Object... items) {
         ArrayList<Rope> ropes = new ArrayList<>(items.length);
@@ -529,25 +472,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Similar to {@link Rope#skipUntil(int, int, char, char)} but finds the
      * <strong>LAST</strong> {@code i}.
      */
-    public int skipUntilLast(int begin, int end, char c0, char c1) {
-        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
-        if (!(this instanceof Term t))
-            throw new UnsupportedOperationException();
-        byte[] snd = t.flaggedDictId >= 0 ? t.local : RopeDict.get(t.flaggedDictId&0x7fffffff).u8();
-        byte[] fst = t.flaggedDictId <  0 ? t.local
-                   : (t.flaggedDictId == 0  ? EMPTY_UTF8 : RopeDict.get(t.flaggedDictId).u8());
-        if (end > fst.length) {
-            int i = Math.min(end, len) - 1 - fst.length;
-            for (byte c; i >= 0 && (c = snd[i]) != c0 && c != c1; ) --i;
-            if (i >= 0) return i + fst.length;
-        }
-        if (begin < fst.length) {
-            int i = Math.min(end, fst.length) - 1;
-            for (byte c; i >= 0 && (c = fst[i]) != c0 && c != c1; ) --i;
-            if (i >= 0) return i;
-        }
-        return end;
-    }
+    public abstract int skipUntilLast(int begin, int end, char c0, char c1);
 
     /**
      * Similar to {@link Rope#skipUntil(int, int, byte[])} but finds the
@@ -600,25 +525,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      *         {@code i < Math.min(len(), end)} satisfying the criteria was found.
      * @throws IllegalArgumentException if {@code begin < 0}.
      */
-    public int skip(int begin, int end, int[] alphabet) {
-        if (!(this instanceof Term t))
-            throw new UnsupportedOperationException();
-        if (begin < 0 || end > len || end < begin)
-            raiseBadRange(begin, end);
-        byte[] fst = t.flaggedDictId > 0 ? RopeDict.get(t.flaggedDictId).u8() : t.local;
-        byte[] snd = t.flaggedDictId < 0 ? RopeDict.get(t.flaggedDictId&0x7fffffff).u8()
-                   : (t.flaggedDictId == 0 ? EMPTY.u8() :  t.local);
-        if (begin < fst.length) {
-            int physEnd = Math.min(end, fst.length);
-            int i = RopeSupport.skip(fst, begin, physEnd, alphabet);
-            if (i != physEnd) return i;
-        }
-        if (end > fst.length) {
-            int physBegin = Math.max(0, begin-fst.length);
-            return RopeSupport.skip(snd, physBegin, end-fst.length, alphabet)+fst.length;
-        }
-        return end;
-    }
+    public abstract int skip(int begin, int end, int[] alphabet);
 
     /** Equivalent to {@code skip(begin, end, Rope.WS)}. */
     public int skipWS(int begin, int end) {
@@ -696,15 +603,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     /** Whether {@code sub(pos, pos+(end-begin)).equals(rope.sub(begin, end))}. */
-    public boolean has(int pos, Rope rope, int begin, int end) {
-        int rLen = end - begin;
-        if (pos < 0) throw new IndexOutOfBoundsException(pos);
-        if (pos+rLen > this.len) return false;
-        while (begin < end) {
-            if (get(pos++) != rope.get(begin++)) return false;
-        }
-        return true;
-    }
+    public abstract boolean has(int pos, Rope rope, int begin, int end);
 
     /** Whether {@code sub(position, position+rope.len()).equals(rope.sub(begin, end))}. */
     public final  boolean has(int position, Rope rope) {
@@ -723,12 +622,6 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return true;
     }
 
-    private static final boolean IS_LE = ByteOrder.nativeOrder()== LITTLE_ENDIAN;
-    private static final long LSB_MASK_L = 0x0101010101010101L;
-    private static final int  LSB_MASK_I = 0x01010101;
-    private static final ValueLayout.OfLong LONG_UNALIGNED = JAVA_LONG.withBitAlignment(8);
-    private static final ValueLayout.OfInt INT_UNALIGNED = JAVA_INT.withBitAlignment(8);
-
     /**
      * Compute a hash value with {@code Math.min(32, end-begin)} bits where bit
      * {@code i} is {@code get(begin+i)&0x1}.
@@ -746,6 +639,22 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
             h |= (get(begin + bit) & 1) << bit++;
         return h;
     }
+
+    public static final int FNV_PRIME = 0x01000193;
+    public static final int FNV_BASIS = 0x811C9DC5;
+
+    /**
+     * Compute a FNV hash using at most 16 bytes in the ranges {@code [begin, begin+4)} and
+     * {@code [end-16, end)}. If those ranges overlap, the intersection bytes will be hashed
+     * only once. If one of those ranges overflows or underflows the {@code [begin, end)} range,
+     * the out of range bytes will not be accessed.
+     *
+     * @param begin the index of the first byte to be hashed.
+     * @param end no byte at or after this index will be hashed.
+     * @return the hash value.
+     */
+    public abstract int fastHash(int begin, int end);
+
 
     private Rope convertCase(int[] until, int offset) {
         int len = len();
@@ -844,10 +753,9 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     @Override public int hashCode() {
-        int len = len();
-        int h = 0;
+        int h = FNV_BASIS;
         for (int i = 0; i < len; i++)
-            h = 31*h + (get(i)&0xff);
+            h = FNV_PRIME * (h ^ (0xff&get(i)));
         return h;
     }
 

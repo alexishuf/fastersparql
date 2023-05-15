@@ -3,8 +3,6 @@ package com.github.alexishuf.fastersparql.sparql.parser;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeWrapper;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -57,12 +55,24 @@ public final class PrefixMap {
         if (iri instanceof Term t) {
             if (t.type() != Term.Type.IRI)
                 throw new IllegalArgumentException("iri is a non-IRI Term");
+        } else if (iri.len == 0) {
+            iri = Term.EMPTY_IRI;
         } else {
-            iri = Term.valueOf(RopeWrapper.forIri(iri).toRope(iri));
+            if (iri.get(0) != '<')
+                throw new IllegalArgumentException("iri prefix does not start with <");
+            int end = iri.len - (iri.get(iri.len-1) == '>' ? 1 : 0);
+            var prefix = new ByteRope(end).append(iri, 0, end);
+            iri = Term.wrap(prefix, Term.CLOSE_IRI);
         }
         map.put(new ByteRope(name), iri);
     }
 
+    /** Analogous to {@link #add(Rope, Rope)} but will not copy {@code name} nor {@code iri}. */
+    public void addRef(ByteRope name, Term iri) {
+        if (iri.type() != Term.Type.IRI)
+            throw new IllegalArgumentException("iri is a non-IRI Term");
+        map.put(name, iri);
+    }
 
     /** Add all prefixes in other to {@code this}, overwriting existing mappings. */
     public void addAll(PrefixMap other) { map.putAll(other.map); }
@@ -87,22 +97,12 @@ public final class PrefixMap {
      */
     public @Nullable Term expand(Rope str, int begin, int colonIdx, int localNameEnd) {
         Term prefix = (Term) map.get(str, begin, colonIdx);
-        if (prefix == null || localNameEnd == colonIdx+1) return prefix;
+        int lnBegin = colonIdx + 1;
+        if (prefix == null || localNameEnd == lnBegin) return prefix;
 
-        int id = prefix.flaggedDictId;
-        if (id == 0)
-            return expandNoId(prefix, str,  colonIdx, localNameEnd);
-        if (str instanceof SegmentRope sr)
-            return Term.prefixed(id, sr, colonIdx+1, localNameEnd);
-        return Term.prefixed(id, str.toArray(colonIdx+1, localNameEnd));
-    }
-
-    private Term expandNoId(Term prefix, Rope str, int colonIdx, int localNameEnd) {
-        int prefixEnd = prefix.len() - 1, localOff = colonIdx + 1;
-        return Term.wrap(new ByteRope(prefixEnd + localNameEnd - localOff + 1)
-                .append(prefix, 0, prefixEnd)
-                .append(str, localOff, localNameEnd)
-                .append('>'));
+        var local = new ByteRope(localNameEnd-lnBegin)
+                .append(str, lnBegin, localNameEnd).append('>');
+        return Term.wrap(prefix.shared(), local);
     }
 
     /**

@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.batch;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,7 +14,7 @@ public class BItCTest {
     static {
         Term[] ints = new Term[1000];
         for (int i = 0; i < ints.length; i++)
-            ints[i] = Term.typed(i, RopeDict.DT_integer);
+            ints[i] = Term.typed(i, SharedRopes.DT_integer);
         INTS = ints;
     }
 
@@ -35,7 +35,7 @@ public class BItCTest {
         for (TermBatch b : batches) {
             consumedCapacity += b.rows;
             for (int r = 0; r < b.rows; r++)
-                resultBytes += requireNonNull(b.get(r, 0)).local.length-1;
+                resultBytes += requireNonNull(b.get(r, 0)).local().len-1;
         }
         resultBytes += consumedCapacity; // one , per item (including last)
         this.resultBytes = resultBytes;
@@ -64,9 +64,9 @@ public class BItCTest {
         int value = 0;
         if (term == null)
             return -1;
-        byte[] local = term.local;
-        for (int mul = 1, i = local.length-1; i > 0; --i, mul *= 10)
-            value += mul*(local[i]-'0');
+        var local = term.local();
+        for (int mul = 1, i = local.len-1; i > 0; --i, mul *= 10)
+            value += mul*(local.get(i)-'0');
         return value;
     }
 

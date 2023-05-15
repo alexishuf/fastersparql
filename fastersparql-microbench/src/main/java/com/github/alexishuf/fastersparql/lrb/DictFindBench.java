@@ -1,13 +1,15 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.store.index.*;
+import com.github.alexishuf.fastersparql.store.index.HdtConverter;
+import com.github.alexishuf.fastersparql.store.index.dict.*;
 import com.github.alexishuf.fastersparql.util.IOUtils;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.openjdk.jmh.annotations.*;
-import org.openjdk.jmh.infra.Blackhole;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
 import org.rdfhdt.hdt.hdt.HDT;

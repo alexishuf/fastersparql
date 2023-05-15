@@ -11,7 +11,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
-import static com.github.alexishuf.fastersparql.model.rope.RopeDict.DT_integer;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
