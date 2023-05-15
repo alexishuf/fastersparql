@@ -62,7 +62,7 @@ public class LocalityStandaloneDict extends Dict {
             if (rope.len == 0) return emptyId;
             long id = 1;
             if (UNSAFE != null && rope instanceof SegmentRope s) {
-                byte[] rBase = (byte[]) s.segment.array().orElse(null);
+                byte[] rBase = s.utf8;
                 long rOff = s.segment.address() + s.offset;
                 int rLen = s.len;
                 while (id <= nStrings) {
@@ -90,8 +90,6 @@ public class LocalityStandaloneDict extends Dict {
             if (UNSAFE != null) {
                 long id = 1;
                 SegmentRope termFst = term.first(), termSnd = term.second();
-                byte[] termFstBase = (byte[])termFst.segment.array().orElse(null);
-                byte[] termSndBase = (byte[])termSnd.segment.array().orElse(null);
                 long termFstOff = termFst.segment.address() + termFst.offset;
                 long termSndOff = termSnd.segment.address() + termSnd.offset;
                 int termFstLen = termFst.len, termSndLen = termSnd.len;
@@ -99,8 +97,8 @@ public class LocalityStandaloneDict extends Dict {
                     long off = readOffUnsafe(id - 1);
                     int len = (int) (readOffUnsafe(id) - off);
                     int diff = compare1_2(null, valBase + off, len,
-                            termFstBase, termFstOff, termFstLen,
-                            termSndBase, termSndOff, termSndLen);
+                                          termFst.utf8, termFstOff, termFstLen,
+                                          termSnd.utf8, termSndOff, termSndLen);
                     if (diff == 0) return id;
                     id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
                 }

@@ -45,14 +45,14 @@ public class SegmentRope extends PlainRope {
     }
 
     public long offset;
-    protected byte @Nullable [] utf8;
+    public byte @Nullable [] utf8;
     public MemorySegment segment;
 
     public SegmentRope() {
         this(ByteRope.EMPTY_SEGMENT, ByteRope.EMPTY_UTF8, 0, 0);
     }
     public SegmentRope(ByteBuffer buffer) {
-        this(MemorySegment.ofBuffer(buffer), 0, buffer.remaining());
+        this(MemorySegment.ofBuffer(buffer), null, 0, buffer.remaining());
     }
 
     public SegmentRope(MemorySegment segment, byte @Nullable[] utf8, long offset, int len) {
@@ -63,14 +63,14 @@ public class SegmentRope extends PlainRope {
             throw new IndexOutOfBoundsException("offset+len > segment.byteSize");
         this.offset = offset;
         if (utf8 == null)
-            this.utf8 = len == 0 ? ByteRope.EMPTY_UTF8 : (byte[]) segment.array().orElse(null);
+            this.utf8 = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
         else
             this.utf8 = utf8;
         this.segment = segment;
     }
 
     public SegmentRope(MemorySegment segment, long offset, int len) {
-        this(segment, len == 0 ? ByteRope.EMPTY_UTF8 : null, offset, len);
+        this(segment, null, offset, len);
     }
 
     public SegmentRope(byte @NonNull [] utf8, int offset, int len) {
@@ -123,14 +123,14 @@ public class SegmentRope extends PlainRope {
 
     public void wrapSegment(MemorySegment segment, long offset, int len) {
         this.segment = segment;
-        this.utf8 = null;
+        this.utf8 = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
         this.offset = offset;
         this.len = len;
     }
 
     public void wrapBuffer(ByteBuffer buffer) {
         segment = MemorySegment.ofBuffer(buffer);
-        utf8 = null;
+        utf8 = buffer.isDirect() ? null : (byte[]) segment.array().orElse(null);
         offset = 0;
         long size = segment.byteSize();
         if (size > Integer.MAX_VALUE) throw new IllegalArgumentException("buffer is too big");
@@ -345,8 +345,8 @@ public class SegmentRope extends PlainRope {
             for (; begin < end && left.get(JAVA_BYTE, pos) == right.get(JAVA_BYTE, begin); ++begin)
                 ++pos;
         } else {
-            Object lBase = left.array().orElse(null);
-            Object rBase = right.array().orElse(null);
+            Object lBase =  left.isNative() ? null :  left.array().orElse(null);
+            Object rBase = right.isNative() ? null : right.array().orElse(null);
             pos += left.address() + (lBase == null ? 0 : U8_BASE);
             begin += right.address() + (rBase == null ? 0 : U8_BASE);
             end = begin + rLen;
@@ -431,7 +431,6 @@ public class SegmentRope extends PlainRope {
         int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
         long phys = offset+begin;
         if (U != null) {
-//            byte[] base = (byte[]) segment.array().orElse(null);
             byte[] base = utf8;
             phys += segment.address() + (base == null ? 0 : U8_BASE);
             h = hashCode(FNV_BASIS, base, phys, nFst);
@@ -455,7 +454,6 @@ public class SegmentRope extends PlainRope {
 //            byte[] base = (byte[])seg.array().orElse(null);
 //            return hashCode(h, base, off+seg.address() + (base == null ? 0 : U8_BASE), len);
 //        }
-
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff&seg.get(JAVA_BYTE, off+i)));
         return h;
@@ -658,7 +656,8 @@ public class SegmentRope extends PlainRope {
 
 
     public final int compareTo(SegmentRope o) {
-        return compare1_1(segment, offset, len, o.segment, o.offset, o.len);
+        return compare1_1(utf8, segment.address()+offset, len,
+                          o.utf8, o.segment.address()+o.offset, o.len);
     }
 
     public final int compareTo(TwoSegmentRope o) {
@@ -667,7 +666,8 @@ public class SegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
-        return compare1_1(segment, offset, len, o.segment, o.offset+begin, end-begin);
+        return compare1_1(utf8, segment.address()+offset, len,
+                o.utf8, o.segment.address()+o.offset+begin, end-begin);
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {

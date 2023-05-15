@@ -119,7 +119,7 @@ public final class SortedCompositeDict extends Dict {
         private long find(SegmentRope b64, PlainRope local) {
             long lo = 0, hi = nStrings-1;
             if (UNSAFE != null && local instanceof SegmentRope s) {
-                byte[] lBase = (byte[]) s.segment.array().orElse(null);
+                byte[] lBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
                 long lOff = s.segment.address() + s.offset;
                 int lLen = local.len;
                 while (lo <= hi) {
@@ -138,7 +138,7 @@ public final class SortedCompositeDict extends Dict {
                     long mid = ((lo + hi) >>> 1);
                     long off = readOffUnsafe(mid);
                     int len = (int) (readOffUnsafe(mid+1) - off);
-                    tmp.wrapSegment(seg, off, len);
+                    tmp.slice(off, len);
                     int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
                     if (diff == 0)
                         diff = local.compareTo(tmp, b64.len, len);

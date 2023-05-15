@@ -37,7 +37,7 @@ public final class SortedStandaloneDict extends Dict {
             if (UNSAFE == null || !(rope instanceof SegmentRope s))
                 return safeFind(rope);
             long lo = 0, hi = nStrings-1;
-            byte[] rBase = (byte[]) s.segment.array().orElse(null);
+            byte[] rBase = s.utf8;
             long rOff = s.segment.address() + s.offset;
             int rLen = rope.len;
             while (lo <= hi) {
@@ -73,8 +73,6 @@ public final class SortedStandaloneDict extends Dict {
                 return safeFind(term);
             long lo = 0, hi = nStrings-1;
             SegmentRope termFst = term.first(), termSnd = term.second();
-            byte[] termFstBase = (byte[]) termFst.segment.array().orElse(null);
-            byte[] termSndBase = (byte[]) termSnd.segment.array().orElse(null);
             long termFstOff = termFst.segment.address()+termFst.offset;
             long termSndOff = termSnd.segment.address()+termSnd.offset;
             int termFstLen = termFst.len, termSndLen = termSnd.len;
@@ -83,8 +81,8 @@ public final class SortedStandaloneDict extends Dict {
                 long off = readOffUnsafe(mid);
                 int len = (int)(readOffUnsafe(mid+1) - off);
                 int diff = compare1_2(null, valBase+off, len,
-                                      termFstBase, termFstOff, termFstLen,
-                                      termSndBase, termSndOff, termSndLen);
+                                      termFst.utf8, termFstOff, termFstLen,
+                                      termSnd.utf8, termSndOff, termSndLen);
                 if      (diff > 0) hi   = mid - 1;
                 else if (diff < 0) lo   = mid + 1;
                 else               return mid + Dict.MIN_ID;

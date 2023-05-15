@@ -128,7 +128,7 @@ public class LocalityCompositeDict extends Dict {
         private long find(int flShId, PlainRope local) {
             long id = 1;
             if (local instanceof SegmentRope s && UNSAFE != null) {
-                byte[] rBase = (byte[]) s.segment.array().orElse(null);
+                byte[] rBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
                 long rAddr = s.segment.address() + s.offset;
                 while (id <= nStrings) {
                     long off = readOffUnsafe(id - 1);

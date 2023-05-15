@@ -32,7 +32,7 @@ public class NettyRopeUtils {
     public static ByteBuf write(ByteBuf bb, MemorySegment segment, long off, int len) {
         if (len <= 0) return bb;
         bb.ensureWritable(len);
-        byte[] u8 = (byte[]) segment.array().orElse(null);
+        byte[] u8 = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
         if (u8 == null) {
             int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
             MemorySegment.copy(segment, off,
