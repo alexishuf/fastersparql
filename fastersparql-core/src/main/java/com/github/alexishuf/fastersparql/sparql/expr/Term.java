@@ -1023,10 +1023,10 @@ public final class Term extends Rope implements Expr {
     /** Index of closing {@code "} if this is a literal, else {@code -1} */
     public int endLex() {
         if (type() != Type.LIT) return -1;
-        int endLex = cachedEndLex;
-        if (endLex == -1 || endLex == 0) {
+        int endLex = 0xff&cachedEndLex;
+        if (endLex == 0) {
             endLex = reverseSkip(1, len, UNTIL_DQ);
-            cachedEndLex = (byte)Math.min(endLex, 255);
+            cachedEndLex = endLex > 0xff ? 0 : (byte)endLex;
         }
         return endLex;
     }
