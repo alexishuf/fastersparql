@@ -217,8 +217,75 @@ public class SharedRopes {
     public SegmentRope internDatatype(PlainRope r, int begin, int end) {
         return intern(r, begin, end, SKIP_INTERNED_DTYPE_BEGIN);
     }
+
     /** Statically-bound variant of {@link #internDatatype(PlainRope, int, int)} */
     public SegmentRope internDatatype(SegmentRope r, int begin, int end) {
+        int len = end - begin;
+        if (len > 38 && r.get(begin+36) == '#') {
+            //"^^<http://www.w3.org/2001/XMLSchema#...>
+            //0123                       27        37
+            byte c1 = r.get(begin+38);
+            SegmentRope cand = switch(r.get(begin+37)) {
+                case 'a' -> DT_anyURI;
+                case 'b' -> switch (c1) {
+                    case 'a' -> DT_base64Binary;
+                    case 'o' -> DT_BOOLEAN;
+                    case 'y' -> DT_BYTE;
+                    default -> null;
+                };
+                case 'd' -> switch (c1) {
+                    case 'a' -> len > 37+5 /*date>*/ ? DT_dateTime : DT_date;
+                    case 'e' -> DT_decimal;
+                    case 'o' -> DT_DOUBLE;
+                    case 'u' -> DT_duration;
+                    default -> null;
+                };
+                case 'f' -> DT_FLOAT;
+                case 'g' -> switch (c1) {
+                    case 'd' -> DT_gDay;
+                    case 'm' -> len > 37+7 /*gMonth>*/ ? DT_gMonthDay : DT_gMonth;
+                    case 'y' -> len > 37+6 /*gYear>*/ ? DT_gYearMonth : DT_gYear;
+                    default -> null;
+                };
+                case 'h' -> DT_hexBinary;
+                case 'i' -> len > 37+4 /*int>*/ ? DT_integer : DT_INT;
+                case 'l' -> switch (c1) {
+                    case 'a' -> DT_language;
+                    case 'o' -> DT_LONG;
+                    default -> null;
+                };
+                case 'n' -> switch (c1) {
+                    case 'e' -> DT_negativeInteger;
+                    case 'o' -> switch (len > 37+3 ? r.get(begin+37+3) : 0) {
+                        case 'N' -> DT_nonNegativeInteger;
+                        case 'P' -> DT_nonPositiveInteger;
+                        default -> null;
+                    };
+                    default -> null;
+                };
+                case 'p' -> DT_positiveInteger;
+                case 's' -> switch (c1) {
+                    case 'h' -> DT_SHORT;
+                    case 't' -> DT_string;
+                    default -> null;
+                };
+                case 't' -> switch (c1) {
+                    case 'i' -> DT_time;
+                    case 'o' -> DT_token;
+                    default -> null;
+                };
+                case 'u' -> switch (len > 37+8 ? r.get(begin+37+8) : 0) {
+                    case 'B' -> DT_unsignedByte;
+                    case 'I' -> DT_unsignedInt;
+                    case 'L' -> DT_unsignedLong;
+                    case 'S' -> DT_unsignedShort;
+                    default -> null;
+                };
+                default -> null;
+            };
+            if (cand != null && cand.len == len && cand.has(0, r, begin, end))
+                return cand;
+        }
         return intern(r, begin, end, SKIP_INTERNED_DTYPE_BEGIN);
     }
     /** Internal/test use only */

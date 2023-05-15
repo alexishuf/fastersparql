@@ -20,8 +20,8 @@ import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_RO
 @State(Scope.Thread)
 @Threads(1)
 @Fork(value = 1, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
-@Measurement(iterations = 10, time = 250, timeUnit = TimeUnit.MILLISECONDS)
-@Warmup(iterations = 4, time = 250, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 6, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Warmup(iterations = 4, time = 500, timeUnit = TimeUnit.MILLISECONDS)
 @BenchmarkMode({Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class RopeDictBench {
