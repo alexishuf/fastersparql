@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -105,9 +106,17 @@ public class NativeBind {
                 left = multiBind(join, left, type, rUnion, i, binding, canDedup, jm);
             } else {
                 if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(left, type, r, canDedup, join.publicVars(), jm);
+                var projection = i == n-1 ? join.publicVars()
+                               : type.resultVars(left.vars(), r.publicVars());
+                left = new PlanBindingBIt<>(left, type, r, canDedup, projection, jm);
             }
         }
+        // if the join has a projection (due to reordering, not due to outer Modifier)
+        // a sequence of native joins might not match that projection, thus we must project.
+        // for non-native joins, the last join already honors Join.projection.
+        var projector = batchType.projector(join.publicVars(), left.vars());
+        if (projector != null)
+            left = new ProcessorBIt<>(left, projector.outVars, projector);
         return left;
     }
 }
