@@ -37,9 +37,6 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
     public static final OfLong  LE_LONG  = IS_BE ?  JAVA_LONG.withOrder(LITTLE_ENDIAN) : JAVA_LONG;
     public static final OfInt   LE_INT   = IS_BE ?   JAVA_INT.withOrder(LITTLE_ENDIAN) : JAVA_INT;
     public static final OfShort LE_SHORT = IS_BE ? JAVA_SHORT.withOrder(LITTLE_ENDIAN) : JAVA_SHORT;
-    protected static final OfLong  LE_LONG_UA  = IS_BE ?  JAVA_LONG_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_LONG_UNALIGNED;
-    protected static final OfInt   LE_INT_UA   = IS_BE ?   JAVA_INT_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_INT_UNALIGNED;
-    protected static final OfShort LE_SHORT_UA = IS_BE ? JAVA_SHORT_UNALIGNED.withOrder(LITTLE_ENDIAN) : JAVA_SHORT_UNALIGNED;
     protected static final @Nullable Unsafe UNSAFE;
 
     static {

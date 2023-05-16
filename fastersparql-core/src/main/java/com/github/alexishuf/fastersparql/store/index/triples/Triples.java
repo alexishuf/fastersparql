@@ -39,7 +39,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public Triples(Path path) throws IOException {
         super(path, SegmentScope.auto());
         firstKey = seg.get(JAVA_LONG, FIRST_KEY_OFF);
-        noValueIt = new ValueIt(0, 0, 0, 0);
+        noValueIt = new ValueIt(0, 0, 0);
         noPairIt = new PairIt(0, 0);
         noSubKeyIt = new SubKeyIt(0, 0, 0);
         validateOffsets();
@@ -96,23 +96,57 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     }
 
     /**
-     * Whether the given {@code keyId} and {@code subKeyId} are mapped to {@code valueId}
+     * Get a iterator over all triples. This should be avoided as a strategy to answer queries.
+     *
+     * @return a iterator positioned before the first triple, requiring
+     *         {@link ScanIt#advance()} to be called.
      */
-    public boolean contains(long keyId, long subKeyId, long valueId) {
-        ValueIt it = values(keyId, subKeyId);
-        if (!it.advance()) return false;
-        if (it.valueId == valueId) return true;
-        int step = valWidth<<1;
-        long end;
-        if (valueId < it.valueId)
-            end = it.bottom + (step = -step);
-        else
-            end = it.top;
-        for (long addr = it.midAddress; addr != end && readValue(addr) == subKeyId; addr += step) {
-            if (readValue(addr         ) != subKeyId) return false;
-            if (readValue(addr+valWidth) ==  valueId) return true;
+    public ScanIt scan() { return new ScanIt(); }
+
+    public final class ScanIt {
+        private final long endKeyId;
+        private long pairAddress, pairsEnd;
+        public long keyId, subKeyId, valueId;
+
+        public ScanIt() {
+            keyId = firstKey-1;
+            endKeyId = firstKey+keysCount();
         }
-        return false;
+
+        /**
+         * Moves this iterator to the next triple, changing {@link #keyId}, {@link #subKeyId}
+         * and {@link #valueId}.
+         *
+         * <p>This class is used instead of an {@link Iterator} to avoid spamming instances of
+         * a {@code Pair} class. This method is analogous to the following:</p>
+         *
+         * <pre>{@code
+         *     if (hasNext()) {
+         *         Pair p = next();
+         *         keyId = p.keyId;
+         *         subKeyId = p.subKeyId;
+         *         valueId = p.valueId;
+         *         return true;
+         *     }
+         *     return false;
+         * }</pre>
+         *
+         * @return {@code true} iff there is a new triple in this iterator {@code *Id} fields,
+         *         {@code false} if the iterator reached the end.
+         */
+        public boolean advance() {
+            while (pairAddress >= pairsEnd && ++keyId < endKeyId) {
+                pairAddress = readOff(  keyId-firstKey);
+                pairsEnd    = readOff(1+keyId-firstKey);
+            }
+            if (pairAddress < pairsEnd) {
+                subKeyId = readValue(pairAddress);
+                valueId = readValue(pairAddress + valWidth);
+                pairAddress += (long) valWidth << 1;
+                return true;
+            }
+            return false;
+        }
     }
 
     /**
@@ -127,6 +161,16 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         return new PairIt(readOff(keyId), readOff(keyId+1));
     }
 
+    /**
+     * The number of results in {@link #pairs(long)} for the given {@code keyId}. This method
+     * is accurate and fast.
+     */
+    public long estimatePairs(long keyId) {
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1) return 0;
+        return (readOff(keyId+1) - readOff(keyId))>>>(valShift+1);
+    }
+
     public final class PairIt {
         private long address;
         private final long end;
@@ -136,8 +180,6 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
             this.address = address;
             this.end = end;
         }
-
-        public long remaining() { return (end-address)>>(valShift+1); }
 
         /**
          * Moves this iterator to the next pair, changing {@link #subKeyId} and {@link #valueId}.
@@ -168,6 +210,25 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     }
 
     /**
+     * Whether the given {@code keyId} and {@code subKeyId} are mapped to {@code valueId}
+     */
+    public boolean contains(long keyId, long subKeyId, long valueId) {
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1) return false;
+        int pairWidth = valWidth<<1;
+        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long address = subKeyLowerBound(subKeyId, bottom, top);
+        while (address < top) {
+            long pairValue = readValue(address+valWidth);
+            if (readValue(address) != subKeyId) return false; // scanned all pairs for subKeyId
+            if (pairValue == valueId) return  true; // found
+            if (pairValue >  valueId) return false; // pairs are ordered, thus valueId is missing
+            address += pairWidth;
+        }
+        return false; //reached top before meeting (subKeyId, valueId) pair
+    }
+
+    /**
      * A {@link ValueIt} iterating over the values for the given key and subkey.
      *
      * @param keyId the key id
@@ -178,35 +239,57 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public ValueIt values(long keyId, long subKeyId) {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1) return noValueIt;
-        int pairShift = valShift + 1;
         long bottom = readOff(keyId), top = readOff(keyId+1);
+        long pair = subKeyLowerBound(subKeyId, bottom, top);
+        if (pair < top && readValue(pair) == subKeyId)
+            return new ValueIt(pair, top, subKeyId);
+        return noValueIt;
+    }
+
+    /**
+     * Approximate number of results that {@link #values(long, long)} would yield for
+     * {@code keyId} and {@code subKeyId}.
+     *
+     * <p><strong>Accuracy</strong>: Estimates of zero are always accurate. For all other values,
+     * the estimate may be an overestimation, but never an underestimation.</p>
+     *
+     * @param keyId analogous to {@link #values(long, long)}
+     * @param subKeyId analogous to {@link #values(long, long)}
+     * @return an estimate of the number of results in the iterator returned by {@link #values(long, long)}
+     */
+    public long estimateValues(long keyId, long subKeyId) {
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1) return 0;
+        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long lo = subKeyLowerBound(subKeyId, bottom, top);
+        return (subKeyLowerBound(subKeyId+1, lo, top) - lo)>>(valShift+1);
+    }
+
+    private long subKeyLowerBound(long subKeyId, long bottom, long top) {
+        int pairShift = valShift + 1;
         long lo = 0, hi = (top-1-bottom)>>pairShift;
         while (lo <= hi) {
             long mid = (lo+hi)>>>1;
             long midAddr = bottom + (mid<<pairShift);
             long diff = subKeyId - readValue(midAddr);
-            if      (diff < 0) hi = mid-1;
-            else if (diff > 0) lo = mid+1;
-            else               return new ValueIt(bottom, top, midAddr, subKeyId);
+            if (diff <= 0) hi = mid-1;
+            else           lo = mid+1;
         }
-        return noValueIt;
+        return bottom + (lo<<pairShift);
     }
 
     public final class ValueIt {
         private long address;
-        private final long midAddress, bottom, top;
+        private final long end;
         /** The {@code subKeyId} given to {@link #values(long, long)}. */
         public final long subKeyId;
         /** The current value id of the queried {@code keyId} and {@code subKeyId} after
          *  a {@code true} {@link #advance()}. */
         public long valueId;
 
-        private ValueIt(long bottom, long top,
-                        long midAddress, long subKeyId) {
-            this.bottom = bottom;
-            this.top    = top;
-            this.midAddress = midAddress;
-            this.address = midAddress;
+        private ValueIt(long begin, long end, long subKeyId) {
+            this.address = begin;
+            this.end = end;
             this.subKeyId = subKeyId;
         }
 
@@ -228,25 +311,15 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
          */
         public boolean advance() {
             long address = this.address;
-            if (address == 0)
+            if (address >= end)
                 return false;
-            int pairWidth = valWidth<<1;
-            if (address >= midAddress) {
-                if (address < top && readValue(address) == subKeyId) {
-                    valueId = readValue(address+valWidth);
-                    this.address += pairWidth;
-                    return true;
-                }
-                this.address = address = midAddress-pairWidth;
+            if (readValue(address) != subKeyId) {
+                this.address = end;
+                return false;
             }
-            // address < midAddress
-            if (address >= bottom && readValue(address) == subKeyId) {
-                valueId = readValue(address+valWidth);
-                this.address -= pairWidth;
-                return true;
-            }
-            this.address = 0; // remember we reached end
-            return false;
+            valueId = readValue(address +valWidth);
+            this.address = address + ((long)valWidth<<1);
+            return true;
         }
     }
 

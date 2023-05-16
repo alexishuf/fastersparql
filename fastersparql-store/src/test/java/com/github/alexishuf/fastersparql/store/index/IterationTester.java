@@ -204,6 +204,10 @@ public class IterationTester implements AutoCloseable {
 
     public void testIteration() throws Exception {
         if (triples == allTriples) {
+            testScan(spo, TestTriple::new);
+            testScan(pso, (p, s, o) -> new TestTriple(s, p, o));
+            testScan(ops, (o, p, s) -> new TestTriple(s, p, o));
+
             testPairs((k, t) -> t.s() == k, spo, TestTriple::new);
             testPairs((k, t) -> t.p() == k, pso, (p, s, o) -> new TestTriple(s, p, o));
             testPairs((k, t) -> t.o() == k, ops, (o, p, s) -> new TestTriple(s, p, o));
@@ -248,6 +252,19 @@ public class IterationTester implements AutoCloseable {
             if (ex.size() == max) return null;
         }
         return ex;
+    }
+
+    private void testScan(Triples index, TripleFactory factory) {
+        var ac = acTL.get();
+        ac.clear();
+        for (var it = index.scan(); it.advance(); )
+            ac.add(factory.create(it.keyId, it.subKeyId, it.valueId));
+        var ex = exTL.get();
+        ex.clear();
+        ex.addAll(triples);
+        Collections.sort(ex);
+        Collections.sort(ac);
+        assertEquals(ex, ac);
     }
 
     private void testPairs(KeyPredicate exPredicate, Triples index, TripleFactory factory) {

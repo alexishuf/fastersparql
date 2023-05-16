@@ -217,8 +217,9 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            releaseHdt();
+            try {
+                super.cleanup(cause);
+            } finally { releaseHdt(); }
         }
     }
 

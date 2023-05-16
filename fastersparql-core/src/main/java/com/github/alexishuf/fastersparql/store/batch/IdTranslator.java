@@ -3,12 +3,12 @@ package com.github.alexishuf.fastersparql.store.batch;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict.Lookup;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.github.alexishuf.fastersparql.util.BS;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static java.lang.Runtime.getRuntime;
 
 public class IdTranslator {
@@ -29,7 +29,7 @@ public class IdTranslator {
      * @throws BadDictIdException if {@code dictId} is not valid
      */
     public static long source(long id, int dictId) {
-        if (id == Dict.NOT_FOUND) return Dict.NOT_FOUND;
+        if (id == NOT_FOUND) return NOT_FOUND;
         if ((id & ~ID_MASK) != 0) throw new LargeIdException(id);
         if ((dictId & ~DICT_I_MASK) != 0) throw new BadDictIdException(dictId);
         return id | ((long) dictId << DICT_BIT);
@@ -44,6 +44,32 @@ public class IdTranslator {
     public static long unsource(long sourcedId) {
         if ((sourcedId & DICT_MASK) == 0) throw new NotSourcedIdException(sourcedId);
         return sourcedId & ID_MASK;
+    }
+
+    /**
+     * Get an unsourced id {@code i} that represents the same string in {@code targetDictId}
+     * as {@code sourcedId} represents in its embedded dict. If the string is not present
+     * in the target dict, or if {@code sourcedId == NOT_FOUND}, {@link Dict#NOT_FOUND}
+     * will be returned.
+     *
+     * @param sourcedId {@link Dict#NOT_FOUND} or an id sourced to a specific dict
+     *                  (see {@link #source(long, int)})
+     * @param targetDictId The id from {@link #register(LocalityCompositeDict)} for the
+     *                     destination dict where an identical string will be looked up.
+     * @return If the target dict does not contain the string or if {@code sourcedId == NOT_FOUND},
+     *         {@link Dict#NOT_FOUND}. Else the unsourced id {@code i} such that
+     *         {@code lookup(targetDictId).get(i).equals(lookup(dictId).get(unsource(sourcedId)))}.
+     * @throws BadDictIdException if {@link #dictId(long)} for {@code sourcedId} is
+     *                            invalid or points to a {@link #deregister(int, Dict)}ed dict.
+     * @throws NotSourcedIdException if {@code sourcedId != } {@link Dict#NOT_FOUND} and does not
+     *                               embed a dict id.
+     */
+    public static long translate(long sourcedId, int targetDictId) {
+        if (sourcedId == NOT_FOUND) return NOT_FOUND;
+        int sourceDictId = (int) ((sourcedId&DICT_MASK) >>> DICT_BIT);
+        if (sourceDictId == 0) throw new NotSourcedIdException(sourcedId);
+        if (sourceDictId == targetDictId) return sourcedId & ID_MASK;
+        return lookup(targetDictId).find(lookup(sourceDictId).get(sourcedId&ID_MASK));
     }
 
     /**
@@ -69,18 +95,19 @@ public class IdTranslator {
     /* --- --- --- dict list --- --- --- */
 
     static final int MAX_DICT = DICT_I_MASK;
-    private static final LocalityCompositeDict[] plainDicts = new LocalityCompositeDict[MAX_DICT+1];
-    private static final VarHandle DICTS = MethodHandles.arrayElementVarHandle(LocalityCompositeDict[].class);
-    private static final VarHandle NEXT_DICT_ID;
+    private static final LocalityCompositeDict[] dicts = new LocalityCompositeDict[MAX_DICT+1];
+    private static final int[] freeDictIds = BS.init(null, MAX_DICT+1);
+    @SuppressWarnings("unused") private static int plainDictsLock;
+    private static final VarHandle DICTS_LOCK;
     static {
+        BS.set(freeDictIds, 1, freeDictIds.length<<5);
         try {
-            NEXT_DICT_ID = MethodHandles.lookup().findStaticVarHandle(IdTranslator.class, "plainNextDictId", int.class);
+            DICTS_LOCK = MethodHandles.lookup().findStaticVarHandle(IdTranslator.class, "plainDictsLock", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
-    @SuppressWarnings("unused") private static int plainNextDictId;
 
     /**
      * Assigns a {@code dictId} to {@code dict}.
@@ -92,18 +119,23 @@ public class IdTranslator {
      * {@link #dict(int)}
      */
     public static int register(LocalityCompositeDict dict) {
-        int dictId = (int) NEXT_DICT_ID.getAndAdd(1);
-        if (dictId <= MAX_DICT) {
-            if (DICTS.compareAndExchangeAcquire(plainDicts, dictId, null, dict) == null) {
-                if (DICTS.compareAndExchange(plainDicts, dictId, null, dict) == null)
-                    return dictId;
+        while ((int)DICTS_LOCK.compareAndExchangeAcquire(0, 1) != 0) Thread.onSpinWait();
+        try {
+            for (int scan = 0; scan < 2; scan++) {
+                for (int i = 1; (i = BS.nextSet(freeDictIds, i)) >= 0; ++i) {
+                    if (dicts[i] != null) continue;
+                    dicts[i] = dict;
+                    BS.clear(freeDictIds, i);
+                    return i;
+                }
+                if (scan == 0) {
+                    for (int i = 1; i < dicts.length; i++) {
+                        if (dicts[i] == null) BS.set(freeDictIds, i);
+                    }
+                }
             }
-        } else {
-            NEXT_DICT_ID.setRelease(MAX_DICT+1);
-        }
-        for (dictId = 1; dictId < plainDicts.length; dictId++) {
-            if (DICTS.compareAndExchange(plainDicts, dictId, null, dict) == null)
-                return dictId;
+        } finally {
+            DICTS_LOCK.setRelease(0);
         }
         throw new NoDictSpaceException();
     }
@@ -114,7 +146,7 @@ public class IdTranslator {
      * @return the {@code dict} given to a previous {@code register(dict)} call.
      */
     public static LocalityCompositeDict dict(int dictId) {
-        return (LocalityCompositeDict) DICTS.getAcquire(plainDicts, dictId);
+        return dicts[dictId];
     }
 
     public static final class NoDictSpaceException extends IllegalStateException {
@@ -138,10 +170,14 @@ public class IdTranslator {
      *                               two dicts to up with the same id.
      */
     public static void deregister(int dictId, Dict dict) {
-        Dict ac = (Dict) DICTS.compareAndExchangeRelease(plainDicts, dictId, dict, null);
+        var ac = dicts[dictId];
         if (ac != dict)
             throw new IllegalStateException("Currently dictId="+dictId+" belongs to "+ac+", not "+dict+" did not remove");
-        dropLookups(dictId);
+        dicts[dictId] = null;
+        //drop lookups
+        int begin = dictId << CPU_BITS, end = (dictId +1) << CPU_BITS;
+        for (int i = begin; i < end; i++)
+            lookups[i] = null;
     }
 
     /* --- --- --- lookup cache --- --- --- */
@@ -174,7 +210,7 @@ public class IdTranslator {
         Thread thread = Thread.currentThread();
         int slot = (dictId << CPU_BITS) | ((int) thread.threadId() & CPU_MASK);
         var l = lookups[slot];
-        var dict = plainDicts[dictId];
+        var dict = dicts[dictId];
         //noinspection resource
         if (l != null && l.owner == thread && l.dict() == dict)
             return l;
@@ -184,12 +220,4 @@ public class IdTranslator {
         lookups[slot] = l;
         return l;
     }
-
-    /** Remove all Lookup instances for the given dict. */
-    private static void dropLookups(int dictId) {
-        int begin = dictId << CPU_BITS, end = (dictId+1) << CPU_BITS;
-        for (int i = begin; i < end; i++)
-            lookups[i] = null;
-    }
-
 }
