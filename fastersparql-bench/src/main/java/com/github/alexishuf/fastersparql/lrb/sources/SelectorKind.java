@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.lrb.sources;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector;
+import com.github.alexishuf.fastersparql.fed.selectors.FSStoreSelector;
 
 import static com.github.alexishuf.fastersparql.fed.Selector.STATE;
 import static com.github.alexishuf.fastersparql.fed.Selector.TYPE;
@@ -12,7 +13,8 @@ import static com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector
 public enum SelectorKind {
     ASK,
     DICT,
-    DICT_WITH_CLASSES;
+    DICT_WITH_CLASSES,
+    FS_STORE;
 
     public Spec createSpec(SourceHandle source) {
         String fileOrDirName = source.source.name()+name().toLowerCase();
@@ -30,6 +32,7 @@ public enum SelectorKind {
                     FETCH_PREDICATES, true,
                     FETCH_CLASSES,    true,
                     STATE, Spec.of(DictionarySelector.STATE_DIR, fileOrDirName));
+            case FS_STORE -> Spec.of(TYPE, FSStoreSelector.NAME);
         };
     }
 

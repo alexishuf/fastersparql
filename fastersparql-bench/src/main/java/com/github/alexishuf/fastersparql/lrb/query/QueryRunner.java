@@ -94,13 +94,18 @@ public final class QueryRunner {
      * {@code it.nextBatch()} and {@code consumer.finish()}.
      */
     public static <B extends Batch<B>> void drain(BIt<B> it, BatchConsumer consumer) {
+        boolean finished = false;
         try {
             consumer.start(it);
             for (B b = null; (b = it.nextBatch(b)) != null; )
                 consumer.accept(b);
+            finished = true;
             consumer.finish(null);
         } catch (Throwable cause) {
-            consumer.finish(cause);
+            if (finished)
+                throw cause;
+            else
+                consumer.finish(cause);
         } finally {
             try {
                 if (it != null) it.close();

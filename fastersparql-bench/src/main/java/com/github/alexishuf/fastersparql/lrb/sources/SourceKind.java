@@ -13,11 +13,21 @@ public enum SourceKind {
     HDT_FILE,
     HDT_TSV,
     HDT_JSON,
-    HDT_WS;
+    HDT_WS,
+    FS_STORE;
+
+    public boolean isHdt() {
+        return switch (this) {
+            case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS -> true;
+            default -> false;
+        };
+    }
+
+    public boolean isFsStore() { return this == FS_STORE; }
 
     private String augScheme() {
         return switch (this) {
-            case HDT_FILE -> "file://";
+            case HDT_FILE,FS_STORE -> "file://";
             case HDT_TSV -> "post,tsv@http://";
             case HDT_JSON -> "post,json@http://";
             case HDT_WS -> "ws://";
@@ -35,6 +45,8 @@ public enum SourceKind {
         var handle = switch (this) {
             case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS -> //noinspection resource
                     new SourceHandle("file://" + file, source, HDT_FILE);
+            case FS_STORE -> //noinspection resource
+                    new SourceHandle("file://"+file, source, this);
         };
         return switch (this) {
             case HDT_WS, HDT_TSV, HDT_JSON -> {

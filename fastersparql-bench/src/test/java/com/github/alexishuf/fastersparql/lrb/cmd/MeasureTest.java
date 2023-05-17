@@ -21,20 +21,27 @@ class MeasureTest {
     private static final Logger log = LoggerFactory.getLogger(MeasureTest.class);
     public static final String DATA_DIR_PROP = "fastersparql.bench.test.data-dir";
     private static File dataDir;
-    private static boolean hasHDT;
+    private static boolean hasHDT, hasStore;
 
     @BeforeAll
     static void beforeAll() {
         String prop = System.getProperty(DATA_DIR_PROP);
         dataDir = prop != null && !prop.isEmpty() ? new File(prop) : new File("");
         hasHDT = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
-                .allMatch(s -> new File(dataDir, s.hdtFilename()).isFile());
+                .allMatch(s -> new File(dataDir, s.filename(SourceKind.HDT_FILE)).isFile());
+        hasStore = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
+                .allMatch(s -> new File(dataDir, s.filename(SourceKind.FS_STORE)).isDirectory());
     }
 
     private void doTestS2(SourceKind sourceKind, boolean jsonPlans) throws IOException {
-        if (!hasHDT) {
+        if (sourceKind.isHdt() && !hasHDT) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",
                      dataDir.getAbsolutePath(), DATA_DIR_PROP);
+            return;
+        }
+        if (sourceKind.isFsStore() && !hasStore) {
+            log.warn("Skipping test: no Store dirs in {}. Set Java property {} to change directory",
+                    dataDir.getAbsolutePath(), DATA_DIR_PROP);
             return;
         }
         File destDir = Files.createTempDirectory("fastersparql-measure").toFile();
@@ -62,15 +69,16 @@ class MeasureTest {
             assertTrue(m.terminalNs() > 0, "terminalNs="+m.terminalNs());
             assertFalse(m.cancelled());
             assertTrue(m.error() == null || m.error().isEmpty());
+            log.debug("allRows={}us", String.format("%.3f", m.allRowsNs()/1_000.0));
         }
     }
 
-    @ParameterizedTest @ValueSource(strings = {"HDT_FILE", "HDT_WS", "HDT_JSON"})
+    @ParameterizedTest @ValueSource(strings = {"HDT_FILE", "HDT_WS", "HDT_JSON", "FS_STORE"})
     void testJsonPlans(String sourceName) throws IOException {
         doTestS2(SourceKind.valueOf(sourceName), true);
     }
 
-    @ParameterizedTest @ValueSource(strings = {"HDT_FILE", "HDT_WS", "HDT_JSON"})
+    @ParameterizedTest @ValueSource(strings = {"HDT_FILE", "HDT_WS", "HDT_JSON", "FS_STORE"})
     void testFederationPlans(String sourceName) throws IOException {
         doTestS2(SourceKind.valueOf(sourceName), false);
     }
