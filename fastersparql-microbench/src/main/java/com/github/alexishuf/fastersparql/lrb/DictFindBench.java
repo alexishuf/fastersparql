@@ -80,11 +80,11 @@ public class DictFindBench {
         int nStrings;
         try (var d = Dict.load(sourceDir.resolve("strings"))) {
             var lookup = d.polymorphicLookup();
-            nStrings = (int) d.strings();
+            nStrings = (int) Math.min(Integer.MAX_VALUE>>2, d.strings());
             int nQueries = (int) Math.max(1, nStrings*queryProportion);
 
             queries = new PlainRope[nQueries];
-            List<Integer> ids = new ArrayList<>(IntStream.range(1, nQueries + 1).boxed().toList());
+            List<Integer> ids = new ArrayList<>(IntStream.range(1, nStrings + 1).boxed().toList());
             Collections.shuffle(ids, random);
             Splitter split = new Splitter(Splitter.Mode.LAST);
             for (int i = 0; i < nQueries; i++) {
