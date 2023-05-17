@@ -56,9 +56,8 @@ public class AskSelector extends Selector {
         @Override public Selector
         load(SparqlClient client, Spec spec) throws IOException, BadSerializationException {
             File file = spec.getFile(STATE_FILE_P, null);
-            if (file == null) {
+            if (file == null || !file.exists() || file.length() == 0)
                 return new AskSelector(client, spec);
-            }
             try (var in = new FileInputStream(file)) {
                 var r = new ByteRope(64);
                 if (!r.clear().readLine(in) || !r.trim().toString().equalsIgnoreCase(NAME))
