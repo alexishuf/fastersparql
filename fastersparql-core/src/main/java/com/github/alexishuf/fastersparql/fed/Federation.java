@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.fed;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
@@ -40,7 +41,6 @@ import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.runtimeE
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.async;
 import static java.lang.Long.bitCount;
 import static java.lang.Long.numberOfTrailingZeros;
-import static java.lang.System.nanoTime;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused")
@@ -242,7 +242,7 @@ public class Federation extends AbstractSparqlClient {
     /* --- --- --- querying --- --- --- */
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        long entryNs = nanoTime();
+        long entryNs = Timestamp.nanoTime();
         cdc = FSProperties.dedupCapacity();
 
         // parse query or copy tree and sanitize
@@ -252,19 +252,19 @@ public class Federation extends AbstractSparqlClient {
         root = project(mutateSanitize(root), sparql.publicVars());
 
         // source selection & agglutination
-        long last = nanoTime();
-        root = sources.size() < 2 ? trivialPlan(root, m) : plan(root, m);
+        long last = Timestamp.nanoTime();
+        root = sources.size() < 2 ? trivialPlan(root) : plan(root);
         last = m.addSelectionAndAgglutination(last);
 
         // optimization
-        root = optimizer.optimize(root);
+        m.plan = root = optimizer.optimize(root);
         m.addOptimization(last);
 
         // final dispatch for execution
         if (!planListeners.isEmpty())
-            root.listeners().addAll(planListeners);
+            root.attach(planListeners);
         var it = root.execute(batchType);
-        m.dispatchNs = nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
+        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
 
         // deliver metrics
         for (var l : fedListeners)
@@ -380,13 +380,12 @@ public class Federation extends AbstractSparqlClient {
         };
     }
 
-    private Plan plan(Plan plan, FedMetrics metrics) {
+    private Plan plan(Plan plan) {
         int nOps = plan.opCount(), nSrc = sources.size();
-        assert false : "fill metrics";
         return switch (plan) {
             case Join join -> {
-                if      (((nOps-1|nSrc-1) & ~63) !=   0) yield coldestPlan(join, metrics);
-                else if (nOps*nSrc               >   64) yield coldPlan(join, metrics);
+                if      (((nOps-1|nSrc-1) & ~63) !=   0) yield coldestPlan(join);
+                else if (nOps*nSrc               >   64) yield coldPlan(join);
                 long sourced = 0, nonExcl = 0; // bit i <--> ops.get(i) has >0, >1 sources
                 long op2src = 0; // bit o*nSrc+s <--> sources[s] matched ops[o]
                 long src2op = 0; // bit s*nOps+o <--> sources[s] matched ops[o]
@@ -394,20 +393,20 @@ public class Federation extends AbstractSparqlClient {
                     long matched = sources.get(s).selector.subBitset(plan);
                     nonExcl |= sourced & matched;
                     sourced |= matched;
-                    for (int o=0; (o=numberOfTrailingZeros(matched>>>o)) < 64; ++o) {
+                    for (int o=0; (o+=numberOfTrailingZeros(matched>>>o)) < 64; ++o) {
                         op2src |= 1L << (o*nSrc + s);
                         src2op |= 1L << (s*nOps + o);
                     }
                 }
 
                 // find safe unsourced operands. short-circuit if we have an unsourced TriplePattern
-                long nonTP = ~sourced; // bit i <--> !(plan.op(i) instanceof TriplePattern)
+                long nonTP = sourced ^ (-1 >>> -nOps); // bit i <--> !(plan.op(i) instanceof TriplePattern)
                 if (nonTP != 0 && isUnsourcedFailure(nonTP, plan)) yield new Empty(plan);
 
                 // find sources with >0 exclusive operands
                 long exclusive = sourced & ~nonExcl;
                 long srcWExcl = 0;
-                for (int o = 0; (o=numberOfTrailingZeros(exclusive>>>o)) < 64; o++)
+                for (int o = 0; (o+=numberOfTrailingZeros(exclusive>>>o)) < 64; o++)
                     srcWExcl |= op2src>>>o*nSrc;
                 srcWExcl &= -1 >>> (64-nSrc);
 
@@ -416,13 +415,13 @@ public class Federation extends AbstractSparqlClient {
                 int nBound = 0;
 
                 // add exclusive groups
-                for (int s = 0; (s=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
+                for (int s = 0; (s+=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
                     long sExclusive = src2op>>>(s*nOps) & exclusive;
                     bound[nBound++] = bindExclusive(sources.get(s).client, sExclusive, plan);
                 }
 
                 // add non-exclusive Unions
-                for (int o=0; (o=numberOfTrailingZeros(nonExcl>>>o)) < 64; ++o)
+                for (int o=0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; ++o)
                     bound[nBound++] = bindToSources(plan.op(o), op2src>>o*nSrc, cdc);
 
                 if (nonTP != 0)
@@ -431,7 +430,7 @@ public class Federation extends AbstractSparqlClient {
                 yield plan;
             }
             case TriplePattern t -> {
-                if (nSrc > 64) yield coldPlan(t, metrics);
+                if (nSrc > 64) yield coldPlan(t);
                 long relevant = 0;
                 for (int i = 0; i < nSrc; i++)
                     if (sources.get(i).selector.has(t)) relevant |= 1L << i;
@@ -440,7 +439,7 @@ public class Federation extends AbstractSparqlClient {
             default -> {
                 if (nOps == 0) yield plan;
                 for (int i = 0; i < nOps; i++) {
-                    Plan o = plan.op(i), bound = plan(o, metrics);
+                    Plan o = plan.op(i), bound = plan(o);
                     if (bound != o) plan.replace(i, bound);
                 }
                 yield plan;
@@ -450,28 +449,28 @@ public class Federation extends AbstractSparqlClient {
 
     private static Plan bindExclusive(SparqlClient client, long subset, Plan parent) {
         int n = bitCount(subset), first = numberOfTrailingZeros(subset);
-        if (n == 1) return parent.op(first);
+        if (n == 1) return new Query(parent.op(first), client);
         if (n == 2) {
             int second = numberOfTrailingZeros(subset >>> first + 1);
             return new Query(new Join(null, parent.op(first), parent.op(second)), client);
         }
         Plan[] ops = new Plan[n];
-        for (int dst = 0, op = 0; (op=numberOfTrailingZeros(subset>>>op)) < 64; ++op)
+        for (int dst = 0, op = 0; (op+=numberOfTrailingZeros(subset>>>op)) < 64; ++op)
             ops[dst] = parent.op(op);
         return new Query(new Join(null, ops), client);
     }
 
     private Plan bindToSources(Plan tp, long srcSubset, int crossDedupCapacity) {
-        int n = bitCount(srcSubset), fIdx = numberOfTrailingZeros(srcSubset          );
-        int                          sIdx = numberOfTrailingZeros(srcSubset>>>fIdx);
-        Query fstQ = new Query(tp, sources.get(fIdx).client);
+        int n = bitCount(srcSubset), fIdx =        numberOfTrailingZeros(srcSubset          );
+        int                          sIdx = fIdx+1+numberOfTrailingZeros(srcSubset>>>(fIdx+1));
+       Query fstQ = new Query(tp, sources.get(fIdx).client);
         Query sndQ = new Query(tp, sources.get(sIdx).client);
         if (n == 2)
             return new Union(crossDedupCapacity, fstQ, sndQ);
         Plan[] ops = new Plan[n];
         ops[0] = fstQ;
         ops[1] = sndQ;
-        for (int o = 2, s = sIdx+1; (s=numberOfTrailingZeros(srcSubset>>>s)) < 64; s++)
+        for (int o = 2, s = sIdx+1; (s+=numberOfTrailingZeros(srcSubset>>>s)) < 64; s++)
             ops[o++] = new Query(tp, sources.get(s).client);
         return new Union(crossDedupCapacity, ops);
     }
@@ -499,14 +498,14 @@ public class Federation extends AbstractSparqlClient {
     }
 
     private static boolean isUnsourcedFailure(long unsourced, Plan parent) {
-        for (int o = 0; (o=numberOfTrailingZeros(unsourced>>>o)) < 64; o++) {
+        for (int o = 0; (o+=numberOfTrailingZeros(unsourced>>>o)) < 64; o++) {
             if (parent.op(o) instanceof TriplePattern) return true;
         }
         return false;
     }
 
     private static void addNonTP(Plan parent, long nonTP, Plan[] bound, int boundSize) {
-        for (int o=0; (o=numberOfTrailingZeros(nonTP>>>o)) < 64; ++o)
+        for (int o=0; (o+=numberOfTrailingZeros(nonTP>>>o)) < 64; ++o)
             bound[boundSize++] = parent.op(o);
     }
 
@@ -516,6 +515,7 @@ public class Federation extends AbstractSparqlClient {
     }
 
     private Plan trivialPlan(Plan plan) {
+        if (sources.size() == 0) return new Empty(plan);
         return switch (plan.type) {
             case JOIN -> {
                 var cli = sources.get(0).client;
@@ -544,22 +544,16 @@ public class Federation extends AbstractSparqlClient {
         };
     }
 
-    private Plan trivialPlan(Plan plan, FedMetrics metrics) {
-        if (sources.size() == 0) return new Empty(plan);
-        plan = trivialPlan(plan);
-        return plan;
-    }
-
-    private Plan coldPlan(Join join, FedMetrics metrics) {
+    private Plan coldPlan(Join join) {
         int nOps = join.opCount(), nSrc = sources.size(), cdc = dedupCapacity();
-        long sourced = 0, nonExcl = 0, ssStartNs = nanoTime();
+        long sourced = 0, nonExcl = 0, ssStartNs = Timestamp.nanoTime();
         long[] op2src       = new long[(nOps*nSrc-1 >> 6) + 1];
         long[] src2op       = new long[(nSrc*nOps-1 >> 6) + 1];
         for (int s = 0; s < nSrc; s++) {
             long matched = sources.get(s).selector.subBitset(join);
             nonExcl |= sourced & matched;
             sourced |= matched;
-            for (int o = 0; (o=numberOfTrailingZeros(matched>>>o)) < 64; o++) {
+            for (int o = 0; (o+=numberOfTrailingZeros(matched>>>o)) < 64; o++) {
                 int i = o*nSrc+s;
                 op2src[i>>6] |= 1L << i;
                 i = s*nOps+o;
@@ -568,12 +562,12 @@ public class Federation extends AbstractSparqlClient {
         }
 
         // find safe unsourced operands. short-circuit if we have an unsourced TriplePattern
-        long nonTP = ~sourced;
+        long nonTP = sourced ^ (-1 >> -nOps);
         if (nonTP != 0 && isUnsourcedFailure (nonTP, join)) return new Empty(join);
 
         // find sources with >0 exclusive operands
         long exclusive = sourced & ~nonExcl, srcWExcl = 0;
-        for (int o = 0, begin; (o=numberOfTrailingZeros(exclusive>>>o)) < 64; o++) {
+        for (int o = 0, begin; (o+=numberOfTrailingZeros(exclusive>>>o)) < 64; o++) {
             begin = o*nSrc;
             srcWExcl |= BS.get(op2src, begin, begin+nSrc);
         }
@@ -583,14 +577,14 @@ public class Federation extends AbstractSparqlClient {
         int nBound = 0;
 
         // add exclusive groups
-        for (int s = 0; (s=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
+        for (int s = 0; (s+=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
             int begin = s * nOps;
             long sExclusive = BS.get(src2op, begin, begin+nOps);
             bound[nBound++] = bindExclusive(sources.get(s).client, sExclusive, join);
         }
 
         // add non-exclusive Unions
-        for (int o = 0; (o = numberOfTrailingZeros(nonExcl>>>o)) < 64; o++) {
+        for (int o = 0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; o++) {
             int begin = o * nSrc;
             bound[nBound++] = bindToSources(join.op(o), get(op2src, begin, begin+nSrc), cdc);
         }
@@ -601,7 +595,7 @@ public class Federation extends AbstractSparqlClient {
         return join;
     }
 
-    private Plan coldestPlan(Join join, FedMetrics metrics) {
+    private Plan coldestPlan(Join join) {
         int nOps = join.opCount(), nSrc = sources.size();
         long[] sourced   = new long[(nOps-1 >> 6) + 1];
         long[] nonExcl   = new long[(nOps-1 >> 6) + 1];
@@ -663,7 +657,7 @@ public class Federation extends AbstractSparqlClient {
         return join;
     }
 
-    private Plan coldPlan(TriplePattern tp, FedMetrics metrics) {
+    private Plan coldPlan(TriplePattern tp) {
         int nSrc = sources.size();
         long[] relevant = new long[(nSrc - 1 >> 6) + 1];
         for (int s = 0; s < nSrc; s++)
