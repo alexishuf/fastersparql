@@ -929,23 +929,32 @@ public final class Term extends Rope implements Expr {
             return;
         }
         if (isLit) {
-            if (shared == DT_integer || shared == DT_decimal || shared == DT_DOUBLE
-                                     || shared == DT_BOOLEAN) {
-                dest.append(local, localOff+1, localLen-1);
-            } else {
-                dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
-                if (shared.get(1) == '^') {
-                    SegmentRope prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
-                    Rope name = prefix == null ? null : assigner.nameFor(prefix);
-                    if (name == null) {
-                        dest.append(shared);
-                    } else {
-                        dest.append(shared, 0, 3).append(name).append(':')
-                            .append(shared, 3+prefix.len, shared.len-1);
-                    }
-                } else {
-                    dest.append(shared);
+            if (shared == DT_DOUBLE) {
+                boolean exp = false;
+                for (long i = localOff+1; i < localLen; i++) {
+                    byte c = local.get(JAVA_BYTE, i);
+                    if (c == 'e' || c == 'E') { exp = true; break; }
                 }
+                if (exp) {
+                    dest.append(local, localOff+1, localLen-1);
+                    return;
+                }
+            } else if (shared == DT_integer || shared == DT_decimal || shared == DT_BOOLEAN) {
+                dest.append(local, localOff + 1, localLen - 1);
+                return;
+            }
+            dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
+            if (shared.get(1) == '^') {
+                SegmentRope prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
+                Rope name = prefix == null ? null : assigner.nameFor(prefix);
+                if (name == null) {
+                    dest.append(shared);
+                } else {
+                    dest.append(shared, 0, 3).append(name).append(':')
+                        .append(shared, 3+prefix.len, shared.len-1);
+                }
+            } else {
+                dest.append(shared);
             }
         } else {
             if (shared == P_RDF && localLen == 5 /*type>*/
