@@ -28,7 +28,7 @@ In the directory that contains the HDT files:
 
 ```bash
 FS_HDT2STORE="java --enable-preview --add-modules jdk.incubator.vector -jar $FS_STORE_JAR"
-$FS_HDT2STORE --same-dir NYT.hdt DrugBank.hdt Jamendo.hdt LMDB.hdt SWDFood.hdt DBPedia-Subset.hdt 
+$FS_HDT2STORE --same-dir NYT.hdt DrugBank.hdt Jamendo.hdt LMDB.hdt SWDFood.hdt DBPedia-Subset.hdt Affymetrix.hdt 
 $FS_HDT2STORE --same-dir --penultimate GeoNames.hdt
 $FS_HDT2STORE --same-dir --prolong ChEBI.hdt KEGG.hdt LinkedTCGA-A.hdt LinkedTCGA-E.hdt LinkedTCGA-M.hdt
 ```

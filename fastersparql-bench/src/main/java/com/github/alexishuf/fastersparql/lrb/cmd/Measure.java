@@ -110,9 +110,11 @@ public class Measure implements Callable<Void>{
                     log.warn("No time budget for rep {} of {}", rep, task);
                     continue;
                 }
-                log.info("Starting rep {} of {}...", rep, task);
+                log.info("Starting rep {} of {} with sel={} and src={}...",
+                         rep, task.query(), task.selector(), task.source());
                 int ms = run(client, task, rep, timeoutMs);
-                log.info("Measured rep {} of {} in {}ms", rep, task, ms);
+                log.info("Measured rep {} of {} with sel={} and src={} in {}ms",
+                        rep, task.query(), task.selector(), task.source(), ms);
                 spent[taskIdx] += ms;
                 msrOp.cooldown();
             }
