@@ -46,6 +46,7 @@ public class LocalityStandaloneDict extends Dict {
             // check if the leftmost node is the mepty string
             this.emptyId = readOff(id-1) == readOff(id) ? id : NOT_FOUND;
         }
+        quickValidateOffsets(-1);
     }
 
     @Override public AbstractLookup polymorphicLookup() { return lookup(); }

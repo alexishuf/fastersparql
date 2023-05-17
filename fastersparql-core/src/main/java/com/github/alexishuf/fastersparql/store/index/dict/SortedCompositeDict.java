@@ -36,8 +36,8 @@ public final class SortedCompositeDict extends Dict {
             throw new IllegalArgumentException("Dict at "+file+" has both prolong and penultimate flags set");
         this.splitMode = prolong ? Splitter.Mode.PROLONG
                 : penultimate ? Splitter.Mode.PENULTIMATE : Splitter.Mode.LAST;
+        quickValidateOffsets(-1);
     }
-
 
     public SortedCompositeDict(Path file) throws IOException {
         this(file, new SortedStandaloneDict(file.resolveSibling("shared")));

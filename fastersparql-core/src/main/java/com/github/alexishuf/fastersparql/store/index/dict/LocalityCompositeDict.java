@@ -64,6 +64,7 @@ public class LocalityCompositeDict extends Dict {
             throw new IllegalArgumentException("Dict at "+file+" has both prolong and penultimate flags set");
         this.splitMode = prolong ? Splitter.Mode.PROLONG
                 : penultimate ? Splitter.Mode.PENULTIMATE : Splitter.Mode.LAST;
+        quickValidateOffsets(OFF_MASK);
     }
 
     public LocalityCompositeDict(Path file) throws IOException {

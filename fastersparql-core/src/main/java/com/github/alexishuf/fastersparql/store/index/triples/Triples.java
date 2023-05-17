@@ -42,7 +42,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         noValueIt = new ValueIt(0, 0, 0);
         noPairIt = new PairIt(0, 0);
         noSubKeyIt = new SubKeyIt(0, 0, 0);
-        validateOffsets();
+        quickValidateOffsets(-1);
     }
 
     @Override protected void fillMetadata(MemorySegment seg, Metadata md) {

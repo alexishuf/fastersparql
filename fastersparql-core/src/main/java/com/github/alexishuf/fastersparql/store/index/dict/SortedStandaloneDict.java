@@ -18,6 +18,7 @@ public final class SortedStandaloneDict extends Dict {
         if ((flags & (byte)(LOCALITY_MASK >>> FLAGS_BIT)) != 0)
             throw new UnsupportedOperationException();
         this.emptyId = nStrings > 0 && readOff(0) == readOff(1) ? MIN_ID : NOT_FOUND;
+        quickValidateOffsets(-1);
     }
 
     @Override public AbstractLookup polymorphicLookup() { return lookup(); }

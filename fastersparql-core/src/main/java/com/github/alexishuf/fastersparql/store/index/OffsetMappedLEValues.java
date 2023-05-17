@@ -122,6 +122,13 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
         }
     }
 
+    protected final void quickValidateOffsets(long offsetMask) throws IOException {
+        if ((readOff(0)&offsetMask) > seg.byteSize())
+            throw new IOException("First offset in "+path+" overflows file size");
+        if ((readOff(offsCount-1)&offsetMask) > seg.byteSize())
+            throw new IOException("Last offset in "+path+" overflows file size");
+    }
+
     /** Reads values for all fields of {@code md} from {@code seg}. This will be called early
      *  during {@link OffsetMappedLEValues} construction. Implementations should not call any
      *  {@link OffsetMappedLEValues} methods. */
