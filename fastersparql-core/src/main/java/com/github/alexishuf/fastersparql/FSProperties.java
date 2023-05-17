@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
@@ -36,23 +37,25 @@ public class FSProperties {
     public static final String OP_JOIN_REORDER_WCO       = "fastersparql.op.join.reorder.wco";
     public static final String FED_ASK_POS_CAP           = "fastersparql.fed.ask.pos.cap";
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
+    public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
 
     /* --- --- --- default values --- --- --- */
-    public static final int DEF_CLIENT_MAX_QUERY_GET      = 1024;
-    public static final int DEF_CLIENT_CONN_RETRIES       = 3;
-    public static final int DEF_CLIENT_CONN_TIMEOUT_MS    = 0;
-    public static final int DEF_CLIENT_SO_TIMEOUT_MS      = 0;
-    public static final int DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
-    public static final int DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
-    public static final int DEF_BATCH_MIN_WAIT_US         = 500;
-    public static final int DEF_BATCH_MAX_WAIT_US         = 1000;
-    public static final int DEF_BATCH_QUEUE_BATCHES       = 8;
-    public static final int DEF_BATCH_QUEUE_ROWS          = 1<<14;
-    public static final int DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
-    public static final int DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
-    public static final int DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
-    public static final int DEF_FED_ASK_POS_CAP           = 1<<14;
-    public static final int DEF_FED_ASK_NEG_CAP           = 1<<12;
+    public static final int     DEF_CLIENT_MAX_QUERY_GET      = 1024;
+    public static final int     DEF_CLIENT_CONN_RETRIES       = 3;
+    public static final int     DEF_CLIENT_CONN_TIMEOUT_MS    = 0;
+    public static final int     DEF_CLIENT_SO_TIMEOUT_MS      = 0;
+    public static final int     DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
+    public static final int     DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
+    public static final int     DEF_BATCH_MIN_WAIT_US         = 500;
+    public static final int     DEF_BATCH_MAX_WAIT_US         = 1000;
+    public static final int     DEF_BATCH_QUEUE_BATCHES       = 8;
+    public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<14;
+    public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
+    public static final int     DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
+    public static final int     DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
+    public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
+    public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
+    public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
 
     /* --- --- --- cached values --- --- --- */
     private static int CACHE_CLIENT_MAX_QUERY_GET      = -1;
@@ -70,6 +73,7 @@ public class FSProperties {
     private static int CACHE_OP_DEDUP_CAPACITY         = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
+    private static Boolean CACHE_STORE_CLIENT_VALIDATE = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_BIND = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_HASH = null;
@@ -101,7 +105,7 @@ public class FSProperties {
             Matcher m = BOOL_RX.matcher(val);
             if (!m.matches())
                 throw new IllegalArgumentException(src+"="+val+" is not a boolean");
-            return !m.group(1).isEmpty();
+            return m.group(1) != null;
         });
     }
 
@@ -152,6 +156,7 @@ public class FSProperties {
         CACHE_OP_JOIN_REORDER_BIND      = null;
         CACHE_OP_JOIN_REORDER_HASH      = null;
         CACHE_OP_JOIN_REORDER_WCO       = null;
+        CACHE_STORE_CLIENT_VALIDATE     = null;
     }
 
     /* --- --- --- accessors --- --- --- */
@@ -448,5 +453,13 @@ public class FSProperties {
         if (i <= 0)
             CACHE_FED_ASK_NEG_CAP = i = readPositiveInt(FED_ASK_NEG_CAP, DEF_FED_ASK_NEG_CAP);
         return i;
+    }
+
+    /** Whether {@link StoreSparqlClient} should validate indexes when loading. */
+    public static boolean storeClientValidate() {
+        Boolean v = CACHE_STORE_CLIENT_VALIDATE;
+        if (v == null)
+            CACHE_STORE_CLIENT_VALIDATE = v = readBoolean(STORE_CLIENT_VALIDATE, DEF_STORE_CLIENT_VALIDATE);
+        return v;
     }
 }

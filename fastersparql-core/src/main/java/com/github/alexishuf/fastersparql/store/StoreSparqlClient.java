@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.store;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
@@ -38,6 +39,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
@@ -45,6 +47,7 @@ import java.nio.file.Path;
 
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
+import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 
 public class StoreSparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
@@ -71,22 +74,36 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         super(ep);
         this.bindingAwareProtocol = true;
         Path dir = endpoint.asFile().toPath();
+        boolean validate = FSProperties.storeClientValidate();
+        log.info("Loading{} {}...", validate ? "/validating" : "", dir);
         if (!Files.isDirectory(dir))
             throw new FSException(ep, dir+" is not a dir, cannot open store");
         LocalityCompositeDict dict = null;
+        int dictId = 0;
         Triples spo = null, pso = null, ops;
-        try {
-            dict = new LocalityCompositeDict(dir.resolve("strings"));
+        try (var exec = newVirtualThreadPerTaskExecutor()) {
+            var dictF = exec.submit(() -> {
+                LocalityCompositeDict d = new LocalityCompositeDict(dir.resolve("strings"));
+                if (validate)
+                    d.validate();
+                return d;
+            });
+            var spoF = exec.submit(() -> loadTriples(dir.resolve("spo"), validate));
+            var psoF = exec.submit(() -> loadTriples(dir.resolve("pso"), validate));
+            var opsF = exec.submit(() -> loadTriples(dir.resolve("ops"), validate));
+            dict = dictF.get();
             dictId = IdTranslator.register(dict);
-            spo = new Triples(dir.resolve("spo"));
-            pso = new Triples(dir.resolve("pso"));
-            ops = new Triples(dir.resolve("ops"));
+            spo = spoF.get();
+            pso = psoF.get();
+            ops = opsF.get();
         } catch (Throwable e) {
+            if (dictId > 0) IdTranslator.deregister(dictId, dict);
             if (dict != null) dict.close();
             if (spo != null) spo.close();
             if (pso != null) pso.close();
             throw FSException.wrap(ep, e);
         }
+        this.dictId = dictId;
         this.dict = dict;
         this.spo = spo;
         this.pso = pso;
@@ -95,6 +112,14 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         var selector = new TrivialSelector(ep, Spec.EMPTY);
         federation.addSource(new Source(this, selector, estimator, Spec.EMPTY));
         REFS.setRelease(this, 1);
+        log.info("Loaded{} {}...", validate ? "/validated" : "", dir);
+    }
+
+    private static Triples loadTriples(Path path, boolean validate) throws IOException {
+        Triples t = new Triples(path);
+        if (validate)
+            t.validate();
+        return t;
     }
 
     /** An {@link AutoCloseable} that ensures the {@link StoreSparqlClient} and the
