@@ -27,7 +27,6 @@ import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
-import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 
 @SuppressWarnings("unused")
@@ -183,7 +182,7 @@ public final class Modifier extends Plan {
                                             : new Filtering<>(bt, inVars, filters);
             processor = bt.filter(outVars, inVars, rf);
             if (dedup != null) {
-                in = new ProcessorBIt<>(in, outVars, processor);
+                in = new ProcessorBIt<>(in, outVars, processor, null);
                 processor = bt.filter(slice ? new SlicingDedup<>(offset, limit, dedup) : dedup);
             }
         } else if (dedup == null) {
@@ -197,15 +196,13 @@ public final class Modifier extends Plan {
     }
 
     private final class ModifierBIt<B extends Batch<B>> extends ProcessorBIt<B> {
-        private final @Nullable Metrics metrics;
-        private boolean completed = false;
 
         public ModifierBIt(BIt<B> in, Vars outVars, BatchProcessor<B> processor) {
-            super(in, outVars, processor);
-            this.metrics = Metrics.createIf(Modifier.this);
+            super(in, outVars, processor, Metrics.createIf(Modifier.this));
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
+            super.cleanup(cause);
             if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
                 var pool = batchType.dedupPool;
                 int cap = Modifier.this.distinctCapacity;
@@ -217,24 +214,6 @@ public final class Modifier extends Plan {
                 } else if (d instanceof WeakDedup<B> wd) {
                     pool.offerWeak(wd);
                 }
-            }
-            super.cleanup(cause);
-        }
-
-        @Override public @Nullable B nextBatch(B b) {
-            try {
-                b = super.nextBatch(b);
-                if (metrics != null && !completed) {
-                    if (b == null) metrics.complete(null, false).deliver();
-                    else           metrics.rowsEmitted(b.rows);
-                }
-                if (b == null) completed = true;
-                return b;
-            } catch (Throwable t) {
-                if (metrics != null && !completed)
-                    metrics.complete(t, isClosedFor(t, delegate)).deliver();
-                completed = true;
-                throw t;
             }
         }
     }
