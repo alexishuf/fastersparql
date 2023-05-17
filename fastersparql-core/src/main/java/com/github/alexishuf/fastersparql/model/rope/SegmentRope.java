@@ -509,27 +509,23 @@ public class SegmentRope extends PlainRope {
 //            }
 //        }
 
-        MemorySegment lSeg1 = lSeg;
-        long lOff1 = lOff;
-        int lLen1 = lLen;
-        MemorySegment rSeg1 = rSeg;
-        long rOff1 = rOff;
-        int rLen1 = rLen;
         boolean lFst = true, rFst = true;
+        if (lSeg == rSeg && lLen == rLen && lOff == rOff)
+            lLen = rLen = 0; // do not compare bytes of same reference
         // move to second segment if first is empty
-        if (lLen1 <= 0) { lSeg1 = lSnd; lOff1 = lSndOff; lLen1 = lSndLen; lFst = false; }
-        if (rLen1 <= 0) { rSeg1 = rSnd; rOff1 = rSndOff; rLen1 = rSndLen; rFst = false; }
+        if (lLen <= 0) { lSeg = lSnd; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+        if (rLen <= 0) { rSeg = rSnd; rOff = rSndOff; rLen = rSndLen; rFst = false; }
 
         for (int common, diff; true; ) {
-            if ((common = Math.min(lLen1, rLen1)) <= 0)
-                return lLen1 - rLen1; // one side exhausted, largest wins
-            if ((diff = compare1_1(lSeg1, lOff1, common, rSeg1, rOff1, common)) != 0)
+            if ((common = Math.min(lLen, rLen)) <= 0)
+                return lLen - rLen; // one side exhausted, largest wins
+            if ((diff = compare1_1(lSeg, lOff, common, rSeg, rOff, common)) != 0)
                 return diff; // found a mismatching byte
             // advance ranges
-            lOff1 += common; lLen1 -= common;
-            rOff1 += common; rLen1 -= common;
-            if (lLen1 == 0 && lFst) { lSeg1 = lSnd; lOff1 = lSndOff; lLen1 = lSndLen; lFst = false; }
-            if (rLen1 == 0 && rFst) { rSeg1 = rSnd; rOff1 = rSndOff; rLen1 = rSndLen; rFst = false; }
+            lOff += common; lLen -= common;
+            rOff += common; rLen -= common;
+            if (lLen == 0 && lFst) { lSeg = lSnd; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+            if (rLen == 0 && rFst) { rSeg = rSnd; rOff = rSndOff; rLen = rSndLen; rFst = false; }
         }
     }
 
