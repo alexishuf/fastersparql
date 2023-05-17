@@ -1,3 +1,4 @@
 com.github.alexishuf.fastersparql.fed.selectors.AskSelector$AskLoader
 com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector$TrivialLoader
 com.github.alexishuf.fastersparql.fed.selectors.DictionarySelector$DictionaryLoader
+com.github.alexishuf.fastersparql.fed.selectors.FSStoreSelector$FSStoreLoader
