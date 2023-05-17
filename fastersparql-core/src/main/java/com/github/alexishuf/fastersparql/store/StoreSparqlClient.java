@@ -62,6 +62,7 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     private final int dictId;
     private final Triples spo, pso, ops;
     private final Federation federation;
+    private final Estimator estimator = new Estimator();
     @SuppressWarnings("unused") private int plainRefs;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -92,9 +93,30 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         this.ops = ops;
         federation = new Federation(ep, null);
         var selector = new TrivialSelector(ep, Spec.EMPTY);
-        federation.addSource(new Source(this, selector, new Estimator(), Spec.EMPTY));
+        federation.addSource(new Source(this, selector, estimator, Spec.EMPTY));
         REFS.setRelease(this, 1);
     }
+
+    /** An {@link AutoCloseable} that ensures the {@link StoreSparqlClient} and the
+     *  underlying storage remains open (i.e., {@link StoreSparqlClient#close()} will be
+     *  silently delayed if there are unterminated {@link BIt}s or unclosed refs. */
+    public class Ref implements AutoCloseable {
+        private boolean closed;
+
+        public Ref() { acquireRef(); }
+
+        public StoreSparqlClient get() { return StoreSparqlClient.this; }
+
+        @Override public void close() {
+            if (closed) return;
+            closed = true;
+            releaseRef();
+        }
+    }
+
+    /** Get a {@link Ref}, which will delay {@link StoreSparqlClient#close()} until after
+     * the {@link Ref} itself is {@link Ref#close()}d. */
+    public Ref liveRef() { return new Ref(); }
 
     private void acquireRef() {
         while (true) {
@@ -134,6 +156,8 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     public int dictId() { return dictId; }
 
     /* --- --- --- estimation --- --- --- */
+
+    public int estimate(TriplePattern tp) { return estimator.estimate(tp, null); }
 
     private final class Estimator extends CardinalityEstimator {
         @Override public int estimate(TriplePattern t, @Nullable Binding binding) {
