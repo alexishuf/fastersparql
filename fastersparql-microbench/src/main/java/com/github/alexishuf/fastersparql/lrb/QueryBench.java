@@ -1,0 +1,218 @@
+package com.github.alexishuf.fastersparql.lrb;
+
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
+import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
+import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
+import com.github.alexishuf.fastersparql.lrb.query.QueryName;
+import com.github.alexishuf.fastersparql.lrb.query.QueryRunner;
+import com.github.alexishuf.fastersparql.lrb.query.QueryRunner.BatchConsumer;
+import com.github.alexishuf.fastersparql.lrb.sources.FederationHandle;
+import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
+import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
+import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
+import com.github.alexishuf.fastersparql.util.IOUtils;
+import org.checkerframework.checker.nullness.qual.Nullable;
+import org.openjdk.jmh.annotations.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.function.IntSupplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
+
+@State(Scope.Thread)
+@Threads(1)
+@Fork(value = 1, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
+@Measurement(iterations = 5, time = 1_000, timeUnit = TimeUnit.MILLISECONDS)
+@Warmup(iterations = 2, time = 1_000, timeUnit = TimeUnit.MILLISECONDS)
+@BenchmarkMode({Mode.AverageTime})
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+public class QueryBench {
+
+    @Param({"S.*"}) private String queries;
+
+    @Param({"FS_STORE", "HDT_FILE"}) SourceKind srcKind;
+    @Param({"PREFERRED"}) SelectorKindType selKind;
+    @Param({"true"}) boolean builtinPlans;
+    @Param({"COMPRESSED"}) BatchKind batchKind;
+
+    public enum SelectorKindType {
+        PREFERRED,
+        ASK,
+        DICT;
+
+        public SelectorKind forSource(SourceKind src) {
+            return switch (this) {
+                case ASK -> SelectorKind.ASK;
+                case DICT -> SelectorKind.DICT;
+                case PREFERRED -> switch (src) {
+                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS -> SelectorKind.ASK;
+                    case FS_STORE -> SelectorKind.FS_STORE;
+                };
+            };
+        }
+    }
+
+    public enum BatchKind {
+        COMPRESSED,
+        TERM,
+        NATIVE;
+
+        <B extends Batch<B>> BatchType<B> forSource(SourceKind src) {
+            //noinspection unchecked
+            return (BatchType<B>) switch (this) {
+                case COMPRESSED -> Batch.COMPRESSED;
+                case TERM -> Batch.TERM;
+                case NATIVE -> switch (src) {
+                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS -> HdtBatch.TYPE;
+                    case FS_STORE -> StoreBatch.TYPE;
+                };
+            };
+        }
+    }
+
+
+    private File dataDir;
+    private BatchType<?> batchType;
+    private FederationHandle fedHandle;
+    private List<Plan> plans;
+    private List<QueryName> queryList;
+    private BoundCounter boundCounter;
+    private RowCounter rowCounter;
+    private RopeLenCounter ropeLenCounter;
+    private TermLenCounter termLenCounter;
+    private int lastBenchResult;
+
+    private static class BoundCounter extends QueryRunner.BoundCounter {
+        public BoundCounter(BatchType<?> batchType) { super(batchType); }
+        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+    }
+
+    private static final class RowCounter extends BatchConsumer {
+        public int rows;
+        public RowCounter(BatchType<?> batchType) {super(batchType);}
+        public int rows() { return rows; }
+        @Override public void start(BIt<?> it)                  { rows = 0; }
+        @Override public void accept(Batch<?> batch)            { rows += batch.rows; }
+        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+    }
+
+    private static final class RopeLenCounter extends BatchConsumer {
+        private final TwoSegmentRope tmp = new TwoSegmentRope();
+        private int acc;
+
+        public RopeLenCounter(BatchType<?> batchType) {super(batchType);}
+        public int len() { return acc; }
+
+        @Override public void start(BIt<?> it) { acc = 0; }
+        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+        @Override public void accept(Batch<?> batch) {
+            for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    if (batch.getRopeView(r, c, tmp))
+                        acc += tmp.len;
+                }
+            }
+        }
+    }
+
+    private static final class TermLenCounter extends BatchConsumer {
+        private final Term tmp = new Term();
+        private int acc;
+
+        public TermLenCounter(BatchType<?> batchType) {super(batchType);}
+        public int len() { return acc; }
+
+        @Override public void start(BIt<?> it) { acc = 0; }
+        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+        @Override public void accept(Batch<?> batch) {
+            for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    if (batch.getView(r, c, tmp))
+                        acc += tmp.len;
+                }
+            }
+        }
+    }
+
+    @Setup(Level.Trial) public void setup() throws IOException {
+        String dataDirPath = System.getProperty("fs.data.dir");
+        if (dataDirPath == null || dataDirPath.isEmpty())
+            throw new IllegalArgumentException("fs.data.dir property not set!");
+        Path dataDir = Path.of(dataDirPath);
+        if (!Files.isDirectory(dataDir))
+            throw new IllegalArgumentException("-Dfs.data.dir="+dataDir+" is not a dir");
+        String missing = LrbSource.all().stream()
+                .map(s -> s.filename(srcKind))
+                .filter(name -> !Files.exists(dataDir.resolve(name)))
+                .collect(Collectors.joining(", "));
+        if (!missing.isEmpty())
+            throw new IOException("Files/dirs missing from "+dataDir+": "+missing);
+        queryList = new QueryOptions(List.of(queries)).queries();
+        if (queryList.isEmpty())
+            throw new IllegalArgumentException("No queries selected");
+        batchType = batchKind.forSource(srcKind);
+        boundCounter = new BoundCounter(batchType);
+        rowCounter = new RowCounter(batchType);
+        ropeLenCounter = new RopeLenCounter(batchType);
+        termLenCounter = new TermLenCounter(batchType);
+        this.dataDir = dataDir.toFile();
+    }
+
+    @Setup(Level.Iteration) public void iterationSetup() throws IOException {
+        fedHandle = FederationHandle.builder(dataDir).srcKind(srcKind)
+                                    .selKind(selKind.forSource(srcKind))
+                                    .waitInit(true).create();
+        if (builtinPlans) {
+            var reg = PlanRegistry.parseBuiltin();
+            reg.resolve(fedHandle.federation);
+            plans = queryList.stream().map(reg::createPlan).toList();
+            String missing = IntStream.range(0, plans.size())
+                    .filter(i -> plans.get(i) == null)
+                    .mapToObj(i -> queryList.get(i).name()).collect(Collectors.joining(", "));
+            if (!missing.isEmpty())
+                throw new IllegalArgumentException("No plan for "+missing);
+        } else {
+            plans = queryList.stream().map(q -> fedHandle.federation.plan(q.parsed())).toList();
+        }
+        lastBenchResult = -1;
+        System.gc();
+        IOUtils.fsync(50_000);
+    }
+
+    @TearDown(Level.Iteration) public void iterationTearDown() {
+        fedHandle.close();
+    }
+
+    private int checkResult(int r) {
+        if (lastBenchResult == -1)
+            lastBenchResult = r;
+        else if (lastBenchResult != r)
+            throw new RuntimeException("Unstable r. Expected "+lastBenchResult+", got "+r);
+        return r;
+    }
+
+    private int execute(BatchConsumer consumer, IntSupplier resultGetter) {
+        for (Plan plan : plans)
+            QueryRunner.drain(plan.execute(batchType), consumer);
+        return checkResult(resultGetter.getAsInt());
+    }
+
+    @Benchmark public int countTerms() { return execute(boundCounter,   boundCounter::nonNull); }
+    @Benchmark public int countRows()  { return execute(rowCounter,     rowCounter::rows); }
+    @Benchmark public int ropeLen()    { return execute(ropeLenCounter, ropeLenCounter::len); }
+    @Benchmark public int termLen()    { return execute(termLenCounter, termLenCounter::len); }
+}

@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.time.Duration;
-import java.util.Arrays;
 
 import static java.lang.Thread.ofPlatform;
 
@@ -216,7 +215,11 @@ public final class QueryRunner {
 
         @Override public void start(BIt<?> it) {
             rows = 0;
-            Arrays.fill(counts, 0);
+            counts[0] = 0;
+            counts[1] = 0;
+            counts[2] = 0;
+            counts[3] = 0;
+            counts[4] = 0;
         }
 
         @Override public void accept(Batch<?> b) {

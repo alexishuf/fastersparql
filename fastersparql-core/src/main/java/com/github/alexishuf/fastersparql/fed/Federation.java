@@ -243,12 +243,34 @@ public class Federation extends AbstractSparqlClient {
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         long entryNs = Timestamp.nanoTime();
-        cdc = FSProperties.dedupCapacity();
-
-        // parse query or copy tree and sanitize
         var m = new FedMetrics(this, sparql);
+        var it = plan(sparql, m).execute(batchType);
+        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
+
+        // deliver metrics
+        for (var l : fedListeners)
+            l.accept(m);
+        return it;
+    }
+
+    public <B extends Batch<B>> Plan plan(SparqlQuery sparql) {
+        long entryNs = Timestamp.nanoTime();
+        var m = new FedMetrics(this, sparql);
+
+        Plan root = plan(sparql, m);
+        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
+
+        // deliver metrics
+        for (var l : fedListeners)
+            l.accept(m);
+        return root;
+    }
+
+    private Plan plan(SparqlQuery sparql, FedMetrics m) {
+        // parse query or copy tree and sanitize
+        cdc = FSProperties.dedupCapacity();
         Plan root = sparql instanceof Plan p
-                  ? p.deepCopy() : new SparqlParser().parse(((OpaqueSparqlQuery)sparql).sparql);
+                ? p.deepCopy() : new SparqlParser().parse(((OpaqueSparqlQuery) sparql).sparql);
         root = project(mutateSanitize(root), sparql.publicVars());
 
         // source selection & agglutination
@@ -263,13 +285,7 @@ public class Federation extends AbstractSparqlClient {
         // final dispatch for execution
         if (!planListeners.isEmpty())
             root.attach(planListeners);
-        var it = root.execute(batchType);
-        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
-
-        // deliver metrics
-        for (var l : fedListeners)
-            l.accept(m);
-        return it;
+        return root;
     }
 
     private static Plan copyUnwrap(Plan parent) {

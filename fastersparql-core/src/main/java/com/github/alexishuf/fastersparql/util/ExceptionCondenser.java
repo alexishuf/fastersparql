@@ -22,6 +22,12 @@ public final class ExceptionCondenser<T extends Throwable> {
         return new ExceptionCondenser<>(RuntimeException.class, RuntimeException::new);
     }
 
+    public static void throwAsUnchecked(Throwable throwable) {
+        if      (throwable instanceof Error e)            throw e;
+        else if (throwable instanceof RuntimeException e) throw e;
+        else if (throwable != null)                       throw new RuntimeException(throwable);
+    }
+
     public void condense(@Nullable Throwable t) {
         if (t != null) {
             if (acc == null) //noinspection unchecked
