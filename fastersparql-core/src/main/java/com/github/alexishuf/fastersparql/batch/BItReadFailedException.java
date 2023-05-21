@@ -11,8 +11,7 @@ public class BItReadFailedException extends FSException {
     private static String buildMsg(BIt<?> it, @Nullable Throwable cause) {
         if (cause == null) return "Unknown cause on "+it;
         var m = Objects.requireNonNullElse(cause.getMessage(), "");
-        return cause.getClass().getSimpleName()+": "+(m.substring(0, Math.min(80, m.length())))
-                + " on "+it;
+        return cause.getClass().getSimpleName()+": "+m+" on "+it;
     }
     public BItReadFailedException(BIt<?> it, Throwable cause) {
         super(buildMsg(it, cause), cause);

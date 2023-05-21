@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
@@ -65,7 +66,7 @@ public class DictFindBench {
     private long expected;
 
     @Setup(Level.Trial) public void setup() throws IOException {
-        long setupStart = System.nanoTime();
+        long setupStart = Timestamp.nanoTime();
         sourceDir = Files.createTempDirectory("fastersparql");
         hdtSource = sourceDir.resolve("NYT.hdt");
         try (var is = HdtBench.class.getResourceAsStream("NYT.hdt");
@@ -113,7 +114,7 @@ public class DictFindBench {
                     hdtTerms[i] = Term.valueOf(queries[i]);
             }
         }
-        long us = System.nanoTime()-setupStart/1_000;
+        long us = Timestamp.nanoTime()-setupStart/1_000;
         log.info("setup in {}.{}ms, queries={}/{}. fsync()ing...",
                  us/1_000, us%1_000, queries.length, nStrings);
         IOUtils.fsync(1_000);

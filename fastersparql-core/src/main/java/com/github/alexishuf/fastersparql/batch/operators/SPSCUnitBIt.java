@@ -175,7 +175,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
         //journal.write("SPSCUnitBIt.nextBatch &b=", identityHashCode(b), "rows=", b == null ? 0 : b.rows, "[0][0]=", b == null ? null : b.get(0, 0));
         ready = null;
         eager = false;
-        adjustCapacity(b);
+        onBatch(b);
         setQS(qs, 0, QS_READY|QS_PKD_PROD); // unpark()s producer if parked.
         return b;
     }

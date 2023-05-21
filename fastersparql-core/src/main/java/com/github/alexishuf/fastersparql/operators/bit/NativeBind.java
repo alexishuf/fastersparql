@@ -2,11 +2,13 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -32,7 +34,7 @@ public class NativeBind {
 
     @SuppressWarnings("GrazieInspection")
     private static <B extends Batch<B>> BIt<B>
-    multiBind(Plan join, BIt<B> left, BindType type, Union right, int rightIdx,
+    multiBind(Plan join, BIt<B> left, BindType type, Vars outVars, Union right,
               @Nullable Binding binding, boolean canDedup, @Nullable JoinMetrics metrics) {
         //          left
         //    +-------^------+      Scatter-planName VThread copies each batch from left
@@ -47,11 +49,11 @@ public class NativeBind {
         //           v              will also set up cross-source or full de-duplication.
         //     Union.dispatch()
         var bt = left.batchType();
-        var vars = left.vars();
+        var leftVars = left.vars();
         var nOps = right.opCount();
         var queues = new ArrayList<SPSCUnitBIt<B>>(nOps);
         for (int i = 0; i < nOps; i++) {
-            var q = new SPSCUnitBIt<>(bt, vars);
+            var q = new SPSCUnitBIt<>(bt, leftVars);
             q.eager().maxBatch(left.maxBatch());
             queues.add(q);
         }
@@ -80,12 +82,12 @@ public class NativeBind {
             boundIts.add(query.client.query(bt, sparql, queues.get(i), type));
         }
         int cdc = right.crossDedupCapacity;
-        int dedupCols = join.publicVars().size();
+        int dedupCols = outVars.size();
         Dedup<B> dedup;
         if      (canDedup) dedup = bt.dedupPool.getWeak(nOps*dedupCapacity(), dedupCols);
         else if (cdc >  0) dedup = bt.dedupPool.getWeakCross(nOps*cdc, dedupCols);
-        else               return new MeteredMergeBIt<>(boundIts, join, rightIdx, metrics);
-        return new DedupMergeBIt<>(boundIts, dedup, join, rightIdx, metrics);
+        else               return new MergeBIt<>(boundIts, bt, outVars, metrics);
+        return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
     }
 
     public static <B extends Batch<B>> BIt<B> preferNative(BatchType<B> batchType, Plan join,
@@ -97,17 +99,17 @@ public class NativeBind {
         for (int i = 1, n = join.opCount(); i < n; i++) {
             var r = join.op(i);
             var jm = metrics == null ? null : metrics.joinMetrics[i];
+            var projection = i == n-1 ? join.publicVars()
+                    : type.resultVars(left.vars(), r.publicVars());
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
                 if (binding != null) sparql = sparql.bound(binding);
                 if (canDedup)        sparql = sparql.toDistinct(WEAK);
                 left = q.client.query(batchType, sparql, left, type, jm);
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
-                left = multiBind(join, left, type, rUnion, i, binding, canDedup, jm);
+                left = multiBind(join, left, type, projection, rUnion, binding, canDedup, jm);
             } else {
                 if (binding != null) r = r.bound(binding);
-                var projection = i == n-1 ? join.publicVars()
-                               : type.resultVars(left.vars(), r.publicVars());
                 left = new PlanBindingBIt<>(left, type, r, canDedup, projection, jm);
             }
         }

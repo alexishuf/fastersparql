@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
@@ -15,7 +16,6 @@ import java.util.Random;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleSleep;
-import static java.lang.System.nanoTime;
 
 @Command
 public class MeasureOptions {
@@ -84,16 +84,16 @@ public class MeasureOptions {
     public void cooldown(int ms) {
         if (ms > 1_000)
             log.info("cooldown({})", ms);
-        long start = nanoTime();
+        long start = Timestamp.nanoTime();
         var runtime = Runtime.getRuntime();
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
         System.gc();
-        IOUtils.fsync(ms-(nanoTime()-start)/1_000_000);
+        IOUtils.fsync(ms-(Timestamp.nanoTime()-start)/1_000_000);
         do {
             uninterruptibleSleep(250);
             System.gc();
-        } while ((nanoTime()-start) < 250_000_000);
+        } while ((Timestamp.nanoTime()-start) < 250_000_000);
 
         double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
         log.info("cooldown(): {}% free memory", String.format("%.2f", freeAfter-freeBefore));

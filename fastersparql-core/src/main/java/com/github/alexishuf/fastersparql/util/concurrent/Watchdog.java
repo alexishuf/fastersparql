@@ -1,11 +1,11 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 
-import static java.lang.System.nanoTime;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class Watchdog implements AutoCloseable {
@@ -28,7 +28,7 @@ public class Watchdog implements AutoCloseable {
         this.thread = Thread.startVirtualThread(() -> {
             LockSupport.park(); // wait until first start() call
             while (!shutdown) {
-                long now = nanoTime(), deadline = (long) DEADLINE.getAcquire(this);
+                long now = Timestamp.nanoTime(), deadline = (long) DEADLINE.getAcquire(this);
                 if (now >= deadline) {
                     if (shutdown) { // courtesy re-check for racing close()
                         break;
@@ -62,7 +62,7 @@ public class Watchdog implements AutoCloseable {
     public @This Watchdog start(long nanos) {
         if (shutdown) throw new IllegalStateException("close()ed");
         triggered = false;
-        DEADLINE.setRelease(this, nanoTime()+nanos);
+        DEADLINE.setRelease(this, Timestamp.nanoTime()+nanos);
         LockSupport.unpark(thread);
         return this;
     }

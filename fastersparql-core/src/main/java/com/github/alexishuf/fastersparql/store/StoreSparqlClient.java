@@ -246,7 +246,9 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     }
 
     @SuppressWarnings("unchecked") @Override
-    public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql, @Nullable BIt<B> bindings, @Nullable BindType type, Metrics.@Nullable JoinMetrics metrics) {
+    public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql,
+                                             @Nullable BIt<B> bindings, @Nullable BindType type,
+                                             Metrics.@Nullable JoinMetrics metrics) {
         if (bindings == null || bindings instanceof EmptyBIt<B>)
             return query(bt, sparql);
         else if (type == null)

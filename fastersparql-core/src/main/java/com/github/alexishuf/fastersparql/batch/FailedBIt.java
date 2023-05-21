@@ -19,9 +19,11 @@ public class FailedBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     @Override public B            nextBatch(@Nullable B b) {
         batchType.recycle(b);
+        if (!terminated)
+            onTermination(error);
         throw error;
     }
 
     @Override public @This BIt<B> tempEager() { return this; }
-    @Override public String       toString()  { return error.toString(); }
+    @Override public String       toString()  { return "FAIL("+error+")"; }
 }

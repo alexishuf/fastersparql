@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Union;
@@ -39,8 +40,11 @@ class WeakCrossSourceDedupBItTest {
             }
             var union = new Union(0, operands);
             var dedup = new WeakCrossSourceDedup<>(Batch.TERM, 3, 1);
-            return sequential ? new DedupConcatBIt<>(its, union, dedup)
-                              : new DedupMergeBIt<>(its, union, dedup);
+            Vars outVars = union.publicVars();
+            Metrics m = Metrics.createIf(union);
+            //noinspection resource
+            return sequential ? new DedupConcatBIt<>(its, outVars, dedup).metrics(m)
+                              : new DedupMergeBIt<>(its, outVars, m, dedup);
         }
 
         @Override public void run() {

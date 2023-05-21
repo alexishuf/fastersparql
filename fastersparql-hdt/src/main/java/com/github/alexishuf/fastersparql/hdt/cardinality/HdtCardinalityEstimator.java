@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.hdt.cardinality;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -17,7 +18,6 @@ import java.util.concurrent.CompletionStage;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.plain;
 import static java.lang.Integer.MAX_VALUE;
-import static java.lang.System.nanoTime;
 import static org.rdfhdt.hdt.enums.ResultEstimationType.EXACT;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
@@ -42,7 +42,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         this.predicateCard[0] = this.maxPredicateCard = (int) Math.min(hdt.getTriples().getNumberOfElements(), MAX_VALUE);
         if (peek.ordinal() >= HdtEstimatorPeek.PREDICATES.ordinal()) {
             Thread.startVirtualThread(() -> {
-                long start = nanoTime();
+                long start = Timestamp.nanoTime();
                 String lName = name == null ? hdt.toString() : name;
                 try {
                     TripleID t = new TripleID(0, 0, 0);
@@ -55,12 +55,12 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
                         this.maxPredicateCard = maxPredicateCard = Math.max(maxPredicateCard, card);
                     }
                     log.info("Cached cardinality of {} predicates at {} in {}ms",
-                            predicateCard.length, lName, (nanoTime() - start) / 1_000_000.0);
+                            predicateCard.length, lName, (Timestamp.nanoTime() - start) / 1_000_000.0);
                     ready.complete(null);
                 } catch (Throwable t) {
                     ready.completeExceptionally(t);
                     log.error("Predicate cardinality caching failed for {} after {}ms",
-                              lName, (nanoTime()-start)/1_000_000.0, t);
+                              lName, (Timestamp.nanoTime()-start)/1_000_000.0, t);
                 }
             });
         } else if (name != null) {

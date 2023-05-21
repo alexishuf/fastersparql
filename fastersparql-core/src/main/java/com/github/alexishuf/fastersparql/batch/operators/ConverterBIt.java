@@ -27,7 +27,9 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
             out.clear(in.cols);
         else
             out = batchType.create(in.rows, in.cols, batchType.bytesRequired(in));
-        return putConverting(out, in);
+        out = putConverting(out, in);
+        if (metrics != null) metrics.batch(out.rows);
+        return out;
     }
 
     protected B putConverting(B out, S in) { return out.putConverting(in); }

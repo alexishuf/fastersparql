@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -54,7 +55,7 @@ public class ResultsParserBench {
     private final NopWsFrameSender wsFrameSender = new NopWsFrameSender();
 
     @SuppressWarnings("unchecked") @Setup(Level.Trial) public void setup() {
-        long start = System.nanoTime();
+        long start = Timestamp.nanoTime();
         bt = Workloads.parseBatchType(typeName);
         ropeTypeHolder = new RopeTypeHolder(ropeType);
         System.out.printf("Loading %s batches...\n", sizeName);
@@ -62,7 +63,7 @@ public class ResultsParserBench {
         vars = Workloads.makeVars(batches);
 
         System.out.printf("Serializing fragments %d times...\n", FRAGMENTS_LISTS);
-        long last = System.nanoTime();
+        long last = Timestamp.nanoTime();
         fragmentsLists = new ArrayList<>(FRAGMENTS_LISTS);
         nextFragmentList = 0;
         var serializer = ResultsSerializer.create(format);
@@ -78,8 +79,8 @@ public class ResultsParserBench {
             serializer.serializeTrailer(sink = ropeTypeHolder.byteSink());
             fragments.add(ropeTypeHolder.takeRope(sink));
             fragmentsLists.add(fragments);
-            if (System.nanoTime()-last > 5_000_000_000L) {
-                last = System.nanoTime();
+            if (Timestamp.nanoTime()-last > 5_000_000_000L) {
+                last = Timestamp.nanoTime();
                 System.out.printf("Serializing fragments: %d/%d...\n", i, FRAGMENTS_LISTS);
             }
             if ((i&31) == 0)
@@ -88,7 +89,7 @@ public class ResultsParserBench {
         Integer listBytes = fragmentsLists.get(0).stream().map(Rope::len).reduce(Integer::sum).orElse(0);
         System.out.printf("Serialized fragments in %.3fms. Built %d lists with %d fragments each, " +
                           "totaling %.3f KiB per list. Will gc() and cooldown sleep(500)\n",
-                          (System.nanoTime()-start)/1_000_000.0, fragmentsLists.size(),
+                          (Timestamp.nanoTime()-start)/1_000_000.0, fragmentsLists.size(),
                           fragmentsLists.get(0).size(), listBytes/1024.0);
         drainer = Thread.ofPlatform().name("drainer").start(this::drain);
         Workloads.cooldown(500);

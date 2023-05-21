@@ -1,20 +1,24 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.alexishuf.fastersparql.batch.base.AbstractBIt.toStringNoArgs;
+import static com.github.alexishuf.fastersparql.batch.base.AbstractBIt.cls2name;
 
 public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>> implements BIt<B> {
     protected BIt<S> delegate;
     protected final BatchType<B> batchType;
     protected final Vars vars;
+    protected @Nullable MetricsFeeder metrics;
 
     public DelegatedControlBIt(BIt<S> delegate, BatchType<B> batchType, Vars vars) {
         this.delegate = delegate;
@@ -27,8 +31,15 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
     @Override public BatchType<B> batchType() { return batchType; }
     @Override public final Vars vars()    { return vars; }
 
+    @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
+        this.metrics = metrics;
+        if (metrics != null && delegate instanceof AbstractBIt<S> i && i.terminated)
+            metrics.completeAndDeliver(i.error, BItClosedAtException.isClosedFor(i.error, i));
+        return this;
+    }
+
     @Override public String toString() {
-        return toStringNoArgs(getClass()) +'('+delegate.toString()+')';
+        return cls2name(getClass()) +'('+delegate.toString()+')';
     }
 
     @Override public BIt<B> preferred() {

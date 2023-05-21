@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
@@ -27,8 +28,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static java.lang.System.nanoTime;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class DictionarySelector extends Selector {
     private static final Logger log = LoggerFactory.getLogger(DictionarySelector.class);
@@ -110,13 +109,13 @@ public class DictionarySelector extends Selector {
 
     private void init(SparqlClient client, boolean fetchPredicates, boolean fetchClasses) {
         try {
-            long start = nanoTime();
+            long start = Timestamp.nanoTime();
             predicates = fetchPredicates ? fetch(client, PREDICATES) : null;
             classes    = fetchClasses    ? fetch(client, CLASSES)    : null;
             log.info("{} indexed {} predicates and {} classes in {}s",
                      DictionarySelector.this, predicates == null ? 0 : predicates.strings(),
                      classes == null ? 0 : classes.strings(),
-                     String.format("%.3f", (nanoTime()-start)/1_000_000_000.0));
+                     String.format("%.3f", (Timestamp.nanoTime()-start)/1_000_000_000.0));
             notifyInit(InitOrigin.QUERY, null);
         } catch (Throwable t) {
             notifyInit(null, t);

@@ -11,8 +11,6 @@ import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
-
 
 public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
@@ -69,5 +67,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
         return b;
     }
 
-    @Override public String toString() { return toStringWithOperands(List.of(client())); }
+    @Override public String toString() {//noinspection resource
+        return "NettySPSC["+client().endpoint()+"]@"+id();
+    }
 }

@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -19,6 +20,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
 import static java.lang.invoke.MethodHandles.lookup;
 
 /**
@@ -29,7 +31,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
     /** A value smaller than any {@link System#nanoTime()} call without overflow risks. */
-    protected static final long ORIGIN = System.nanoTime();
+    protected static final long ORIGIN = Timestamp.nanoTime();
     protected static final VarHandle RECYCLED;
 
     static {
@@ -48,6 +50,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;
     protected B recycled;
+    protected @Nullable MetricsFeeder metrics;
     protected final Vars vars;
 
     public AbstractBIt(BatchType<B> batchType, Vars vars) {
@@ -130,6 +133,12 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
             log.info(ON_TERM_TPL, this, msg);
         }
         try {
+            if (metrics != null)
+                metrics.completeAndDeliver(cause, isClosedFor(cause, this));
+        } catch (Throwable t) {
+            log.error("{}.metrics.completeAndDeliver({}) failed", this, cause, t);
+        }
+        try {
             cleanup(cause);
         } catch (Throwable t) {
             log.error("{}.cleanup() failed", this, t);
@@ -142,6 +151,38 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     public boolean isClosed() { return closed; }
 
+    /**
+     * This will be called after {@link BIt#minBatch(int)}, {@link BIt#maxBatch(int)},
+     * {@link BIt#minWait(long, TimeUnit)} or {@link BIt#maxWait(long, TimeUnit)} (and related
+     * setter overrides) are called.
+     *
+     * <p>Implementations should use this to updated derived fields or to complete
+     * filling but not yet ready batches.</p>
+     */
+    protected void updatedBatchConstraints() {
+        int bound;
+        if (rowsCapacity  < (bound = minBatch)   ) rowsCapacity = bound;
+        if (bytesCapacity < (bound = 32*minBatch)) bytesCapacity = bound;
+        if (rowsCapacity  > (bound = maxBatch)   ) rowsCapacity = bound;
+    }
+
+    protected void onBatch(@Nullable B b) {
+        if (b == null) return;
+        int delta = b.rows - rowsCapacity;
+        if (delta > 0) {
+            rowsCapacity += delta; // add missing capacity
+            bytesCapacity = Math.max(b.bytesUsed(), bytesCapacity);
+        } else if (delta < -64) {
+            rowsCapacity += delta>>2; // reduce capacity by 25% of excess capacity
+            delta = b.bytesUsed()-bytesCapacity;
+            if (delta > 0)
+                bytesCapacity += delta;
+            else if (delta < -128)
+                bytesCapacity += delta>>4;
+        }
+        var m = metrics;
+        if (m != null) m.batch(b.rows);
+    }
 
     /**
      * Get how many nanoseconds to wait to check again whether a batch with {@code r} rows
@@ -179,35 +220,11 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     @Override public Vars vars() { return vars; }
 
-    /**
-     * This will be called after {@link BIt#minBatch(int)}, {@link BIt#maxBatch(int)},
-     * {@link BIt#minWait(long, TimeUnit)} or {@link BIt#maxWait(long, TimeUnit)} (and related
-     * setter overrides) are called.
-     *
-     * <p>Implementations should use this to updated derived fields or to complete
-     * filling but not yet ready batches.</p>
-     */
-    protected void updatedBatchConstraints() {
-        int bound;
-        if (rowsCapacity  < (bound = minBatch)   ) rowsCapacity = bound;
-        if (bytesCapacity < (bound = 32*minBatch)) bytesCapacity = bound;
-        if (rowsCapacity  > (bound = maxBatch)   ) rowsCapacity = bound;
-    }
-
-    protected void adjustCapacity(@Nullable B b) {
-        if (b == null) return;
-        int delta = b.rows - rowsCapacity;
-        if (delta > 0) {
-            rowsCapacity += delta; // add missing capacity
-            bytesCapacity = Math.max(b.bytesUsed(), bytesCapacity);
-        } else if (delta < -64) {
-            rowsCapacity += delta>>2; // reduce capacity by 25% of excess capacity
-            delta = b.bytesUsed()-bytesCapacity;
-            if (delta > 0)
-                bytesCapacity += delta;
-            else if (delta < -128)
-                bytesCapacity += delta>>4;
-        }
+    @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
+        this.metrics = metrics;
+        if (terminated && metrics != null)
+            metrics.completeAndDeliver(error, isClosedFor(error, this));
+        return this;
     }
 
     @Override public BIt<B> preferred() {
@@ -323,10 +340,10 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     protected String toStringNoArgs() {
-        return toStringNoArgs(getClass())+'@'+id();
+        return cls2name(getClass())+'@'+id();
     }
 
-    static String toStringNoArgs(Class<?> cls) {
+    static String cls2name(Class<?> cls) {
         String name = cls.getSimpleName();
         int suffixStart = name.length() - 3;
         if (name.regionMatches(suffixStart, "BIt", 0, 3))
@@ -337,14 +354,16 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     @Override public String toString() { return toStringNoArgs(); }
 
     protected String toStringWithOperands(Collection<?> operands) {
-        var sb = new ByteRope(200).append(toStringNoArgs()).append('(');
         int taken = 0, n = operands.size();
-        for (var i = operands.iterator(); sb.length() < 60 && i.hasNext(); ++taken)
-            sb.append(i.next()).append(", ");
+        if (n == 0)
+            return toStringNoArgs()+"()";
+        if (n == 1)
+            return toStringNoArgs()+"("+operands.iterator().next()+")";
+        var sb = new ByteRope(512).append(toStringNoArgs()).append('(');
+        for (var i = operands.iterator(); sb.length() < 508 && i.hasNext(); ++taken)
+            sb.append("\n  ").append(i.next());
         if (taken < n)
-            sb.append("...");
-        else if (taken > 0)
-            sb.unAppend(2);
-        return sb.append(')').toString();
+            sb.append("\n  ...");
+        return sb.append("\n)").toString();
     }
 }

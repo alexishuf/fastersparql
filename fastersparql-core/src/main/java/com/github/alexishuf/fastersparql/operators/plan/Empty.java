@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -33,7 +34,8 @@ public final class Empty extends Plan {
         Vars vars = publicVars;
         if (binding != null && vars.intersects(binding.vars))
             vars = vars.minus(binding.vars);
-        return new EmptyBIt<>(bt, vars);
+        //noinspection resource
+        return new EmptyBIt<>(bt, vars).metrics(Metrics.createIf(this));
     }
 
     @Override public boolean equals(Object obj) {

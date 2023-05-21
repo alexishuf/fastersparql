@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.hdt;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.operators.BindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -298,7 +299,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
     private static final class LogProgressListener implements ProgressListener {
         private final String path;
         private final long interval = FSHdtProperties.mapProgressIntervalMs()*1_000_000L;
-        private long lastMessage = System.nanoTime();
+        private long lastMessage = Timestamp.nanoTime();
         private boolean logged;
 
         public LogProgressListener(String path) {
@@ -306,7 +307,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void notifyProgress(float level, String message) {
-            long now = System.nanoTime();
+            long now = Timestamp.nanoTime();
             long elapsed = now - lastMessage;
             if (elapsed > interval) {
                 lastMessage = now;

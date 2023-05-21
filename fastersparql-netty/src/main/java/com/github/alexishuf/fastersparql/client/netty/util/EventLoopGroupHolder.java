@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
@@ -179,7 +180,7 @@ public class EventLoopGroupHolder {
             }
             if (--references == 0) {
                 if (keepAlive > 0 && shutdownDeadline == -1) {
-                    shutdownDeadline = System.nanoTime()+keepAliveTimeUnit.toNanos(keepAlive);
+                    shutdownDeadline = Timestamp.nanoTime()+keepAliveTimeUnit.toNanos(keepAlive);
                     Thread.startVirtualThread(() -> {
                         try {
                             Thread.sleep(keepAliveTimeUnit.toMillis(keepAlive));
@@ -214,13 +215,13 @@ public class EventLoopGroupHolder {
         Future<?> future = release();
         boolean interrupted = false;
         for (long blocked, nanos = waitTimeUnit.toNanos(wait); nanos > 0; ) {
-            blocked = System.nanoTime();
+            blocked = Timestamp.nanoTime();
             try {
                 future.get(nanos, NANOSECONDS);
                 break;
             } catch (InterruptedException e) {
                 interrupted  = true;
-                nanos -= System.nanoTime() - blocked;
+                nanos -= Timestamp.nanoTime() - blocked;
             } catch (ExecutionException e) {
                 log.error("{}: shutdown failed", this, e.getCause());
                 break;

@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -112,8 +111,6 @@ public final class Values extends Plan {
     }
 
     private final class ValuesBIt<B extends Batch<B>> extends SingletonBIt<B> {
-        private final @Nullable Metrics metrics;
-
         ValuesBIt(BatchType<B> batchType, B values) {
             super(values, batchType, publicVars);
             metrics = Metrics.createIf(Values.this);
@@ -121,8 +118,6 @@ public final class Values extends Plan {
 
         @Override protected void cleanup(@Nullable Throwable error) {
             super.cleanup(error);
-            if (metrics != null)
-                metrics.complete(error, BItClosedAtException.isClosedFor(error, this)).deliver();
         }
 
         @Override public String toString() { return Values.this.toString(); }

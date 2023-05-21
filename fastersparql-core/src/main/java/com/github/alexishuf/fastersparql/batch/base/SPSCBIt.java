@@ -294,7 +294,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             checkError(); // throw if failed
             return null;
         }
-        adjustCapacity(b); // guides getBatch() allocations
+        onBatch(b); // guides getBatch() allocations
         //dbg.write("nextBatch RET &b=", System.identityHashCode(b), "rows=", b.rows);
         return b;
     }

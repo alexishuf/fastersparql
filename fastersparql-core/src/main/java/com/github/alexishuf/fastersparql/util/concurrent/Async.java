@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 
 import java.util.concurrent.BlockingQueue;
@@ -8,8 +9,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
-
-import static java.lang.System.nanoTime;
 
 public class Async {
     private static final class StageSync<T> implements BiConsumer<T, Throwable> {
@@ -120,9 +119,9 @@ public class Async {
     }
 
     public static void uninterruptibleSleep(int ms) {
-        long start = nanoTime();
+        long start = Timestamp.nanoTime();
         boolean interrupted = false;
-        while ((nanoTime()-start)/1_000_000L < ms) {
+        while ((Timestamp.nanoTime()-start)/1_000_000L < ms) {
             try { //noinspection BusyWait
                 Thread.sleep(ms);
             } catch (InterruptedException e) {

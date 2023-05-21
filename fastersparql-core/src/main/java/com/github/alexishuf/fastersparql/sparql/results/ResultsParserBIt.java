@@ -168,7 +168,12 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     protected abstract void doFeedShared(SegmentRope rope);
 
     @Override public B offer(B batch) throws BItCompletedException {
-        return destination != null ? destination.offer(batch) : super.offer(batch);
+        if (destination == null) {
+            return super.offer(batch);
+        } else {
+            if (metrics != null) metrics.batch(batch.rows);
+            return destination.offer(batch);
+        }
     }
 
     public long rowsEmitted() { return rowsEmitted; }

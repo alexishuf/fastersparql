@@ -65,7 +65,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             else                      onTermination(null);
             return null;
         }
-        adjustCapacity(b);
+        onBatch(b);
         //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
         return b;
     }

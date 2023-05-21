@@ -576,7 +576,7 @@ class TermTest {
                 arguments(NOP, DT_decimal, "\"1.999", "1.999"),
                 arguments(NOP, DT_decimal, "\"-0.33", "-0.33"),
                 arguments(NOP, DT_DOUBLE, "\"+2.3e-02", "+2.3e-02"),
-                arguments(NOP, DT_DOUBLE, "\"2.3", "2.3"),
+                arguments(NOP, DT_DOUBLE, "\"2.3", "\"2.3\"^^<http://www.w3.org/2001/XMLSchema#double>"),
 
                 arguments(NOP,   DT_INT, "\"23", "\"23\"^^<http://www.w3.org/2001/XMLSchema#int>"),
                 arguments(CANON, DT_INT, "\"23", "\"23\"^^xsd:int"),

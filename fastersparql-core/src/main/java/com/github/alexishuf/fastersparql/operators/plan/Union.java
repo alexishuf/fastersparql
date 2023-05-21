@@ -2,12 +2,13 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
+import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
-import com.github.alexishuf.fastersparql.operators.bit.MeteredConcatBIt;
-import com.github.alexishuf.fastersparql.operators.bit.MeteredMergeBIt;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -70,12 +71,14 @@ public final class Union extends Plan {
             dedup = canDedup ? bt.dedupPool.getWeak(cap, cols)
                              : bt.dedupPool.getWeakCross(cap, cols);
         }
-        if (singleEndpoint()) {
-            return dedup == null ? new MeteredConcatBIt<>(sources, this)
-                                 : new DedupConcatBIt<>(sources, this, dedup);
+        Metrics m = Metrics.createIf(this);
+        if (singleEndpoint()) {//noinspection resource
+            var it = dedup == null ? new ConcatBIt<>(sources, bt, publicVars())
+                                   : new DedupConcatBIt<>(sources, publicVars(), dedup);
+            return it.metrics(m);
         }
-        return dedup == null ? new MeteredMergeBIt<>(sources, this)
-                             : new DedupMergeBIt<>(sources, this, dedup);
+        return dedup == null ? new MergeBIt<>(sources, bt, publicVars(), m)
+                             : new DedupMergeBIt<>(sources, publicVars(), m, dedup);
     }
 
     @Override public boolean equals(Object o) {

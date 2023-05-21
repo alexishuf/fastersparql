@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.fed;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 
 import java.util.Objects;
 
 import static java.lang.String.format;
-import static java.lang.System.nanoTime;
 
 @SuppressWarnings("unused")
 public final class FedMetrics {
@@ -30,20 +30,20 @@ public final class FedMetrics {
     public long    optimizationNs() { return optimizationNs; }
 
     long addDispatch(long startNs) {
-        long now = nanoTime();
+        long now = Timestamp.nanoTime();
         dispatchNs += now-startNs;
         return now;
     }
 
     long addSelectionAndAgglutination(long startNs) {
-        long now = nanoTime();
+        long now = Timestamp.nanoTime();
         selectionAndAgglutinationNs += now-startNs;
         return now;
     }
 
     @SuppressWarnings("UnusedReturnValue")
     long addOptimization(long startNs) {
-        long now = nanoTime();
+        long now = Timestamp.nanoTime();
         optimizationNs += now-startNs;
         return now;
     }

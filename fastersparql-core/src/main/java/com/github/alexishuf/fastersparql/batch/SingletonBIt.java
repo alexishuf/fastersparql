@@ -7,8 +7,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.util.Objects;
-
 public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
     private @Nullable B batch;
 
@@ -21,9 +19,13 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
         if (b != null) batchType.recycle(b);
         b = batch;
         batch = null;
+        if (b == null && !terminated)
+            onTermination(null);
+        else if (b != null)
+            onBatch(b);
         return b;
     }
 
     @Override public @This BIt<B> tempEager() { return this; }
-    @Override public      String  toString()  { return Objects.toString(batch); }
+    @Override public      String  toString()  { return batch == null ? "EMPTY" : batch.toString(); }
 }

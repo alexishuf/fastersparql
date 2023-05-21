@@ -69,5 +69,5 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
         return true;
     }
 
-    @Override public String toString() { return it.toString(); }
+    @Override public String toString() { return toStringNoArgs()+'('+it+')'; }
 }

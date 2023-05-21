@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 
+import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.invoke.MethodHandles.lookup;
 
@@ -159,12 +160,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             B_REQUESTED.getAndAddRelease(this, 1);
             LockSupport.unpark(bindingsSender);
         }
-        if (metrics != null) metrics.completeAndDeliver(cause, this);
-    }
-
-    @Override protected void emitRow() {
-        if (metrics != null) metrics.rightRowsReceived(1);
-        super.emitRow();
+        if (metrics != null) metrics.completeAndDeliver(cause, isClosedFor(cause, this));
     }
 
     /* --- --- --- parsing for !control messages  --- --- --- */

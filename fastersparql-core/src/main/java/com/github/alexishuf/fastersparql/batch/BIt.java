@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -55,7 +56,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * Value to use with {@link #maxWait(long, TimeUnit)} when the smallest practical value above
      * zero is desired.
      */
-    int QUICK_MAX_WAIT_NS = QUICK_MIN_WAIT_NS*2;
+    int QUICK_MAX_WAIT_NS = QUICK_MIN_WAIT_NS+1;
 
     /** Set of methods to manipulate elements produced by this iterator. */
     BatchType<B> batchType();
@@ -64,6 +65,27 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * If {@code T} represents something akin to rows in a table, this returns the
      * column names for such table. Else, return an empty list. */
     Vars vars();
+
+    /**
+     * Report batches and completion events to {@code metrics}.
+     *
+     * <p>If this {@link BIt} is already terminated,
+     * {@link MetricsFeeder#completeAndDeliver(Throwable, boolean)} shall be immediately called.
+     * For queue-based {@link BIt}, {@link MetricsFeeder#batch(int)} may be called either from
+     * {@link BIt#nextBatch(Batch)} or from {@link CallbackBIt#offer(Batch)}, but there must be
+     * exactly one call per batch that passeed through the queue.
+     *
+     * <p>A call to this method replaces any listener set by a previous call.
+     * {@link MetricsFeeder#completeAndDeliver(Throwable, boolean)} is <strong>NOT</strong>
+     * called when a listener is replaced. If {@code metrics} is null, there will be no
+     * listener for future events.</p>
+     *
+     * @param metrics listener for batch and termination events on this {@link BIt}.
+     *                A {@code null} simply causes the removal of the current listener (if set),
+     *                without any other effects.
+     * @return {@code this} {@link BIt}, for chaining further methods.
+     */
+    @This BIt<B> metrics(@Nullable MetricsFeeder metrics);
 
     /**
      * Sets the minimum amount of time to wait before declaring a filling batch ready

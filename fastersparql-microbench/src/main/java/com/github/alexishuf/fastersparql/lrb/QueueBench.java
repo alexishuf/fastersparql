@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
+import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
-import static java.lang.System.nanoTime;
 import static java.util.Objects.requireNonNull;
 
 @SuppressWarnings({"unchecked", "rawtypes"})

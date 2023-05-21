@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -24,7 +25,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-import static java.lang.Thread.*;
+import static java.lang.Thread.ofVirtual;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
@@ -44,17 +45,20 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     private final Thread[] feedWaiters;
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through VarHandles
     private int nWaiters, activeSources;
-
-
     //private DebugJournal.RoleJournal journals[];
 
+    public MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType, Vars vars) {
+        this(sources, batchType, vars, null);
+    }
+
     public MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
-                    Vars vars) {
-        this(sources, batchType, vars, true);
+                    Vars vars, @Nullable MetricsFeeder metrics) {
+        this(sources, batchType, vars, metrics, true);
     }
     protected MergeBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType,
-                       Vars vars, boolean autoStart) {
+                       Vars vars, @Nullable MetricsFeeder metrics, boolean autoStart) {
         super(batchType, vars, FSProperties.queueMaxRows());
+        this.metrics = metrics;
         //noinspection unchecked
         int n = (this.sources = sources instanceof List<?> list
                 ? (List<? extends BIt<B>>) list : new ArrayList<>(sources)).size();
@@ -125,9 +129,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     protected @Nullable BatchProcessor<B> createProcessor(int sourceIdx) {
-        Vars offer = sources.get(sourceIdx).vars();
-        if (vars.equals(offer)) return null;
-        return batchType.projector(vars, offer);
+        return batchType.projector(vars, sources.get(sourceIdx).vars());
     }
 
     private void drainTask(int i) {

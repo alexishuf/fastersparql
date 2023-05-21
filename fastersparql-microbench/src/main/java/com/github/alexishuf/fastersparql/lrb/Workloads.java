@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -75,12 +76,12 @@ public class Workloads {
 
     public static <B extends Batch<B>> void
     repeat(List<B> seed, BatchType<B> bt, int n, Collection<List<B>> dest) {
-        long last = System.nanoTime();
+        long last = Timestamp.nanoTime();
         for (int i = 0; i < n; i++) {
-            if (System.nanoTime()-last > 10_000_000_000L) {
+            if (Timestamp.nanoTime()-last > 10_000_000_000L) {
                 System.out.printf("Creating duplicates of %d batches: %d/%d...\n",
                         seed.size(), i, n);
-                last = System.nanoTime();
+                last = Timestamp.nanoTime();
             }
             List<B> copy = new ArrayList<>();
             for (B b : seed) {
@@ -101,9 +102,9 @@ public class Workloads {
     }
 
     public static void cooldown(int ms) {
-        long start = System.nanoTime();
+        long start = Timestamp.nanoTime();
         System.gc();
-        ms = Math.max(50, ms - (int)((System.nanoTime()-start)/1_000_000));
+        ms = Math.max(50, ms - (int)((Timestamp.nanoTime()-start)/1_000_000));
         try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
     }
 }

@@ -15,7 +15,6 @@ import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClo
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
     private static final Logger log = LoggerFactory.getLogger(ProcessorBIt.class);
     protected final BatchProcessor<B> processor;
-    protected final @Nullable Metrics metrics;
     protected boolean terminated;
 
     public ProcessorBIt(BIt<B> delegate, Vars vars, BatchProcessor<B> processor,
@@ -26,11 +25,15 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
     }
 
     protected void cleanup(@Nullable Throwable cause) {
+        try {
+            if (metrics != null)
+                metrics.completeAndDeliver(cause, isClosedFor(cause, delegate));
+        } catch (Throwable t) {
+            log.error("{}: Failed to deliver metrics {}", this, metrics, t);
+        }
         processor.release();
         if (cause != null)
             delegate.close();
-        if (metrics != null)
-            metrics.complete(cause, isClosedFor(cause, delegate)).deliver();
     }
 
     protected final void onTermination(@Nullable Throwable cause) {
@@ -49,8 +52,8 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                 if ((b = processor.processInPlace(b)) != null && b.rows > 0)
                     break;
             }
-            if (b == null) onTermination(null); //exhausted
-            else if (metrics != null) metrics.rowsEmitted(b.rows);
+            if      (b       == null) onTermination(null); //exhausted
+            else if (metrics != null) metrics.batch(b.rows);
             return b;
         } catch (Throwable t) {
             onTermination(t); //error

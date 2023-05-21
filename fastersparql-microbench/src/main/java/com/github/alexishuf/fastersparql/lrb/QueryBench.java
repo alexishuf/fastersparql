@@ -14,12 +14,15 @@ import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.File;
 import java.io.IOException;
@@ -94,7 +97,9 @@ public class QueryBench {
     private RowCounter rowCounter;
     private RopeLenCounter ropeLenCounter;
     private TermLenCounter termLenCounter;
+    private final MetricsConsumer metricsConsumer = new MetricsConsumer();
     private int lastBenchResult;
+    private Blackhole bh;
 
     private static class BoundCounter extends QueryRunner.BoundCounter {
         public BoundCounter(BatchType<?> batchType) { super(batchType); }
@@ -148,6 +153,17 @@ public class QueryBench {
         }
     }
 
+    private final class MetricsConsumer implements MetricsListener {
+        @Override public void accept(Metrics metrics) {
+            if (metrics.error != null)
+                throw new RuntimeException(metrics.error);
+            bh.consume(metrics.rows);
+            bh.consume(metrics.firstRowNanos);
+            bh.consume(metrics.allRowsNanos);
+            bh.consume(metrics.rows);
+        }
+    }
+
     @Setup(Level.Trial) public void setup() throws IOException {
         String dataDirPath = System.getProperty("fs.data.dir");
         if (dataDirPath == null || dataDirPath.isEmpty())
@@ -188,6 +204,8 @@ public class QueryBench {
         } else {
             plans = queryList.stream().map(q -> fedHandle.federation.plan(q.parsed())).toList();
         }
+        for (Plan plan : plans)
+            plan.attach(metricsConsumer);
         lastBenchResult = -1;
         System.gc();
         IOUtils.fsync(50_000);
@@ -205,14 +223,15 @@ public class QueryBench {
         return r;
     }
 
-    private int execute(BatchConsumer consumer, IntSupplier resultGetter) {
+    private int execute(Blackhole bh, BatchConsumer consumer, IntSupplier resultGetter) {
+        this.bh = bh;
         for (Plan plan : plans)
             QueryRunner.drain(plan.execute(batchType), consumer);
         return checkResult(resultGetter.getAsInt());
     }
 
-    @Benchmark public int countTerms() { return execute(boundCounter,   boundCounter::nonNull); }
-    @Benchmark public int countRows()  { return execute(rowCounter,     rowCounter::rows); }
-    @Benchmark public int ropeLen()    { return execute(ropeLenCounter, ropeLenCounter::len); }
-    @Benchmark public int termLen()    { return execute(termLenCounter, termLenCounter::len); }
+    @Benchmark public int countTerms(Blackhole bh) { return execute(bh, boundCounter,   boundCounter::nonNull); }
+    @Benchmark public int countRows(Blackhole bh)  { return execute(bh, rowCounter,     rowCounter::rows); }
+    @Benchmark public int ropeLen(Blackhole bh)    { return execute(bh, ropeLenCounter, ropeLenCounter::len); }
+    @Benchmark public int termLen(Blackhole bh)    { return execute(bh, termLenCounter, termLenCounter::len); }
 }

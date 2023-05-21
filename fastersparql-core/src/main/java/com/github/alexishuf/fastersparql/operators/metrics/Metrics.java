@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.metrics;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -9,10 +10,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
-
 @SuppressWarnings("unused")
-public class Metrics {
+public class Metrics implements MetricsFeeder {
     /** {@link Plan} for which these metrics apply */
     public Plan plan;
     /** Total number of rows emitted until a cancel or completion */
@@ -43,7 +42,7 @@ public class Metrics {
     public boolean delivered = false;
 
     /** Average number of rows yielded for every binding of the right operand  */
-    public final class JoinMetrics {
+    public final class JoinMetrics implements MetricsFeeder {
         /** How many times this operand was bound to a row of its left-side siblings */
         public int bindings;
         /** On average a binding of this operand yielded this many result rows */
@@ -72,7 +71,7 @@ public class Metrics {
         }
 
         public void beginBinding() {
-            long now = System.nanoTime();
+            long now = Timestamp.nanoTime();
             if (bindings > 0)
                 bindingExhausted(now);
             ++bindings;
@@ -97,25 +96,19 @@ public class Metrics {
             totalNanosPerLeftRow += nanos;
         }
 
-        public void rightRowsReceived(int n) {
+        @Override public void batch(int n) {
             rightMatches += n;
             if (isLast)
-                rowsEmitted(n);
+                Metrics.this.batch(n);
         }
 
-        public void complete() {
-            bindingExhausted(System.nanoTime());
+        @Override public void completeAndDeliver(@Nullable Throwable cause, boolean cancelled) {
+            bindingExhausted(Timestamp.nanoTime());
             avgRowsPerBinding = totalRightMatches/(double)bindings;
             noRowsPerBindingRate = leftRowsUnmatched/(double)bindings;
             avgNanosPerBinding = totalNanosPerLeftRow/bindings;
-        }
-
-        public void completeAndDeliver(@Nullable Throwable cause, BIt<?> it) {
-            complete();
-            if (isLast) {
-                Metrics.this.complete(cause, isClosedFor(cause, it));
-                deliver();
-            }
+            if (isLast)
+                Metrics.this.completeAndDeliver(cause, cancelled);
         }
 
         @Override public boolean equals(Object o) {
@@ -150,7 +143,7 @@ public class Metrics {
 
     public Metrics(Plan plan) {
         this.plan = plan;
-        this.lastEmit = startNanos = System.nanoTime();
+        this.lastEmit = startNanos = Timestamp.nanoTime();
         firstRowNanos = -1;
         allRowsNanos = -1;
         minNanosBetweenBatches = Long.MAX_VALUE;
@@ -166,10 +159,10 @@ public class Metrics {
         return plan.listeners().isEmpty() ? null : new Metrics(plan);
     }
 
-    public void rowsEmitted(int n) {
+    @Override public void batch(int n) {
         if (n <= 0)
             return;
-        long now = System.nanoTime(), delta = now - lastEmit;
+        long now = Timestamp.nanoTime(), delta = now - lastEmit;
         if (delta < minNanosBetweenBatches)
             minNanosBetweenBatches = delta;
         if (delta > maxNanosBetweenBatches)
@@ -181,8 +174,9 @@ public class Metrics {
         ++batches;
     }
 
-    public Metrics complete(@Nullable Throwable t, boolean cancelled) {
-        long now = System.nanoTime();
+    @Override public void completeAndDeliver(@Nullable Throwable t, boolean cancelled) {
+        if (delivered) return;
+        long now = Timestamp.nanoTime();
         allRowsNanos = now-startNanos;
         terminalNanos = now -lastEmit;
         error = t;
@@ -190,11 +184,6 @@ public class Metrics {
         if (joinMetrics.length > 0) {
             joinMetrics[0].bindings = 1;
         }
-        return this;
-    }
-
-    public void deliver() {
-        if (delivered) return;
         for (var listener : plan.listeners())
             listener.accept(this);
     }
@@ -224,8 +213,7 @@ public class Metrics {
     }
 
     @Override public String toString() {
-        return "Metrics{" +
-                ", rows=" + rows +
+        return "Metrics{rows=" + rows +
                 ", batches=" + batches +
                 ", startNanos=" + startNanos +
                 ", allRowsNanos=" + allRowsNanos +

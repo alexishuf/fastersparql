@@ -192,7 +192,8 @@ public final class Modifier extends Plan {
             var rf = slice ? new SlicingDedup<>(offset, limit, dedup) : dedup;
             processor = bt.filter(outVars, inVars, rf);
         }
-        return processor == null ? in : new ModifierBIt<>(in, outVars, processor);
+        Metrics m = Metrics.createIf(this);
+        return (processor == null ? in : new ModifierBIt<>(in, outVars, processor)).metrics(m);
     }
 
     private final class ModifierBIt<B extends Batch<B>> extends ProcessorBIt<B> {
