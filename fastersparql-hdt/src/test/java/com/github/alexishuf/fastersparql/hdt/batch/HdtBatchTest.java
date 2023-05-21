@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
+import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.junit.jupiter.api.AfterAll;
@@ -102,8 +103,8 @@ class HdtBatchTest {
 
     @Test
     public void testProjectInPlace() {
-        var x = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("x"), new int[]{1});
-        var y = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("y"), new int[]{2});
+        var x = new IdBatch.Merger<>(HdtBatch.TYPE, Vars.of("x"), new int[]{1});
+        var y = new IdBatch.Merger<>(HdtBatch.TYPE, Vars.of("y"), new int[]{2});
         HdtBatch in, ac;
 
         in = new HdtBatch(new long[]{Alice, Bob}, 1, 2);
@@ -120,7 +121,7 @@ class HdtBatchTest {
     }
 
     @Test public void testMerge() {
-        var merger = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("x", "u", "y", "z"),
+        var merger = new HdtBatch.Merger<>(HdtBatch.TYPE, Vars.of("x", "u", "y", "z"),
                                                         new int[]{1, 0, -1, 2});
         var l = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);
         var r = new HdtBatch(new long[]{knows, charlie, Bob}, 3, 1);
@@ -136,7 +137,7 @@ class HdtBatchTest {
 
 
     @Test public void testFiler() {
-        var filter = new HdtBatch.Filter(HdtBatch.TYPE, null, new RowFilter<>() {
+        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, null, new RowFilter<>() {
             int calls = 0;
             @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
         });
@@ -148,7 +149,7 @@ class HdtBatchTest {
 
     @Test public void testFilterProjecting() {
         var projector = HdtBatch.TYPE.projector(Vars.of("x"), Vars.of("x", "y"));
-        var filter = new HdtBatch.Filter(HdtBatch.TYPE, projector, new RowFilter<>() {
+        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, projector, new RowFilter<>() {
             int calls = 0;
             @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
         });

@@ -86,7 +86,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         dictId = IdAccess.register(hdt.getDictionary());
         HDT_REFS.setRelease(this, 1);
         federation = new Federation(ep, null);
-        var estimator = new HdtCardinalityEstimator(hdt, dictId, estimatorPeek(), ep.toString());
+        var estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
         estimatorReady = estimator.ready().thenApply(ignored -> this);
         var selector = new TrivialSelector(ep, Spec.EMPTY);
         federation.addSource(new Source(this, selector, estimator, Spec.EMPTY));

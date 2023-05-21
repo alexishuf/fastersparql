@@ -48,26 +48,25 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         }
     }
 
-
     @Override public RowBucket<HdtBatch> createBucket(int rowsCapacity, int cols) {
         return new HdtBatchBucket(rowsCapacity, cols);
     }
 
     @Override public @Nullable BatchMerger<HdtBatch> projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new HdtBatch.Merger(this, out, sources);
+        return sources == null ? null : new IdBatch.Merger<>(this, out, sources);
     }
 
     @Override public @NonNull BatchMerger<HdtBatch> merger(Vars out, Vars left, Vars right) {
-        return new HdtBatch.Merger(this, out, mergerSources(out, left, right));
+        return new IdBatch.Merger<>(this, out, mergerSources(out, left, right));
     }
 
     @Override public BatchFilter<HdtBatch> filter(Vars out, Vars in, RowFilter<HdtBatch> filter) {
-        return new HdtBatch.Filter(this, projector(out, in), filter);
+        return new IdBatch.Filter<>(this, projector(out, in), filter);
     }
 
     @Override public BatchFilter<HdtBatch> filter(RowFilter<HdtBatch> filter) {
-        return new HdtBatch.Filter(this, null, filter);
+        return new IdBatch.Filter<>(this, null, filter);
     }
 
     @Override public String toString() { return "HdtBatch"; }

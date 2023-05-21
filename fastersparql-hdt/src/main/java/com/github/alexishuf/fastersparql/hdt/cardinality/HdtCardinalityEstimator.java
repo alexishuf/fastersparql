@@ -31,7 +31,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
     private int maxPredicateCard;
     private final CompletableFuture<?> ready = new CompletableFuture<>();
 
-    public HdtCardinalityEstimator(HDT hdt, int dictId, HdtEstimatorPeek peek,
+    public HdtCardinalityEstimator(HDT hdt, HdtEstimatorPeek peek,
                                    @Nullable String name) {
         super(uncertaintyPenalty(hdt, peek));
 
