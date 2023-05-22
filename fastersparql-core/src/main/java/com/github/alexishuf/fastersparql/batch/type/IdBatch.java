@@ -103,11 +103,12 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
     @Override public boolean beginOffer() {
-        int base = rows*cols, required = base+cols;
+        int base = rows * cols, required = base + cols;
         if (arr.length < required) return false;
-        Arrays.fill(arr, base, required, 0);
-        if (hashes.length >= base)
-            Arrays.fill(hashes, base, Math.min(hashes.length, required), 0);
+        for (int i = base; i < required; i++) {
+            arr[i] = 0;
+            hashes[i] = 0;
+        }
         offerRowBase = base;
         return true;
     }
