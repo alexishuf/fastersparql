@@ -188,13 +188,16 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     private final class Estimator extends CardinalityEstimator {
         @Override public int estimate(TriplePattern t, @Nullable Binding binding) {
             var l = lookup(dictId);
+            long s = t.s.type() == VAR ? 0 : l.find(t.s);
+            long p = t.p.type() == VAR ? 0 : l.find(t.p);
+            long o = t.o.type() == VAR ? 0 : l.find(t.o);
             long estimate = switch (binding == null ? t.varRoles() : t.varRoles(binding)) {
                 case EMPTY        -> 1;
-                case OBJ          -> spo.estimateValues(l.find(t.s), l.find(t.p));
-                case PRE, PRE_OBJ -> spo.estimatePairs(l.find(t.s));
-                case SUB          -> ops.estimateValues(l.find(t.o), l.find(t.p));
-                case SUB_OBJ      -> pso.estimatePairs(l.find(t.p));
-                case SUB_PRE      -> ops.estimatePairs(l.find(t.o));
+                case OBJ          -> spo.estimateValues(s, p);
+                case PRE, PRE_OBJ -> spo.estimatePairs(s);
+                case SUB          -> ops.estimateValues(o, p);
+                case SUB_OBJ      -> pso.estimatePairs(p);
+                case SUB_PRE      -> ops.estimatePairs(o);
                 case SUB_PRE_OBJ  -> spo.triplesCount();
             };
             return (int)Math.min(Integer.MAX_VALUE, estimate);
