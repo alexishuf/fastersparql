@@ -340,11 +340,14 @@ class BatchTest {
                 B b7 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
                 B b8 = type.create(1, size.cols, 1);
                 B b9 = type.create(1, size.cols, 0);
+                B bA = type.create(1, size.cols, 4);
                 b4.clear(size.cols*2);
                 b5.clear(size.cols*2);
                 b4.clear(size.cols);
                 b5.clear(size.cols);
                 b7.clear(size.cols);
+                TermBatch bT = Batch.TERM.create(size.rows, size.cols, reqBytes);
+                size.fill(bT);
                 TermParser termParser = new TermParser();
                 List<B> putBatches = List.of(b2, b4, b5, b7, b8, b9);
                 for (int r = 0; r < size.rows; r++) {
@@ -380,6 +383,7 @@ class BatchTest {
                 for (int r = 1; r < size.rows; r++)
                     b6_.putRow(size.terms[r]);
                 b6.put(b6_);
+                assertSame(bA, bA.putConverting(bT));
                 assertBatchesEquals(size, b1, ctx);
                 assertBatchesEquals(size, b2, ctx);
                 assertBatchesEquals(size, b3, ctx);
@@ -389,6 +393,7 @@ class BatchTest {
                 assertBatchesEquals(size, b7, ctx);
                 assertBatchesEquals(size, b8, ctx);
                 assertBatchesEquals(size, b9, ctx);
+                assertBatchesEquals(size, bA, ctx);
                 assertBatchesEquals(b1, b2, ctx);
                 assertBatchesEquals(b2, b3, ctx);
                 assertBatchesEquals(b3, b4, ctx);
@@ -397,6 +402,7 @@ class BatchTest {
                 assertBatchesEquals(b6, b7, ctx);
                 assertBatchesEquals(b7, b8, ctx);
                 assertBatchesEquals(b8, b9, ctx);
+                assertBatchesEquals(b9, bA, ctx);
             }
         });
     }

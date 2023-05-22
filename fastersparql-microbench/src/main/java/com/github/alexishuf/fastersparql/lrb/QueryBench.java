@@ -235,7 +235,7 @@ public class QueryBench {
     @Benchmark public int ropeLen(Blackhole bh)    { return execute(bh, ropeLenCounter, ropeLenCounter::len); }
     @Benchmark public int termLen(Blackhole bh)    { return execute(bh, termLenCounter, termLenCounter::len); }
 //    @Benchmark public int termLenBaseline(Blackhole bh)    {
-//        AbstractBIt.TIME = false;
+//        CompressedBatch.SPECIALIZE = false;
 //        return execute(bh, termLenCounter, termLenCounter::len);
 //    }
 }

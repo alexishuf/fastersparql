@@ -702,7 +702,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param other source of rows
      * @param <O> {@link Batch} concrete class
      */
-    public final <O extends Batch<O>> @This B putConverting(O other) {
+    public <O extends Batch<O>> @This B putConverting(O other) {
         int cols = other.cols;
         if (cols != this.cols) throw new IllegalArgumentException();
         if (other.getClass() == getClass()) {//noinspection unchecked

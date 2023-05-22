@@ -12,6 +12,7 @@ import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
@@ -20,6 +21,7 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.UNTIL_DQ;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -947,6 +949,56 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         bytesUsed += lLen;
         ++rows;
         assert validate() : "corrupted";
+    }
+
+    @Override public @This <O extends Batch<O>> CompressedBatch putConverting(O other) {
+        if (other instanceof CompressedBatch cb) {
+            put(cb);
+            return this;
+        }
+        int cols = this.cols, rows = other.rows;
+        if (other.cols != cols) throw new IllegalArgumentException();
+        reserve(rows, other.bytesUsed());
+        ByteRope localCopy = null;
+        TwoSegmentRope t = new TwoSegmentRope();
+        for (int r = 0; r < rows; r++) {
+            beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (other.getRopeView(r, c, t)) {
+                    byte fst = t.get(0);
+                    SegmentRope sh = switch (fst) {
+                        case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+                        case '<' -> SHARED_ROPES.  internPrefixOf(t, 0, t.len);
+                        case '_' -> EMPTY;
+                        default -> throw new IllegalArgumentException("Not an RDF term: "+t);
+                    };
+                    MemorySegment local;
+                    long localOff;
+                    int localLen;
+                    if (sh.len == t.sndLen) {
+                        local =  t.fst;
+                        localOff = t.fstOff;
+                        localLen = t.fstLen;
+                    } else if (sh.len == t.fstLen) {
+                        local = t.snd;
+                        localOff = t.sndOff;
+                        localLen = t.sndLen;
+                    } else {
+                        if (localCopy == null) localCopy = new ByteRope(t.len);
+                        else                   localCopy.clear();
+                        if (fst == '"') localCopy.append(t, 0, t.len-sh.len);
+                        else                 localCopy.append(t, sh.len, t.len);
+                        local = localCopy.segment;
+                        localOff = 0;
+                        localLen = localCopy.len;
+                    }
+                    if (fst == '"') localLen |= SH_SUFF_MASK;
+                    setTerm(false, c, sh, local, null, localOff, localLen);
+                }
+            }
+            commitPut();
+        }
+        return this;
     }
 
     /* --- --- --- operation objects --- --- --- */

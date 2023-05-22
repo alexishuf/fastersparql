@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
+import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
@@ -35,7 +35,7 @@ public class StoreBatchType extends BatchType<StoreBatch> {
     }
 
     private static class StoreBatchConverterBIt<S extends Batch<S>>
-            extends ConverterBIt<StoreBatch, S> {
+            extends IdConverterBIt<StoreBatch, S> {
         private final int dictId;
 
         public StoreBatchConverterBIt(BIt<S> delegate, BatchType<StoreBatch> batchType,
