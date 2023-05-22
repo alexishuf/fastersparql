@@ -188,7 +188,7 @@ public class AskSelector extends Selector {
         try (BIt<?> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
             boolean has = it.nextBatch(null) != null;
             (has ? positive : negative).add(canonBatch, 0);
-            if (has && (vars&1) == 0) { // if positive and ground predicate, store generalized
+            if (has && (vars&2) == 0) { // if positive and ground predicate, store generalized
                 if (s != X) {
                     canon[0] = X;
                     positive.add(canonBatch, 0); // store X p o
