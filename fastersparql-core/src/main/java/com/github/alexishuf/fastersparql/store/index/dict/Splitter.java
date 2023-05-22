@@ -102,19 +102,25 @@ public class Splitter {
     }
 
     public PlainRope shared() {
-        return switch (sharedSide) {
-            case NONE,PREFIX -> wrap(sharedView, str, 0, suffixBegin);
-            case SUFFIX      -> wrap(sharedView, str, suffixBegin, str.len-suffixBegin);
-        };
+        int begin = 0, len = suffixBegin;
+        if (sharedSide == SharedSide.SUFFIX) {
+            begin = len;
+            len = str.len - len;
+        }
+        return wrap(sharedView, str, begin, len);
     }
 
     public PlainRope local() {
-        return switch (sharedSide) {
-            case NONE   -> str instanceof TwoSegmentRope t && (t.fstLen == 0 || t.sndLen == 0)
-                         ? wrap(localView, str, 0, str.len) : str;
-            case PREFIX -> wrap(localView, str, suffixBegin, str.len-suffixBegin);
-            case SUFFIX -> wrap(localView, str, 0, suffixBegin);
-        };
+        int begin = 0, len = suffixBegin;
+        SharedSide side = sharedSide;
+        if (side == SharedSide.PREFIX) {
+            begin = len; len = str.len-len;
+        } else if (side == SharedSide.NONE) {
+            if (!(str instanceof TwoSegmentRope t) || (t.fstLen != 0 && t.sndLen != 0))
+                return str;
+            len = str.len;
+        }
+        return wrap(localView, str, begin, len);
     }
 
     public Mode mode() { return mode; }
