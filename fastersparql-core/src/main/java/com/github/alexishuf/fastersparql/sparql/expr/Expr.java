@@ -43,7 +43,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     Expr bound(Binding binding);
 
     /** Whether this is an RDF value (a non-variable {@link Term}). */
-    default boolean isGround() { return this instanceof Term t && !t.isVar(); }
+    default boolean isGround() {
+        return this instanceof Term t && t.type() != Type.VAR;
+    }
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
     void toSparql(ByteSink<?> out, PrefixAssigner prefixAssigner);

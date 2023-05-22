@@ -198,7 +198,7 @@ final class Optimizer extends CardinalityEstimator {
          *  can feed. This allows join-reordering to prioritize feeding a filter when cost are
          *  otherwise close. */
         private int faEstimate(Plan plan) {
-            int cost = estimate(plan);
+            int cost = estimate(plan, null);
             Vars inVars = plan.publicVars();
             if (upFilterVars.isEmpty())
                 return cost; // no filters to evaluate

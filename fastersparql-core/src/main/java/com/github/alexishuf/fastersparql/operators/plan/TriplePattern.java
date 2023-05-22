@@ -11,6 +11,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.fromBitset;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 
 
 public final class TriplePattern extends Plan {
@@ -32,29 +33,29 @@ public final class TriplePattern extends Plan {
 
     @SuppressWarnings("unused")
     public TripleRoleSet groundRoles() {
-        return fromBitset((s.isVar() ? 0x0 : 0x4) |
-                          (p.isVar() ? 0x0 : 0x2) |
-                          (o.isVar() ? 0x0 : 0x1));
+        return fromBitset((s.type() == VAR ? 0x0 : 0x4) |
+                          (p.type() == VAR ? 0x0 : 0x2) |
+                          (o.type() == VAR ? 0x0 : 0x1));
     }
 
     public TripleRoleSet varRoles() {
-        return fromBitset((s.isVar() ? 0x4 : 0x0) |
-                          (p.isVar() ? 0x2 : 0x0) |
-                          (o.isVar() ? 0x1 : 0x0));
+        return fromBitset((s.type() == VAR ? 0x4 : 0x0) |
+                          (p.type() == VAR ? 0x2 : 0x0) |
+                          (o.type() == VAR ? 0x1 : 0x0));
     }
 
 
     @SuppressWarnings("unused")
     public TripleRoleSet groundRoles(Binding binding) {
-        return fromBitset((!s.isVar() || binding.get(s) != null ? 0x4 : 0x0) |
-                          (!p.isVar() || binding.get(p) != null ? 0x2 : 0x0) |
-                          (!o.isVar() || binding.get(o) != null ? 0x1 : 0x0));
+        return fromBitset((s.type() != VAR || binding.get(s) != null ? 0x4 : 0x0) |
+                          (p.type() != VAR || binding.get(p) != null ? 0x2 : 0x0) |
+                          (o.type() != VAR || binding.get(o) != null ? 0x1 : 0x0));
     }
 
     public TripleRoleSet varRoles(Binding binding) {
-        return fromBitset((s.isVar() && binding.get(s) == null ? 0x4 : 0x0) |
-                          (p.isVar() && binding.get(p) == null ? 0x2 : 0x0) |
-                          (o.isVar() && binding.get(o) == null ? 0x1 : 0x0));
+        return fromBitset((s.type() == VAR && binding.get(s) == null ? 0x4 : 0x0) |
+                          (p.type() == VAR && binding.get(p) == null ? 0x2 : 0x0) |
+                          (o.type() == VAR && binding.get(o) == null ? 0x1 : 0x0));
     }
 
     @Override public Plan copy(@Nullable Plan[] ops) { return new TriplePattern(s, p, o); }

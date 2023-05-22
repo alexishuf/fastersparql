@@ -152,8 +152,10 @@ public class AskSelector extends Selector {
     }
 
     @Override public boolean has(TriplePattern tp) {
-        Term s = tp.s.isVar() ? X : tp.s, p = tp.p.isVar() ? X : tp.p, o = tp.o.isVar() ? X : tp.o;
-        int vars = ((s.isVar() ? 1 : 0)<<2) | ((p.isVar() ? 1 : 0)<<1) | (o.isVar() ? 1 : 0);
+        Term s = tp.s.type() == Term.Type.VAR ? X : tp.s;
+        Term p = tp.p.type() == Term.Type.VAR ? X : tp.p;
+        Term o = tp.o.type() == Term.Type.VAR ? X : tp.o;
+        int vars = ((s == X ? 1 : 0)<<2) | ((p == X ? 1 : 0)<<1) | (o == X ? 1 : 0);
         TermBatch canonBatch = triple(s, p, o);
         Term[] canon = canonBatch.arr();
         if (positive.contains(canonBatch, 0)) return true;

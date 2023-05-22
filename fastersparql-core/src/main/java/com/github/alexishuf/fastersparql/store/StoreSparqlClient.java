@@ -45,6 +45,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
@@ -211,9 +212,9 @@ public class StoreSparqlClient extends AbstractSparqlClient {
             var l = lookup(dictId);
             Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
             storeIt = queryTP(tpVars, tp,
-                    tp.s.isVar() ? NOT_FOUND : l.find(tp.s),
-                    tp.p.isVar() ? NOT_FOUND : l.find(tp.p),
-                    tp.o.isVar() ? NOT_FOUND : l.find(tp.o),
+                    tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
+                    tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
+                    tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
                     tp.varRoles());
             if (m != null)
                 storeIt = m.executeFor(storeIt, null, false);
@@ -262,9 +263,9 @@ public class StoreSparqlClient extends AbstractSparqlClient {
                 TriplePattern tp = q instanceof TriplePattern t ? t : (TriplePattern) q.op(0);
                 var l = lookup(dictId);
                 long sId = NOT_FOUND, pId = NOT_FOUND, oId = NOT_FOUND;
-                boolean empty = (!tp.s.isVar() && (sId = l.find(tp.s)) == NOT_FOUND)
-                             || (!tp.p.isVar() && (pId = l.find(tp.p)) == NOT_FOUND)
-                             || (!tp.o.isVar() && (oId = l.find(tp.o)) == NOT_FOUND);
+                boolean empty = (tp.s.type() != VAR && (sId = l.find(tp.s)) == NOT_FOUND)
+                             || (tp.p.type() != VAR && (pId = l.find(tp.p)) == NOT_FOUND)
+                             || (tp.o.type() != VAR && (oId = l.find(tp.o)) == NOT_FOUND);
                 if (empty)
                     return (BIt<B>) new EmptyBIt<>(TYPE, q.publicVars());
                 return (BIt<B>) new StoreBindingBIt((BIt<StoreBatch>)bindings, type,

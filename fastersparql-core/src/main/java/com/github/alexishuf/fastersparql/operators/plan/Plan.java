@@ -328,9 +328,9 @@ public abstract sealed class Plan implements SparqlQuery
             case TRIPLE -> {
                 TriplePattern p = (TriplePattern) this;
                 Vars.Mutable set = new Vars.Mutable(3);
-                if (p.s.isVar()) set.add(p.s);
-                if (p.p.isVar()) set.add(p.p);
-                if (p.o.isVar()) set.add(p.o);
+                if (p.s.type() == Term.Type.VAR) set.add(p.s);
+                if (p.p.type() == Term.Type.VAR) set.add(p.p);
+                if (p.o.type() == Term.Type.VAR) set.add(p.o);
                 yield set.isEmpty() ? Vars.EMPTY : set;
             }
             case QUERY -> ((Query)this).sparql.allVars();
