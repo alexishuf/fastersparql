@@ -985,10 +985,10 @@ public final class Term extends Rope implements Expr {
     /* --- --- --- term methods --- --- --- */
 
     public enum Type {
+        BLANK,
         VAR,
         LIT,
-        IRI,
-        BLANK
+        IRI
     }
     private static final Type[] TYPES  = Type.values();
 
