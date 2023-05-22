@@ -17,6 +17,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     public UnitaryBIt(BatchType<B> batchType, Vars vars) {
         super(batchType, vars);
+        minWaitNs = QUICK_MIN_WAIT_NS;
         //journal = DebugJournal.SHARED.role(toStringNoArgs());
     }
 

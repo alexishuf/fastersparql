@@ -50,7 +50,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * limits on precision of process wake-ups</a>.</p>
      *
      */
-    int QUICK_MIN_WAIT_NS = 70_000;
+    int QUICK_MIN_WAIT_NS = 75_000;
 
     /**
      * Value to use with {@link #maxWait(long, TimeUnit)} when the smallest practical value above
@@ -195,6 +195,18 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * @return {@code this}, for chaining.
      */
     BIt<B> preferred();
+
+    /**
+     * Sets {@link #minWait(long, TimeUnit)} and {@link #maxWait(long, TimeUnit)} to the
+     * minimum practical values, without touching min/max batch size. This should
+     * enable larger batches and better data/instruction locality with the minimal latency
+     * increase.
+     *
+     * <p>To keep latency increase really minimal, this should be done on leaf iterators and not
+     * iterators representing inner nodes of the plan.</p>
+     * @return {@code this}, for chaining.
+     */
+    BIt<B> quickWait();
 
     /**
      * Sets min/max batch size and wait time so that {@link BIt#nextBatch(B)} delay is minimal.

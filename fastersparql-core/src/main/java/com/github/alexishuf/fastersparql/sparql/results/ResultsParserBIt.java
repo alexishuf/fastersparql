@@ -108,6 +108,8 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         this.batchType = batchType;
         this.destination = null;
         (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
+        //noinspection resource
+        preferred();
     }
 
     protected ResultsParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
@@ -115,6 +117,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         this.batchType = batchType;
         this.destination = destination;
         (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
+        destination.preferred();
     }
 
     /**

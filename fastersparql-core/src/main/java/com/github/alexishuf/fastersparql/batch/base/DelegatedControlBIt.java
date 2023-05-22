@@ -47,6 +47,11 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         return this;
     }
 
+    @Override public BIt<B> quickWait() {
+        delegate.quickWait();
+        return this;
+    }
+
     @Override public @This BIt<B> eager() {
         delegate.eager();
         return this;

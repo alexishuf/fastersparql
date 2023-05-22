@@ -42,8 +42,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         }
     }
 
-    protected long minWaitNs = 0;
-    protected long maxWaitNs = 0;
+    protected long minWaitNs;
+    protected long maxWaitNs;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
     protected int rowsCapacity, bytesCapacity;
     protected boolean needsStartTime = false, closed = false, terminated = false, eager = false;
@@ -233,6 +233,13 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         maxWaitNs = FSProperties.batchMaxWait(TimeUnit.NANOSECONDS);
         minBatch  = FSProperties.batchMinSize();
         maxBatch = Math.max(minBatch, DEF_MAX_BATCH);
+        updatedBatchConstraints();
+        return this;
+    }
+
+    @Override public BIt<B> quickWait() {
+        minWaitNs = QUICK_MIN_WAIT_NS;
+        maxWaitNs = QUICK_MAX_WAIT_NS;
         updatedBatchConstraints();
         return this;
     }
