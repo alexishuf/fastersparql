@@ -707,9 +707,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public void reserve(int additionalRows, int additionalBytes) {
         int required = (rows + additionalRows) * cols;
         if (required > shared.length)
-            shared = copyOf(shared, shared.length + Math.max(shared.length>>1, additionalRows));
-        if ((required <<= 1) > slices.length)
-            slices = slGrow(slices, required-slices.length + PUT_SLACK);
+            shared = copyOf(shared, Math.max(shared.length+(shared.length>>1), required));
+        required = (rows+additionalRows) * slRowInts + PUT_SLACK;
+        if (required > slices.length)
+            slices = slGrow(slices, Math.max(slices.length+ (slices.length>>1), required));
         required = bytesUsed()+additionalBytes;
         if (required > locals.length)
             growLocals(locals, localsCeil(required));
