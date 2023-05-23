@@ -112,12 +112,12 @@ class StoreBatchTest {
 
             for (int i = 0; i <= r; i++) {
                 for (int c = 0; c < cols; c++) {
-                    long id = b0.sourcedId(i, c);
+                    long id = b0.id(i, c);
                     TwoSegmentRope str = lookup.get(IdTranslator.unsource(id));
                     assertNotNull(str);
                     int hash = str.hashCode();
                     for (StoreBatch b : batches) {
-                        assertEquals(id, b.sourcedId(i, c));
+                        assertEquals(id, b.id(i, c));
                         assertTrue(b0.equals(i, c, b, i, c));
                         assertTrue(b.equals(i, c, b0, i, c));
                         assertEquals(hash, b.hash(i, c));
@@ -150,7 +150,7 @@ class StoreBatchTest {
     private void check(StoreBatch b, int cols, int ... ids) {
         for (int i = 0, r = 0; i < ids.length; i += cols, ++r) {
             for (int c = 0; c < cols; c++)
-                assertEquals(source(ids[i + c], dictId), b.sourcedId(r, c));
+                assertEquals(source(ids[i + c], dictId), b.id(r, c));
         }
     }
 

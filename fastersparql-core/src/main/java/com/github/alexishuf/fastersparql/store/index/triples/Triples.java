@@ -103,6 +103,12 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
      */
     public ScanIt scan() { return new ScanIt(); }
 
+    public void scan(ScanIt it) {
+        it.keyId = firstKey-1;
+        it.pairAddress = 0;
+        it.pairsEnd = 0;
+    }
+
     public final class ScanIt {
         private final long endKeyId;
         private long pairAddress, pairsEnd;
@@ -162,6 +168,24 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     }
 
     /**
+     * Equivalent to {@link #pairs(long)} but modifies {@code it} instead of returning a new
+     * iterator.
+     */
+    public void pairs(long keyId, PairIt it) {
+        if (it == noPairIt) throw new IllegalArgumentException();
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return;
+        it.address = readOff(keyId);
+        it.end     = readOff(keyId+1);
+    }
+
+    /** Create a new {@link PairIt} for use with {@link #pairs(long, PairIt)}. */
+    public PairIt makePairIt() {
+        return new PairIt(0, 0);
+    }
+
+    /**
      * The number of results in {@link #pairs(long)} for the given {@code keyId}. This method
      * is accurate and fast.
      */
@@ -173,7 +197,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
 
     public final class PairIt {
         private long address;
-        private final long end;
+        private long end;
         public long subKeyId, valueId;
 
         public PairIt(long address, long end) {
@@ -214,7 +238,8 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
      */
     public boolean contains(long keyId, long subKeyId, long valueId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= offsCount-1) return false;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return false;
         int pairWidth = valWidth<<1;
         long bottom = readOff(keyId), top = readOff(keyId+1);
         long address = subKeyLowerBound(subKeyId, bottom, top);
@@ -238,12 +263,33 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
      */
     public ValueIt values(long keyId, long subKeyId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= offsCount-1) return noValueIt;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return noValueIt;
         long bottom = readOff(keyId), top = readOff(keyId+1);
         long pair = subKeyLowerBound(subKeyId, bottom, top);
         if (pair < top && readValue(pair) == subKeyId)
             return new ValueIt(pair, top, subKeyId);
         return noValueIt;
+    }
+
+    /**
+     * Equivalent to {@link #values(long, long)} but modifies {@code it} instead of returning
+     * a new iterator.
+     */
+    public void values(long keyId, long subKeyId, ValueIt it) {
+        if (it == noValueIt) throw new IllegalArgumentException();
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return;
+        long bottom = readOff(keyId), top = readOff(keyId+1);
+        it.address = subKeyLowerBound(subKeyId, bottom, top);
+        it.end = top;
+        it.subKeyId = subKeyId;
+    }
+
+    /** Create a {@link ValueIt} for use with {@link #values(long, long, ValueIt)} */
+    public ValueIt makeValuesIt() {
+        return new ValueIt(0, 0, 0);
     }
 
     /**
@@ -259,7 +305,8 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
      */
     public long estimateValues(long keyId, long subKeyId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= offsCount-1) return 0;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return 0;
         long bottom = readOff(keyId), top = readOff(keyId+1);
         long lo = subKeyLowerBound(subKeyId, bottom, top);
         return (subKeyLowerBound(subKeyId+1, lo, top) - lo)>>(valShift+1);
@@ -280,9 +327,9 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
 
     public final class ValueIt {
         private long address;
-        private final long end;
+        private long end;
         /** The {@code subKeyId} given to {@link #values(long, long)}. */
-        public final long subKeyId;
+        public long subKeyId;
         /** The current value id of the queried {@code keyId} and {@code subKeyId} after
          *  a {@code true} {@link #advance()}. */
         public long valueId;
@@ -310,6 +357,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
          * @return whether there is a new value in {@link #valueId}.
          */
         public boolean advance() {
+            final long end = this.end, subKeyId = this.subKeyId;
             long address = this.address;
             if (address >= end)
                 return false;
@@ -333,15 +381,33 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
      */
     public SubKeyIt subKeys(long keyId, long valueId) {
         keyId -= firstKey;
-        if (keyId < 0 || keyId >= offsCount-1) return noSubKeyIt;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return noSubKeyIt;
         long begin = readOff(keyId), end = readOff(keyId+1);
         return valShift == 2 ? new SubKeyIt4(begin, end, valueId)
                              : new SubKeyIt (begin, end, valueId);
     }
 
+    /** Equivalent to {@link #subKeys(long, long)} but modifies {@code it} instead of
+     *  returning a new iterator.*/
+    public void subKeys(long keyId, long valueId, SubKeyIt it) {
+        if (it == noSubKeyIt) throw new IllegalArgumentException();
+        keyId -= firstKey;
+        if (keyId < 0 || keyId >= offsCount-1)
+            return;
+        it.address = readOff(keyId);
+        it.end     = readOff(keyId+1);
+        it.valueId = valueId;
+    }
+
+    /** Creates a {@link SubKeyIt} for use with {@link #subKeys(long, long, SubKeyIt)}. */
+    public SubKeyIt makeSubKeyIt() {
+        return valShift == 2 ? new SubKeyIt4(0, 0, 0)
+                             : new SubKeyIt(0, 0, 0);
+    }
+
     public sealed class SubKeyIt {
-        protected long address;
-        protected final long valueId, end;
+        protected long address, valueId, end;
         /** The sub-key id fetched by the last {@code true} {@link #advance()} call. */
         public long subKeyId;
 
@@ -368,6 +434,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
          * @return whether there is a new sub-key in #subKeyId.
          */
         public boolean advance() {
+            final long end = this.end, valueId = this.valueId;
             if (address == end)
                 return false;
             int pairWidth = valWidth<<1;

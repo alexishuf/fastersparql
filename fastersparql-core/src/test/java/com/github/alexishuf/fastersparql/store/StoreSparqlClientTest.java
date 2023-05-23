@@ -314,6 +314,7 @@ class StoreSparqlClientTest {
         Results r = d.results;
         try (var client = d.createClient()) {
             r.check(client);
+            r.check(client, COMPRESSED);
             r.check(client, TYPE, it -> TYPE.convert(it, client.dictId()));
             if (innerConcurrency) {
                 try {

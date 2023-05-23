@@ -4,9 +4,11 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
+import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
-import com.github.alexishuf.fastersparql.batch.operators.BindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -21,12 +23,14 @@ import com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.TripleRoleSet;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
@@ -40,14 +44,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
+import static java.lang.Boolean.FALSE;
+import static java.lang.Boolean.TRUE;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 
 public class StoreSparqlClient extends AbstractSparqlClient {
@@ -249,7 +257,7 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         };
     }
 
-    @SuppressWarnings("unchecked") @Override
+    @Override
     public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql,
                                              @Nullable BIt<B> bindings, @Nullable BindType type,
                                              Metrics.@Nullable JoinMetrics metrics) {
@@ -261,18 +269,16 @@ public class StoreSparqlClient extends AbstractSparqlClient {
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         try {
             Plan q = new SparqlParser().parse(sparql);
-            if (bt == TYPE && (q instanceof TriplePattern
-                    || (q instanceof Modifier m && m.left instanceof TriplePattern))) {
-                TriplePattern tp = q instanceof TriplePattern t ? t : (TriplePattern) q.op(0);
+            if (StoreBindingBIt.supports(q)) {
+                var tp = q instanceof TriplePattern t ? t : (TriplePattern) q.left();
                 var l = lookup(dictId);
-                long sId = NOT_FOUND, pId = NOT_FOUND, oId = NOT_FOUND;
-                boolean empty = (tp.s.type() != VAR && (sId = l.find(tp.s)) == NOT_FOUND)
-                             || (tp.p.type() != VAR && (pId = l.find(tp.p)) == NOT_FOUND)
-                             || (tp.o.type() != VAR && (oId = l.find(tp.o)) == NOT_FOUND);
+                long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+                boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
+                             || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
+                             || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
                 if (empty)
-                    return (BIt<B>) new EmptyBIt<>(TYPE, q.publicVars());
-                return (BIt<B>) new StoreBindingBIt((BIt<StoreBatch>)bindings, type,
-                                                    q, sId, pId, oId, metrics);
+                    return new EmptyBIt<>(bt, q.publicVars());
+                return new StoreBindingBIt<>(bindings, type, q, s, p, o, metrics);
             }
             return new ClientBindingBIt<>(bindings, type, this, q, metrics);
         } catch (Throwable t) {
@@ -396,28 +402,120 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    final class StoreBindingBIt extends BindingBIt<StoreBatch> {
-        private final @Nullable Modifier modifier;
-        private final TriplePattern right;
-        private final long sId, pId, oId;
-        private final Vars rightFreeVars;
+    final class StoreBindingBIt<B extends Batch<B>> extends AbstractBIt<B> {
+        private final BindType bindType;
+        private final BIt<B> left;
+        private Object rIt;
+        private B lb;
+        private int lr;
+        private final B rb;
+        private final BatchMerger<B> merger;
+        private final TripleRoleSet tpFreeRoles;
+        private final Metrics.@Nullable JoinMetrics joinMetrics;
+        private final long s, p, o;
+        private final byte sLeftCol, pLeftCol, oLeftCol;
+        private final byte kCol, skCol, vCol, rightCols;
+        private final short dictId;
+        private boolean rEnd;
+        private final boolean rightSingleRow;
+        private final TwoSegmentRope ropeView = new TwoSegmentRope();
+        private ByteRope localCopy;
 
-        public StoreBindingBIt(BIt<StoreBatch> left, BindType type, Plan right, long sId,
-                               long pId, long oId, Metrics.@Nullable JoinMetrics metrics) {
-            super(left, type, right.publicVars(), null, metrics);
+        public static boolean supports(Plan right) {
+            if (right instanceof TriplePattern) return true;
             if (right instanceof Modifier m) {
-                this.modifier = m;
-                this.right = (TriplePattern) m.left();
-            } else {
-                this.modifier = null;
-                this.right = (TriplePattern) right;
+                TriplePattern tp = m.left() instanceof TriplePattern t ? t : null;
+                if (tp == null)
+                    return false;
+                return m.filters.isEmpty()
+                        && (m.limit == Long.MAX_VALUE || m.limit == 1)
+                        &&  m.offset == 0
+                        && (m.projection == null || tp.publicVars().containsAll(m.projection));
             }
-            this.sId = sId;
-            this.pId = pId;
-            this.oId = oId;
-            this.rightFreeVars
-                    = (modifier != null && modifier.filters.isEmpty() ? modifier : right)
-                    .publicVars().minus(left.vars());
+            return false;
+        }
+
+        public StoreBindingBIt(BIt<B> left, BindType type, Plan right,
+                               long s, long p, long o, Metrics.@Nullable JoinMetrics metrics) {
+            super(left.batchType(), type.resultVars(left.vars(), right.publicVars()));
+            this.bindType = type;
+            this.left = left;
+            Vars leftVars = left.vars();
+            Vars rightFreeVars = right.publicVars().minus(leftVars);
+            this.merger = batchType.merger(vars, leftVars, rightFreeVars);
+            this.lb = batchType.create(PREFERRED_MIN_BATCH, leftVars.size(), 0);
+            this.dictId = (short)StoreSparqlClient.this.dictId;
+            var tp = right instanceof TriplePattern t ? t : (TriplePattern) right.left();
+            int sLeftCol = leftVars.indexOf(tp.s);
+            int pLeftCol = leftVars.indexOf(tp.p);
+            int oLeftCol = leftVars.indexOf(tp.o);
+            if ((sLeftCol|pLeftCol|oLeftCol) > 127)
+                throw new IllegalArgumentException("too many binding columns");
+            this.sLeftCol = (byte) sLeftCol;
+            this.pLeftCol = (byte) pLeftCol;
+            this.oLeftCol = (byte) oLeftCol;
+            int rightCols = rightFreeVars.size();
+            if (rightCols > 127)
+                throw new IllegalArgumentException("too many right vars");
+            this.rightCols = (byte) rightCols;
+            this.rb = batchType.create(BIt.PREFERRED_MIN_BATCH, rightFreeVars.size(), 0);
+            byte sCol = (byte)rightFreeVars.indexOf(tp.s);
+            byte pCol = (byte)rightFreeVars.indexOf(tp.p);
+            byte oCol = (byte)rightFreeVars.indexOf(tp.o);
+            this.tpFreeRoles = TripleRoleSet.fromBitset(
+                    (s == NOT_FOUND && sLeftCol < 0 ? 0x4 : 0x0) |
+                    (p == NOT_FOUND && pLeftCol < 0 ? 0x2 : 0x0) |
+                    (o == NOT_FOUND && oLeftCol < 0 ? 0x1 : 0x0) );
+            byte kCol = -1, skCol = -1, vCol = -1;
+            switch (tpFreeRoles) {
+                case EMPTY -> rIt = TRUE;
+                case SUB -> {
+                    rIt = ops.makeValuesIt();
+                    vCol = sCol;
+                }
+                case OBJ -> {
+                    rIt = spo.makeValuesIt();
+                    vCol = oCol;
+                }
+                case PRE -> {
+                    rIt = spo.makeSubKeyIt();
+                    skCol = pCol;
+                }
+                case PRE_OBJ -> {
+                    rIt = spo.makePairIt();
+                    skCol = pCol;
+                    vCol = oCol;
+                }
+                case SUB_OBJ -> {
+                    rIt = pso.makePairIt();
+                    skCol = sCol;
+                    vCol = oCol;
+                }
+                case SUB_PRE -> {
+                    rIt = ops.makePairIt();
+                    skCol = pCol;
+                    vCol = sCol;
+                }
+                case SUB_PRE_OBJ -> {
+                    rIt = spo.scan();
+                    kCol = sCol;
+                    skCol = pCol;
+                    vCol = oCol;
+                }
+            }
+            this.kCol  = kCol;
+            this.skCol = skCol;
+            this.vCol  = vCol;
+            this.rightSingleRow = switch (bindType) {
+                case JOIN,LEFT_JOIN          -> right instanceof Modifier m && m.limit == 1;
+                case EXISTS,NOT_EXISTS,MINUS -> true;
+            };
+            this.metrics = metrics;
+            this.joinMetrics = metrics;
+            this.s = s;
+            this.p = p;
+            this.o = o;
+            this.rEnd = true;
             acquireRef();
         }
 
@@ -427,28 +525,164 @@ public class StoreSparqlClient extends AbstractSparqlClient {
             } finally { releaseRef(); }
         }
 
-        @Override protected Object rightUnbound() {
-            return right;
+        @Override public @Nullable B nextBatch(@Nullable B b) {
+            if (lb == null) return null; // already exhausted
+            try {
+                long startNs = needsStartTime ? Timestamp.nanoTime() : ORIGIN;
+                long innerDeadline = rightSingleRow ? ORIGIN-1 : startNs+minWaitNs;
+                b = getBatch(b);
+                do {
+                    boolean rEmpty = rEnd;
+                    if (rEmpty) {
+                        if (++lr >= lb.rows) {
+                            lr = 0;
+                            lb = left.nextBatch(lb);
+                            if (lb == null) break; // reached end
+                        }
+                        rebind(lb, lr);
+                    }
+                    // fill rb with values from bound rIt
+                    rb.clear(rightCols);
+                    switch (tpFreeRoles) {
+                        case EMPTY -> {
+                            if (rIt == TRUE) {
+                                rb.beginPut();
+                                rb.commitPut();
+                                rIt = FALSE;
+                            }
+                        }
+                        case SUB_PRE_OBJ -> {
+                            Triples.ScanIt it = (Triples.ScanIt) rIt;
+                            while (it.advance()) {
+                                putRow(it.keyId, it.subKeyId, it.valueId);
+                                if (Timestamp.nanoTime() > innerDeadline) break;
+                            }
+                        }
+                        case SUB,OBJ -> {
+                            for (var it = (Triples.ValueIt) rIt; it.advance(); ) {
+                                putRow(0, 0, it.valueId);
+                                if (Timestamp.nanoTime() > innerDeadline) break;
+                            }
+                        }
+                        case PRE -> {
+                            for (var it = (Triples.SubKeyIt)rIt; it.advance(); ) {
+                                putRow(0, it.subKeyId, 0);
+                                if (Timestamp.nanoTime() > innerDeadline) break;
+                            }
+                        }
+                        case SUB_PRE,SUB_OBJ,PRE_OBJ -> {
+                            for (var it = (Triples.PairIt)rIt; it.advance(); ) {
+                                putRow(0, it.subKeyId, it.valueId);
+                                if (Timestamp.nanoTime() > innerDeadline) break;
+                            }
+                        }
+                    }
+                    rEnd = rb.rows == 0;
+                    boolean pub = switch (bindType) {
+                        case JOIN,EXISTS      ->  !rEnd;
+                        case NOT_EXISTS,MINUS ->   rEnd;
+                        case LEFT_JOIN        -> { rEmpty &= rEnd; yield !rEnd || rEmpty; }
+                    };
+                    if (pub) {
+                        switch (bindType) {
+                            case JOIN,LEFT_JOIN          ->   b = merger.merge(b, lb, lr, rb);
+                            case EXISTS,NOT_EXISTS,MINUS -> { b.putRow(lb, lr); rEnd = true; }
+                        }
+                    }
+                } while (readyInNanos(b.rows, startNs) > 0);
+                if (b.rows == 0) b = handleEmptyBatch(b);
+                else             onBatch(b);
+            } catch (Throwable t) {
+                lb = null; // signal exhaustion
+                onTermination(t);
+                throw t;
+            }
+            return b;
         }
 
-        @Override protected BIt<StoreBatch> bind(BatchBinding<StoreBatch> binding) {
-            long sId = this.sId, pId = this.pId, oId = this.oId;
-            var b = binding.batch;
-            if (b != null) {
-                long[] ids = b.arr();
-                int base = binding.row * b.cols, idx;
-                Vars bv = binding.vars;
-                if ((idx = bv.indexOf(right.s)) >= 0) sId = translate(ids[base+idx], dictId);
-                if ((idx = bv.indexOf(right.p)) >= 0) pId = translate(ids[base+idx], dictId);
-                if ((idx = bv.indexOf(right.o)) >= 0) oId = translate(ids[base+idx], dictId);
+        private B handleEmptyBatch(B batch) {
+            batchType.recycle(recycle(batch));
+            onTermination(null);
+            return null;
+        }
+
+        private void putRow(long kId, long skId, long vId) {
+            rb.beginPut();
+            if (rb instanceof StoreBatch sb) {
+                if ( kCol >= 0) sb.putTerm(kCol,  source( kId, dictId));
+                if (skCol >= 0) sb.putTerm(skCol, source(skId, dictId));
+                if ( vCol >= 0) sb.putTerm(vCol,  source( vId, dictId));
+            } else {
+                var lookup = lookup(dictId);
+                if ( kCol >= 0) putTerm(rb, kCol,   kId, lookup);
+                if (skCol >= 0) putTerm(rb, skCol, skId, lookup);
+                if ( vCol >= 0) putTerm(rb, vCol,   vId, lookup);
             }
-            var varRoles = TripleRoleSet.fromBitset((sId == NOT_FOUND ? 0x4 : 0x0) |
-                                                    (pId == NOT_FOUND ? 0x2 : 0x0) |
-                                                    (oId == NOT_FOUND ? 0x1 : 0x0));
-            BIt<StoreBatch> it = queryTP(rightFreeVars, right, sId, pId, oId, varRoles);
-            if (modifier != null)
-                it = modifier.executeFor(it, null, false);
-            return it;
+            rb.commitPut();
+        }
+
+        private void putTerm(B dest, byte col, long id, LocalityCompositeDict.Lookup lookup) {
+            TwoSegmentRope t = lookup.get(id);
+            if (t == null) return;
+            byte fst = t.get(0);
+            SegmentRope sh = switch (fst) {
+                case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+                case '<' -> SHARED_ROPES.internPrefixOf(t, 0, t.len);
+                case '_' -> ByteRope.EMPTY;
+                default -> throw new IllegalArgumentException("Not an RDF term");
+            };
+            MemorySegment local;
+            long localOff;
+            int localLen;
+            if (sh.len == t.sndLen) {
+                local =  t.fst;
+                localOff = t.fstOff;
+                localLen = t.fstLen;
+            } else if (sh.len == t.fstLen) {
+                local = t.snd;
+                localOff = t.sndOff;
+                localLen = t.sndLen;
+            } else {
+                if (localCopy == null) localCopy = new ByteRope(t.len);
+                else                   localCopy.clear();
+                if (fst == '"') localCopy.append(t, 0, t.len-sh.len);
+                else            localCopy.append(t, sh.len, t.len);
+                local = localCopy.segment;
+                localOff = 0;
+                localLen = localCopy.len;
+            }
+            dest.putTerm(col, sh, local, localOff, localLen, fst == '"');
+        }
+
+        private void rebind(B lb, int lr) {
+            long s, p, o;
+            if (lb instanceof StoreBatch sb) {
+                s = sLeftCol < 0 ? this.s : translate(sb.id(lr, sLeftCol), dictId);
+                p = pLeftCol < 0 ? this.p : translate(sb.id(lr, pLeftCol), dictId);
+                o = oLeftCol < 0 ? this.o : translate(sb.id(lr, oLeftCol), dictId);
+            } else {
+                s = this.s;
+                p = this.p;
+                o = this.o;
+                var l = lookup(dictId);
+                if (sLeftCol >= 0 && lb.getRopeView(lr, sLeftCol, ropeView))
+                    s = l.find(ropeView);
+                if (pLeftCol >= 0 && lb.getRopeView(lr, pLeftCol, ropeView))
+                    p = l.find(ropeView);
+                if (oLeftCol >= 0 && lb.getRopeView(lr, oLeftCol, ropeView))
+                    o = l.find(ropeView);
+            }
+            switch (tpFreeRoles) {
+                case EMPTY       -> rIt = spo.contains(s, p, o);
+                case SUB_PRE_OBJ ->    spo.scan(      (Triples.ScanIt)  rIt);
+                case OBJ         ->  spo.values(s, p, (Triples.ValueIt) rIt);
+                case PRE         -> spo.subKeys(s, o, (Triples.SubKeyIt)rIt);
+                case PRE_OBJ     ->   spo.pairs(s,    (Triples.PairIt)  rIt);
+                case SUB         ->  ops.values(o, p, (Triples.ValueIt) rIt);
+                case SUB_OBJ     ->   pso.pairs(p,    (Triples.PairIt)  rIt);
+                case SUB_PRE     ->   ops.pairs(o,    (Triples.PairIt)  rIt);
+            }
+            if (joinMetrics != null) joinMetrics.beginBinding();
         }
     }
 }

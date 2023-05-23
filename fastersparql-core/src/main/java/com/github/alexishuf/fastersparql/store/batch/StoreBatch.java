@@ -89,12 +89,6 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         return left.equals(right);
     }
 
-    public long sourcedId(@NonNegative int row, @NonNegative int col) {
-        //noinspection ConstantValue
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
-        return arr[row*cols + col];
-    }
-
     private @Nullable TwoSegmentRope tmpRope(int row, int col) {
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
         long sourcedId = arr[row * cols + col];

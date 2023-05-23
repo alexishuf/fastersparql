@@ -79,10 +79,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public long id(int row, int col) {
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
-
-        // check for null
-        int addr = row * cols + col;
-        return arr[addr];
+        return arr[row * cols + col];
     }
 
     /* --- --- --- mutators --- --- --- */

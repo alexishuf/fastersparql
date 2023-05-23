@@ -45,7 +45,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected long minWaitNs;
     protected long maxWaitNs;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
-    protected int rowsCapacity, bytesCapacity;
+    protected int rowsCapacity = PREFERRED_MIN_BATCH, bytesCapacity = PREFERRED_MIN_BATCH*32;
     protected boolean needsStartTime = false, closed = false, terminated = false, eager = false;
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;

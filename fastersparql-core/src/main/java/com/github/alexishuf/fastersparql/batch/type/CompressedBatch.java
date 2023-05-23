@@ -987,7 +987,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                         if (localCopy == null) localCopy = new ByteRope(t.len);
                         else                   localCopy.clear();
                         if (fst == '"') localCopy.append(t, 0, t.len-sh.len);
-                        else                 localCopy.append(t, sh.len, t.len);
+                        else            localCopy.append(t, sh.len, t.len);
                         local = localCopy.segment;
                         localOff = 0;
                         localLen = localCopy.len;

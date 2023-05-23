@@ -53,20 +53,20 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         return new StoreBatchBucket(rowsCapacity, cols);
     }
 
-    @Override public @Nullable BatchMerger<StoreBatch> projector(Vars out, Vars in) {
+    @Override public IdBatch.@Nullable Merger<StoreBatch> projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
         return sources == null ? null : new IdBatch.Merger<>(this, out, sources);
     }
 
-    @Override public @NonNull BatchMerger<StoreBatch> merger(Vars out, Vars left, Vars right) {
+    @Override public IdBatch.@NonNull Merger<StoreBatch> merger(Vars out, Vars left, Vars right) {
         return new IdBatch.Merger<>(this, out, mergerSources(out, left, right));
     }
 
-    @Override public BatchFilter<StoreBatch> filter(Vars out, Vars in, RowFilter<StoreBatch> filter) {
+    @Override public IdBatch.Filter<StoreBatch> filter(Vars out, Vars in, RowFilter<StoreBatch> filter) {
         return new IdBatch.Filter<>(this, projector(out, in), filter);
     }
 
-    @Override public BatchFilter<StoreBatch> filter(RowFilter<StoreBatch> filter) {
+    @Override public IdBatch.Filter<StoreBatch> filter(RowFilter<StoreBatch> filter) {
         return new IdBatch.Filter<>(this, null, filter);
     }
 
