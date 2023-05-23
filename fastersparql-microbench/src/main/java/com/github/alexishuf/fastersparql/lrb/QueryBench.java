@@ -51,6 +51,7 @@ public class QueryBench {
     @Param({"PREFERRED"}) SelectorKindType selKind;
     @Param({"true"}) boolean builtinPlans;
     @Param({"COMPRESSED"}) BatchKind batchKind;
+//    @Param({"true"}) boolean alt;
 
     public enum SelectorKindType {
         PREFERRED,
@@ -189,6 +190,7 @@ public class QueryBench {
     }
 
     @Setup(Level.Iteration) public void iterationSetup() throws IOException {
+//        StoreSparqlClient.ALT = alt;
         fedHandle = FederationHandle.builder(dataDir).srcKind(srcKind)
                                     .selKind(selKind.forSource(srcKind))
                                     .waitInit(true).create();
@@ -234,8 +236,4 @@ public class QueryBench {
     @Benchmark public int countRows(Blackhole bh)  { return execute(bh, rowCounter,     rowCounter::rows); }
     @Benchmark public int ropeLen(Blackhole bh)    { return execute(bh, ropeLenCounter, ropeLenCounter::len); }
     @Benchmark public int termLen(Blackhole bh)    { return execute(bh, termLenCounter, termLenCounter::len); }
-//    @Benchmark public int termLenBaseline(Blackhole bh)    {
-//        StoreSparqlClient.ALT = false;
-//        return execute(bh, termLenCounter, termLenCounter::len);
-//    }
 }

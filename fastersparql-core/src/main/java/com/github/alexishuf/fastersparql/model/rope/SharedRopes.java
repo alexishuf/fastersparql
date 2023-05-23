@@ -13,15 +13,7 @@ public class SharedRopes {
 
     private static final int BUCKET_BITS = 4;
     private static final int BUCKET_SIZE = 1<<BUCKET_BITS;
-    // by default, use 64 ~ 32 MiB (if compressed oops) storage
-    private static final int DEF_BUCKETS = 64*1024*1024
-                                         / (4  + /* SegmentRope reference */
-                                            16 + /* SegmentRope object header */
-                                            8  + /* MemorySegment reference */
-                                            8  + /* long offset */
-                                            4    /* int len */ )
-                                         / BUCKET_SIZE ;
-    public static final SharedRopes SHARED_ROPES = new SharedRopes(DEF_BUCKETS);
+    public static final SharedRopes SHARED_ROPES = SharedRopes.withBytesCapacity(96*1024*1024);
 
     public static final SegmentRope P_XSD = SHARED_ROPES.internPrefix("<http://www.w3.org/2001/XMLSchema#");
     public static final SegmentRope P_RDF = SHARED_ROPES.internPrefix("<http://www.w3.org/1999/02/22-rdf-syntax-ns#");
@@ -137,6 +129,23 @@ public class SharedRopes {
         this.bucketMask = buckets-1;
         this.buckets = new SegmentRope[buckets<<BUCKET_BITS];
         this.hashes = new int[buckets<<BUCKET_BITS];
+    }
+
+    /**
+     * Calls {@link SharedRopes#SharedRopes(int)} with a bucket count that will lead to at most
+     * {@code bytes} of memory being used with buckets and {@link SegmentRope} objects, without
+     * including the actual UTF-8 bytes
+     *
+     * @param bytes storage capacity in bytes, not including the UTF-8 data
+     * @return a new {@link SharedRopes} instance.
+     */
+    public static SharedRopes withBytesCapacity(int bytes) {
+        return new SharedRopes(bytes
+                             / (4  + /* SegmentRope reference */
+                                32 + /* SegmentRope object */
+                                40 + /* MemorySegment object */
+                                16   /* byte[] header */
+                             ) / BUCKET_SIZE);
     }
 
     void freeze() {

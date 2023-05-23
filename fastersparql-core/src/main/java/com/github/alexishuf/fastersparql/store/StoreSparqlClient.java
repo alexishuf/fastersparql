@@ -76,11 +76,16 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     private final Federation federation;
     private final Estimator estimator = new Estimator();
     @SuppressWarnings("unused") private int plainRefs;
+    private final int prefixesMask;
+    private final SegmentRope[] prefixes;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public StoreSparqlClient(SparqlEndpoint ep) {
         super(ep);
+        int prefixesCap = (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */);
+        this.prefixesMask = -1 >>> Integer.numberOfLeadingZeros(prefixesCap);
+        this.prefixes = new SegmentRope[prefixesMask+1];
         this.bindingAwareProtocol = true;
         Path dir = endpoint.asFile().toPath();
         boolean validate = FSProperties.storeClientValidate();
@@ -614,20 +619,27 @@ public class StoreSparqlClient extends AbstractSparqlClient {
                 if ( vCol >= 0) sb.putTerm(vCol,  source( vId, dictId));
             } else {
                 var lookup = lookup(dictId);
-                if ( kCol >= 0) putTerm(rb, kCol,   kId, lookup);
-                if (skCol >= 0) putTerm(rb, skCol, skId, lookup);
-                if ( vCol >= 0) putTerm(rb, vCol,   vId, lookup);
+                if ( kCol >= 0) convertTerm(rb, kCol,   kId, lookup);
+                if (skCol >= 0) convertTerm(rb, skCol, skId, lookup);
+                if ( vCol >= 0) convertTerm(rb, vCol,   vId, lookup);
             }
             rb.commitPut();
         }
 
-        private void putTerm(B dest, byte col, long id, LocalityCompositeDict.Lookup lookup) {
+        private void convertTerm(B dest, byte col, long id, LocalityCompositeDict.Lookup lookup) {
             TwoSegmentRope t = lookup.get(id);
             if (t == null) return;
             byte fst = t.get(0);
             SegmentRope sh = switch (fst) {
                 case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                case '<' -> SHARED_ROPES.internPrefixOf(t, 0, t.len);
+                case '<' -> {
+                    if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                    int slot = (int)(t.fstOff & prefixesMask);
+                    var cached = prefixes[slot];
+                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
+                        prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                    yield cached;
+                }
                 case '_' -> ByteRope.EMPTY;
                 default -> throw new IllegalArgumentException("Not an RDF term");
             };
