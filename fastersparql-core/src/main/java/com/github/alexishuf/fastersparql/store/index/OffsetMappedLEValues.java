@@ -193,13 +193,7 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
         if (UNSAFE == null || IS_BE)
             return readFallbackOff(index);
         long addr = offBase + (index << offShift);
-        return switch (offShift) {
-            case 0  -> UNSAFE.getByte(addr)  & BYTE_MASK;
-            case 1  -> UNSAFE.getShort(addr) & SHORT_MASK;
-            case 2  -> UNSAFE.getInt(addr)   & INT_MASK;
-            case 3  -> UNSAFE.getLong(addr);
-            default -> throw unreachable;
-        };
+        return offShift == 3 ? UNSAFE.getLong(addr) : UNSAFE.getInt(addr) & INT_MASK;
     }
 
     /**
@@ -223,6 +217,13 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
             case 3 -> UNSAFE.getLong(addr);
             default -> throw unreachable;
         };
+    }
+
+    protected long readValueUnsafe(long offset) {
+        if (UNSAFE == null || IS_BE)
+            return readFallbackValue(offset);
+        long addr = valBase + offset;
+        return valShift == 3 ? UNSAFE.getLong(addr) : UNSAFE.getInt(addr) & INT_MASK;
     }
 
     private long readFallbackOff(long index) {

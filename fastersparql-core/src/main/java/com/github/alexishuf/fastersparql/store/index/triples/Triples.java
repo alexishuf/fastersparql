@@ -73,7 +73,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
             long begin = readOff(k), end = readOff(k+1);
             int pairWidth = valWidth<<1;
             for (long prevSK = 0, prevV = 0; begin < end; begin += pairWidth) {
-                long sk = readValue(begin), v = readValue(begin+valWidth);
+                long sk = readValueUnsafe(begin), v = readValueUnsafe(begin+valWidth);
                 if (sk < prevSK || (sk == prevSK && v < prevV))
                     throw new IOException("Malformed "+this+": ("+sk+" "+v+") < ("+prevSK+" "+prevV+") byte "+begin+", key index "+k);
                 if (sk == 0)
@@ -142,12 +142,12 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
          */
         public boolean advance() {
             while (pairAddress >= pairsEnd && ++keyId < endKeyId) {
-                pairAddress = readOff(  keyId-firstKey);
-                pairsEnd    = readOff(1+keyId-firstKey);
+                pairAddress = readOffUnsafe(  keyId-firstKey);
+                pairsEnd    = readOffUnsafe(1+keyId-firstKey);
             }
             if (pairAddress < pairsEnd) {
-                subKeyId = readValue(pairAddress);
-                valueId = readValue(pairAddress + valWidth);
+                subKeyId = readValueUnsafe(pairAddress);
+                valueId = readValueUnsafe(pairAddress + valWidth);
                 pairAddress += (long) valWidth << 1;
                 return true;
             }
@@ -164,7 +164,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public PairIt pairs(long keyId) {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1) return noPairIt;
-        return new PairIt(readOff(keyId), readOff(keyId+1));
+        return new PairIt(readOffUnsafe(keyId), readOffUnsafe(keyId+1));
     }
 
     /**
@@ -176,8 +176,8 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return;
-        it.address = readOff(keyId);
-        it.end     = readOff(keyId+1);
+        it.address = readOffUnsafe(keyId);
+        it.end     = readOffUnsafe(keyId+1);
     }
 
     /** Create a new {@link PairIt} for use with {@link #pairs(long, PairIt)}. */
@@ -192,7 +192,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public long estimatePairs(long keyId) {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1) return 0;
-        return (readOff(keyId+1) - readOff(keyId))>>>(valShift+1);
+        return (readOffUnsafe(keyId+1) - readOffUnsafe(keyId))>>>(valShift+1);
     }
 
     public final class PairIt {
@@ -225,9 +225,9 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
          */
         public boolean advance() {
             long address = this.address;
-            if (address == end) return false;
-            subKeyId = readValue(address);
-            valueId = readValue(address+valWidth);
+            if (address >= end) return false;
+            subKeyId = readValueUnsafe(address);
+            valueId = readValueUnsafe(address+valWidth);
             this.address += (long) valWidth <<1;
             return true;
         }
@@ -241,11 +241,11 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         if (keyId < 0 || keyId >= offsCount-1)
             return false;
         int pairWidth = valWidth<<1;
-        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long bottom = readOffUnsafe(keyId), top = readOffUnsafe(keyId+1);
         long address = subKeyLowerBound(subKeyId, bottom, top);
         while (address < top) {
-            long pairValue = readValue(address+valWidth);
-            if (readValue(address) != subKeyId) return false; // scanned all pairs for subKeyId
+            long pairValue = readValueUnsafe(address+valWidth);
+            if (readValueUnsafe(address) != subKeyId) return false; // scanned all pairs for subKeyId
             if (pairValue == valueId) return  true; // found
             if (pairValue >  valueId) return false; // pairs are ordered, thus valueId is missing
             address += pairWidth;
@@ -265,9 +265,9 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return noValueIt;
-        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long bottom = readOffUnsafe(keyId), top = readOffUnsafe(keyId+1);
         long pair = subKeyLowerBound(subKeyId, bottom, top);
-        if (pair < top && readValue(pair) == subKeyId)
+        if (pair < top && readValueUnsafe(pair) == subKeyId)
             return new ValueIt(pair, top, subKeyId);
         return noValueIt;
     }
@@ -281,7 +281,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return;
-        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long bottom = readOffUnsafe(keyId), top = readOffUnsafe(keyId+1);
         it.address = subKeyLowerBound(subKeyId, bottom, top);
         it.end = top;
         it.subKeyId = subKeyId;
@@ -307,7 +307,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return 0;
-        long bottom = readOff(keyId), top = readOff(keyId+1);
+        long bottom = readOffUnsafe(keyId), top = readOffUnsafe(keyId+1);
         long lo = subKeyLowerBound(subKeyId, bottom, top);
         return (subKeyLowerBound(subKeyId+1, lo, top) - lo)>>(valShift+1);
     }
@@ -318,7 +318,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         while (lo <= hi) {
             long mid = (lo+hi)>>>1;
             long midAddr = bottom + (mid<<pairShift);
-            long diff = subKeyId - readValue(midAddr);
+            long diff = subKeyId - readValueUnsafe(midAddr);
             if (diff <= 0) hi = mid-1;
             else           lo = mid+1;
         }
@@ -361,11 +361,11 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
             long address = this.address;
             if (address >= end)
                 return false;
-            if (readValue(address) != subKeyId) {
+            if (readValueUnsafe(address) != subKeyId) {
                 this.address = end;
                 return false;
             }
-            valueId = readValue(address +valWidth);
+            valueId = readValueUnsafe(address +valWidth);
             this.address = address + ((long)valWidth<<1);
             return true;
         }
@@ -383,7 +383,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return noSubKeyIt;
-        long begin = readOff(keyId), end = readOff(keyId+1);
+        long begin = readOffUnsafe(keyId), end = readOffUnsafe(keyId+1);
         return valShift == 2 ? new SubKeyIt4(begin, end, valueId)
                              : new SubKeyIt (begin, end, valueId);
     }
@@ -395,8 +395,8 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         keyId -= firstKey;
         if (keyId < 0 || keyId >= offsCount-1)
             return;
-        it.address = readOff(keyId);
-        it.end     = readOff(keyId+1);
+        it.address = readOffUnsafe(keyId);
+        it.end     = readOffUnsafe(keyId+1);
         it.valueId = valueId;
     }
 
@@ -438,11 +438,11 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
             if (address == end)
                 return false;
             int pairWidth = valWidth<<1;
-            while (address < end && readValue(address+valWidth) != valueId)
+            while (address < end && readValueUnsafe(address+valWidth) != valueId)
                 address += pairWidth;
             if (address == end)
                 return false;
-            subKeyId = readValue(address);
+            subKeyId = readValueUnsafe(address);
             return true;
         }
     }
@@ -472,14 +472,14 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
                 }
             }
             if (i == ve) { // not vectorized
-                while (i < end && readValue(i+valWidth) != valueId)
+                while (i < end && readValueUnsafe(i+valWidth) != valueId)
                     i += 8;
                 if (i >= end) {
                     address = i;
                     return false;
                 }
             }
-            subKeyId = readValue(i);
+            subKeyId = readValueUnsafe(i);
             address = i+8;
             return true;
         }
