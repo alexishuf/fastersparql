@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import java.io.IOException;
@@ -61,8 +62,9 @@ public class LocalityStandaloneDict extends Dict {
 
         @Override public long find(PlainRope rope) {
             if (rope.len == 0) return emptyId;
+            if (UNSAFE == null) return coldFind(rope);
             long id = 1;
-            if (UNSAFE != null && rope instanceof SegmentRope s) {
+            if (rope instanceof SegmentRope s) {
                 byte[] rBase = s.utf8;
                 long rOff = s.segment.address() + s.offset;
                 int rLen = s.len;
@@ -74,13 +76,31 @@ public class LocalityStandaloneDict extends Dict {
                     id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
                 }
             } else {
+                TwoSegmentRope tsr = (TwoSegmentRope) rope;
+                byte[] rBase1 = tsr.fstU8, rBase2 = tsr.sndU8;
+                long rOff1 = tsr.fst.address() + tsr.fstOff;
+                long rOff2 = tsr.snd.address() + tsr.sndOff;
+                int rLen1 = tsr.fstLen, rLen2 = tsr.sndLen;
                 while (id <= nStrings) {
                     long off = readOffUnsafe(id - 1);
-                    tmp.slice(off, (int) (readOffUnsafe(id) - off));
-                    int diff = tmp.compareTo(rope);
+                    int diff = (int) (readOffUnsafe(id) - off);
+                    diff = compare1_2(null, valBase + off, diff,
+                                      rBase1, rOff1, rLen1, rBase2, rOff2, rLen2);
                     if (diff == 0) return id;
                     id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
                 }
+            }
+            return NOT_FOUND;
+        }
+
+        private long coldFind(PlainRope rope) {
+            long id = 1;
+            while (id <= nStrings) {
+                long off = readOffUnsafe(id - 1);
+                tmp.slice(off, (int) (readOffUnsafe(id) - off));
+                int diff = tmp.compareTo(rope);
+                if (diff == 0) return id;
+                id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
             }
             return NOT_FOUND;
         }
