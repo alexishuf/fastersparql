@@ -161,26 +161,29 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     }
                     b = null;
                     break;
-                } else if (READY.getOpaque(this) == null && readyInNanos(f.rows, fillingStart) == 0) {
-                    READY.setRelease(this, f);
-                    fillingStart = ORIGIN;
-                    unpark(consumer);
-                    this.filling = b;
-                    b = null;
-                    break;
-                } else if (mustPark(b.rows, f.rows)) {
-                    producer = Thread.currentThread();
-                    //dbg.write("offer: parking, b.rows=", b.rows);
-                    LOCK.setRelease(this, 0);
-                    locked = false;
-                    park(this);
-                    producer = null;
-                    lock();
-                    locked = true;
                 } else {
-                    f.put(b);
-                    delayedWake = consumer; // delay to avoid Thread.yield
-                    break;
+                    boolean park = mustPark(b.rows, f.rows);
+                    if (plainReady == null && (park || readyInNanos(f.rows, fillingStart) == 0)) {
+                        READY.setRelease(this, f);
+                        fillingStart = ORIGIN;
+                        unpark(consumer);
+                        this.filling = b;
+                        b = null;
+                        break;
+                    } else if (park) {
+                        producer = Thread.currentThread();
+                        //dbg.write("offer: parking, b.rows=", b.rows);
+                        LOCK.setRelease(this, 0);
+                        locked = false;
+                        park(this);
+                        producer = null;
+                        lock();
+                        locked = true;
+                    } else {
+                        f.put(b);
+                        delayedWake = consumer; // delay unpark() to avoid Thread.yield
+                        break;
+                    }
                 }
             }
         } finally {
