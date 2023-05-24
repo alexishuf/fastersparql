@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
+import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -52,21 +54,23 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         return new HdtBatchBucket(rowsCapacity, cols);
     }
 
-    @Override public @Nullable BatchMerger<HdtBatch> projector(Vars out, Vars in) {
+    @Override public @Nullable Merger<HdtBatch> projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new IdBatch.Merger<>(this, out, sources);
+        return sources == null ? null : new Merger<>(this, out, sources);
     }
 
-    @Override public @NonNull BatchMerger<HdtBatch> merger(Vars out, Vars left, Vars right) {
-        return new IdBatch.Merger<>(this, out, mergerSources(out, left, right));
+    @Override public @NonNull Merger<HdtBatch> merger(Vars out, Vars left, Vars right) {
+        return new Merger<>(this, out, mergerSources(out, left, right));
     }
 
-    @Override public BatchFilter<HdtBatch> filter(Vars out, Vars in, RowFilter<HdtBatch> filter) {
-        return new IdBatch.Filter<>(this, projector(out, in), filter);
+    @Override public Filter<HdtBatch> filter(Vars out, Vars in, RowFilter<HdtBatch> filter,
+                                             BatchFilter<HdtBatch> before) {
+        return new Filter<>(this, out, projector(out, in), filter, before);
     }
 
-    @Override public BatchFilter<HdtBatch> filter(RowFilter<HdtBatch> filter) {
-        return new IdBatch.Filter<>(this, null, filter);
+    @Override public Filter<HdtBatch> filter(Vars vars, RowFilter<HdtBatch> filter,
+                                             BatchFilter<HdtBatch> before) {
+        return new Filter<>(this, vars, null, filter, before);
     }
 
     @Override public String toString() { return "HdtBatch"; }

@@ -737,7 +737,7 @@ class BatchTest {
                     expected.commitPut();
                 }
                 RowFilter<B> rowFilter = (batch, row) -> !survivors.contains(row);
-                var filter = out.equals(in) ? type.filter(rowFilter)
+                var filter = out.equals(in) ? type.filter(out, rowFilter)
                                             : type.filter(out, in, rowFilter);
                 B copyFilter = filter.filter(null, full);
                 assertBatchesEquals(expected, copyFilter, ctx);

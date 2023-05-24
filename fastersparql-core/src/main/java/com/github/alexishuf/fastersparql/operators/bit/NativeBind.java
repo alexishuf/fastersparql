@@ -118,7 +118,7 @@ public class NativeBind {
         // for non-native joins, the last join already honors Join.projection.
         var projector = batchType.projector(join.publicVars(), left.vars());
         if (projector != null)
-            left = new ProcessorBIt<>(left, projector.outVars, projector, metrics);
+            left = new ProcessorBIt<>(left, projector, metrics);
         return left;
     }
 }

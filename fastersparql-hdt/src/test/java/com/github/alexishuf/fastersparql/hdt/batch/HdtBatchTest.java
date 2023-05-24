@@ -15,6 +15,7 @@ import static com.github.alexishuf.fastersparql.hdt.batch.IdAccessTest.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HdtBatchTest {
+    private static final Vars X = Vars.of("x");
     private static Dictionary dict;
     private static int dictId;
     private static long Alice, Bob, knows, charlie;
@@ -137,10 +138,10 @@ class HdtBatchTest {
 
 
     @Test public void testFiler() {
-        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, null, new RowFilter<>() {
+        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, null, new RowFilter<>() {
             int calls = 0;
             @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
-        });
+        }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie}, 3, 1);
         assertSame(b, filter.filterInPlace(b));
@@ -149,10 +150,10 @@ class HdtBatchTest {
 
     @Test public void testFilterProjecting() {
         var projector = HdtBatch.TYPE.projector(Vars.of("x"), Vars.of("x", "y"));
-        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, projector, new RowFilter<>() {
+        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, projector, new RowFilter<>() {
             int calls = 0;
             @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
-        });
+        }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);
         assertSame(b, filter.filterInPlace(b));

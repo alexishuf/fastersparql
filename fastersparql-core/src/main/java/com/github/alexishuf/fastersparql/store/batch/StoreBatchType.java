@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.store.batch;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
+import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -53,21 +55,23 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         return new StoreBatchBucket(rowsCapacity, cols);
     }
 
-    @Override public IdBatch.@Nullable Merger<StoreBatch> projector(Vars out, Vars in) {
+    @Override public @Nullable Merger<StoreBatch> projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new IdBatch.Merger<>(this, out, sources);
+        return sources == null ? null : new Merger<>(this, out, sources);
     }
 
-    @Override public IdBatch.@NonNull Merger<StoreBatch> merger(Vars out, Vars left, Vars right) {
-        return new IdBatch.Merger<>(this, out, mergerSources(out, left, right));
+    @Override public @NonNull Merger<StoreBatch> merger(Vars out, Vars left, Vars right) {
+        return new Merger<>(this, out, mergerSources(out, left, right));
     }
 
-    @Override public IdBatch.Filter<StoreBatch> filter(Vars out, Vars in, RowFilter<StoreBatch> filter) {
-        return new IdBatch.Filter<>(this, projector(out, in), filter);
+    @Override public Filter<StoreBatch> filter(Vars out, Vars in, RowFilter<StoreBatch> filter,
+                                               BatchFilter<StoreBatch> before) {
+        return new Filter<>(this, out, projector(out, in), filter, before);
     }
 
-    @Override public IdBatch.Filter<StoreBatch> filter(RowFilter<StoreBatch> filter) {
-        return new IdBatch.Filter<>(this, null, filter);
+    @Override public Filter<StoreBatch> filter(Vars vars, RowFilter<StoreBatch> filter,
+                                               BatchFilter<StoreBatch> before) {
+        return new Filter<>(this, vars, null, filter, before);
     }
 
     @Override public String toString() { return "StoreBatch"; }

@@ -9,4 +9,10 @@ public interface RowFilter<B extends Batch<B>> {
      * concurrently with filtering.
      */
     default boolean targetsProjection() { return false; }
+
+    /**
+     * Clears any state that is mutated by calls to {@link #drop(Batch, int)}, reverting to the
+     * state this filter was when constructuted (before first {@code drop()} call);
+     */
+    default void reset() {}
 }

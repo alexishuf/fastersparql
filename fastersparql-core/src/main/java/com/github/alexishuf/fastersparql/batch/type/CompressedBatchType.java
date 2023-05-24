@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Filter;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import jdk.incubator.vector.ByteVector;
@@ -43,24 +45,26 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     }
 
     @Override
-    public @Nullable BatchMerger<CompressedBatch> projector(Vars out, Vars in) {
+    public @Nullable Merger projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new CompressedBatch.Merger(this, out, sources);
+        return sources == null ? null : new Merger(this, out, sources);
     }
 
     @Override
-    public @NonNull BatchMerger<CompressedBatch> merger(Vars out, Vars left, Vars right) {
-        return new CompressedBatch.Merger(this, out, mergerSources(out, left, right));
+    public @NonNull Merger merger(Vars out, Vars left, Vars right) {
+        return new Merger(this, out, mergerSources(out, left, right));
     }
 
     @Override
-    public BatchFilter<CompressedBatch> filter(Vars out, Vars in, RowFilter<CompressedBatch> filter) {
-        return new CompressedBatch.Filter(this, projector(out, in), filter);
+    public Filter filter(Vars out, Vars in, RowFilter<CompressedBatch> filter,
+                         BatchFilter<CompressedBatch> before) {
+        return new Filter(this, out, projector(out, in), filter, before);
     }
 
     @Override
-    public BatchFilter<CompressedBatch> filter(RowFilter<CompressedBatch> filter) {
-        return new CompressedBatch.Filter(this, null, filter);
+    public Filter filter(Vars vars, RowFilter<CompressedBatch> filter,
+                         BatchFilter<CompressedBatch> before) {
+        return new Filter(this, vars, null, filter, before);
     }
 
     @Override public String toString() { return "CompressedBatch"; }

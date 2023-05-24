@@ -1141,9 +1141,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         private int @Nullable [] tsl;
         private SegmentRope @Nullable [] tsh;
 
-        public Filter(BatchType<CompressedBatch> batchType, BatchMerger<CompressedBatch> projector,
-                      RowFilter<CompressedBatch> rowFilter) {
-            super(batchType, projector, rowFilter);
+        public Filter(BatchType<CompressedBatch> batchType, Vars outVars,
+                      BatchMerger<CompressedBatch> projector,
+                      RowFilter<CompressedBatch> rowFilter,
+                      @Nullable BatchFilter<CompressedBatch> before) {
+            super(batchType, outVars, projector, rowFilter, before);
+            assert projector == null || projector.outVars.equals(outVars);
         }
 
         private CompressedBatch filterInPlaceEmpty(CompressedBatch in, int cols) {
@@ -1158,6 +1161,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
         @Override public CompressedBatch filterInPlace(CompressedBatch in,
                                                        BatchMerger<CompressedBatch> projector) {
+            if (before != null)
+                in = before.filterInPlace(in);
             int @Nullable[] columns = projector == null ? null : projector.columns;
             int rows = in.rows, iCols = in.cols, cols = columns == null ? iCols : columns.length;
             if (cols == 0 || rows == 0)

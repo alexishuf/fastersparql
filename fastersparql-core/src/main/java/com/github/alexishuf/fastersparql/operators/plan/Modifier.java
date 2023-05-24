@@ -160,8 +160,15 @@ public final class Modifier extends Plan {
     }
     public <B extends Batch<B>>
     BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean canDedup) {
-        var bt = in.batchType();
-        Vars outVars = publicVars(), inVars = in.vars();
+        var processor = processorFor(in.batchType(), in.vars(), binding, canDedup);
+        if (processor == null) return in;
+        return new ModifierBIt<>(in, processor).metrics(Metrics.createIf(this));
+    }
+
+    public <B extends Batch<B>>
+    BatchProcessor<B> processorFor(BatchType<B> bt, Vars inVars,
+                                   @Nullable Binding binding, boolean canDedup) {
+        Vars outVars = publicVars();
         if (binding != null)
             outVars = outVars.minus(binding.vars);
         List<Expr> filters = binding == null ? this.filters : boundFilters(binding);
@@ -182,8 +189,8 @@ public final class Modifier extends Plan {
                                             : new Filtering<>(bt, inVars, filters);
             processor = bt.filter(outVars, inVars, rf);
             if (dedup != null) {
-                in = new ProcessorBIt<>(in, outVars, processor, null);
-                processor = bt.filter(slice ? new SlicingDedup<>(offset, limit, dedup) : dedup);
+                RowFilter<B> dedupRF = slice ? new SlicingDedup<>(offset, limit, dedup) : dedup;
+                processor = bt.filter(outVars, dedupRF, (BatchFilter<B>) processor);
             }
         } else if (dedup == null) {
             processor = slice ? bt.filter(outVars, inVars, new Slicing<>(offset, limit))
@@ -192,14 +199,12 @@ public final class Modifier extends Plan {
             var rf = slice ? new SlicingDedup<>(offset, limit, dedup) : dedup;
             processor = bt.filter(outVars, inVars, rf);
         }
-        Metrics m = Metrics.createIf(this);
-        return (processor == null ? in : new ModifierBIt<>(in, outVars, processor)).metrics(m);
+        return processor;
     }
 
     private final class ModifierBIt<B extends Batch<B>> extends ProcessorBIt<B> {
-
-        public ModifierBIt(BIt<B> in, Vars outVars, BatchProcessor<B> processor) {
-            super(in, outVars, processor, Metrics.createIf(Modifier.this));
+        public ModifierBIt(BIt<B> in, BatchProcessor<B> processor) {
+            super(in, processor, Metrics.createIf(Modifier.this));
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
@@ -222,9 +227,15 @@ public final class Modifier extends Plan {
     /* --- --- --- RowFilter implementations --- --- --- */
 
     private static class Slicing<B extends Batch<B>> implements RowFilter<B> {
+        private final long offset, limit;
         private long skip, allowed;
 
         public Slicing(long offset, long limit) {
+            skip = this.offset = offset;
+            allowed = this.limit = limit;
+        }
+
+        @Override public void reset() {
             skip = offset;
             allowed = limit;
         }
@@ -243,12 +254,19 @@ public final class Modifier extends Plan {
 
     private static class SlicingDedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
         private final Dedup<B> dedup;
+        private final long offset, limit;
         private long skip, allowed;
 
         public SlicingDedup(long offset, long limit, Dedup<B> dedup) {
             this.dedup = dedup;
+            skip = this.offset = offset;
+            allowed = this.limit = limit;
+        }
+
+        @Override public void reset() {
             skip = offset;
             allowed = limit;
+            dedup.clear(dedup.cols());
         }
 
         @Override public boolean drop(B batch, int row) {
@@ -265,10 +283,16 @@ public final class Modifier extends Plan {
     }
 
     private static final class SlicingFiltering<B extends Batch<B>> extends Filtering<B> {
+        private final long offset, limit;
         private long skip, allowed;
 
         public SlicingFiltering(long offset, long limit, BatchType<B> bt, Vars inVars, List<Expr> filters) {
             super(bt, inVars, filters);
+            skip = this.offset = offset;
+            allowed = this.limit = limit;
+        }
+
+        @Override public void reset() {
             skip = offset;
             allowed = limit;
         }

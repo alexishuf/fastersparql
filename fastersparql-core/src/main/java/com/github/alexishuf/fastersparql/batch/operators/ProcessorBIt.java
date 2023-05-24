@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -17,9 +16,9 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
     protected final BatchProcessor<B> processor;
     protected boolean terminated;
 
-    public ProcessorBIt(BIt<B> delegate, Vars vars, BatchProcessor<B> processor,
+    public ProcessorBIt(BIt<B> delegate, BatchProcessor<B> processor,
                         @Nullable Metrics metrics) {
-        super(delegate, delegate.batchType(), vars);
+        super(delegate, delegate.batchType(), processor.outVars);
         this.processor = processor;
         this.metrics = metrics;
     }

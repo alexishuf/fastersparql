@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.VarHandle;
@@ -19,9 +20,11 @@ public abstract class BatchProcessor<B extends Batch<B>> {
 
     protected @Nullable B recycled;
     protected BatchType<B> batchType;
+    public final Vars outVars;
 
-    public BatchProcessor(BatchType<B> batchType) {
+    public BatchProcessor(BatchType<B> batchType, Vars outVars) {
         this.batchType = batchType;
+        this.outVars = outVars;
     }
 
     /**

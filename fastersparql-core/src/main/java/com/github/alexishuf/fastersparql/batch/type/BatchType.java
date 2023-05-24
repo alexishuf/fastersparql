@@ -132,16 +132,30 @@ public abstract class BatchType<B extends Batch<B>> {
      * @param out vars in the resulting {@link Batch}
      * @param in vars in the input batch ({@code in} in {@link BatchFilter#filter(Batch, Batch)}).
      * @param filter the filter that will be applied to each row
+     * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract BatchFilter<B> filter(Vars out, Vars in, RowFilter<B> filter);
+    public abstract BatchFilter<B> filter(Vars out, Vars in, RowFilter<B> filter,
+                                          BatchFilter<B> before);
+
+    /** {@link #filter(Vars, Vars, RowFilter, BatchFilter)} with {@code before=null}. */
+    public final BatchFilter<B> filter(Vars out, Vars in, RowFilter<B> filter) {
+        return filter(out, in, filter, null);
+    }
 
     /**
      * Creates a {@link BatchFilter} that removes all rows for which
      * {@link RowFilter#drop(Batch, int)} returns {@code true}.
      *
+     * @param vars input <strong>AND</strong> output vars for batches filtered
      * @param filter the filter that will be applied to each row
+     * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract BatchFilter<B> filter(RowFilter<B> filter);
+    public abstract BatchFilter<B> filter(Vars vars, RowFilter<B> filter, BatchFilter<B> before);
+
+    /** {@link #filter(Vars, RowFilter, BatchFilter)} with {@code before=null} */
+    public final BatchFilter<B> filter(Vars vars, RowFilter<B> filter) {
+        return filter(vars, filter, null);
+    }
 }

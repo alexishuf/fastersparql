@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -43,23 +45,24 @@ public final class TermBatchType extends BatchType<TermBatch> {
     }
 
     @Override
-    public @Nullable BatchMerger<TermBatch> projector(Vars out, Vars in) {
+    public @Nullable Merger projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new TermBatch.Merger(this, out, sources);
+        return sources == null ? null : new Merger(this, out, sources);
     }
 
     @Override
-    public @NonNull BatchMerger<TermBatch> merger(Vars out, Vars left, Vars right) {
-        return new TermBatch.Merger(this, out, mergerSources(out, left, right));
+    public @NonNull Merger merger(Vars out, Vars left, Vars right) {
+        return new Merger(this, out, mergerSources(out, left, right));
     }
 
-    @Override
-    public BatchFilter<TermBatch> filter(Vars out, Vars in, RowFilter<TermBatch> filter) {
-        return new TermBatch.Filter(this, projector(out, in), filter);
+    @Override public Filter filter(Vars out, Vars in, RowFilter<TermBatch> filter,
+                                   BatchFilter<TermBatch> before) {
+        return new Filter(this, out, projector(out, in), filter, before);
     }
 
-    @Override public BatchFilter<TermBatch> filter(RowFilter<TermBatch> filter) {
-        return new TermBatch.Filter(this, null, filter);
+    @Override public Filter filter(Vars vars, RowFilter<TermBatch> filter,
+                                   BatchFilter<TermBatch> before) {
+        return new Filter(this, vars, null, filter, before);
     }
 
     @Override public String toString() { return "TermBatch"; }

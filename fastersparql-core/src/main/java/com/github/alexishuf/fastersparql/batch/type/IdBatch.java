@@ -239,9 +239,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         private long @MonotonicNonNull [] tmpIds;
         private int  @MonotonicNonNull [] tmpHashes;
 
-        public Filter(BatchType<B> batchType, @Nullable BatchMerger<B> projector,
-                      RowFilter<B> rowFilter) {
-            super(batchType, projector, rowFilter);
+        public Filter(BatchType<B> batchType, Vars vars, @Nullable BatchMerger<B> projector,
+                      RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
+            super(batchType, vars, projector, rowFilter, before);
         }
 
         private B filterInPlaceEmpty(B b) {
@@ -258,6 +258,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
 
         @Override public B filterInPlace(B b, BatchMerger<B> projector) {
+            if (before != null)
+                b = before.filterInPlace(b);
             long[] arr = b.arr;
             int[] hashes = b.hashes;
             int r = 0, rows = b.rows, w = b.cols, out = 0;

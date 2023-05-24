@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
-    public final Vars outVars;
     protected final int[] sources;
     public final int @Nullable [] columns;
 
@@ -25,8 +24,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     public BatchMerger(BatchType<B> batchType, Vars outVars, int[] sources) {
-        super(batchType);
-        this.outVars = outVars;
+        super(batchType, outVars);
         this.sources = sources;
         this.columns = makeColumns(sources);
     }
