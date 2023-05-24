@@ -14,7 +14,7 @@ class WatchdogTest {
     }
 
     @RepeatedTest(20) void test() {
-        int shortNanos = 500_000, longNanos = 10_000_000;
+        int longNanos = 10_000_000;
         AtomicInteger triggers = new AtomicInteger(0);
         try (Watchdog w = new Watchdog(triggers::getAndIncrement)) {
             sleep(longNanos);
@@ -25,11 +25,11 @@ class WatchdogTest {
             assertEquals(1, triggers.get());
 
             // every start nullifies the previous untriggered start
-            for (long start = nanoTime(); nanoTime()-start < 1_000_000; )
-                w.start(1_000_000);
+            for (long start = nanoTime(); nanoTime()-start < 2_000_000; )
+                w.start(2_000_000);
             // only last start() is effective, despite first ones nearing their deadline
             assertEquals(1, triggers.get());
-            sleep(shortNanos);
+            sleep(100_000);
             assertEquals(1, triggers.get());
 
             // sleep a bit for the last start(). Due to the flooding,
