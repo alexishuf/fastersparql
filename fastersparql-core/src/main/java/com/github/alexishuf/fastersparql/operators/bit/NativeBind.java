@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
-import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -51,9 +51,9 @@ public class NativeBind {
         var bt = left.batchType();
         var leftVars = left.vars();
         var nOps = right.opCount();
-        var queues = new ArrayList<SPSCUnitBIt<B>>(nOps);
+        var queues = new ArrayList<SPSCBIt<B>>(nOps);
         for (int i = 0; i < nOps; i++) {
-            var q = new SPSCUnitBIt<>(bt, leftVars);
+            var q = new SPSCBIt<>(bt, leftVars, left.maxBatch());
             q.eager().maxBatch(left.maxBatch());
             queues.add(q);
         }
