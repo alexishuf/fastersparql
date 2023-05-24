@@ -160,7 +160,7 @@ public final class SortedCompositeDict extends Dict {
             if (sharedRope == null)
                 throw new BadSharedId(id, SortedCompositeDict.this, off, len);
             out.wrapFirst(sharedRope);
-            out.wrapSecond(seg, off+5, len-5);
+            out.wrapSecond(seg, null, off+5, len-5);
             if (seg.get(JAVA_BYTE, off+4) == SUFFIX_CHAR)
                 out.flipSegments();
             return out;

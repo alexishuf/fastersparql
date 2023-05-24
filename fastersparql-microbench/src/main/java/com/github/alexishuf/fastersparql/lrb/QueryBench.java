@@ -190,7 +190,7 @@ public class QueryBench {
     }
 
     @Setup(Level.Iteration) public void iterationSetup() throws IOException {
-//        StoreSparqlClient.ALT = alt;
+//        LocalityCompositeDict.ALT = alt;
         fedHandle = FederationHandle.builder(dataDir).srcKind(srcKind)
                                     .selKind(selKind.forSource(srcKind))
                                     .waitInit(true).create();

@@ -127,8 +127,8 @@ class SharedRopesTest {
                 builtin.offset + builtin.skipUntilLast(0, builtin.len, '/', '#'),
                 builtin.offset + builtin.skipUntilLast(0, builtin.len, '"'));
         for (long mid : mids) {
-            tsr.wrapFirst(builtin.segment, builtin.offset, (int) mid);
-            tsr.wrapSecond(builtin.segment, mid, builtin.len-(int)mid);
+            tsr.wrapFirst(builtin.segment, builtin.utf8, builtin.offset, (int) mid);
+            tsr.wrapSecond(builtin.segment, builtin.utf8, mid, builtin.len-(int)mid);
             if (builtin.get(0) == '<')
                 assertSame(builtin, SHARED_ROPES.internPrefix(tsr, 0, tsr.len));
             else
@@ -152,11 +152,11 @@ class SharedRopesTest {
         ByteRope r = new ByteRope("([" + iri + "])");
         TwoSegmentRope tsr0 = new TwoSegmentRope(), tsr1 = new TwoSegmentRope();
         int half = r.len/2;
-        tsr0.wrapFirst(r.segment, r.offset, half);
-        tsr0.wrapSecond(r.segment, r.offset+half, r.len-half);
+        tsr0.wrapFirst(r.segment, r.utf8, r.offset, half);
+        tsr0.wrapSecond(r.segment, r.utf8, r.offset+half, r.len-half);
         half = r.skipUntilLast(0, r.len, '/', '#');
-        tsr1.wrapFirst(r.segment, r.offset, half);
-        tsr1.wrapSecond(r.segment, r.offset+half, r.len-half);
+        tsr1.wrapFirst(r.segment, r.utf8, r.offset, half);
+        tsr1.wrapSecond(r.segment, r.utf8, r.offset+half, r.len-half);
 
         List<PlainRope> ropes = List.of(r, tsr0, tsr1);
         for (int i = 0; i < ropes.size(); i++) {
@@ -184,11 +184,11 @@ class SharedRopesTest {
     @ParameterizedTest @MethodSource void internSuffix(String lit, String suffix) {
         ByteRope r = new ByteRope("([" + lit + "])");
         TwoSegmentRope tsr0 = new TwoSegmentRope(), tsr1 = new TwoSegmentRope();
-        tsr0.wrapFirst(r.segment, r.offset, r.len/2);
-        tsr0.wrapSecond(r.segment, r.offset+r.len/2, r.len);
+        tsr0.wrapFirst(r.segment, r.utf8, r.offset, r.len/2);
+        tsr0.wrapSecond(r.segment, r.utf8, r.offset+r.len/2, r.len);
         int mid = r.skipUntilLast(0, r.len, '"');
-        tsr1.wrapFirst(r.segment, r.offset, mid);
-        tsr1.wrapSecond(r.segment, r.offset+mid, r.len-mid);
+        tsr1.wrapFirst(r.segment, r.utf8, r.offset, mid);
+        tsr1.wrapSecond(r.segment, r.utf8, r.offset+mid, r.len-mid);
 
         List<PlainRope> ropes = List.of(r, tsr0, tsr1);
         for (int i = 0; i < ropes.size(); i++) {

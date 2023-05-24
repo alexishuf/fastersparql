@@ -10,6 +10,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
     public MemorySegment fst, snd;
+    public byte[] fstU8, sndU8;
     public long fstOff, sndOff;
     public int fstLen, sndLen;
 
@@ -17,14 +18,18 @@ public class TwoSegmentRope extends PlainRope {
         super(0);
         fst = ByteRope.EMPTY_SEGMENT;
         snd = ByteRope.EMPTY_SEGMENT;
+        fstU8 = ByteRope.EMPTY_UTF8;
+        sndU8 = ByteRope.EMPTY_UTF8;
     }
 
     public TwoSegmentRope(SegmentRope first, SegmentRope snd) {
         super(first.len+snd.len);
         this.fst = first.segment;
+        this.fstU8 = first.utf8;
         this.fstOff = first.offset;
         this.fstLen = first.len;
         this.snd = snd.segment;
+        this.sndU8 = snd.utf8;
         this.sndOff = snd.offset;
         this.sndLen = snd.len;
     }
@@ -33,6 +38,8 @@ public class TwoSegmentRope extends PlainRope {
         super(fstLen+sndLen);
         this.fst = fst;
         this.snd = snd;
+        this.fstU8 = (byte[])fst.array().orElse(null);
+        this.sndU8 = (byte[])snd.array().orElse(null);
         this.fstOff = fstOff;
         this.sndOff = sndOff;
         this.fstLen = fstLen;
@@ -41,23 +48,27 @@ public class TwoSegmentRope extends PlainRope {
 
     public void shallowCopy(TwoSegmentRope other) {
         fst    = other.fst;
+        fstU8  = other.fstU8;
         fstOff = other.fstOff;
         fstLen = other.fstLen;
         snd    = other.snd;
+        sndU8  = other.sndU8;
         sndOff = other.sndOff;
         sndLen = other.sndLen;
         len    = other.len;
     }
 
-    public void wrapFirst(MemorySegment segment, long off, int len) {
+    public void wrapFirst(MemorySegment segment, byte[] utf8, long off, int len) {
         fst = segment;
+        fstU8 = utf8;
         fstOff = off;
         fstLen = len;
         this.len = len+sndLen;
     }
 
-    public void wrapSecond(MemorySegment segment, long off, int len) {
+    public void wrapSecond(MemorySegment segment, byte[] utf8, long off, int len) {
         snd = segment;
+        sndU8 = utf8;
         sndOff = off;
         sndLen = len;
         this.len = fstLen+len;
@@ -65,6 +76,7 @@ public class TwoSegmentRope extends PlainRope {
 
     public void wrapFirst(SegmentRope rope) {
         fst = rope.segment;
+        fstU8 = rope.utf8;
         fstOff = rope.offset;
         fstLen = rope.len;
         this.len = fstLen+sndLen;
@@ -72,6 +84,7 @@ public class TwoSegmentRope extends PlainRope {
 
     public void wrapSecond(SegmentRope rope) {
         snd = rope.segment;
+        sndU8 = rope.utf8;
         sndOff = rope.offset;
         sndLen = rope.len;
         this.len = fstLen+sndLen;
@@ -79,12 +92,15 @@ public class TwoSegmentRope extends PlainRope {
 
     public void flipSegments() {
         MemorySegment seg = fst;
+        byte[] u8         = fstU8;
         long off          = fstOff;
         int len           = fstLen;
         fst    = snd;
+        fstU8  = sndU8;
         fstOff = sndOff;
         fstLen = sndLen;
         snd    = seg;
+        sndU8  = u8;
         sndOff = off;
         sndLen = len;
     }
@@ -132,11 +148,11 @@ public class TwoSegmentRope extends PlainRope {
         if (end-begin == len) return this;
         var r = new TwoSegmentRope();
         if (begin < fstLen)
-            r.wrapFirst(fst, fstOff+begin, Math.min(fstLen, end)-begin);
+            r.wrapFirst(fst, fstU8, fstOff+begin, Math.min(fstLen, end)-begin);
         int e = end-fstLen;
         if (e > 0) {
             begin = Math.max(0, begin - fstLen);
-            r.wrapSecond(snd, sndOff+begin, e-begin);
+            r.wrapSecond(snd, sndU8, sndOff+begin, e-begin);
         }
         return r;
     }

@@ -148,8 +148,8 @@ public class Splitter {
                 if (created)
                     tsw = new TwoSegmentRope();
                 int taken = fstLen - begin;
-                tsw.wrapFirst(t.fst, t.fstOff+begin, taken);
-                tsw.wrapSecond(t.snd, t.sndOff+Math.max(0, begin-t.fstLen), len-taken);
+                tsw.wrapFirst(t.fst, t.fstU8, t.fstOff+begin, taken);
+                tsw.wrapSecond(t.snd, t.sndU8, t.sndOff+Math.max(0, begin-t.fstLen), len-taken);
                 if (created) {
                     if (wrapper == localView) tsLocalView  = tsw;
                     else                      tsSharedView = tsw;

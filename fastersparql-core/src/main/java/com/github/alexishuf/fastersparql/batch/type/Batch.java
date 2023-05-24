@@ -259,8 +259,8 @@ public abstract class Batch<B extends Batch<B>> {
             dest.wrapSecond(EMPTY);
         } else {
             TwoSegmentRope t = (TwoSegmentRope) r;
-            dest.wrapFirst(t.fst, t.fstOff, t.fstLen);
-            dest.wrapSecond(t.snd, t.sndOff, t.sndLen);
+            dest.wrapFirst(t.fst, t.fstU8, t.fstOff, t.fstLen);
+            dest.wrapSecond(t.snd, t.sndU8, t.sndOff, t.sndLen);
         }
         return true;
     }

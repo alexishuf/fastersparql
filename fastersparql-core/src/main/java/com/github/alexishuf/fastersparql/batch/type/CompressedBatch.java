@@ -422,7 +422,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         TwoSegmentRope tsr = new TwoSegmentRope();
         tsr.wrapFirst(sh);
         int off = slices[i2+SL_OFF];
-        tsr.wrapSecond(MemorySegment.ofArray(copyOfRange(locals, off, off+len)), 0, len);
+        byte[] u8 = copyOfRange(locals, off, off + len);
+        tsr.wrapSecond(MemorySegment.ofArray(u8), u8, 0, len);
         if (suffix)
             tsr.flipSegments();
         return tsr;
@@ -439,7 +440,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             sh = EMPTY;
         }
         dest.wrapFirst(sh);
-        dest.wrapSecond(localsSeg, slices[i2+SL_OFF], len);
+        dest.wrapSecond(localsSeg, locals, slices[i2+SL_OFF], len);
         if (suffix)
             dest.flipSegments();
         return true;

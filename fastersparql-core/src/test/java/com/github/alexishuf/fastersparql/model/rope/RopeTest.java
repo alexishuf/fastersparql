@@ -73,17 +73,18 @@ class RopeTest {
     private static final class TwoSegmentRopeFac implements Factory {
         @Override public List<Rope> create(String string) {
             ArrayList<Rope> list = new ArrayList<>();
-            MemorySegment seg = MemorySegment.ofArray(string.getBytes(UTF_8));
+            byte[] u8 = string.getBytes(UTF_8);
+            MemorySegment seg = MemorySegment.ofArray(u8);
             int n = (int) seg.byteSize();
             list.add(new TwoSegmentRope(seg, 0, n, seg, 0, 0));
             list.add(new TwoSegmentRope(seg, n, 0, seg, 0, n));
 
             var r = new TwoSegmentRope();
-            r.wrapFirst(seg, 0, n);
+            r.wrapFirst(seg, u8, 0, n);
             list.add(r);
 
             r = new TwoSegmentRope();
-            r.wrapSecond(seg, 0, n);
+            r.wrapSecond(seg, u8, 0, n);
             list.add(r);
 
             if (n > 2) {
@@ -91,18 +92,18 @@ class RopeTest {
                 list.add(new TwoSegmentRope(seg, 0, mid, seg, mid, n-mid));
 
                 r = new TwoSegmentRope(seg, mid, n, seg, 0, n);
-                r.wrapFirst(seg, 0, mid);
-                r.wrapSecond(seg, mid, n-mid);
+                r.wrapFirst(seg, u8, 0, mid);
+                r.wrapSecond(seg, u8, mid, n-mid);
                 list.add(r);
 
                 r = new TwoSegmentRope();
-                r.wrapSecond(seg, 1, n-1);
-                r.wrapFirst(seg, 0, 1);
+                r.wrapSecond(seg, u8, 1, n-1);
+                r.wrapFirst(seg, u8, 0, 1);
                 list.add(r);
 
                 r = new TwoSegmentRope(seg, mid, n-mid, seg, 0, mid);
-                r.wrapSecond(seg, 1, n-1);
-                r.wrapFirst(seg, 0, 1);
+                r.wrapSecond(seg, u8, 1, n-1);
+                r.wrapFirst(seg, u8, 0, 1);
                 list.add(r);
             }
             return list;

@@ -765,8 +765,8 @@ public final class Term extends Rope implements Expr {
         if      (end   <= fstLen) return fst.sub(begin, end);
         else if (begin >= fstLen) return snd.sub(begin-fstLen, end-fstLen);
         var tsr = new TwoSegmentRope();
-        tsr.wrapFirst(fst.segment, fst.offset+begin, fstLen-begin);
-        tsr.wrapSecond(snd.segment, snd.offset+Math.max(0, begin-fstLen), end-fstLen);
+        tsr.wrapFirst(fst.segment, fst.utf8, fst.offset+begin, fstLen-begin);
+        tsr.wrapSecond(snd.segment, snd.utf8, snd.offset+Math.max(0, begin-fstLen), end-fstLen);
         return tsr;
     }
 
