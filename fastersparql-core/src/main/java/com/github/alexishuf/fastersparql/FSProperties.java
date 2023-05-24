@@ -26,7 +26,7 @@ public class FSProperties {
     public static final String BATCH_MIN_SIZE            = "fastersparql.batch.min-size";
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
-    public static final String BATCH_QUEUE_BATCHES       = "fastersparql.batch.queue.batches";
+    public static final String WS_SERVER_BINDINGS        = "fastersparql.ws.server.bindings";
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_REDUCED_CAPACITY       = "fastersparql.op.reduced.capacity";
@@ -46,10 +46,10 @@ public class FSProperties {
     public static final int     DEF_CLIENT_SO_TIMEOUT_MS      = 0;
     public static final int     DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
     public static final int     DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
-    public static final int     DEF_BATCH_MIN_WAIT_US         = BIt.QUICK_MIN_WAIT_NS;
-    public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS;
-    public static final int     DEF_BATCH_QUEUE_BATCHES       = 8;
-    public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<14;
+    public static final int     DEF_BATCH_MIN_WAIT_US         = BIt.QUICK_MIN_WAIT_NS/1_000;
+    public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS/1_000;
+    public static final int     DEF_WS_SERVER_BINDINGS        = 256;
+    public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int     DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
     public static final int     DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
@@ -66,7 +66,7 @@ public class FSProperties {
     private static int CACHE_BATCH_MIN_SIZE            = -1;
     private static int CACHE_BATCH_MIN_WAIT_US         = -1;
     private static int CACHE_BATCH_MAX_WAIT_US         = -1;
-    private static int CACHE_BATCH_QUEUE_BATCHES       = -1;
+    private static int CACHE_WS_SERVER_BINDINGS        = -1;
     private static int CACHE_BATCH_QUEUE_ROWS          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
     private static int CACHE_OP_REDUCED_CAPACITY       = -1;
@@ -145,7 +145,7 @@ public class FSProperties {
         CACHE_BATCH_MIN_SIZE            = -1;
         CACHE_BATCH_MIN_WAIT_US         = -1;
         CACHE_BATCH_MAX_WAIT_US         = -1;
-        CACHE_BATCH_QUEUE_BATCHES       = -1;
+        CACHE_WS_SERVER_BINDINGS        = -1;
         CACHE_BATCH_QUEUE_ROWS          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
         CACHE_OP_REDUCED_CAPACITY       = -1;
@@ -275,13 +275,16 @@ public class FSProperties {
     }
 
     /**
-     * The default value for queue sizes in iterators that internally use bounded queues.
+     * The default number of bindings that a server will initially request from the client
+     * in a {@code !bind} operation. As the bindings are processed, the server will send new,
+     * smaller requests to the client aiming to keep at most this number of bindings ready at
+     * the server side.
      *
-     * @return a positive number of batches.
+     * @return a positive number of rows
      */
-    public static @Positive int queueMaxBatches() {
-        int i = CACHE_BATCH_QUEUE_BATCHES;
-        if (i <= 0) CACHE_BATCH_QUEUE_BATCHES = i = readPositiveInt(BATCH_QUEUE_BATCHES, DEF_BATCH_QUEUE_BATCHES);
+    public static @Positive int wsServerBindings() {
+        int i = CACHE_WS_SERVER_BINDINGS;
+        if (i <= 0) CACHE_WS_SERVER_BINDINGS = i = readPositiveInt(WS_SERVER_BINDINGS, DEF_WS_SERVER_BINDINGS);
         return i;
     }
 

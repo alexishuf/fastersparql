@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.exceptions.InvalidMediaType;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.checker.nullness.qual.PolyNull;
 
 import java.nio.charset.Charset;
 import java.util.Collection;
@@ -348,10 +349,10 @@ public final class MediaType {
         return request == null || request.accepts(this);
     }
 
-    public Charset charset(Charset fallback) {
-        String name = params.getOrDefault("charset", fallback == null ? null : fallback.name());
+    public @PolyNull Charset charset(@PolyNull Charset fallback) {
+        String name = params.getOrDefault("charset", null);
         if (name == null)
-            return null;
+            return fallback;
         return Charset.forName(name);
     }
 

@@ -11,7 +11,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt.createFor;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -71,7 +71,7 @@ public enum QueryName {
 
         //parse TSV
         try (var is = getClass().getResourceAsStream("results/" + name() + ".tsv");
-             var parser = createFor(TSV, batchType, vars, queueMaxBatches())) {
+             var parser = createFor(TSV, batchType, vars, queueMaxRows())) {
             assert is != null;
             Thread.startVirtualThread(() -> {
                 try {

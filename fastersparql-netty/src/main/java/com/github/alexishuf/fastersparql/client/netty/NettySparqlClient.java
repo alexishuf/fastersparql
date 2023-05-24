@@ -108,7 +108,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private final SegmentRope bufferRope = new SegmentRope();
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), FSProperties.queueMaxBatches());
+            super(batchType, query.publicVars(), FSProperties.queueMaxRows());
             this.request = createRequest(query);
             request();
         }

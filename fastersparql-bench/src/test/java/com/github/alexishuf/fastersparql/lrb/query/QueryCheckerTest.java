@@ -48,7 +48,7 @@ class QueryCheckerTest {
                 else                finish.completeExceptionally(error);
             }
         };
-        var it = new SPSCBIt<>(bt, qry.parsed().publicVars(), FSProperties.queueMaxBatches());
+        var it = new SPSCBIt<>(bt, qry.parsed().publicVars(), FSProperties.queueMaxRows());
         Thread.startVirtualThread(() -> {
             try {
                 assertNotNull(ex);

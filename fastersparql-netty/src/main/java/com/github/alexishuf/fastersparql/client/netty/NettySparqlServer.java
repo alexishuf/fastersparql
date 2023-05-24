@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
@@ -45,7 +44,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
+import static com.github.alexishuf.fastersparql.FSProperties.wsServerBindings;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
@@ -551,8 +550,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private final SegmentRope wrapperRope = new SegmentRope();
         private @MonotonicNonNull ByteBufSink fsSink;
-        private final int maxBindingsBatches = FSProperties.queueMaxBatches();
-        private final int maxBindings = maxBindingsBatches*4*BIt.PREFERRED_MIN_BATCH;
+        private final int maxBindings = wsServerBindings();
 
         private @Nullable WsServerParserBIt<CompressedBatch> bindingsParser;
         private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
@@ -674,7 +672,7 @@ public class NettySparqlServer implements AutoCloseable {
                 vars.add(new ByteRope(j-i-1).append(wrapperRope, i+1, j));
             }
             bindingsParser = new WsServerParserBIt<>(this, COMPRESSED, vars,
-                                                     queueMaxBatches());
+                                                     wsServerBindings());
             // do not block if client starts flooding
             bindingsParser.maxReadyItems(Integer.MAX_VALUE);
             int round = waitingVarsRound;

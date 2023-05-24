@@ -148,7 +148,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         protected final ByteBufSink bbSink = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT);
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), FSProperties.queueMaxBatches());
+            super(batchType, query.publicVars(), FSProperties.queueMaxRows());
             this.requestMessage = createRequest(QUERY_VERB, query.sparql());
             this.parser = new WsClientParserBIt<>(this, this);
             request();
@@ -156,7 +156,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query, Vars outVars, BindType bindType, BIt<B> bindings,
                      @Nullable JoinMetrics metrics) {
-            super(batchType, outVars, FSProperties.queueMaxBatches());
+            super(batchType, outVars, FSProperties.queueMaxRows());
             this.requestMessage = createRequest(BIND_VERB[bindType.ordinal()], query.sparql());
             var usefulBindingVars = bindings.vars().intersection(query.allVars());
             this.parser = new WsClientParserBIt<>(this, this, bindings, usefulBindingVars, metrics);

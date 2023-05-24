@@ -23,7 +23,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxBatches;
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.BItGenerator.GENERATORS;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
@@ -204,7 +203,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
             for (int round = 0; round < 100; round++) {
                 // create a SPSCBIt and feed from multiple threads, as done in MergeBIt
                 // check no items are lost
-                try (var cb = create(queueMaxBatches())) {
+                try (var cb = create(queueMaxRows())) {
                     cb.minBatch(1).maxBatch(3);
                     var barrier1 = new AtomicInteger(nSources);
                     var barrier2 = new AtomicInteger(nSources);
