@@ -432,7 +432,7 @@ public class SegmentRope extends PlainRope {
         long phys = offset+begin;
         if (U != null) {
             byte[] base = utf8;
-            phys += segment.address() + (base == null ? 0 : U8_BASE);
+            phys += segment.address();
             h = hashCode(FNV_BASIS, base, phys, nFst);
             h = hashCode(h, base, phys+(end-nSnd)-begin, nSnd);
         } else {
@@ -443,6 +443,7 @@ public class SegmentRope extends PlainRope {
     }
 
     public static int hashCode(int h, byte[] base, long offset, int len) {
+        if (base != null) offset += U8_BASE;
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff&U.getByte(base, offset+i)));
         return h;
@@ -460,7 +461,10 @@ public class SegmentRope extends PlainRope {
     }
 
     @Override public int hashCode() {
-        return hashCode(FNV_BASIS, segment, offset, len);
+        if (U == null)
+            return hashCode(FNV_BASIS, segment, offset, len);
+        else
+            return hashCode(FNV_BASIS, utf8, segment.address()+offset, len);
     }
 
     @Override public @NonNull String toString() {
