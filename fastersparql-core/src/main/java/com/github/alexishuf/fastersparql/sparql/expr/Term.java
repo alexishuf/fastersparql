@@ -19,6 +19,7 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
@@ -458,7 +459,7 @@ public final class Term extends Rope implements Expr {
             if (first() != shared() || first != shared())
                 throw new AssertionError("first != shared in prefixed term");
             if (second.len == 0)
-                throw new AssertionError("EMpty local segment");
+                throw new AssertionError("Empty local segment");
             if (first.len > 0 && first.get(0) != '<')
                 throw new AssertionError("shared prefix does not start with <");
         }
@@ -862,6 +863,45 @@ public final class Term extends Rope implements Expr {
     }
 
     public int cmp(int begin, int end, Rope rope, int rBegin, int rEnd) {
+        if (!HAS_UNSAFE)
+            return cmpNoUnsafe(begin, end, rope, rBegin, rEnd);
+        if (begin < 0 || end > len || rBegin < 0 || rEnd > rope.len)
+            throw new IndexOutOfBoundsException();
+
+        // collect segments and ranges for this
+        SegmentRope fst = first, snd = second;
+        int      fstLen = Math.min(fst.len, end)-begin;
+
+        // collect segments and ranges for rope
+        byte[] ofst, osnd;
+        long ofstOff, osndOff;
+        int ofstLen, osndLen;
+        if (rope instanceof Term t) {
+            SegmentRope f = t.first, s = t.second;
+            ofst = f.utf8; ofstOff = f.segment.address()+f.offset; ofstLen = f.len;
+            osnd = s.utf8; osndOff = s.segment.address()+s.offset; osndLen = s.len;
+        } else if (rope instanceof SegmentRope s) {
+            ofst = s.utf8; ofstOff = s.segment.address()+s.offset; ofstLen = s.len;
+            osnd = null;      osndOff = 0;        osndLen = 0;
+        } else {
+            TwoSegmentRope t = (TwoSegmentRope) rope;
+            ofst = t.fstU8; ofstOff = t.fst.address()+t.fstOff; ofstLen = t.fstLen;
+            osnd = t.sndU8; osndOff = t.snd.address()+t.sndOff; osndLen = t.sndLen;
+        }
+
+        // crop segments to [rBegin, rEnd)
+        if (rBegin < ofstLen)  ofstOff += rBegin;
+        if (rEnd > ofstLen)  { osndOff += Math.max(0, rBegin-ofstLen); osndLen = rEnd - ofstLen; }
+        else                   ofstLen = rEnd;
+
+        return compare2_2(fst.utf8, fst.segment.address()+fst.offset+begin, fstLen,
+                          snd.utf8,
+                          snd.segment.address()+snd.offset+Math.max(0, begin-fst.len),
+                          len-fstLen,
+                          ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
+    }
+
+    private int cmpNoUnsafe(int begin, int end, Rope rope, int rBegin, int rEnd) {
         if (begin < 0 || end > len || rBegin < 0 || rEnd > rope.len)
             throw new IndexOutOfBoundsException();
 
@@ -892,8 +932,8 @@ public final class Term extends Rope implements Expr {
         else                   ofstLen = rEnd;
 
         return compare2_2(fst.segment, fst.offset+begin, fstLen,
-                          snd.segment, snd.offset+Math.max(0, begin-fst.len), len-fstLen,
-                          ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
+                snd.segment, snd.offset+Math.max(0, begin-fst.len), len-fstLen,
+                ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
     }
 
     /* --- --- --- Expr implementation --- --- --- */

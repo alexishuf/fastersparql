@@ -29,10 +29,8 @@ import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.*;
 import static java.util.Objects.requireNonNull;
-import static jdk.incubator.vector.ByteVector.fromArray;
 import static jdk.incubator.vector.IntVector.fromArray;
 import static jdk.incubator.vector.VectorMask.fromLong;
-import static jdk.incubator.vector.VectorOperators.XOR;
 
 public class CompressedBatch extends Batch<CompressedBatch> {
     private static final int SH_SUFF_MASK = 0x80000000;
@@ -91,8 +89,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     /** {@code col} in last {@code offerTerm}/{@code putTerm} call in the current
      *  {@link #beginOffer()}/{@link #beginPut()}, else {@code -1}. */
     private int offerLastCol = -1;
-    /** Whether hash() and equals() can be vectorized */
-    private boolean vectorSafe;
     /** Whether the range {@code [bytesUsed(), locals.length)} is zero-filled. */
     private boolean localsTailClear;
 
@@ -104,9 +100,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         sb.append(String.format("""
                 CompressedBatch{
                   rows=%d, cols=%d, slRowInts=%d
-                  offerNextLocals=%d, offerLastCol=%d, %svectorSafe, %slocalsTailClear
-                """, rows, cols, slRowInts, offerNextLocals, offerLastCol,
-                     vectorSafe ? "" : "!", localsTailClear ? "" : "!"));
+                  offerNextLocals=%d, offerLastCol=%d, %slocalsTailClear
+                """,
+                rows, cols, slRowInts, offerNextLocals, offerLastCol, localsTailClear ? "" : "!"));
         int dumpRows = offerNextLocals == -1 ? rows : rows+1;
         for (int r = 0; r < dumpRows; r++) {
             sb.append("  row=").append(r)
@@ -238,8 +234,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             throw new IllegalStateException("Column already set");
         int len = flaggedLocalLen & LEN_MASK;
         if (len > 0) {
-            if (offerLastCol > destCol)
-                vectorSafe = false; // out-of-order locals breaks vectorized row equals/hash
             offerLastCol = destCol;
             int required  = localsCeil(dest+len);
             if (required > locals.length) {
@@ -278,7 +272,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.slRowInts = (cols+1)<<1;
         this.slices = new int[slCeil(max(1, rowsCapacity)*slRowInts+PUT_SLACK)];
         this.shared = new SegmentRope[max(1, rowsCapacity)*slRowInts+PUT_SLACK];
-        this.vectorSafe = true;
         this.localsTailClear = true;
     }
 
@@ -291,7 +284,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.offerNextLocals = o.offerNextLocals;
         this.offerLastCol = o.offerLastCol;
         this.slRowInts = o.slRowInts;
-        this.vectorSafe = o.vectorSafe;
         this.localsTailClear = o.localsTailClear;
     }
 
@@ -320,29 +312,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int h = FNV_BASIS;
         if (cols == 0)
             return h;
-        for (int i = row*cols, e = i+cols; i < e; i++) {
+        SegmentRope fst, snd, local = new SegmentRope(localsSeg, locals, 0, 0);
+        for (int i = row*cols, e = i+cols, slb = row*slRowInts; i < e; ++i, slb += 2) {
             SegmentRope s = shared[i];
-            h = FNV_PRIME * (h ^ (s == null ? FNV_BASIS : s.hashCode()));
-        }
-        if (vectorSafe) {
-            int slb = (row+1) * slRowInts - 2, len = slices[slb+SL_LEN];
-            int i = slices[slb+SL_OFF], end = i + len;
-            if (len >= B_SP_LEN) {
-                for (int e = i+B_SP.loopBound(len); i < e; i += B_SP_LEN)
-                    h ^= fromArray(B_SP, locals, i).reinterpretAsInts().reduceLanes(XOR);
+            if (s == null) s = EMPTY;
+            int len = slices[slb+SL_LEN];
+            local.slice(slices[slb+SL_OFF], len&LEN_MASK);
+            if ((len & SH_SUFF_MASK) == 0)  {
+                fst = s;
+                snd = local;
+            } else {
+                fst = local;
+                snd = s;
             }
-            for (int bit = 0; i < end; ++i, bit = (bit+8) & 31)
-                h ^= (0xff&locals[i]) << bit;
-        } else {
-            // due to possible gaps, we must simulate locals were sequentially laid out,
-            // without gaps. to achieve this bit must be carried over across local segments
-            int bit = 0;
-            for (int slb = row*slRowInts, sle = slb + (cols<<1); slb < sle; slb += 2) {
-                for (int bb = slices[slb+SL_OFF], be = bb + slices[slb+SL_LEN]&LEN_MASK; bb < be; ++bb) {
-                    h ^= (0xff&locals[bb]) << bit;
-                    bit = (bit+8) & 31;
-                }
-            }
+            h = snd.hashCode(fst.hashCode(h));
         }
         return h;
     }
@@ -352,6 +335,34 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
+        if (!HAS_UNSAFE)
+            return equalsNoUnsafe(row, other, oRow);
+        if (row < 0 || row >= rows || oRow < 0 || oRow >= other.rows)
+            throw new IndexOutOfBoundsException();
+        int cols = this.cols;
+        if (cols != other.cols) return false;
+        if (cols == 0) return true;
+        byte[] locals = this.locals, oLocals = other.locals;
+        SegmentRope[] shared = this.shared, oshared = other.shared;
+        int[] sl = this.slices, osl = other.slices;
+        int slb = row*slRowInts, oslb = oRow*slRowInts;
+        int shBase = row*cols, oShBase = oRow*cols;
+        for (int c = 0; c < cols; ++c) {
+            SegmentRope sh = shared[shBase+c], osh = oshared[oShBase+c];
+            if ( sh == null) sh = EMPTY;
+            if (osh == null) osh = EMPTY;
+            int c2 = c << 1;
+            if (compare2_2(sh.utf8,  sh.segment.address()+sh.offset,  sh.len,
+                           locals, sl[slb+c2+SL_OFF], sl[slb+c2+SL_LEN]&LEN_MASK,
+                           osh.utf8, osh.segment.address()+osh.offset, osh.len,
+                           oLocals, osl[oslb+c2+SL_OFF], osl[oslb+c2+SL_LEN]&LEN_MASK) != 0)
+                return false;
+        }
+        return true;
+    }
+
+
+    private boolean equalsNoUnsafe(int row, CompressedBatch other, int oRow) {
         if (row < 0 || row >= rows || oRow < 0 || oRow >= other.rows)
             throw new IndexOutOfBoundsException();
         int cols = this.cols;
@@ -367,13 +378,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             if ( sh == null) sh = EMPTY;
             if (osh == null) osh = EMPTY;
             int c2 = c << 1;
-            if ((slices[ slBase+c2+SL_LEN]&LEN_MASK) != (oSlices[oSlBase+c2+SL_LEN]&LEN_MASK)) return false;
             if (compare2_2(sh.segment,  sh.offset,  sh.len,  localsSeg,
-                           slices[ slBase+c2+SL_OFF],
-                           slices[ slBase+c2+SL_LEN]&LEN_MASK,
-                           osh.segment, osh.offset, osh.len, oLocalsSeg,
-                           oSlices[oSlBase+c2+SL_OFF],
-                           oSlices[oSlBase+c2+SL_LEN]&LEN_MASK) != 0)
+                    slices[ slBase+c2+SL_OFF],
+                    slices[ slBase+c2+SL_LEN]&LEN_MASK,
+                    osh.segment, osh.offset, osh.len, oLocalsSeg,
+                    oSlices[oSlBase+c2+SL_OFF],
+                    oSlices[oSlBase+c2+SL_LEN]&LEN_MASK) != 0)
                 return false;
         }
         return true;
@@ -724,7 +734,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         offerLastCol    = -1;
         slices[SL_OFF]  = 0;
         slices[SL_LEN]  = 0;
-        vectorSafe      = true;
         localsTailClear = false;
     }
 
@@ -897,7 +906,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         arraycopy(o.locals, 0, locals, lDst, lLen);
 
         // update batch-level data
-        vectorSafe &= o.vectorSafe; // copied any out-of-order locals and gaps from o.locals
         bytesUsed += lLen;
         rows += oRows;
         assert validate() : "corrupted";
@@ -929,10 +937,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void putRow(CompressedBatch o, int row) {
         int cols = this.cols;
-        if (!o.vectorSafe || row >= o.rows || cols != o.cols) {
-            super.putRow(o, row);
-            return;
-        }
+        if (cols != o.cols) throw new IllegalArgumentException("o.cols != cols");
+        if (row > o.rows) throw new IndexOutOfBoundsException("row > o.rows");
         int base = rows * slRowInts, oBase = row*o.slRowInts;
         int[] sl = this.slices, osl = o.slices;
         int lLen = o.bytesUsed(row), lSrc = osl[oBase+(cols<<1) + SL_OFF], lDst = bytesUsed;
@@ -1131,9 +1137,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             b.cols = columns.length;
             // md now is packed (before b.mdRowInts could be >cols)
             b.slRowInts = (columns.length+1)<<1;
-            // any projection breaks hash/equals vector-safety as there is unexpected data
-            // between or after local strings.
-            b.vectorSafe = false;
             return b;
         }
     }
@@ -1236,10 +1239,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             if (otsh != null)
                 recycleTSh(otsh);
             in.slRowInts = tslRowInts;
-            if (columns != null) {
-                in.vectorSafe = false;
+            if (columns != null)
                 in.cols = columns.length;
-            }
             // update bytesUsed and localsTailClear
             if (rows == 0) {
                 in.bytesUsed = 0;

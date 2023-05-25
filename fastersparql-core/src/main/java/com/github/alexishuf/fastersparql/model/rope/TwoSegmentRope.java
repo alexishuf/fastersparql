@@ -4,8 +4,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import java.lang.foreign.MemorySegment;
 
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
@@ -231,6 +230,43 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
+        if (!SegmentRope.HAS_UNSAFE)
+            return hasNoUnsafe(pos, rope, begin, end);
+        int rLen = end - begin;
+        if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
+        if (pos+rLen > len) return false;
+
+        long fstOff = this.fst.address()+this.fstOff+pos;
+        long sndOff = this.snd.address()+this.sndOff+Math.max(0, pos-this.fstLen);
+        int fstLen = Math.min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
+
+        if (rope instanceof SegmentRope s) {
+            return compare1_2(s.utf8, s.segment.address()+s.offset+begin, rLen,
+                              fstU8, fstOff, fstLen, sndU8, sndOff, sndLen) == 0;
+        } else {
+            byte[] o_fst, o_snd;
+            long o_fstOff, o_sndOff;
+            int o_fstLen;
+            if (rope instanceof TwoSegmentRope t) {
+                o_fst = t.fstU8; o_fstOff = t.fst.address()+t.fstOff; o_fstLen = t.fstLen;
+                o_snd = t.sndU8; o_sndOff = t.snd.address()+t.sndOff;
+            } else {
+                Term t = (Term) rope;
+                SegmentRope r;
+                o_fst = (r = t. first()).utf8; o_fstOff = r.segment.address()+r.offset; o_fstLen = r.len;
+                o_snd = (r = t.second()).utf8; o_sndOff = r.segment.address()+r.offset;
+            }
+            o_fstOff += begin;
+            o_sndOff += Math.max(0, begin-o_fstLen);
+            o_fstLen = Math.min(o_fstLen, end)-begin;
+            return compare2_2(fstU8, fstOff,   fstLen,
+                              sndU8, sndOff,   sndLen,
+                              o_fst, o_fstOff, o_fstLen,
+                              o_snd, o_sndOff, rLen-o_fstLen) == 0;
+        }
+    }
+
+    public boolean hasNoUnsafe(int pos, Rope rope, int begin, int end) {
         int rLen = end - begin;
         if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
         if (pos+rLen > len) return false;
@@ -238,10 +274,9 @@ public class TwoSegmentRope extends PlainRope {
         long fstOff = this.fstOff+pos, sndOff = this.sndOff+Math.max(0, pos-this.fstLen);
         int fstLen = Math.min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
 
-        //noinspection IfCanBeSwitch
         if (rope instanceof SegmentRope s) {
             return compare1_2(s.segment, s.offset+begin, rLen,
-                              fst, fstOff, fstLen, snd, sndOff, sndLen) == 0;
+                    fst, fstOff, fstLen, snd, sndOff, sndLen) == 0;
         } else {
             MemorySegment o_fst, o_snd;
             long o_fstOff, o_sndOff;
@@ -259,8 +294,8 @@ public class TwoSegmentRope extends PlainRope {
             o_sndOff += Math.max(0, begin-o_fstLen);
             o_fstLen = Math.min(o_fstLen, end)-begin;
             return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
-                              o_fst, o_fstOff, o_fstLen,
-                              o_snd, o_sndOff, rLen-o_fstLen) == 0;
+                    o_fst, o_fstOff, o_fstLen,
+                    o_snd, o_sndOff, rLen-o_fstLen) == 0;
         }
     }
 
@@ -289,28 +324,60 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(SegmentRope o) {
-        return -compare1_2(o.segment, o.offset, o.len,
-                           fst, fstOff, fstLen, snd, sndOff, sndLen);
+        if (HAS_UNSAFE) {
+            return -compare1_2(o.utf8, o.segment.address()+o.offset, o.len,
+                               fstU8, fst.address()+fstOff, fstLen,
+                               sndU8, snd.address()+sndOff, sndLen);
+        } else {
+            return -compare1_2(o.segment, o.offset, o.len,
+                    fst, fstOff, fstLen, snd, sndOff, sndLen);
+        }
     }
 
     @Override public int compareTo(TwoSegmentRope o) {
-        return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
-                          o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
+        if (HAS_UNSAFE) {
+            return compare2_2(fstU8, fst.address()+fstOff, fstLen,
+                              sndU8, snd.address()+sndOff, sndLen,
+                              o.fstU8, o.fst.address()+o.fstOff, o.fstLen,
+                              o.sndU8, o.snd.address()+o.sndOff, o.sndLen);
+        } else {
+            return compare2_2(fst, fstOff, fstLen, snd, sndOff, sndLen,
+                              o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
+        }
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
-        return -compare1_2(o.segment, o.offset+begin, end-begin,
-                           fst, fstOff, fstLen, snd, sndOff, sndLen);
+        if (HAS_UNSAFE) {
+            return -compare1_2(o.utf8, o.segment.address()+o.offset + begin, end - begin,
+                               fstU8, fst.address()+fstOff, fstLen,
+                               sndU8, snd.address()+sndOff, sndLen);
+        } else {
+            return -compare1_2(o.segment, o.offset + begin, end - begin,
+                    fst, fstOff, fstLen, snd, sndOff, sndLen);
+        }
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
+        if (!HAS_UNSAFE)
+            return compareToNoUnsafe(o, begin, end);
+        if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
+        // the following locals simulate o.sub(begin, end)
+        long o_fstOff = o.fst.address()+o.fstOff+begin;
+        long o_sndOff = o.snd.address()+o.sndOff+Math.max(0, begin-o.fstLen);
+        int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
+             o_sndLen = end-begin-o_fstLen;
+        return compare2_2(fstU8, fst.address()+fstOff, fstLen,
+                          sndU8, snd.address()+sndOff, sndLen,
+                          o.fstU8, o_fstOff, o_fstLen, o.sndU8, o_sndOff, o_sndLen);
+    }
+    private int compareToNoUnsafe(TwoSegmentRope o, int begin, int end) {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)
         long o_fstOff = o.fstOff+begin, o_sndOff = o.sndOff+Math.max(0, begin-o.fstLen);
         int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
-             o_sndLen = end-begin-o_fstLen;
+                o_sndLen = end-begin-o_fstLen;
         return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
-                                     o.fst, o_fstOff, o_fstLen, o.snd, o_sndOff, o_sndLen);
+                o.fst, o_fstOff, o_fstLen, o.snd, o_sndOff, o_sndLen);
     }
 }

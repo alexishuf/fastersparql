@@ -25,8 +25,9 @@ import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 public class SegmentRope extends PlainRope {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
+    public static final boolean HAS_UNSAFE;
     static final Unsafe U;
-    public static final int U8_BASE;
+    private static final int U8_BASE;
 
     static {
         Unsafe u = null;
@@ -41,6 +42,7 @@ public class SegmentRope extends PlainRope {
             } catch (Throwable ignored1) {}
         }
         U = u;
+        HAS_UNSAFE = u != null;
         U8_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
     }
 
@@ -467,6 +469,14 @@ public class SegmentRope extends PlainRope {
             return hashCode(FNV_BASIS, utf8, segment.address()+offset, len);
     }
 
+
+    public int hashCode(int hash) {
+        if (U == null)
+            return hashCode(hash, segment, offset, len);
+        else
+            return hashCode(hash, utf8, segment.address()+offset, len);
+    }
+
     @Override public @NonNull String toString() {
         if (len == 0) return "";
         if (utf8 != null)
@@ -478,6 +488,30 @@ public class SegmentRope extends PlainRope {
         if (utf8 != null && end-begin > 0)
             return new String(utf8, backingArrayOffset()+begin, end-begin, UTF_8);
         return super.toString(begin, end);
+    }
+
+    public static int compare2_2(byte[] lBase, long lOff, int lLen,
+                                 byte[] lSnd, long lSndOff, int lSndLen,
+                                 byte[] rBase, long rOff, int rLen,
+                                 byte[] rSnd, long rSndOff, int rSndLen) {
+        boolean lFst = true, rFst = true;
+        if (lBase == rBase && lLen == rLen && lOff == rOff)
+            lLen = rLen = 0; // do not compare bytes of same reference
+        // move to second segment if first is empty
+        if (lLen <= 0) { lBase = lSnd; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+        if (rLen <= 0) { rBase = rSnd; rOff = rSndOff; rLen = rSndLen; rFst = false; }
+
+        for (int common, diff; true; ) {
+            if ((common = Math.min(lLen, rLen)) <= 0)
+                return lLen - rLen; // one side exhausted, largest wins
+            if ((diff = compare1_1(lBase, lOff, common, rBase, rOff, common)) != 0)
+                return diff; // found a mismatching byte
+            // advance ranges
+            lOff += common; lLen -= common;
+            rOff += common; rLen -= common;
+            if (lLen == 0 && lFst) { lBase = lSnd; lOff = lSndOff; lLen = lSndLen; lFst = false; }
+            if (rLen == 0 && rFst) { rBase = rSnd; rOff = rSndOff; rLen = rSndLen; rFst = false; }
+        }
     }
 
     public static int compare2_2(MemorySegment lSeg, long lOff, int lLen,
