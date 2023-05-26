@@ -85,7 +85,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     protected BItCompletedException mkCompleted() {
-        return new BItCompletedException("Previous complete("+error+") on "+this, this);
+        return new BItCompletedException("Previous complete("+error+") on "+this, this, error);
     }
 
     protected final void checkError() {
