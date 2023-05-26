@@ -31,6 +31,7 @@ public class FSProperties {
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_REDUCED_CAPACITY       = "fastersparql.op.reduced.capacity";
     public static final String OP_DEDUP_CAPACITY         = "fastersparql.op.dedup.capacity";
+    public static final String OP_CROSS_DEDUP_CAPACITY   = "fastersparql.op.cross-source-dedup";
     public static final String OP_JOIN_REORDER           = "fastersparql.op.join.reorder";
     public static final String OP_JOIN_REORDER_BIND      = "fastersparql.op.join.reorder.bind";
     public static final String OP_JOIN_REORDER_HASH      = "fastersparql.op.join.reorder.hash";
@@ -53,6 +54,7 @@ public class FSProperties {
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int     DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
     public static final int     DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
+    public static final int     DEF_OP_CROSS_DEDUP_CAPACITY   = 1<<8;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
@@ -71,6 +73,7 @@ public class FSProperties {
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
     private static int CACHE_OP_REDUCED_CAPACITY       = -1;
     private static int CACHE_OP_DEDUP_CAPACITY         = -1;
+    private static int CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE = null;
@@ -106,6 +109,16 @@ public class FSProperties {
             if (!m.matches())
                 throw new IllegalArgumentException(src+"="+val+" is not a boolean");
             return m.group(1) != null;
+        });
+    }
+
+    protected static @Positive int readNonNegativeInteger(String propertyName, int defaultValue) {
+        return readProperty(propertyName, defaultValue, (src, val) -> {
+            int i = -1;
+            try { i = Integer.parseInt(val); } catch (NumberFormatException ignored) {}
+            if (i < 0)
+                throw new IllegalArgumentException(src+"="+val+" is negative");
+            return i;
         });
     }
 
@@ -150,6 +163,7 @@ public class FSProperties {
         CACHE_OP_DISTINCT_CAPACITY      = -1;
         CACHE_OP_REDUCED_CAPACITY       = -1;
         CACHE_OP_DEDUP_CAPACITY         = -1;
+        CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_OP_JOIN_REORDER           = null;
@@ -368,6 +382,13 @@ public class FSProperties {
         int i = CACHE_OP_DEDUP_CAPACITY;
         if (i < 0)
             CACHE_OP_DEDUP_CAPACITY = i = readPositiveInt(OP_DEDUP_CAPACITY, DEF_OP_DEDUP_CAPACITY);
+        return i;
+    }
+
+    public static int crossDedupCapacity() {
+        int i = CACHE_OP_CROSS_DEDUP_CAPACITY;
+        if (i < 0)
+            CACHE_OP_CROSS_DEDUP_CAPACITY = i = readNonNegativeInteger(OP_CROSS_DEDUP_CAPACITY, DEF_OP_CROSS_DEDUP_CAPACITY);
         return i;
     }
 

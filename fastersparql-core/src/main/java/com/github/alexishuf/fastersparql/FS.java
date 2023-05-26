@@ -232,7 +232,7 @@ public class FS {
 
     /** Equivalent to {@link FS#union(int, Plan...)} with {@link FSProperties#dedupCapacity()} */
     public static Union crossDedupUnion(Plan... operands) {
-        int cdc = FSProperties.dedupCapacity();
+        int cdc = FSProperties.crossDedupCapacity();
         return new Union(cdc, flattenUnion(cdc, operands));
     }
 
