@@ -89,8 +89,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     /** {@code col} in last {@code offerTerm}/{@code putTerm} call in the current
      *  {@link #beginOffer()}/{@link #beginPut()}, else {@code -1}. */
     private int offerLastCol = -1;
-    /** Whether the range {@code [bytesUsed(), locals.length)} is zero-filled. */
-    private boolean localsTailClear;
 
 
     /* --- --- --- helpers --- --- --- */
@@ -100,9 +98,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         sb.append(String.format("""
                 CompressedBatch{
                   rows=%d, cols=%d, slRowInts=%d
-                  offerNextLocals=%d, offerLastCol=%d, %slocalsTailClear
+                  offerNextLocals=%d, offerLastCol=%d
                 """,
-                rows, cols, slRowInts, offerNextLocals, offerLastCol, localsTailClear ? "" : "!"));
+                rows, cols, slRowInts, offerNextLocals, offerLastCol));
         int dumpRows = offerNextLocals == -1 ? rows : rows+1;
         for (int r = 0; r < dumpRows; r++) {
             sb.append("  row=").append(r)
@@ -135,24 +133,21 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             for (int r = 0; r < rows; r++) {
                 int rOff = slices[slRowBase(r) + SL_OFF];
                 int rEnd = rOff + slices[slRowBase(r) + SL_LEN];
+                if (rEnd < rOff)
+                    throw new AssertionError("Negative length for row "+r);
                 if (rEnd > rOff && rOff < lastRowAlignedEnd)
                     throw new AssertionError("Non-empty row (" + r + ") locals start at " + rOff + ", before end (" + lastRowAlignedEnd + ") of previous row ");
                 if ((bytesUsed(r) & B_SP_MASK) != 0)
                     throw new AssertionError("bytesUsed(" + r + ")=" + bytesUsed(r) + " is not aligned");
-                int rowAlignedEnd = lastRowAlignedEnd + bytesUsed(r);
+                int rowAlignedEnd = rOff + bytesUsed(r);
                 if (rEnd > rowAlignedEnd)
                     throw new AssertionError("stored locals end " + rEnd + " for row " + r + " overflows bytesUsed(r)=" + bytesUsed(r));
-                if (rEnd > rOff) {
-                    for (int i = rEnd; i < rowAlignedEnd; i++)
-                        if (locals[i] != 0)
-                            throw new AssertionError("Space between last local byte of row " + r + " and its align-ceil is not zero-filled");
-                }
                 for (int c = 0; c < cols; c++) {
                     int off = slices[r * slRowInts + (c << 1) + SL_OFF];
                     int len = slices[r * slRowInts + (c << 1) + SL_LEN];
                     if (len > 0 && off < lastRowAlignedEnd)
                         throw new AssertionError("locals offset for col " + c + " of row " + r + " is before the assigned start for this row");
-                    if (len > 0 && off >= rowAlignedEnd)
+                    if (len > 0 && off+len > rowAlignedEnd)
                         throw new AssertionError("locals offset for col " + c + " of row " + r + " overflows assigned locals segment for row");
                     try {
                         get(r, c);
@@ -165,11 +160,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 if (!equals(r, this, r))
                     throw new AssertionError("Equality not reflexive for row " + r);
                 lastRowAlignedEnd = Math.max(lastRowAlignedEnd, rowAlignedEnd);
-            }
-            if (localsTailClear) {
-                for (int i = lastRowAlignedEnd; i < locals.length; i++)
-                    if (locals[i] != 0)
-                        throw new AssertionError("localsTailClear is set but byte " + i + " is not zero");
             }
         } catch (Throwable t) {
             try {
@@ -254,7 +244,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      */
     private boolean rollbackOffer() {
         fill(locals, bytesUsed, locals.length, (byte)0);
-        localsTailClear = true;
         offerLastCol = -1;
         offerNextLocals = -1;
         return false;
@@ -268,7 +257,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.slRowInts = (cols+1)<<1;
         this.slices = new int[slCeil(max(1, rowsCapacity)*slRowInts+PUT_SLACK)];
         this.shared = new SegmentRope[max(1, rowsCapacity)*slRowInts+PUT_SLACK];
-        this.localsTailClear = true;
     }
 
     private CompressedBatch(CompressedBatch o) {
@@ -280,7 +268,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.offerNextLocals = o.offerNextLocals;
         this.offerLastCol = o.offerLastCol;
         this.slRowInts = o.slRowInts;
-        this.localsTailClear = o.localsTailClear;
     }
 
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
@@ -730,7 +717,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         offerLastCol    = -1;
         slices[SL_OFF]  = 0;
         slices[SL_LEN]  = 0;
-        localsTailClear = false;
     }
 
     @Override public void clear(int newColumns) {
@@ -830,11 +816,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (required > shared.length)
             shared = copyOf(shared, Math.max(shared.length + (shared.length >> 1), required));
         fill(shared, required-cols, required, null);
-
-        if (!localsTailClear) {
-            fill(locals, bytesUsed, locals.length, (byte)0);
-            localsTailClear = true;
-        }
     }
 
     @Override public void putTerm(int col, Term t) {
@@ -891,10 +872,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             slices = slGrow(slices, required);
         if ((required >>= 1) > shared.length)
             shared = copyOf(shared, Math.max(shared.length + (shared.length>>1), required));
-        if ((required=localsCeil(bytesUsed+lLen)) > locals.length) {
-            localsTailClear = true;
+        if ((required=localsCeil(bytesUsed+lLen)) > locals.length)
             growLocals(locals, required);
-        }
 
         //vectorized copy of slices, adding lDst to each SL_OFF in slices
         int[] sl = this.slices, osl = o.slices;
@@ -961,8 +940,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
         arraycopy(o.shared, row*cols, shared, rows*cols, cols);
         arraycopy(o.locals, lSrc, locals, lDst, lLen);
-        if (lDst+lLen == locals.length && !localsTailClear)
-            localsTailClear = true;
         int slRowBase = (rows+1)*slRowInts - 2;
         slices[slRowBase+SL_OFF] = bytesUsed;
         slices[slRowBase+SL_LEN] = lLen;
@@ -1098,7 +1075,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 tsh = getTSh(tShRequired);
             }
             for (int r = 0, slOut = 0, shOut = 0, slBase = 0; r < rows; r++, slBase += bSlWidth) {
-                int rowLen = 0, shBase = r*bCols;
+                int rowEnd = 0, shBase = r*bCols;
                 for (int src : columns) {
                     if (src < 0) {
                         tsh[shOut] = null;
@@ -1110,13 +1087,15 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                         int off = bsl[src+SL_OFF], len = bsl[src+SL_LEN];
                         tsl[slOut+SL_OFF] = off;
                         tsl[slOut+SL_LEN] = len;
-                        rowLen = Math.max(rowLen, off+len&LEN_MASK);
+                        rowEnd = Math.max(rowEnd, off+len&LEN_MASK);
                     }
                     slOut += 2;
                     ++shOut;
                 }
-                tsl[slOut+SL_OFF] = bsl[slBase+bSlWidth-2+SL_OFF];
-                tsl[slOut+SL_LEN] = rowLen;
+                // update row (off, len) slice
+                int rowOff = bsl[slBase + bSlWidth - 2 + SL_OFF];
+                tsl[slOut+SL_OFF] = rowOff;
+                tsl[slOut+SL_LEN] = rowEnd - rowOff;
                 slOut += 2;
             }
 
@@ -1130,6 +1109,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             b.cols = columns.length;
             // md now is packed (before b.mdRowInts could be >cols)
             b.slRowInts = (columns.length+1)<<1;
+            assert b.validate() : "corrupted by projection";
             return b;
         }
     }
@@ -1197,7 +1177,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             } else {
                 for (int r = 0; r < rows; r++) {
                     if (rowFilter.drop(in, r)) continue;
-                    int slBase = r*islRowInts, shBase = r*iCols, rowLen = 0;
+                    int slBase = r*islRowInts, shBase = r*iCols, rowEnd = 0;
                     for (int src : columns) {
                         if (src < 0) {
                             tsh[shOut] = null;
@@ -1209,20 +1189,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                             int off = isl[colBase+SL_OFF], len = isl[colBase+SL_LEN];
                             tsl[slOut+SL_OFF] = off;
                             tsl[slOut+SL_LEN] = len;
-                            rowLen = Math.max(rowLen, off+len&LEN_MASK);
+                            rowEnd = Math.max(rowEnd, off+len&LEN_MASK);
                         }
                         slOut += 2;
                         ++shOut;
                     }
-                    tsl[slOut+SL_OFF] = isl[slBase+islRowInts-2+SL_OFF];
-                    tsl[slOut+SL_LEN] = rowLen;
+                    int rowOff = isl[slBase+islRowInts-2+SL_OFF];
+                    tsl[slOut+SL_OFF] = rowOff;
+                    tsl[slOut+SL_LEN] = rowEnd - rowOff;
                     slOut += 2;
                 }
             }
 
             //update metadata. start with division so it runs while we do other stuff
             in.rows = rows = slOut/tslRowInts;
-            int oldBytesUsed =  in.bytesUsed();
             in.slices = tsl;  // replace metadata
             in.shared = tsh;
             this.tsl = isl;   // use original isl on next call
@@ -1241,8 +1221,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 int base = rows * tslRowInts - 2;
                 in.bytesUsed = localsCeil(tsl[base+SL_OFF] + tsl[base+SL_LEN]);
             }
-            if (in.bytesUsed != oldBytesUsed)
-                in.localsTailClear = false;
+            assert in.validate() : "corrupted by projection";
             return in;
         }
     }
