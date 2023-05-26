@@ -216,16 +216,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * @param forbidGrow if true, this call will produce no side effects and will return
      *                   {@code false} if setting the term would require locals to be re-allocated
      * @param shared A shared suffix/prefix of the term to be kept by reference
-     * @param local A {@link MemorySegment} containing a prefix/suffix of the term whose contents
-     *              shall be copied into this batch.
-     * @param localOff start of the term's local part in {@code local}
      * @param flaggedLocalLen length (in bytes) of the term local part, possibly {@code |}'ed
      *                        with {@code SH_SUFFIX_MASK}
-     * @return true iff the term was written.
+     * @return the offset into {@code this.locals} where {@code flaggedLocalLen&LEN_MASK} bytes
+     *         MUST be copied after this method return, or {@code -1} if {@code forbidGrow}
+     *         and there was not enough space in {@code this.locals}
      */
-    private boolean setTerm(boolean forbidGrow, int destCol, SegmentRope shared,
-                            @Nullable MemorySegment local, byte @Nullable [] localU8,
-                            long localOff, int flaggedLocalLen) {
+    private int allocTerm(boolean forbidGrow, int destCol, SegmentRope shared,
+                          int flaggedLocalLen) {
         if (offerNextLocals < 0) throw new IllegalStateException();
         if (destCol < 0 || destCol >= cols) throw new IndexOutOfBoundsException();
         // find write location in md and grow if needed
@@ -237,31 +235,29 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             offerLastCol = destCol;
             int required  = localsCeil(dest+len);
             if (required > locals.length) {
-                if (forbidGrow) return false;
+                if (forbidGrow) return -1;
                 growLocals(locals, max(required, localsCeil(locals.length+(locals.length>>1))));
             }
-            if (localU8 != null)
-                System.arraycopy(localU8, (int) localOff, locals, dest, len);
-            else //noinspection DataFlowIssue
-                MemorySegment.copy(local, JAVA_BYTE, localOff, locals, dest, len);
             offerNextLocals = dest+len;
+        } else if (shared != null && shared.len > 0) {
+            throw new IllegalArgumentException("Empty local with non-empty shared");
         }
-        if (shared != null && shared.len == 0) shared = null;
-        this.shared[rows*cols + destCol] = shared;
+        this.shared[rows*cols + destCol] = shared != null && shared.len == 0 ? null : shared;
         slices[slBase+SL_OFF] = dest;
         slices[slBase+SL_LEN] = flaggedLocalLen;
-        return true;
+        return dest;
     }
 
     /**
      * Erases the side effects of a rejected {@code beginOffer}/{@code offerTerm}/
      * {@code commitOffer} sequence.
      */
-    private void rollbackOffer() {
+    private boolean rollbackOffer() {
         fill(locals, bytesUsed, locals.length, (byte)0);
         localsTailClear = true;
         offerLastCol = -1;
         offerNextLocals = -1;
+        return false;
     }
 
     /* --- --- --- lifecycle --- --- --- */
@@ -758,30 +754,40 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public boolean offerTerm(int col, Term t) {
         if (t == null) return true;
-        SegmentRope l = t.local();
-        boolean ok = setTerm(true, col, t.shared(), l.segment,
-                             null, l.offset,
-                             l.len | (t.sharedSuffixed() ? SH_SUFF_MASK : 0));
-        if (!ok) rollbackOffer();
-        return ok;
+        var local = t.local();
+        int dest = allocTerm(true, col, t.shared(),
+                             local.len | (t.sharedSuffixed() ? SH_SUFF_MASK : 0));
+        if (dest < 0) return rollbackOffer();
+        local.copy(0, local.len, locals, dest);
+        return true;
     }
 
     @Override public boolean offerTerm(int destCol, CompressedBatch other, int oRow, int oCol) {
         int oBase = other.slBase(oRow, oCol);
         int[] oSl = other.slices;
-        boolean ok = setTerm(true, destCol, other.shared[oRow*other.cols + oCol],
-                             null, other.locals, oSl[oBase+SL_OFF], oSl[oBase+SL_LEN]);
-        if (!ok) rollbackOffer();
-        return ok;
+        int fLen = oSl[oBase + SL_LEN];
+        int dest = allocTerm(true, destCol, other.shared[oRow*other.cols+oCol], fLen);
+        if (dest < 0) return rollbackOffer();
+        arraycopy(other.locals, oSl[oBase+SL_OFF], locals, dest, fLen&LEN_MASK);
+        return true;
     }
 
     @Override
-    protected boolean offerTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
-                                long localOff, int localLen, boolean sharedSuffix) {
-        boolean ok = setTerm(true, col, shared, local, localU8, localOff,
+    public boolean offerTerm(int col, SegmentRope shared, MemorySegment local, long localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(true, col, shared,
+                             localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
+        if (dest < 0) return rollbackOffer();
+        MemorySegment.copy(local, JAVA_BYTE, localOff, locals, dest, localLen);
+        return true;
+    }
+
+    @Override
+    public boolean offerTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(true, col, shared,
                              localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
-        if (!ok) rollbackOffer();
-        return ok;
+        if (dest < 0) return rollbackOffer();
+        arraycopy(local, localOff, locals, dest, localLen);
+        return true;
     }
 
     @Override public boolean commitOffer() {
@@ -835,24 +841,30 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         SegmentRope shared, local;
         if (t == null) { shared =      EMPTY; local =     EMPTY; }
         else           { shared = t.shared(); local = t.local(); }
-        int suffixMask = t != null && t.sharedSuffixed() ? SH_SUFF_MASK : 0;
-        setTerm(false, col, shared, local.segment,
-                null, local.offset, local.len | suffixMask);
+        int fLen = local.len | (t != null && t.sharedSuffixed() ? SH_SUFF_MASK : 0);
+        int dest = allocTerm(false, col, shared, fLen);
+        local.copy(0, local.len, locals, dest);
     }
 
     @Override public void putTerm(int destCol, CompressedBatch other, int row, int col) {
-        int oBase = other.slBase(row, col);
         int[] oSl = other.slices;
-        setTerm(false, destCol, other.shared[row*other.cols + col],
-                null, other.locals, oSl[oBase+SL_OFF], oSl[oBase+SL_LEN]);
+        int oBase = other.slBase(row, col), fLen = oSl[oBase + SL_LEN];
+        int dest = allocTerm(false, destCol, other.shared[row*other.cols+col], fLen);
+        arraycopy(other.locals, oSl[oBase+SL_OFF], locals, dest, fLen&LEN_MASK);
     }
 
+    @Override
+    public void putTerm(int col, SegmentRope shared, MemorySegment local, long localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(false, col, shared,
+                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+        MemorySegment.copy(local, JAVA_BYTE, localOff, locals, dest, localLen);
+    }
 
     @Override
-    protected void putTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
-                           long localOff, int localLen, boolean sharedSuffix) {
-        setTerm(false, col, shared, local, localU8, localOff,
-                localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(false, col, shared,
+                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+        arraycopy(local, localOff, locals, dest, localLen);
     }
 
     @Override public void commitPut() { commitOffer(); }
@@ -967,7 +979,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols, rows = other.rows;
         if (other.cols != cols) throw new IllegalArgumentException();
         reserve(rows, other.bytesUsed());
-        ByteRope localCopy = null;
         TwoSegmentRope t = new TwoSegmentRope();
         for (int r = 0; r < rows; r++) {
             beginPut();
@@ -980,28 +991,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                         case '_' -> EMPTY;
                         default -> throw new IllegalArgumentException("Not an RDF term: "+t);
                     };
-                    MemorySegment local;
-                    long localOff;
-                    int localLen;
-                    if (sh.len == t.sndLen) {
-                        local =  t.fst;
-                        localOff = t.fstOff;
-                        localLen = t.fstLen;
-                    } else if (sh.len == t.fstLen) {
-                        local = t.snd;
-                        localOff = t.sndOff;
-                        localLen = t.sndLen;
-                    } else {
-                        if (localCopy == null) localCopy = new ByteRope(t.len);
-                        else                   localCopy.clear();
-                        if (fst == '"') localCopy.append(t, 0, t.len-sh.len);
-                        else            localCopy.append(t, sh.len, t.len);
-                        local = localCopy.segment;
-                        localOff = 0;
-                        localLen = localCopy.len;
-                    }
-                    if (fst == '"') localLen |= SH_SUFF_MASK;
-                    setTerm(false, c, sh, local, null, localOff, localLen);
+                    int localLen = t.len-sh.len, localOff = fst == '<' ? sh.len : 0;
+                    int dest = allocTerm(false, c, sh,
+                                         localLen|(fst == '"'? SH_SUFF_MASK : 0));
+                    t.copy(localOff, localOff+localLen, locals, dest);
                 }
             }
             commitPut();

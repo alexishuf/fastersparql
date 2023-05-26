@@ -486,7 +486,7 @@ public abstract class Batch<B extends Batch<B>> {
         return offerTerm(col, shared, local, null, localOff, localLen, sharedSuffix);
     }
 
-    protected boolean offerTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
+    private boolean offerTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
                                 long localOff, int localLen, boolean sharedSuffix) {
         return offerTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
     }
@@ -604,7 +604,7 @@ public abstract class Batch<B extends Batch<B>> {
         return Term.wrap(fst, snd);
     }
 
-    protected void putTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
+    private void putTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
                            long localOff, int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
     }
