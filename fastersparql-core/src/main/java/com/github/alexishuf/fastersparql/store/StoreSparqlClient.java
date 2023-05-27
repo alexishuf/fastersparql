@@ -476,7 +476,7 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         private final short dictId, prbCols;
         private boolean rEnd;
         private final boolean rightSingleRow;
-        private final TwoSegmentRope ropeView = new TwoSegmentRope();
+        private final TwoSegmentRope ropeView;
         private ByteRope localCopy;
         private final @Nullable BatchMerger<B> preFilterMerger;
         private final @Nullable BatchFilter<B> rightFilter;
@@ -497,6 +497,7 @@ public class StoreSparqlClient extends AbstractSparqlClient {
                                long s, long p, long o, Vars projection,
                                Metrics.@Nullable JoinMetrics metrics) {
             super(left.batchType(), projection);
+            this.ropeView = batchType == TYPE ? null : new TwoSegmentRope();
             this.bindType = type;
             this.left = left;
             Vars leftVars = left.vars();

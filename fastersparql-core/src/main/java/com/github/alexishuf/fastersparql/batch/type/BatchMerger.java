@@ -85,7 +85,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @return {@code dest}, if not null, else a new {@link Batch}.
      */
     public B merge(@Nullable B dest, B left, int leftRow, @Nullable B right) {
-        if (right == null)
+        if (right == null || right.rows == 0)
             return mergeWithMissing(dest, left, leftRow);
         int rows = right.rows, bytesCapacity = right.bytesUsed() + left.bytesUsed(leftRow);
         if (dest == null)
