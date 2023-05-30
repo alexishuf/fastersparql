@@ -27,7 +27,7 @@ public final class EmptyBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     @Override public B            nextBatch(@Nullable B b) {
         batchType.recycle(b);
-        if (!terminated)
+        if (!isTerminated())
             onTermination(null);
         return null;
     }

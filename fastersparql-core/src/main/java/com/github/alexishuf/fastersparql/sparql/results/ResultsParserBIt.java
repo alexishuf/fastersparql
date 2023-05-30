@@ -205,7 +205,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * @param error the error (if parsing failed) or {@code null} if parsing completed normally.
      */
     @Override public void complete(@Nullable Throwable error) {
-        boolean first = !terminated;
+        boolean first = !isTerminated();
         if (error != null && !(error instanceof BItIllegalStateException)
                           && !(error instanceof FSCancelledException)
                           && !(error instanceof FSServerException)) {

@@ -110,6 +110,10 @@ public class NettySparqlServer implements AutoCloseable {
         return (InetSocketAddress)server.localAddress();
     }
 
+    @Override public String toString() {
+        return "NettySparqlServer"+server+"("+sparqlClient.endpoint()+")";
+    }
+
     @Override public void close()  {
         sparqlClient.close();
         server.close().addListener(f -> {

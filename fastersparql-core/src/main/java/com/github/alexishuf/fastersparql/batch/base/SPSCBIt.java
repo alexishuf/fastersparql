@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -31,7 +32,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @SuppressWarnings("unused")  // access through READY
     private @Nullable B plainReady;
     private @Nullable B filling;
-    private long fillingStart = ORIGIN;
+    private long fillingStart = Timestamp.ORIGIN;
     protected int maxItems;
     @SuppressWarnings("unused") // access through STATE
     private int plainLock;
@@ -52,7 +53,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public boolean isCompleted() {
         lock();
         try {
-            return terminated;
+            return isTerminated();
         } finally { LOCK.setRelease(this, 0); }
     }
 
@@ -147,13 +148,13 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         try {
             while (true) {
                 B f = this.filling;
-                if (terminated) {
+                if (isTerminated()) {
                     throw mkCompleted();
                 } else if (f == null) { // no filling batch
-                    if (needsStartTime && fillingStart == ORIGIN) fillingStart = nanoTime();
+                    if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                     if (READY.getOpaque(this) == null && readyInNanos(b.rows, fillingStart) == 0) {
                         READY.setRelease(this, b);
-                        fillingStart = ORIGIN;
+                        fillingStart = Timestamp.ORIGIN;
                         unpark(consumer);
                     } else { // start filling
                         this.filling = b;
@@ -165,7 +166,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     boolean park = mustPark(b.rows, f.rows);
                     if (plainReady == null && (park || readyInNanos(f.rows, fillingStart) == 0)) {
                         READY.setRelease(this, f);
-                        fillingStart = ORIGIN;
+                        fillingStart = Timestamp.ORIGIN;
                         unpark(consumer);
                         this.filling = b;
                         b = null;
@@ -198,20 +199,20 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         boolean locked = true;
         Thread delayedWake = null;
         try {
-            if (terminated) throw mkCompleted();
+            if (isTerminated()) throw mkCompleted();
             while (true) {
                 B dst = this.filling;
                 // try publishing filling as READY since put() might take > 1us
                 if (dst != null && READY.getOpaque(this) == null
                         && readyInNanos(dst.rows, fillingStart) == 0) {
                     READY.setRelease(this, dst);
-                    fillingStart = ORIGIN;
+                    fillingStart = Timestamp.ORIGIN;
                     unpark(consumer); // delayedWake unnecessary
                     dst = null;
                 }
                 if (dst == null) { // no filling or published filling to READY
                     filling = dst = getBatch(null);
-                    if (needsStartTime && fillingStart == ORIGIN) fillingStart = nanoTime();
+                    if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                 }
                 if (mustPark(b.rows, dst.rows)) { // park() until free capacity
                     producer = Thread.currentThread();
@@ -227,7 +228,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     if (READY.getOpaque(this) == null && readyInNanos(dst.rows, fillingStart)==0) {
                         READY.setRelease(this, dst);
                         this.filling = null;
-                        fillingStart = ORIGIN;
+                        fillingStart = Timestamp.ORIGIN;
                         //dbg.write("copy: pub after put");
                     }
                     delayedWake = consumer; // delay wake to avoid Thread.yield()
@@ -256,14 +257,14 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 if ((b = (B)READY.getAndSetAcquire(this, null)) != null) {
                     break;
                 } else if (filling != null) { // steal or determine nanos until re-check
-                    if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || terminated) {
+                    if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || isTerminated()) {
                         if (filling.rows > 0) b = filling;
                         else                  batchType.recycle(filling);
                         this.filling = null;
-                        fillingStart = ORIGIN;
+                        fillingStart = Timestamp.ORIGIN;
                         break;
                     }
-                } else if (terminated) { // also: READY and filling are null
+                } else if (isTerminated()) { // also: READY and filling are null
                     break;
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;

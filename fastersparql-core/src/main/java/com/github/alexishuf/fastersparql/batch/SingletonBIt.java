@@ -19,7 +19,7 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
         if (b != null) batchType.recycle(b);
         b = batch;
         batch = null;
-        if (b == null && !terminated)
+        if (b == null && !isTerminated())
             onTermination(null);
         else if (b != null)
             onBatch(b);

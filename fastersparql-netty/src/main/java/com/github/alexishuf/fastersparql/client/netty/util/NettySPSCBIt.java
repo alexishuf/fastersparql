@@ -31,13 +31,13 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
         assert ch == null || ch.eventLoop().inEventLoop() : "complete() outside event loop";
         //noinspection resource
         error = FSException.wrap(client().endpoint(), error);
-        if (!terminated && ClientRetry.retry(++retries, error, this::request))
+        if (!isTerminated() && ClientRetry.retry(++retries, error, this::request))
             return; //will retry request
         if (ch != null) {
             if (error == null) ch.config().setAutoRead(true);
             else ch.close();
         }
-        boolean first = !terminated;
+        boolean first = !isTerminated();
         super.complete(error);
         if (error == null && first)
             afterNormalComplete();

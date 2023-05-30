@@ -613,8 +613,8 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         @Override public @Nullable B nextBatch(@Nullable B b) {
             if (lb == null) return null; // already exhausted
             try {
-                long startNs = needsStartTime ? Timestamp.nanoTime() : ORIGIN;
-                long innerDeadline = rightSingleRow ? ORIGIN-1 : startNs+minWaitNs;
+                long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
+                long innerDeadline = rightSingleRow ? Timestamp.ORIGIN-1 : startNs+minWaitNs;
                 b = getBatch(b);
                 do {
                     boolean rEmpty = rEnd;

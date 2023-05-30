@@ -33,7 +33,7 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
         this.metrics = metrics;
-        if (metrics != null && delegate instanceof AbstractBIt<S> i && i.terminated)
+        if (metrics != null && delegate instanceof AbstractBIt<S> i && i.isTerminated())
             metrics.completeAndDeliver(i.error, BItClosedAtException.isClosedFor(i.error, i));
         return this;
     }

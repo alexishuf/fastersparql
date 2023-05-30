@@ -135,8 +135,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
         /* --- --- --- BIt methods --- --- --- */
 
         @Override public void complete(@Nullable Throwable error) {
-            if (!terminated && parser != null) parser.complete(error);
-            if (!terminated)                   super.complete(error);
+            if (isTerminated()) return;
+            if (parser != null) parser.complete(error);
+            super.complete(error);
         }
 
         /* --- --- --- parsing methods called from NettyHandler --- --- --- */

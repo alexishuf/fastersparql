@@ -30,13 +30,12 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
-    /** A value smaller than any {@link System#nanoTime()} call without overflow risks. */
-    protected static final long ORIGIN = Timestamp.nanoTime();
-    protected static final VarHandle RECYCLED;
+    protected static final VarHandle RECYCLED, TERMINATED;
 
     static {
         try {
             RECYCLED = lookup().findVarHandle(AbstractBIt.class, "recycled", Batch.class);
+            TERMINATED = lookup().findVarHandle(AbstractBIt.class, "plainTerminated", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -45,8 +44,9 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected long minWaitNs;
     protected long maxWaitNs;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
+    protected int plainTerminated;
     protected int rowsCapacity = PREFERRED_MIN_BATCH, bytesCapacity = PREFERRED_MIN_BATCH*32;
-    protected boolean needsStartTime = false, closed = false, terminated = false, eager = false;
+    protected boolean needsStartTime = false, closed = false, eager = false;
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;
     protected B recycled;
@@ -111,7 +111,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      */
     protected final void onTermination(@Nullable Throwable cause) {
         var msg = cause == null ? "null" : cause.getClass().getSimpleName() + ": " + cause.getMessage();
-        if (terminated) {
+        if (!TERMINATED.compareAndSet(this, 0, 1)) {
             if (cause != null && !(cause instanceof BItClosedAtException)) {
                 if (error == null)
                     log.info(ON_TERM_TPL_PREV, this, msg, "null");
@@ -120,8 +120,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
             } else {
                 log.trace(ON_TERM_TPL_PREV, this, msg, Objects.toString(this.error));
             }
+            return;
         }
-        terminated = true;
         error = cause;
         if (cause == null || cause instanceof BItClosedAtException) {
             log.trace(ON_TERM_TPL, this, msg);
@@ -150,6 +150,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     /* --- --- --- helpers --- --- --- */
 
     public boolean isClosed() { return closed; }
+
+    public boolean isTerminated() { return (int)TERMINATED.getOpaque(this) == 1; }
 
     /**
      * This will be called after {@link BIt#minBatch(int)}, {@link BIt#maxBatch(int)},
@@ -193,7 +195,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      * {@link BIt#maxWait(long, TimeUnit)}), returns {@link Long#MAX_VALUE}. </p>
      *
      * @param r current batch size
-     * @param start when the batch started filling (can be {@link AbstractBIt#ORIGIN})
+     * @param start when the batch started filling (can be {@link Timestamp#ORIGIN})
      * @return Zero if batch is ready, {@link Long#MAX_VALUE} if the iterator does not have
      *         time-based batch readiness, Else, nanoseconds until time until
      *         {@link BIt#minWait(TimeUnit)} or {@link BIt#maxWait(TimeUnit)}.
@@ -222,7 +224,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
         this.metrics = metrics;
-        if (terminated && metrics != null)
+        if ((int)TERMINATED.getOpaque(this) == 1 && metrics != null)
             metrics.completeAndDeliver(error, isClosedFor(error, this));
         return this;
     }
@@ -342,7 +344,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     @Override public void close() {
         if (closed) return;
         closed = true;
-        if (!terminated) // close() before onExhausted()
+        if ((int)TERMINATED.getOpaque(this) == 0) // close() before onExhausted()
             onTermination(new BItClosedAtException(this));
     }
 

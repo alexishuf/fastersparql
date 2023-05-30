@@ -172,7 +172,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- WsFrameSender methods --- --- --- */
 
         @Override public void sendFrame(ByteBufSink content) {
-            if (terminated) {
+            if (isTerminated()) {
                 //noinspection RedundantCast
                 log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, (Object)error);
                 content.release();
@@ -229,7 +229,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (frame instanceof TextWebSocketFrame t) {
                 bufferRope.wrapBuffer(t.content().nioBuffer());
                 parser.feedShared(bufferRope);
-            } else if (!terminated && !(frame instanceof CloseWebSocketFrame)) {
+            } else if (!isTerminated() && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();
                 complete(new FSServerException("Unexpected "+suffix));
             }

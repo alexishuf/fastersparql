@@ -19,7 +19,7 @@ public class FailedBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     @Override public B            nextBatch(@Nullable B b) {
         batchType.recycle(b);
-        if (!terminated)
+        if (!isTerminated())
             onTermination(error);
         throw error;
     }

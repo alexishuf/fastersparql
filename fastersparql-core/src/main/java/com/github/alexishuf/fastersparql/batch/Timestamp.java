@@ -10,6 +10,8 @@ import static java.lang.Thread.ofPlatform;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class Timestamp {
+    /** A value smaller than any {@link #nanoTime()} call without overflow risks. */
+    public static final long ORIGIN = System.nanoTime();
     private static final Logger log = LoggerFactory.getLogger(Timestamp.class);
     private static final VarHandle NOW, ERR;
     static {

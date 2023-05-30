@@ -61,7 +61,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         boolean re = false;
         if (lb == null) return null; // already exhausted
         try {
-            long startNs = needsStartTime ? Timestamp.nanoTime() : ORIGIN;
+            long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
             b = getBatch(b);
             do {
                 if (inner == empty) {
