@@ -116,9 +116,6 @@ public class NativeBind {
         // if the join has a projection (due to reordering, not due to outer Modifier)
         // a sequence of native joins might not match that projection, thus we must project.
         // for non-native joins, the last join already honors Join.projection.
-        var projector = batchType.projector(join.publicVars(), left.vars());
-        if (projector != null)
-            left = new ProcessorBIt<>(left, projector, metrics);
-        return left;
+        return ProcessorBIt.project(join.publicVars(), left);
     }
 }
