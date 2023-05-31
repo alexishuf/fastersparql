@@ -477,17 +477,22 @@ public class Federation extends AbstractSparqlClient {
     }
 
     private Plan bindToSources(Plan tp, long srcSubset, int crossDedupCapacity) {
-        int n = bitCount(srcSubset), fIdx =        numberOfTrailingZeros(srcSubset          );
-        int                          sIdx = fIdx+1+numberOfTrailingZeros(srcSubset>>>(fIdx+1));
-       Query fstQ = new Query(tp, sources.get(fIdx).client);
-        Query sndQ = new Query(tp, sources.get(sIdx).client);
+        int src = numberOfTrailingZeros(srcSubset);
+        if (src == 64)
+            return new Empty(tp);
+        Query fst = new Query(tp, sources.get(src++).client);
+        src += numberOfTrailingZeros(srcSubset>>src);
+        if (src >= 64)
+            return fst;
+        Query snd = new Query(tp, sources.get(src++).client);
+        int n = bitCount(srcSubset);
         if (n == 2)
-            return new Union(crossDedupCapacity, fstQ, sndQ);
+            return new Union(crossDedupCapacity, fst, snd);
         Plan[] ops = new Plan[n];
-        ops[0] = fstQ;
-        ops[1] = sndQ;
-        for (int o = 2, s = sIdx+1; (s+=numberOfTrailingZeros(srcSubset>>>s)) < 64; s++)
-            ops[o++] = new Query(tp, sources.get(s).client);
+        ops[0] = fst;
+        ops[1] = snd;
+        for (int o = 2; (src+=numberOfTrailingZeros(srcSubset>>>src)) < 64; src++)
+            ops[o++] = new Query(tp, sources.get(src).client);
         return new Union(crossDedupCapacity, ops);
     }
 
