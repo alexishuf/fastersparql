@@ -472,7 +472,7 @@ public class Federation extends AbstractSparqlClient {
         }
         Plan[] ops = new Plan[n];
         for (int dst = 0, op = 0; (op+=numberOfTrailingZeros(subset>>>op)) < 64; ++op)
-            ops[dst] = parent.op(op);
+            ops[dst++] = parent.op(op);
         return new Query(new Join(null, ops), client);
     }
 
@@ -600,7 +600,7 @@ public class Federation extends AbstractSparqlClient {
         // add exclusive groups
         for (int s = 0; (s+=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
             int begin = s * nOps;
-            long sExclusive = BS.get(src2op, begin, begin+nOps);
+            long sExclusive = BS.get(src2op, begin, begin+nOps) & exclusive;
             bound[nBound++] = bindExclusive(sources.get(s).client, sExclusive, join);
         }
 
