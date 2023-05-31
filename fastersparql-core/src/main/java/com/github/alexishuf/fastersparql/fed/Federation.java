@@ -583,7 +583,7 @@ public class Federation extends AbstractSparqlClient {
         }
 
         // find safe unsourced operands. short-circuit if we have an unsourced TriplePattern
-        long nonTP = sourced ^ (-1 >> -nOps);
+        long nonTP = sourced ^ (-1 >>> -nOps);
         if (nonTP != 0 && isUnsourcedFailure (nonTP, join)) return new Empty(join);
 
         // find sources with >0 exclusive operands
