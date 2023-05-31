@@ -58,7 +58,11 @@ public final class LevelPool<T> {
         int level = Integer.numberOfLeadingZeros(capacity|1), base = level*width;
         int size = lockAndGetSize(level);
         try {
-            if (size > 0) o = table[base+--size];
+            if (size > 0) {
+                int idx = base+--size;
+                o = table[idx];
+                table[idx] = null;
+            }
         } finally {
             STATES.setRelease(states, level, size);
         }
@@ -79,7 +83,7 @@ public final class LevelPool<T> {
         int level = Integer.numberOfLeadingZeros(capacity|1), base = level*width;
         int size = lockAndGetSize(level), cap = level == 31 ? singletonWidth : width;
         try {
-//            new Exception("&o="+System.identityHashCode(o)).printStackTrace();
+//            new Exception("offer &o="+System.identityHashCode(o)+", thread="+Thread.currentThread()) .printStackTrace(System.out);
 //            for (int i = 0; i < size; i++) {
 //                if (table[base+i] == o)
 //                    throw new AssertionError();

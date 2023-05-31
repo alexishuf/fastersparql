@@ -58,7 +58,10 @@ public final class LIFOPool<T> {
     public @Nullable T get() {
         while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
         try {
-            return size > 0 ? recycled[--size] : null;
+            if (size == 0) return null;
+            T o = recycled[--size];
+            recycled[size] = null;
+            return o;
         } finally {
             LOCK.setRelease(this, 0);
         }
@@ -79,6 +82,11 @@ public final class LIFOPool<T> {
         try {
             if (size == recycled.length)
                 return o;
+//            new Exception("&o="+System.identityHashCode(o)+", thread="+Thread.currentThread()).printStackTrace(System.out);
+//            for (int i = 0; i < size; i++) {
+//                if (recycled[i] == o)
+//                    throw new AssertionError("double free");
+//            }
             recycled[size++] = o;
             return null;
         } finally {
