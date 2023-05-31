@@ -240,15 +240,15 @@ public final class Modifier extends Plan {
             allowed = limit;
         }
 
-        @Override public boolean drop(B batch, int row) {
+        @Override public Decision drop(B batch, int row) {
             if (skip > 0) {
                 --skip;
-                return true;
+                return Decision.DROP;
             } else if (allowed == 0) {
-                return true;
+                return Decision.TERMINATE;
             }
             --allowed;
-            return false;
+            return Decision.KEEP;
         }
     }
 
@@ -269,16 +269,15 @@ public final class Modifier extends Plan {
             dedup.clear(dedup.cols());
         }
 
-        @Override public boolean drop(B batch, int row) {
-            if (dedup.isDuplicate(batch, row, 0)) return true;
+        @Override public Decision drop(B batch, int row) {
+            if (allowed == 0) return Decision.TERMINATE;
+            if (dedup.isDuplicate(batch, row, 0)) return Decision.DROP;
             if (skip > 0) {
                 --skip;
-                return true;
-            } else if (allowed == 0) {
-                return true;
+                return Decision.DROP;
             }
             --allowed;
-            return false;
+            return Decision.KEEP;
         }
     }
 
@@ -297,14 +296,16 @@ public final class Modifier extends Plan {
             allowed = limit;
         }
 
-        @Override public boolean drop(B batch, int row) {
-            if (allowed == 0 || super.drop(batch, row)) return true;
+        @Override public Decision drop(B batch, int row) {
+            if (allowed == 0) return Decision.TERMINATE;
+            var decision = super.drop(batch, row);
+            if (decision != Decision.KEEP) return decision;
             if (skip > 0) {
                 --skip;
-                return true;
+                return Decision.DROP;
             }
             --allowed;
-            return false;
+            return Decision.KEEP;
         }
     }
 
@@ -324,16 +325,16 @@ public final class Modifier extends Plan {
             log.info("Filter evaluation failed for {}. filters={}", binding, filters, t);
         }
 
-        @Override public boolean drop(B batch, int row) {
+        @Override public Decision drop(B batch, int row) {
             var binding = this.binding.setRow(batch, row);
             try {
                 for (Expr expr : filters) {
-                    if (!expr.eval(binding).asBool()) return true;
+                    if (!expr.eval(binding).asBool()) return Decision.DROP;
                 }
-                return false;
+                return Decision.KEEP;
             } catch (Throwable t) {
                 logFailure(t);
-                return true;
+                return Decision.DROP;
             }
         }
     }

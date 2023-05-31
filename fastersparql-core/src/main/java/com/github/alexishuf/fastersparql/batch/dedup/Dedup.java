@@ -38,7 +38,9 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public abstract boolean isWeak();
 
-    @Override public boolean drop(B batch, int row) { return isDuplicate(batch, row, 0); }
+    @Override public Decision drop(B batch, int row) {
+        return isDuplicate(batch, row, 0) ? Decision.DROP : Decision.KEEP;
+    }
 
     @Override public void reset() { clear(cols); }
 
@@ -48,7 +50,9 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
      */
     public RowFilter<B> sourcedFilter(int sourceIdx) {
         return new ProjectionRowFilter<>() {
-            @Override public boolean drop(B b, int r) { return isDuplicate(b, r, sourceIdx); }
+            @Override public Decision drop(B b, int r) {
+                return isDuplicate(b, r, sourceIdx) ? Decision.DROP : Decision.KEEP;
+            }
             @Override public void reset() { clear(cols); }
         };
     }

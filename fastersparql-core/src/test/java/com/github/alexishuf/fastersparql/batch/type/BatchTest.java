@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -736,7 +737,8 @@ class BatchTest {
                     projectExpected.accept(size.terms[r], expected);
                     expected.commitPut();
                 }
-                RowFilter<B> rowFilter = (batch, row) -> !survivors.contains(row);
+                RowFilter<B> rowFilter = (batch, row)
+                        -> survivors.contains(row) ? Decision.KEEP : Decision.DROP;
                 var filter = out.equals(in) ? type.filter(out, rowFilter)
                                             : type.filter(out, in, rowFilter);
                 B copyFilter = filter.filter(null, full);

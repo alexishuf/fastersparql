@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.KEEP;
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.TERMINATE;
 import static java.lang.System.arraycopy;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.Objects.requireNonNull;
@@ -260,7 +262,15 @@ public final class TermBatch extends Batch<TermBatch> {
         private TermBatch filterInPlaceEmpty(TermBatch b) {
             int survivors = 0, rows = b.rows;
             for (int r = 0; r < rows; r++) {
-                if (!rowFilter.drop(b, r)) ++survivors;
+                switch (rowFilter.drop(b, r)) {
+                    case KEEP -> ++survivors;
+                    case DROP -> {}
+                    case TERMINATE -> rows = -1;
+                }
+            }
+            if (rows == -1 && survivors == 0) {
+                batchType.recycle(b);
+                return null;
             }
             if (projector != null)
                 b.cols = requireNonNull(projector.columns).length;
@@ -282,18 +292,20 @@ public final class TermBatch extends Batch<TermBatch> {
                 columns = null;
             }
             if (columns == null) {
+                RowFilter.Decision decision = null;
                 //move r until we find a gap start (1+ rows that must be dropped)
-                while (r < rows && !rowFilter.drop(b, r)) ++r;
+                while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
                 out = r*w; // rows in [0, r) must be kept
                 ++r; // r==rows or must be dropped, do not call drop(b, r) again
                 for (int keep, kTerms; r < rows; out += kTerms) {
                     // skip over rows to be dropped
-                    while (r < rows &&  rowFilter.drop(b, r)) ++r;
+                    while (r < rows && (decision = rowFilter.drop(b, r)) != KEEP) ++r;
                     // find keep region [keep, keep+kTerms). ++r because either r==rows or is a keep
                     kTerms = (keep = r++) < rows ? w : 0;
-                    for (; r < rows && !rowFilter.drop(b, r); ++r) kTerms += w;
+                    for (; r < rows && (decision = rowFilter.drop(b, r)) == KEEP; ++r) kTerms += w;
                     // copy keep rows
                     arraycopy(arr, keep*w, arr, out, kTerms);
+                    if (decision == TERMINATE) rows = -1;
                 }
                 b.rows = out/w;
             } else {
@@ -303,17 +315,26 @@ public final class TermBatch extends Batch<TermBatch> {
                 boolean mayGrow = columns.length*rows > arr.length;
                 // when projecting and filtering, there is no gain in copying regions
                 for (int inRowStart = 0; r < rows; ++r, inRowStart += w) {
-                    if (rowFilter.drop(b, r)) continue;
-                    arraycopy(arr, inRowStart, tmp, 0, w);
-                    if (mayGrow && out+columns.length > arr.length) {
-                        int newLen = Math.max(columns.length*rows, arr.length+(arr.length>>1));
-                        b.arr = arr = Arrays.copyOf(arr, newLen);
+                    switch (rowFilter.drop(b, r)) {
+                        case DROP -> {}
+                        case KEEP -> {
+                            arraycopy(arr, inRowStart, tmp, 0, w);
+                            if (mayGrow && out+columns.length > arr.length) {
+                                int newLen = Math.max(columns.length*rows, arr.length+(arr.length>>1));
+                                b.arr = arr = Arrays.copyOf(arr, newLen);
+                            }
+                            for (int src : columns)
+                                arr[out++] = src >= 0 ? tmp[src] : null;
+                        }
+                        case TERMINATE -> rows = -1;
                     }
-                    for (int src : columns)
-                        arr[out++] = src >= 0 ? tmp[src] : null;
                 }
                 b.cols = columns.length;
                 b.rows = out/columns.length;
+            }
+            if (rows == -1 && out == 0) {
+                batchType.recycle(b);
+                return null;
             }
             return b;
         }

@@ -1029,13 +1029,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      *
      * @param tmd a {@code int[] to recycle}
      */
-    private static void recycleTMd(int[] tmd) {
+    private static void recycleTSl(int[] tmd) {
         int[] a = (int[]) REC_TMD.getAcquire();
         if (a == null || tmd.length > a.length)
             REC_TMD.setRelease(tmd);
     }
 
-    /** Analogous to {@link #recycleTMd(int[])}. */
+    /** Analogous to {@link #recycleTSl(int[])}. */
     private static void recycleTSh(SegmentRope[] sh) {
         SegmentRope[] a = (SegmentRope[]) REC_SH.getAcquire();
         if (a == null || sh.length > a.length)
@@ -1104,7 +1104,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             b.shared = tsh;
             this.tsl = bsl;
             this.tsh = bsh;
-            if (otmd != null) recycleTMd(otmd);
+            if (otmd != null) recycleTSl(otmd);
             if (otsh != null) recycleTSh(otsh);
             b.cols = columns.length;
             // md now is packed (before b.mdRowInts could be >cols)
@@ -1117,22 +1117,46 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     static final class Filter extends BatchFilter<CompressedBatch> {
         private int @Nullable [] tsl;
         private SegmentRope @Nullable [] tsh;
+        private final boolean bogusProjection;
 
         public Filter(BatchType<CompressedBatch> batchType, Vars outVars,
                       BatchMerger<CompressedBatch> projector,
                       RowFilter<CompressedBatch> rowFilter,
                       @Nullable BatchFilter<CompressedBatch> before) {
             super(batchType, outVars, projector, rowFilter, before);
+            if (projector != null && projector.columns != null) {
+                boolean bogus = true;
+                for (int c : projector.columns) {
+                    if (c != -1) { bogus = false; break; }
+                }
+                bogusProjection = bogus;
+            } else  {
+                bogusProjection = false;
+            }
             assert projector == null || projector.outVars.equals(outVars);
         }
 
         private CompressedBatch filterInPlaceEmpty(CompressedBatch in, int cols) {
             int rows = in.rows, survivors = 0;
             for (int r = 0; r < rows; r++) {
-                if (!rowFilter.drop(in, r)) survivors++;
+                switch (rowFilter.drop(in, r)) {
+                    case KEEP -> survivors++;
+                    case DROP -> {}
+                    case TERMINATE -> rows = -1;
+                }
+            }
+            if (rows == -1 && survivors == 0) {
+                batchType.recycle(in);
+                return null;
             }
             in.clear(cols);
+            if (cols > 0 && survivors > 0) {
+                in.reserve(survivors, 0);
+                Arrays.fill(in.slices, 0, in.slRowInts*survivors, 0);
+                Arrays.fill(in.shared, 0, survivors, null);
+            }
             in.rows = survivors;
+            assert in.validate() : "filterInPlaceEmpty corrupted batch";
             return in;
         }
 
@@ -1140,16 +1164,19 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                                                        BatchMerger<CompressedBatch> projector) {
             if (before != null)
                 in = before.filterInPlace(in);
+            if (in == null)
+                return null;
             int @Nullable[] columns = projector == null ? null : projector.columns;
             int rows = in.rows, iCols = in.cols, cols = columns == null ? iCols : columns.length;
-            if (cols == 0 || rows == 0)
-                return filterInPlaceEmpty(in, cols);
 
             //project if filter requires
             if (columns != null && rowFilter.targetsProjection()) {
                 in = projector.projectInPlace(in);
                 columns = null;
             }
+
+            if (cols == 0 || rows == 0 || bogusProjection)
+                return filterInPlaceEmpty(in, cols);
 
             // get working arrays
             int tslRowInts = (cols+1)<<1, islRowInts = in.slRowInts;
@@ -1168,39 +1195,55 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
             if (columns == null) { // faster code if we don't need to concurrently project
                 for (int r = 0; r < rows; r++) {
-                    if (rowFilter.drop(in, r)) continue;
-                    arraycopy(isl, r*islRowInts, tsl, slOut, tslRowInts);
-                    arraycopy(ish, r*cols, tsh, shOut, cols);
-                    shOut += cols;
-                    slOut   += tslRowInts;
+                    switch (rowFilter.drop(in, r)) {
+                        case KEEP -> {
+                            arraycopy(isl, r*islRowInts, tsl, slOut, tslRowInts);
+                            arraycopy(ish, r*cols, tsh, shOut, cols);
+                            shOut += cols;
+                            slOut += tslRowInts;
+                        }
+                        case DROP -> {}
+                        case TERMINATE -> rows = -1;
+                    }
                 }
             } else {
                 for (int r = 0; r < rows; r++) {
-                    if (rowFilter.drop(in, r)) continue;
-                    int slBase = r*islRowInts, shBase = r*iCols, rowEnd = 0;
-                    for (int src : columns) {
-                        if (src < 0) {
-                            tsh[shOut] = null;
-                            tsl[slOut  ] = 0;
-                            tsl[slOut+1] = 0;
-                        } else {
-                            tsh[shOut] = ish[shBase+src];
-                            int colBase = slBase + (src<<1);
-                            int off = isl[colBase+SL_OFF], len = isl[colBase+SL_LEN];
-                            tsl[slOut+SL_OFF] = off;
-                            tsl[slOut+SL_LEN] = len;
-                            rowEnd = Math.max(rowEnd, off+len&LEN_MASK);
+                    switch (rowFilter.drop(in, r)) {
+                        case DROP -> {}
+                        case KEEP -> {
+                            int slBase = r*islRowInts, shBase = r*iCols, rowEnd = 0;
+                            for (int src : columns) {
+                                if (src < 0) {
+                                    tsh[shOut] = null;
+                                    tsl[slOut  ] = 0;
+                                    tsl[slOut+1] = 0;
+                                } else {
+                                    tsh[shOut] = ish[shBase+src];
+                                    int colBase = slBase + (src<<1);
+                                    int off = isl[colBase+SL_OFF], len = isl[colBase+SL_LEN];
+                                    tsl[slOut+SL_OFF] = off;
+                                    tsl[slOut+SL_LEN] = len;
+                                    rowEnd = Math.max(rowEnd, off+len&LEN_MASK);
+                                }
+                                slOut += 2;
+                                ++shOut;
+                            }
+                            int rowOff = isl[slBase+islRowInts-2+SL_OFF];
+                            tsl[slOut+SL_OFF] = rowOff;
+                            tsl[slOut+SL_LEN] = rowEnd - rowOff;
+                            slOut += 2;
                         }
-                        slOut += 2;
-                        ++shOut;
+                        case TERMINATE -> rows = -1;
                     }
-                    int rowOff = isl[slBase+islRowInts-2+SL_OFF];
-                    tsl[slOut+SL_OFF] = rowOff;
-                    tsl[slOut+SL_LEN] = rowEnd - rowOff;
-                    slOut += 2;
                 }
             }
 
+            if (rows == -1 && slOut == 0) { //TERMINATED
+                batchType.recycle(in);
+                recycleTSl(tsl);
+                recycleTSh(tsh);
+                return null;
+            }
             //update metadata. start with division so it runs while we do other stuff
             in.rows = rows = slOut/tslRowInts;
             in.slices = tsl;  // replace metadata
@@ -1208,7 +1251,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             this.tsl = isl;   // use original isl on next call
             this.tsh = ish;
             if (otmd != null) // offer our old tsl to other instances
-                recycleTMd(otmd);
+                recycleTSl(otmd);
             if (otsh != null)
                 recycleTSh(otsh);
             in.slRowInts = tslRowInts;

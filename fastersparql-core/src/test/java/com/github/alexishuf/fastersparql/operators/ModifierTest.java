@@ -59,6 +59,8 @@ public class ModifierTest {
             if (!expected.isEmpty())
                 assertEquals(expected.columns(), plan.publicVars().size());
             expected.check(plan.execute(Batch.TERM));
+            expected.check(plan.execute(Batch.TERM));
+            expected.check(plan.execute(Batch.COMPRESSED));
         }
     }
 

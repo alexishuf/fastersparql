@@ -48,8 +48,12 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
     @Override public @Nullable B nextBatch(B b) {
         try {
             while ((b = delegate.nextBatch(b)) != null) {
-                if ((b = processor.processInPlace(b)) != null && b.rows > 0)
+                if ((b = processor.processInPlace(b)) == null) {
+                    delegate.close(); // premature end, likely due to LIMIT clause
                     break;
+                } else if (b.rows > 0) {
+                    break;
+                }
             }
             if      (b       == null) onTermination(null); //exhausted
             else if (metrics != null) metrics.batch(b.rows);

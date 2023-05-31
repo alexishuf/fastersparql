@@ -1,7 +1,19 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 public interface RowFilter<B extends Batch<B>> {
-    boolean drop(B batch, int row);
+    enum Decision {
+        /** Do not drop the evaluated row. */
+        KEEP,
+        /** Drop the evaluated row. */
+        DROP,
+        /**
+         * Drop the evaluated row, all subsequent rows in the current batch and
+         * all rows in future batches.
+         */
+        TERMINATE
+    }
+
+    Decision drop(B batch, int row);
 
     /**
      * Whether {@link RowFilter#drop(Batch, int)} must be evaluated on the projected

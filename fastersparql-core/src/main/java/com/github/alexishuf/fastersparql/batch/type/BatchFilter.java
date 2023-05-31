@@ -41,6 +41,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     public B filter(@Nullable B dest, B in) {
         if (before != null)
             in = before.filter(null, in);
+        if (in == null)
+            return null;
         int rows = in.rows;
         BatchMerger<B> projector = this.projector;
         if (dest == null) {
@@ -53,19 +55,32 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
         if (projector == null) {
             for (int r = 0; r < rows; r++) {
-                if (!rowFilter.drop(in, r)) dest.putRow(in, r);
+                switch (rowFilter.drop(in, r)) {
+                    case KEEP      -> dest.putRow(in, r);
+                    case DROP      -> {}
+                    case TERMINATE -> rows = -1;
+                }
             }
         } else {
             int[] columns = Objects.requireNonNull(projector.columns);
             for (int r = 0; r < rows; r++) {
-                if (rowFilter.drop(in, r)) continue;
-                dest.beginPut();
-                for (int c = 0, s; c < columns.length; c++) {
-                    if ((s = columns[c]) >= 0)
-                        dest.putTerm(c, in, r, s);
+                switch (rowFilter.drop(in, r)) {
+                    case KEEP -> {
+                        dest.beginPut();
+                        for (int c = 0, s; c < columns.length; c++) {
+                            if ((s = columns[c]) >= 0)
+                                dest.putTerm(c, in, r, s);
+                        }
+                        dest.commitPut();
+                    }
+                    case DROP      -> {}
+                    case TERMINATE -> rows = -1;
                 }
-                dest.commitPut();
             }
+        }
+        if (rows == -1 && dest.rows == 0) {
+            batchType.recycle(dest);
+            return null;
         }
         return dest;
     }

@@ -140,7 +140,7 @@ class HdtBatchTest {
     @Test public void testFiler() {
         var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, null, new RowFilter<>() {
             int calls = 0;
-            @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
+            @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
         }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie}, 3, 1);
@@ -152,7 +152,7 @@ class HdtBatchTest {
         var projector = HdtBatch.TYPE.projector(Vars.of("x"), Vars.of("x", "y"));
         var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, projector, new RowFilter<>() {
             int calls = 0;
-            @Override public boolean drop(HdtBatch batch, int row) { return calls++ == 0; }
+            @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
         }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);

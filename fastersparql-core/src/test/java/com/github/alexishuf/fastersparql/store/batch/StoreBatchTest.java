@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.X;
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.DROP;
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.KEEP;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.source;
 import static com.github.alexishuf.fastersparql.store.batch.StoreBatch.TYPE;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.Mode.LAST;
@@ -195,7 +197,7 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveOdd() {
-        var filter = TYPE.filter(X, (batch, row) -> (row & 1) == 1);
+        var filter = TYPE.filter(X, (batch, row) -> (row & 1) == 1 ? DROP : KEEP);
         assertNotNull(filter);
         StoreBatch b = mk(1, 0, 1, 2, 3);
         assertSame(b, filter.filterInPlace(b));
@@ -205,7 +207,7 @@ class StoreBatchTest {
 
     @Test public void testRemoveEvenAndMidCol() {
         var filter = TYPE.filter(Vars.of("x", "z"), Vars.of("x", "y", "z"),
-                                 (batch, row) -> (row & 1) == 0);
+                                 (batch, row) -> (row & 1) == 0 ? DROP : KEEP);
         assertNotNull(filter);
         StoreBatch b = mk(3,
                 1, 2, 3,

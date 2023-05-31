@@ -120,14 +120,6 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         }
     }
 
-    protected B process(int i, B b, @Nullable BatchProcessor<B> processor) {
-        if (processor != null) {
-            b = processor.processInPlace(b);
-            if (b.rows == 0) return b;
-        }
-        return syncOffer(i, b);
-    }
-
     protected @Nullable BatchProcessor<B> createProcessor(int sourceIdx) {
         return batchType.projector(vars, sources.get(sourceIdx).vars());
     }
@@ -140,11 +132,11 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             processor = createProcessor(i);
             //if (processor != null) journal.write("drainTask: processor=", processor);
             for (B b = stealRecycled(); (b = source.nextBatch(b)) != null;) {
-                //journal.write("drainTask: rows=", b.rows, "&b=", identityHashCode(b),"b[0][0]=", b.get(0, 0));
-                if ((b = process(i, b, processor)) == null) {
-                    b = stealRecycled();
-                    //journal.write("drainTask: &(b=steal)=", identityHashCode(b), "rows", b == null ? 0 : b.rows, "[0][0]=", b==null ? null : b.get(0, 0));
+                if (processor != null) {
+                    b = processor.processInPlace(b);
+                    if (b      == null) break;
                 }
+                if (b.rows >     0) b = syncOffer(i, b);
             }
             //journal.write("drainTask src=", i, "exhausted");
         } catch (BItCompletedException e) {
