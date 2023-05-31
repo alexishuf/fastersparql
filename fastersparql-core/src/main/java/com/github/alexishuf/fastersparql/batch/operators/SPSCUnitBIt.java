@@ -230,7 +230,8 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             setQS(qs, setFlags, QS_WRITING|QS_PKD_CONS);
         }
         //journal.write("SPSCUnitBIt.offer: ret &recycled=", identityHashCode(recycled), "&b=", identityHashCode(b));
-        return recycled == null ? stealRecycled() : recycled;
+        if (recycled == null && (recycled = stealRecycled()) != null) recycled.clear(vars.size());
+        return recycled;
     }
 
     public void copy(B src) {

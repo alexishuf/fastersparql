@@ -191,7 +191,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             if (locked) LOCK.setRelease(this, 0);
             unpark(delayedWake);
         }
-        return b == null ? stealRecycled() : b;
+        if (b == null && (b = stealRecycled()) != null) b.clear(vars.size());
+        return b;
     }
 
     @Override public void copy(B b) throws BItCompletedException {

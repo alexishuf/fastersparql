@@ -47,7 +47,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
@@ -477,7 +476,6 @@ public class StoreSparqlClient extends AbstractSparqlClient {
         private boolean rEnd;
         private final boolean rightSingleRow;
         private final TwoSegmentRope ropeView;
-        private ByteRope localCopy;
         private final @Nullable BatchMerger<B> preFilterMerger;
         private final @Nullable BatchFilter<B> rightFilter;
 
