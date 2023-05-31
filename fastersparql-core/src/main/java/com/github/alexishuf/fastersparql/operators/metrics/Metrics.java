@@ -146,6 +146,7 @@ public class Metrics implements MetricsFeeder {
         this.lastEmit = startNanos = Timestamp.nanoTime();
         firstRowNanos = -1;
         allRowsNanos = -1;
+        terminalNanos = -1;
         minNanosBetweenBatches = Long.MAX_VALUE;
         joinMetrics = switch (plan.type) {
             case JOIN,LEFT_JOIN,EXISTS,NOT_EXISTS,MINUS -> new JoinMetrics[plan.opCount()];
