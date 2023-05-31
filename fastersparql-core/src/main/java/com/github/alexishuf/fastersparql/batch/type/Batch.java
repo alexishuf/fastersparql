@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static java.util.Objects.requireNonNull;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
@@ -483,22 +482,19 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public boolean offerTerm(int col, SegmentRope shared, MemorySegment local,
                              long localOff, int localLen, boolean sharedSuffix) {
-        return offerTerm(col, shared, local, null, localOff, localLen, sharedSuffix);
+        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    private boolean offerTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
-                                long localOff, int localLen, boolean sharedSuffix) {
-        return offerTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
-    }
-
-    /**
-     * Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)},
-     * but uses a {@code byte[]} instead of a {@link MemorySegment} as the source of the UTF-8
-     * bytes of the local segment.
-     */
+    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
     public boolean offerTerm(int col, SegmentRope shared, byte[] local, int localOff,
                              int localLen, boolean sharedSuffix) {
-        return offerTerm(col, shared, null, local, localOff, localLen, sharedSuffix);
+        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
+    }
+
+    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
+    public boolean offerTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff,
+                             int localLen, boolean sharedSuffix) {
+        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
     /**
@@ -587,35 +583,52 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public void putTerm(int col, SegmentRope shared, MemorySegment local,
                         long localOff, int localLen, boolean sharedSuffix) {
-        putTerm(col, shared, local, null, localOff, localLen, sharedSuffix);
+        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    private Term makeTerm(SegmentRope shared, MemorySegment local, byte[] localU8, long localOff,
+    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)} */
+    public void putTerm(int col, SegmentRope shared, TwoSegmentRope local,
+                        int localOff, int localLen, boolean sharedSuffix) {
+        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
+    }
+
+    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
+    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen,
+                        boolean sharedSuffix) {
+        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
+    }
+
+    private Term makeTerm(SegmentRope shared, MemorySegment local, long localOff,
                           int localLen, boolean sharedSuffix) {
-        if ((shared == null || shared.len == 0) && localLen == 0) {
+        if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
-        }
-        ByteRope localRope = new ByteRope(localLen);
-        if (localU8 != null) localRope.append(localU8, (int)localOff, localLen);
-        else                 localRope.append(requireNonNull(local), localOff, localLen);
+        ByteRope localRope = new ByteRope(localLen).append(local, localOff, localLen);
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }
         return Term.wrap(fst, snd);
     }
 
-    private void putTerm(int col, SegmentRope shared, MemorySegment local, byte[] localU8,
-                           long localOff, int localLen, boolean sharedSuffix) {
-        putTerm(col, makeTerm(shared, local, localU8, localOff, localLen, sharedSuffix));
+    private Term makeTerm(SegmentRope shared, byte[] localU8, int localOff,
+                          int localLen, boolean sharedSuffix) {
+        if ((shared == null || shared.len == 0) && localLen == 0)
+            return null;
+        ByteRope localRope = new ByteRope(localLen).append(localU8, localOff, localLen);
+        SegmentRope fst, snd;
+        if (sharedSuffix) { fst = localRope; snd =    shared; }
+        else              { fst =    shared; snd = localRope; }
+        return Term.wrap(fst, snd);
     }
 
-    /**
-     * Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)}, but
-     * uses a {@code byte[]} instead of {@link MemorySegment} for the local UTF-8 source.
-     */
-    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen,
-                        boolean sharedSuffix) {
-        putTerm(col, shared, null, local, localOff, localLen, sharedSuffix);
+    private Term makeTerm(SegmentRope shared, TwoSegmentRope local, int localOff,
+                          int localLen, boolean sharedSuffix) {
+        if ((shared == null || shared.len == 0) && localLen == 0)
+            return null;
+        ByteRope localRope = new ByteRope(localLen).append(local, localOff, localOff+localLen);
+        SegmentRope fst, snd;
+        if (sharedSuffix) { fst = localRope; snd =    shared; }
+        else              { fst =    shared; snd = localRope; }
+        return Term.wrap(fst, snd);
     }
 
     /** Version of {@link #commitOffer()} that never rejects. For use with

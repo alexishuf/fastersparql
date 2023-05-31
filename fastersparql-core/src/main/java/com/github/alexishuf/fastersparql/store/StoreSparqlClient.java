@@ -744,27 +744,8 @@ public class StoreSparqlClient extends AbstractSparqlClient {
                 case '_' -> ByteRope.EMPTY;
                 default -> throw new IllegalArgumentException("Not an RDF term");
             };
-            MemorySegment local;
-            long localOff;
-            int localLen;
-            if (sh.len == t.sndLen) {
-                local =  t.fst;
-                localOff = t.fstOff;
-                localLen = t.fstLen;
-            } else if (sh.len == t.fstLen) {
-                local = t.snd;
-                localOff = t.sndOff;
-                localLen = t.sndLen;
-            } else {
-                if (localCopy == null) localCopy = new ByteRope(t.len);
-                else                   localCopy.clear();
-                if (fst == '"') localCopy.append(t, 0, t.len-sh.len);
-                else            localCopy.append(t, sh.len, t.len);
-                local = localCopy.segment;
-                localOff = 0;
-                localLen = localCopy.len;
-            }
-            dest.putTerm(col, sh, local, localOff, localLen, fst == '"');
+            int localOff = fst == '<' ? sh.len : 0;
+            dest.putTerm(col, sh, t, localOff, t.len-sh.len, fst == '"');
         }
 
         private void rebind(B lb, int lr) {

@@ -215,7 +215,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private int allocTerm(boolean forbidGrow, int destCol, SegmentRope shared,
                           int flaggedLocalLen) {
         if (offerNextLocals < 0) throw new IllegalStateException();
-        if (destCol < 0 || destCol >= cols) throw new IndexOutOfBoundsException();
+        if (destCol <     0) throw new IndexOutOfBoundsException();
+        if (destCol >= cols) throw new IndexOutOfBoundsException();
         // find write location in md and grow if needed
         int slBase = rows*slRowInts + (destCol<<1), dest = offerNextLocals;
         if (slices[slBase+SL_OFF] != 0)
@@ -776,6 +777,15 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return true;
     }
 
+    @Override
+    public boolean offerTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(true, col, shared,
+                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+        if (dest < 0) return rollbackOffer();
+        local.copy(localOff, localOff+localLen, locals, dest);
+        return true;
+    }
+
     @Override public boolean commitOffer() {
         if (offerNextLocals < 0) throw new IllegalStateException();
         int base = (rows+1) * slRowInts - 2;
@@ -846,6 +856,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int dest = allocTerm(false, col, shared,
                              localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
         arraycopy(local, localOff, locals, dest, localLen);
+    }
+
+    @Override
+    public void putTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(false, col, shared,
+                             localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
+        local.copy(localOff, localOff+localLen, locals, dest);
     }
 
     @Override public void commitPut() { commitOffer(); }
