@@ -24,9 +24,7 @@ public class SingletonsRowBucket<B extends Batch<B>> implements RowBucket<B> {
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
-        int i = 0;
-        while (i < rows.length) {
-            B r = rows[i];
+        for (B r : rows) {
             if (r != null && bt.recycle(r) != null) break;
         }
         Arrays.fill(rows, null);
