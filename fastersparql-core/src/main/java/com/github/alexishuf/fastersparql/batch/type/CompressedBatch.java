@@ -947,10 +947,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols;
         if (cols != o.cols) throw new IllegalArgumentException("o.cols != cols");
         if (row > o.rows) throw new IndexOutOfBoundsException("row > o.rows");
-        int base = rows * slRowInts, oBase = row*o.slRowInts;
-        int[] sl = this.slices, osl = o.slices;
-        int lLen = o.bytesUsed(row), lSrc = osl[oBase+(cols<<1) + SL_OFF], lDst = bytesUsed;
+        int[] osl = o.slices;
+        int oBase = row*o.slRowInts, lLen = o.bytesUsed(row), lSrc = osl[oBase+(cols<<1) + SL_OFF];
         reserve(1, lLen);
+        int base = rows*slRowInts, lDst = bytesUsed;
+        int[] sl = this.slices;
         for (int e = base+(cols<<1); base < e; base += 2, oBase += 2) {
             sl[base+SL_OFF] = osl[oBase+SL_OFF] - lSrc + lDst;
             sl[base+SL_LEN] = osl[oBase+SL_LEN];
