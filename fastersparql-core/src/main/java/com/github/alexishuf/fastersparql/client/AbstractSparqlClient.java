@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -31,7 +30,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     public <B extends Batch<B>>
     BIt<B> query(BatchType<B> batchType, SparqlQuery sparql, @Nullable BIt<B> bindings,
                             @Nullable BindType type, @Nullable JoinMetrics metrics) {
-        if (bindings == null || bindings instanceof EmptyBIt<B>)
+        if (bindings == null)
             return query(batchType, sparql);
         else if (type == null)
             throw new NullPointerException("bindings != null, but type is null!");

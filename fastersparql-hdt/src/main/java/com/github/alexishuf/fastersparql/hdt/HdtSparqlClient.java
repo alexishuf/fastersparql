@@ -124,7 +124,7 @@ public class HdtSparqlClient extends AbstractSparqlClient {
 
     @Override
     public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql, @Nullable BIt<B> bindings, @Nullable BindType type, Metrics.@Nullable JoinMetrics metrics) {
-        if (bindings == null || bindings instanceof EmptyBIt<B>)
+        if (bindings == null)
             return query(bt, sparql);
         else if (type == null)
             throw new NullPointerException("bindings != null, but type is null!");

@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
@@ -100,7 +99,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     public <B extends Batch<B>>
     BIt<B> query(BatchType<B> batchType, SparqlQuery sp, @Nullable BIt<B> bindings,
                  @Nullable BindType bindType, @Nullable JoinMetrics metrics) {
-        if (bindings == null || bindings instanceof EmptyBIt)
+        if (bindings == null)
             return query(batchType, sp);
         if (bindType == null)
             throw new FSInvalidArgument("bindType is null with non-null bindings");
