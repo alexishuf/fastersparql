@@ -170,7 +170,8 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
         if (bindingsSender == null)
             bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
         long n = rope.parseLong(rope.skipWS(begin + BIND_REQUEST.length, end));
-        if ((int)B_REQUESTED.getAndAddRelease(this, (int)Math.max(MAX_VALUE, n)) <= 0)
+        int add = (int) Math.min(MAX_VALUE-(long)plainBindingsRequested, n);
+        if ((int)B_REQUESTED.getAndAddRelease(this, add) <= 0)
             LockSupport.unpark(bindingsSender);
     }
 
@@ -208,6 +209,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                 for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
                     while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
                         LockSupport.park(this);
+                    if (allowed < 0) allowed = MAX_VALUE;
                     if (isClosed())
                         return;
                     allowed -= taken = Math.min(allowed, rows - r);
