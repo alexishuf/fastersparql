@@ -182,6 +182,10 @@ public abstract class Batch<B extends Batch<B>> {
         return sb.append(']').toString();
     }
 
+    protected String mkOutOfBoundsMsg(int row) {
+        return "row "+row+" is out of bounds for cols="+cols+")";
+    }
+
     /* --- --- --- term-level accessors --- --- --- */
 
     /**
@@ -375,6 +379,9 @@ public abstract class Batch<B extends Batch<B>> {
         return Objects.equals(get(row, col), other.get(oRow, oCol));
     }
 
+    protected String mkOutOfBoundsMsg(int row, int col) {
+        return "("+row+", "+col+") is out of bounds for batch of size ("+rows+", "+cols+")";
+    }
 
     /* --- --- --- mutators --- --- --- */
 

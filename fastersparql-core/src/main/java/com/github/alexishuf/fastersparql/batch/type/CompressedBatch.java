@@ -175,11 +175,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     private int slBase(int row, int col) {
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        if (row < 0 || col < 0 || row >= rows || col >= cols)
+            throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row, col));
         return row* slRowInts + (col<<1);
     }
     private int slRowBase(int row) {
-        if (row < 0 || row >= rows) throw new IndexOutOfBoundsException();
+        if (row < 0 || row >= rows)
+            throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
         return row*slRowInts + (cols<<1);
     }
 
@@ -215,8 +217,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private int allocTerm(boolean forbidGrow, int destCol, SegmentRope shared,
                           int flaggedLocalLen) {
         if (offerNextLocals < 0) throw new IllegalStateException();
-        if (destCol <     0) throw new IndexOutOfBoundsException();
-        if (destCol >= cols) throw new IndexOutOfBoundsException();
+        if (destCol < 0 || destCol >= cols)
+            throw new IndexOutOfBoundsException("destCol="+destCol+", cols="+cols);
         // find write location in md and grow if needed
         int slBase = rows*slRowInts + (destCol<<1), dest = offerNextLocals;
         if (slices[slBase+SL_OFF] != 0)
@@ -321,8 +323,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
         if (!HAS_UNSAFE)
             return equalsNoUnsafe(row, other, oRow);
-        if (row < 0 || row >= rows || oRow < 0 || oRow >= other.rows)
-            throw new IndexOutOfBoundsException();
+        if (row < 0 || row >= rows)
+            throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
+        if (oRow < 0 || oRow >= other.rows)
+            throw new IndexOutOfBoundsException(other.mkOutOfBoundsMsg(oRow));
         int cols = this.cols;
         if (cols != other.cols) return false;
         if (cols == 0) return true;
@@ -347,8 +351,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
 
     private boolean equalsNoUnsafe(int row, CompressedBatch other, int oRow) {
-        if (row < 0 || row >= rows || oRow < 0 || oRow >= other.rows)
-            throw new IndexOutOfBoundsException();
+        if (row < 0 || row >= rows)
+            throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
+        if (oRow < 0 || oRow >= other.rows)
+            throw new IndexOutOfBoundsException(other.mkOutOfBoundsMsg(row));
         int cols = this.cols;
         if (cols != other.cols) return false;
         if (cols == 0) return true;
@@ -443,7 +449,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
         if (row < 0 || row >= rows || col < 0 || col >= cols)
-            throw new IndexOutOfBoundsException();
+            throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row, col));
         SegmentRope sh = shared[row*cols + col];
         return sh == null ? EMPTY : sh;
     }
@@ -582,7 +588,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
         fstLen &= LEN_MASK;
         if (begin < 0 || end > (fstLen+sndLen))
-            throw new IndexOutOfBoundsException();
+            throw new IndexOutOfBoundsException(begin);
         if (fstLen + sndLen == 0) return;
 
         if (begin < fstLen)
@@ -946,7 +952,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public void putRow(CompressedBatch o, int row) {
         int cols = this.cols;
         if (cols != o.cols) throw new IllegalArgumentException("o.cols != cols");
-        if (row > o.rows) throw new IndexOutOfBoundsException("row > o.rows");
+        if (row > o.rows) throw new IndexOutOfBoundsException(o.mkOutOfBoundsMsg(row));
         int[] osl = o.slices;
         int oBase = row*o.slRowInts, lLen = o.bytesUsed(row), lSrc = osl[oBase+(cols<<1) + SL_OFF];
         reserve(1, lLen);
