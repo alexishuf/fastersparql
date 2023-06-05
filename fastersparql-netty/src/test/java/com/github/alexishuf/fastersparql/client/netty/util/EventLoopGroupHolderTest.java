@@ -38,13 +38,13 @@ class EventLoopGroupHolderTest {
         assertFalse(elg2.isShutdown());
         assertFalse(elg2.isShuttingDown());
         assertFalse(elg2.isTerminated());
-        Thread.sleep(600); //wait for rogue keepAlive killer
+        Thread.sleep(900); //wait for rogue keepAlive killer
         assertFalse(elg.isShuttingDown()); // keepAlive
 
         holder.release();
         assertFalse(elg.isShuttingDown()); // keepAlive
 
-        Thread.sleep(600); // wait keepAlive expire
+        Thread.sleep(900); // wait keepAlive expire
         assertTrue(elg.isShuttingDown()); //shutdown started
 
         EventLoopGroup elg3 = holder.acquire();
