@@ -97,9 +97,9 @@ public abstract class CardinalityEstimator {
         for (int i = 1, n = plan.opCount(); i < n; i++) {
             Plan o = plan.op(i);
             int cost = estimate(o, accBinding);
-            boolean noNewVars = true;
-            short unjoinedNewVars = 0, joins = 0;
             Vars oVars = o.publicVars();
+            boolean noNewVars = true, cartesian = true;
+            short unjoinedNewVars = 0, joins = 0;
             for (Rope name : oVars) {
                 int varIdx = accBinding.vars.indexOf(name);
                 if (accBinding.get(varIdx) == null) {
@@ -115,6 +115,8 @@ public abstract class CardinalityEstimator {
                         }
                     }
                     if (unjoined) ++unjoinedNewVars;
+                } else {
+                    cartesian = false;
                 }
             }
             if (noNewVars) {
@@ -122,6 +124,9 @@ public abstract class CardinalityEstimator {
                     accCost -= accCost >> 4; // o is acting as a filter
                 else
                     accCost = accCost + cost; // o has a small multiplicative effect, thus we add
+            } else if (cartesian) {
+                // cartesian product may only have a filtering effect in theory
+                accCost *= cost;
             } else if (joins == 0) {
                 // new vars were added, but they do not contribute to any subsequent join.
                 // assume these vars will not cause filtering. For > 1 new vars, assume that
