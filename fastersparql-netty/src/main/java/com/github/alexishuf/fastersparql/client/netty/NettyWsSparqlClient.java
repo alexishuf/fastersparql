@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
+import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -19,13 +19,10 @@ import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
-import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
@@ -45,6 +42,7 @@ import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
 
+import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.model.BindType.MINUS;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -95,23 +93,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
     }
 
-    @Override
-    public <B extends Batch<B>>
-    BIt<B> query(BatchType<B> batchType, SparqlQuery sp, @Nullable BIt<B> bindings,
-                 @Nullable BindType bindType, @Nullable JoinMetrics metrics) {
-        if (bindings == null)
-            return query(batchType, sp);
-        if (bindType == null)
-            throw new FSInvalidArgument("bindType is null with non-null bindings");
-        if (sp.isGraph())
-            throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
+    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
         try {
-            if (bindType == MINUS && !bindings.vars().intersects(sp.allVars()))
+            var sp = bq.query;
+            var bindings = bq.bindings;
+            var type = bq.type;
+            if (sp.isGraph())
+                throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
+            if (type == MINUS && !bindings.vars().intersects(sp.allVars()))
                 return bindings;
-            else if (!bindType.isJoin())
-                sp = sp.toAsk();
-            Vars exVars = bindType.resultVars(bindings.vars(), sp.publicVars());
-            return new WsBIt<>(batchType, sp, exVars, bindType, bindings, metrics);
+            return new WsBIt<>(bq);
         } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
     }
 
@@ -147,18 +138,19 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         protected final ByteBufSink bbSink = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT);
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), FSProperties.queueMaxRows());
+            super(batchType, query.publicVars(), queueMaxRows());
             this.requestMessage = createRequest(QUERY_VERB, query.sparql());
             this.parser = new WsClientParserBIt<>(this, this);
             request();
         }
 
-        public WsBIt(BatchType<B> batchType, SparqlQuery query, Vars outVars, BindType bindType, BIt<B> bindings,
-                     @Nullable JoinMetrics metrics) {
-            super(batchType, outVars, FSProperties.queueMaxRows());
-            this.requestMessage = createRequest(BIND_VERB[bindType.ordinal()], query.sparql());
-            var usefulBindingVars = bindings.vars().intersection(query.allVars());
-            this.parser = new WsClientParserBIt<>(this, this, bindings, usefulBindingVars, metrics);
+        public WsBIt(BindQuery<B> bindQuery) {
+            super(bindQuery.bindings.batchType(), bindQuery.resultVars(), queueMaxRows());
+            SparqlQuery query = bindQuery.query;
+            this.requestMessage = createRequest(BIND_VERB[bindQuery.type.ordinal()], query.sparql());
+            var usefulBindingVars = bindQuery.bindings.vars().intersection(query.allVars());
+            this.parser = new WsClientParserBIt<>(this, this,
+                                                  bindQuery, usefulBindingVars);
             request();
         }
 

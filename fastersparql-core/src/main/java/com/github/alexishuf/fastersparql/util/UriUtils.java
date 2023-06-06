@@ -187,9 +187,7 @@ public class UriUtils {
         if (string == null)
             return null;
         int i = string.skipUntil(begin, end, '%');
-        if (i == end)
-            return string;
-        ByteRope b = new ByteRope(end);
+        ByteRope b = new ByteRope(end-begin);
         while (i < end) {
             b.append(string, begin, i);
             if (i + 2 < end) {

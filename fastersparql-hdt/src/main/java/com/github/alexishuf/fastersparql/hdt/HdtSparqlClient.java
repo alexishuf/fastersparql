@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.batch.operators.BindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
+import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
@@ -21,16 +22,13 @@ import com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.hdt.cardinality.HdtCardinalityEstimator;
-import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
@@ -122,22 +120,17 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    @Override
-    public <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql, @Nullable BIt<B> bindings, @Nullable BindType type, Metrics.@Nullable JoinMetrics metrics) {
-        if (bindings == null)
-            return query(bt, sparql);
-        else if (type == null)
-            throw new NullPointerException("bindings != null, but type is null!");
-        if (sparql.isGraph())
-            throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
         try {
-            Plan q = new SparqlParser().parse(sparql);
-            if (bt == TYPE && (q instanceof TriplePattern
+            Plan q = bq.parsedQuery();
+            if (q.isGraph())
+                throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+            if (bq.bindings.batchType() == TYPE && (q instanceof TriplePattern
                     || (q instanceof Modifier m && m.left instanceof TriplePattern))) {
                 //noinspection unchecked
-                return (BIt<B>) new HdtBindingBIt((BIt<HdtBatch>)bindings, type, q, metrics);
+                return (BIt<B>) new HdtBindingBIt((BindQuery<HdtBatch>) bq, q);
             }
-            return new ClientBindingBIt<>(bindings, type, this, q, metrics);
+            return new ClientBindingBIt<>(bq, this);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
         }
@@ -232,9 +225,8 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         private final Vars rightFreeVars;
         private final Dictionary dict;
 
-        public HdtBindingBIt(BIt<HdtBatch> left, BindType type, Plan rightPlan,
-                             Metrics.@Nullable JoinMetrics metrics) {
-            super(left, type, rightPlan.publicVars(), null, metrics);
+        public HdtBindingBIt(BindQuery<HdtBatch> bq, Plan rightPlan) {
+            super(bq, null);
             acquireHdt();
             if (rightPlan instanceof Modifier m) {
                 this.modifier = m;
@@ -249,15 +241,11 @@ public class HdtSparqlClient extends AbstractSparqlClient {
             this.o = plain(dict, right.o,    OBJECT);
             this.rightFreeVars
                     = (modifier != null && modifier.filters.isEmpty() ? modifier : right)
-                    .publicVars().minus(left.vars());
+                    .publicVars().minus(bq.bindings.vars());
             if (s == -1 || p == -1 || o == -1)
                 empty = new EmptyBIt<>(TYPE, rightFreeVars);
             else
                 empty = null;
-        }
-
-        @Override protected Object rightUnbound() {
-            return right;
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {

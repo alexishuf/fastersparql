@@ -35,7 +35,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     public final BatchType<B> batchType;
 
     protected B rowBatch;
-    private long rowsEmitted;
+    protected long rowsEmitted;
 
     protected final @Nullable CallbackBIt<B> destination;
 

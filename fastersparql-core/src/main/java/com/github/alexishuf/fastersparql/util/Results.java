@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -268,8 +269,7 @@ public final class Results {
 
     /** Create a copy of {@code this} that will send the given {@link SparqlQuery}
      *  (or {@link Rope}/{@link CharSequence} to be parsed as one) to
-     *  {@link SparqlClient#query(BatchType, SparqlQuery)} or
-     *  {@link SparqlClient#query(BatchType, SparqlQuery, BIt, BindType)}
+     *  {@link SparqlClient#query(BatchType, SparqlQuery)} or {@link SparqlClient#query(BindQuery)}
      *  on {@link Results#check(SparqlClient)}. */
     public <R> Results query(Object sparql) {
         SparqlQuery query;
@@ -316,8 +316,7 @@ public final class Results {
     }
 
     /** Create a copy of {@code this} that will send {@code bindType} to
-     *  {@link SparqlClient#query(BatchType, SparqlQuery, BIt, BindType)} on
-     *  {@link Results#check(SparqlClient)}. */
+     *  {@link SparqlClient#query(BindQuery)} on {@link Results#check(SparqlClient)}. */
     public Results bindType(BindType bindType) {
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
     }
@@ -385,6 +384,22 @@ public final class Results {
             return new EmptyBIt<>(TERM, bindingsVars);
         return new IteratorBIt<>(bindingsList, TERM, bindingsVars);
     }
+    public BindQuery<TermBatch> asBindQuery() {
+        if (bindingsList == null)
+            throw new UnsupportedOperationException("No bindings set");
+        if (query == null)
+            throw new UnsupportedOperationException("No query set");
+        return new BindQuery<>(query, bindingsBIt(), bindType);
+    }
+
+    public <B extends Batch<B>> BindQuery<B> asBindQuery(BatchType<B> batchType) {
+        if (bindingsList == null)
+            throw new UnsupportedOperationException("No bindings set");
+        if (query == null)
+            throw new UnsupportedOperationException("No query set");
+        return new BindQuery<>(query, batchType.convert(bindingsBIt()), bindType);
+    }
+
     public Results bindingsAsResults() {
         if (bindingsList == null || bindingsVars == null)
             throw new IllegalStateException("No bindings!");
@@ -410,28 +425,61 @@ public final class Results {
         SparqlQuery query = this.query;
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
-        if (bindingsList != null) {
-            check(client.query(batchType, query, batchType.convert(bindingsBIt()), bindType));
-        } else {
+        if (bindingsList != null)
+            queryAndCheck(client, batchType.convert(bindingsBIt()));
+        else
             check(client.query(batchType, query));
+    }
+
+    private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings) {
+        queryAndCheck(client, bindings, this.query, this.bindType);
+    }
+
+    private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings,
+                                                    SparqlQuery query, BindType bindType) {
+        assert bindingsList != null;
+        var observedSeq = new BitSet();
+        var errors = new StringBuilder();
+        check(client.query(new BindQuery<B>(query, bindings, bindType) {
+            public void binding(long seq) {
+                if (seq >= bindingsList.size() || seq < 0) {
+                    errors.append("Invalid seq number: ").append(seq).append('\n');
+                } else if (observedSeq.get((int)seq)) {
+                    errors.append("Duplicate seq: ").append(seq).append('\n');
+                } else {
+                    observedSeq.set((int)seq);
+                }
+            }
+            @Override public void emptyBinding(long sequence) {binding(sequence);}
+            @Override public void nonEmptyBinding(long sequence) {binding(sequence);}
+        }));
+        for (int i = 0; i < bindingsList.size(); i++) {
+            if (!observedSeq.get(i))
+                errors.append("No *Binding(").append(i).append(") call\n");
+        }
+        if (!errors.isEmpty()) {
+            var sb = new StringBuilder();
+            if (context != null)
+                throw new AssertionError("Context: "+context+"\n"+ errors);
+            else
+                throw new AssertionError(errors.toString());
         }
     }
+
 
     /**
      * {@link Results#check(BIt)} on the result of querying {@link Results#query()}
      * (with bindings, if {@link Results#hasBindings()})  against client and receiving rows
      * using the given {@code rowType}.
      */
-    public <B extends Batch<B>> void check(SparqlClient client,
-                                           BatchType<B> batchType,
-                                           Function<BIt<TermBatch>, BIt<B>> bindingsConverter) throws AssertionError {
+    public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType, Function<BIt<TermBatch>, BIt<B>> bindingsConverter) throws AssertionError {
         if (query == null)
             throw new IllegalStateException("No query defined, cannot check(SparqlClient)");
         SparqlQuery query = this.query;
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
         if (bindingsList != null) {
-            check(client.query(batchType, query, bindingsConverter.apply(bindingsBIt()), bindType));
+            queryAndCheck(client, bindingsConverter.apply(bindingsBIt()));
         } else {
             check(client.query(batchType, query));
         }
@@ -454,7 +502,7 @@ public final class Results {
     public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType,
                                            SparqlQuery q, BIt<B> bindings,
                                            BindType bindType) throws AssertionError {
-        check(client.query(batchType, q, bindings, bindType));
+        queryAndCheck(client, bindings, q, bindType);
     }
 
     /** Equivalent to {@code check(((Plan)query()).execute())}. */

@@ -8,11 +8,8 @@ import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQuery;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
-import com.github.alexishuf.fastersparql.model.BindType;
-import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A {@link SparqlClient} allows submitting queries to remote SPARQL endpoints.
@@ -50,40 +47,23 @@ public interface SparqlClient extends AutoCloseable {
      *         the intent.</li>
      * </ul>
      *
-     * @param batchType  {@link BatchType} of resulting {@link BIt}. If {@code bindings != null},
-     *                   MUST be equals to {@code bindings.rowType()}.
-     * @param sparql     the SPARQL query.
-     * @param bindings   A {@link BIt} over rows of the left side of the bind operation. For each
-     *                   such row, {@code sparql} will be executed with vars set in the left
-     *                   row assigned to the value in that row. All solutions for the bound
-     *                   {@code sparql} are merged with the original left row in accordance to
-     *                   the requested bind {@code type}
-     * @param type       The semantics for the bind operation to be done with the given
-     *                   {@code bindings}. Can be null if, and only if {@code bindings == null}
-     * @param metrics    optional {@link JoinMetrics} that will receive events from the returned
-     *                   {@link BIt}.
+     * @param bindQuery A specification of the bind operation and maybe a listener of the
+     *                  {@link BindQuery#emptyBinding(long)} and
+     *                  {@link BindQuery#nonEmptyBinding(long)} events.
      * @return a {@link BIt} over the solutions
      * @throws NullPointerException if only one among {@code bindings} and {@code type}  is null.
      */
-    <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql,
-                                      @Nullable BIt<B> bindings, @Nullable BindType type,
-                                      @Nullable JoinMetrics metrics);
-
-    /** Equivalent to {@code query(batchType, sparql, bindings, type, null)}. */
-    <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql,
-                                      @Nullable BIt<B> bindings, @Nullable BindType type);
+    <B extends Batch<B>> BIt<B> query(BindQuery<B> bindQuery);
 
     /**
-     * Whether {@link SparqlClient#query(BatchType, SparqlQuery, BIt, BindType)}
-     * uses a protocol extension that allows more efficient execution of bind-based joins,
-     * {@code OPTIONAL}, {@code FILTER EXISTS} and {@code MINUS} SPARQL operators.
+     * Whether {@link SparqlClient#query(BindQuery)} uses a protocol extension that allows more
+     * efficient execution of bind-based joins, {@code OPTIONAL}, {@code FILTER EXISTS}
+     * and {@code MINUS} SPARQL operators.
      */
     boolean usesBindingAwareProtocol();
 
     /** Equivalent to {@code query(sparql, null, null)}. */
-    default <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql)  {
-        return query(batchType, sparql, null, null);
-    }
+    <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql);
 
     /**
      * Closes the client, releasing all resources.

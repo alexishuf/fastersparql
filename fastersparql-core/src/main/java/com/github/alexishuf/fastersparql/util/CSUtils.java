@@ -4,7 +4,26 @@ package com.github.alexishuf.fastersparql.util;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.Arrays;
+
 public class CSUtils {
+    public static final byte[] BITS_2_BASE64 = {
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+            'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+            'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+            'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+            'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', '+', '/'
+    };
+
+    public static final byte[] BASE64_2_BITS;
+    static {
+        byte[] char2value = new byte[128];
+        Arrays.fill(char2value, (byte) -1);
+        for (int value = 0; value < BITS_2_BASE64.length; value++)
+            char2value[BITS_2_BASE64[value]] = (byte) value;
+        BASE64_2_BITS = char2value;
+    }
 
     /**
      * Compute a {@link String}-compatible hash code even if cs is not a {@link String}.

@@ -5,36 +5,35 @@ import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
-import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     protected final BatchMerger<B> merger;
-    protected final BindType bindType;
+    protected final BindQuery<B> bindQuery;
     private @Nullable B lb, rb;
     private int leftRow = -1;
-    private final BIt<B> left, empty;
+    private final BIt<B> empty;
     private final BatchBinding<B> tempBinding;
+    private long bindingSeq;
+    private boolean bindingEmpty = false;
 
     /* --- --- --- lifecycle --- --- --- */
 
-    public BindingBIt(BIt<B> left, BindType type, Vars rightPublicVars,
-                      @Nullable Vars projection,
-                      Metrics. @Nullable JoinMetrics metrics) {
-        super(projection != null ? projection : type.resultVars(left.vars(), rightPublicVars),
-              EmptyBIt.of(left.batchType()));
-        this.empty = inner;
+    public BindingBIt(BindQuery<B> bindQuery, @Nullable Vars projection) {
+        super(projection != null ? projection : bindQuery.resultVars(),
+              EmptyBIt.of(bindQuery.bindings.batchType()));
+        var left = bindQuery.bindings;
         Vars leftPublicVars = left.vars();
-        Vars rFree = rightPublicVars.minus(leftPublicVars);
-        this.lb = batchType.createSingleton(leftPublicVars.size());
-        this.left        = left;
+        Vars rFree = bindQuery.query.publicVars().minus(leftPublicVars);
+        this.lb          = batchType.createSingleton(leftPublicVars.size());
+        this.bindQuery   = bindQuery;
+        this.empty       = inner;
         this.merger      = batchType.merger(vars(), leftPublicVars, rFree);
-        this.bindType    = type;
         this.tempBinding = new BatchBinding<>(batchType, leftPublicVars);
-        this.metrics     = metrics;
+        this.metrics     = bindQuery.metrics;
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
@@ -42,14 +41,14 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         lb = batchType.recycle(lb);
         rb = batchType.recycle(rb);
         if (cause != null)
-            left.close();
+            bindQuery.bindings.close();
     }
 
     /* --- --- --- delegate control --- --- --- */
 
     @Override public @Nullable B recycle(B batch) {
         if (batch == null || super.recycle(batch) == null) return null;
-        if (left.recycle(batch) == null) return null;
+        if (bindQuery.bindings.recycle(batch) == null) return null;
         if (inner.recycle(batch) == null) return null;
         return batch;
     }
@@ -65,9 +64,10 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             b = getBatch(b);
             do {
                 if (inner == empty) {
+                    bindingEmpty = true;
                     if (++leftRow >= lb.rows) {
                         leftRow = 0;
-                        lb = left.nextBatch(lb);
+                        lb = bindQuery.bindings.nextBatch(lb);
                         if (lb == null) break; // reached end
                     }
                     inner = bind(tempBinding.setRow(lb, leftRow));
@@ -76,16 +76,21 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 if ((rb = inner.nextBatch(rb)) == null) {
                     inner = empty;
                 }
-                boolean pub = switch (bindType) {
+                boolean pub = switch (bindQuery.type) {
                     case JOIN,EXISTS      -> rb != null;
                     case NOT_EXISTS,MINUS -> rb == null;
                     case LEFT_JOIN        -> { re &= rb == null; yield rb != null || re; }
                 };
                 if (pub) {
-                    switch (bindType) {
+                    bindingEmpty = false;
+                    switch (bindQuery.type) {
                         case JOIN,LEFT_JOIN          ->   b = merger.merge(b, lb, leftRow, rb);
                         case EXISTS,NOT_EXISTS,MINUS -> { b.putRow(lb, leftRow); inner = empty; }
                     }
+                }
+                if (inner == empty) {
+                    if (bindingEmpty) bindQuery.emptyBinding(bindingSeq++);
+                    else              bindQuery.nonEmptyBinding(bindingSeq++);
                 }
             } while (readyInNanos(b.rows, startNs) > 0);
             if (b.rows == 0) b = handleEmptyBatch(b);
@@ -106,13 +111,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     /* --- --- --- toString() --- --- --- */
 
-    protected abstract Object rightUnbound();
-
     @Override protected String toStringNoArgs() {
-        return super.toStringNoArgs()+'['+bindType+']';
+        return super.toStringNoArgs()+'['+bindQuery.type+']';
     }
 
     @Override public String toString() {
-        return toStringNoArgs()+'('+left+", "+rightUnbound()+')';
+        return toStringNoArgs()+'('+bindQuery.bindings+", "+bindQuery.query+')';
     }
 }

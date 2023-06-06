@@ -366,7 +366,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             offer.add(varName);
         }
         inVar2outVar = new int[this.inputColumns = offer.size()];
-        if (nVars == 0 && offer.size() >= 1)
+        if (nVars == 0 && offer.size() > (offer.contains(WsBindingSeq.VAR) ? 1 : 0))
             checkAskVars(offer);
         for (int i = 0; i < offer.size(); i++)
             inVar2outVar[i] = vars.indexOf(offer.get(i));
@@ -458,14 +458,14 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     }
 
     protected InvalidSparqlResultsException extraColumns() {
-        var msg = format("More than %d columns at line %d. Expected %s", nVars, line,
+        var msg = format("More than %d columns at line %d. Expected %s", inputColumns, line,
                          eol == Csv.EOL ? "\\r\\n (\\x0D\\x0A, CRLF)" : "\\n(\\x0A, LF)");
         return new InvalidSparqlResultsException(msg);
     }
 
     protected InvalidSparqlResultsException badSep(byte actual) {
         String msg = format("Expected %s, got '%s' (0x%x) at line %d",
-                column >= nVars - 1 ? eol.len == 1 ? "\"\\n\"" : "\"\\r\\n\""
+                column >= inputColumns - 1 ? eol.len == 1 ? "\"\\n\"" : "\"\\r\\n\""
                                     : eol.len == 1 ? "'\\t'" : "','",
                 (char)(0xff & actual),
                 0xff & actual,

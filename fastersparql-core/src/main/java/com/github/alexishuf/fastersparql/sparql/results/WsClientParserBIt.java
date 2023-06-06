@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -29,6 +30,7 @@ import static java.lang.invoke.MethodHandles.lookup;
 
 public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B> {
     private static final Logger log = LoggerFactory.getLogger(WsClientParserBIt.class);
+    private static final int[] EMPTY_COLS = new int[0];
     private static final VarHandle B_REQUESTED;
     static {
         try {
@@ -40,9 +42,15 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
 
     /* --- --- --- instance fields --- --- --- */
 
+    private final @Nullable BindQuery<B> bindQuery;
     private final @Nullable BIt<B> bindings;
     private final Vars usefulBindingsVars;
-    private final @Nullable JoinMetrics metrics;
+    private final @Nullable SPSCBIt<B> sentBindings;
+    private final int[] bindingCol2OutCol;
+    private @Nullable B sentBatch;
+    private int sentBatchRow;
+    private long bindingSeq = -1;
+    private boolean bindingNotified = true;
     private @MonotonicNonNull Thread bindingsSender;
     @SuppressWarnings("unused") private int plainBindingsRequested;
 
@@ -59,8 +67,10 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
     public WsClientParserBIt(WsFrameSender<?> frameSender, CallbackBIt<B> destination) {
         super(frameSender, destination);
         usefulBindingsVars = Vars.EMPTY;
+        sentBindings = null;
+        bindingCol2OutCol = EMPTY_COLS;
         bindings = null;
-        metrics = null;
+        bindQuery = null;
     }
 
     /**
@@ -76,20 +86,21 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
     public WsClientParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, Vars vars, int maxBatches) {
         super(frameSender, batchType, vars, maxBatches);
         usefulBindingsVars = Vars.EMPTY;
+        sentBindings = null;
+        bindingCol2OutCol = EMPTY_COLS;
         bindings = null;
-        metrics = null;
+        bindQuery = null;
     }
 
     /**
      * Create a parser for the experimental WebSocket query results of a {@code !bind} request.
      *
      * @param frameSender       object to be used when sending WebSocket frames
-     * @param batchType         the {@link BatchType} with operations for {@code R}
      * @param vars              See {@link ResultsParserBIt#ResultsParserBIt(BatchType, Vars, int)}
-     * @param bindings          a {@link BIt} of bindings that will be sent in to the server as TSV
-     *                          chunks in WebSocket frames in parallel to the consumption of this
-     *                          {@link BIt} and in response to server-sent {@code !bind-request n}
-     *                          frames.
+     * @param bindQuery         a {@link BindQuery} specifying the bind operation
+     *                          {@link BindQuery#emptyBinding(long)} and
+     *                          {@link BindQuery#nonEmptyBinding(long)} will be called for every
+     *                          binding, in order.
      * @param usefulBindingVars among the vars provided by {@code bindings} only these will be
      *                          sent to the server. This is equivalent to projecting
      *                          {@code bindings} just during the sending phase: for
@@ -98,27 +109,30 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      @param maxItems          See {@link SPSCBIt#SPSCBIt(BatchType, Vars, int)}
      */
     public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
-                             @NonNull BatchType<B> batchType, @NonNull Vars vars,
-                             @NonNull BIt<B> bindings,
-                             @Nullable Vars usefulBindingVars,
-                             @Nullable JoinMetrics metrics, int maxItems) {
-        super(frameSender, batchType, vars, maxItems);
-        this.bindings = bindings;
-        this.usefulBindingsVars = usefulBindingVars == null ? bindings.vars() : usefulBindingVars;
-        assert bindings.vars().containsAll(this.usefulBindingsVars);
-        this.metrics = metrics;
+                             @NonNull Vars vars,
+                             BindQuery<B> bindQuery,
+                             @Nullable Vars usefulBindingVars, int maxItems) {
+        super(frameSender, bindQuery.bindings.batchType(), vars, maxItems);
+        this.bindQuery = bindQuery;
+        this.bindings = bindQuery.bindings;
+        Vars bindingsVars = bindings.vars();
+        this.sentBindings = new SPSCBIt<>(batchType, bindingsVars, BIt.DEF_MAX_BATCH);
+        this.usefulBindingsVars = usefulBindingVars == null ? bindingsVars : usefulBindingVars;
+        assert bindingsVars.containsAll(this.usefulBindingsVars);
+        this.bindingCol2OutCol = bindingCol2OutCol(vars, bindingsVars);
+        this.metrics = bindQuery.metrics;
     }
 
     /**
      * Create a parser for the experimental WebSocket query results of a {@code !bind} request
      * that will redirect all rows and the results completion to {@code destination}
      *
-     * @param frameSender object to be used when sending WebSocket frames
-     * @param destination See {@link ResultsParserBIt#ResultsParserBIt(BatchType, CallbackBIt)}
-     * @param bindings a {@link BIt} of bindings that will be sent in to the server as TSV
-     *                 chunks in WebSocket frames in parallel to the consumption of this
-     *                 {@link BIt} and in response to server-sent {@code !bind-request n}
-     *                 frames.
+     * @param frameSender       object to be used when sending WebSocket frames
+     * @param destination       See {@link ResultsParserBIt#ResultsParserBIt(BatchType, CallbackBIt)}
+     * @param bindQuery         a {@link BindQuery} specifying the bind operation
+     *                          {@link BindQuery#emptyBinding(long)} and
+     *                          {@link BindQuery#nonEmptyBinding(long)} will be called for every
+     *                          binding, in order.
      * @param usefulBindingVars among the vars provided by {@code bindings} only these will be
      *                          sent to the server. This is equivalent to projecting
      *                          {@code bindings} just during the sending phase: for
@@ -127,22 +141,75 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      */
     public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
                              @NonNull CallbackBIt<B> destination,
-                             @NonNull BIt<B> bindings,
-                             @Nullable Vars usefulBindingVars,
-                             @Nullable JoinMetrics metrics) {
+                             BindQuery<B> bindQuery,
+                             @Nullable Vars usefulBindingVars) {
         super(frameSender, destination);
-        this.bindings = bindings;
-        this.usefulBindingsVars = usefulBindingVars == null ? bindings.vars() : usefulBindingVars;
-        assert bindings.vars().containsAll(this.usefulBindingsVars);
-        this.metrics = metrics;
+        this.bindQuery = bindQuery;
+        this.bindings = bindQuery.bindings;
+        Vars bindingsVars = bindings.vars();
+        this.sentBindings = new SPSCBIt<>(bindings.batchType(), bindingsVars, BIt.DEF_MAX_BATCH);
+        this.usefulBindingsVars = usefulBindingVars == null ? bindingsVars : usefulBindingVars;
+        assert bindingsVars.containsAll(this.usefulBindingsVars);
+        this.bindingCol2OutCol = bindingCol2OutCol(vars, bindingsVars);
+        this.metrics = bindQuery.metrics;
+    }
+
+    private static int[] bindingCol2OutCol(Vars outVars, Vars bindingsVars) {
+        int[] cols = new int[bindingsVars.size()];
+        for (int i = 0; i < cols.length; i++)
+            cols[i] = outVars.indexOf(bindingsVars.get(i));
+        return cols;
     }
 
     /* --- --- --- specialize SVParserBIt.Tsv methods --- --- --- */
 
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {
-        if      (rope.has(begin,   BIND_REQUEST)) handleBindRequest(rope, begin, eol);
-        else                                      return false;
+        byte hint = begin + 6 /*!bind-*/ < eol ? rope.get(begin+6) : 0;
+        byte[] cmd = hint == 'r' && rope.has(begin, BIND_REQUEST) ? BIND_REQUEST
+                   : hint == 'e' && rope.has(begin, BIND_EMPTY_UNTIL) ? BIND_EMPTY_UNTIL
+                   : null;
+        if (cmd == null)
+            return false;
+        long n = rope.parseLong(begin + cmd.length);
+        if   (cmd == BIND_REQUEST) handleBindRequest(n);
+        else                       handleBindEmptyUntil(n);
         return true;
+    }
+
+    @Override protected void setTerm() {
+        if (sentBindings == null || column != 0) { // normal path (not WsBindingSeq.VAR)
+            super.setTerm();
+            return;
+        }
+        // the WS server will perform the binding operation and for each bound result it will
+        // send the sequence number (0-based) of the binding and the values for public vars of
+        // the  right-hand operand that were not bound with values from the left-hand operand.
+        // In the case of non-join BindTypes (EXISTS/NOT_EXISTS/MINUS), there will be no
+        // right-side columns and only the binding sequence number column will be sent.
+        //
+        // This code parses the sequence number and instead of trying to set it in rowBatch,
+        // will set all appropriate columns in rowBatch with values from the seq-th binding.
+        //
+        // The server will process bindings in the same order they are sent. Thus, we will not
+        // receive a seq value below bindingSeq. The server MAY skip some sequence numbers to denote
+        // that the skipped bindings yielded no results. In that case we will not observe such
+        // sequence numbers here and will not output those bindings.
+        long seq = WsBindingSeq.parse(termParser.localBuf(), termParser.localBegin(),
+                                      termParser.localEnd);
+        if (seq < bindingSeq)
+            throw new InvalidSparqlResultsException("Server sent binding seq in the past");
+        skipUntilBindingSeq(seq);
+        if (sentBatch == null || sentBatchRow >= sentBatch.rows)
+            throw new IllegalArgumentException("No sent binding, server sent binding seq in the future");
+        if (!bindingNotified && bindQuery != null) {
+            bindQuery.nonEmptyBinding(seq);
+            bindingNotified = true;
+        }
+        for (int col = 0; col < bindingCol2OutCol.length; col++) {
+            int outCol = bindingCol2OutCol[col];
+            if (outCol >= 0)
+                rowBatch.putTerm(outCol, sentBatch, sentBatchRow, col);
+        }
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
@@ -159,20 +226,55 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             // unblock sender and publish state changes from this thread, making it exit
             B_REQUESTED.getAndAddRelease(this, 1);
             LockSupport.unpark(bindingsSender);
+            if (serverSentTermination && cause == null && sentBindings != null && bindQuery != null) {
+                // got a friendly !end, iterate over all remaining sent bindings and notify
+                // they had zero results
+                while (true) {
+                    if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
+                        sentBatchRow = 0;
+                        if ((sentBatch = sentBindings.nextBatch(sentBatch)) == null)
+                            break; // no more sent bindings
+                    }
+                    handleBindEmptyUntil(bindingSeq+(sentBatch.rows-sentBatchRow));
+                }
+            }
         }
         if (metrics != null) metrics.completeAndDeliver(cause, isClosedFor(cause, this));
     }
 
     /* --- --- --- parsing for !control messages  --- --- --- */
 
-    private void handleBindRequest(Rope rope, int begin, int end) {
+    private void handleBindRequest(long n) {
         if (bindings == null) throw noBindings(BIND_REQUEST);
         if (bindingsSender == null)
             bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
-        long n = rope.parseLong(rope.skipWS(begin + BIND_REQUEST.length, end));
         int add = (int) Math.min(MAX_VALUE-(long)plainBindingsRequested, n);
         if ((int)B_REQUESTED.getAndAddRelease(this, add) <= 0)
             LockSupport.unpark(bindingsSender);
+    }
+
+    private void handleBindEmptyUntil(long seq) {
+        skipUntilBindingSeq(seq);
+        if (!bindingNotified && bindQuery != null) {
+            bindQuery.emptyBinding(seq);
+            bindingNotified = true;
+        }
+    }
+
+    private void skipUntilBindingSeq(long seq) {
+        if (sentBindings == null || bindQuery == null)
+            throw new IllegalStateException("Not sending bindings");
+        while (bindingSeq < seq) {
+            if (metrics instanceof JoinMetrics m) m.beginBinding();
+            if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
+                sentBatch = sentBindings.nextBatch(sentBatch);
+                sentBatchRow = 0;
+            }
+            long prev = bindingSeq++;
+            if (!bindingNotified)
+                bindQuery.emptyBinding(prev);
+            bindingNotified = false;
+        }
     }
 
     /* --- --- --- exception factories --- --- --- */
@@ -184,12 +286,6 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
 
     /* --- --- --- bindings upload virtual thread --- --- --- */
 
-    private void dummyBeginBinding(int n) {
-        if (metrics == null) return;
-        for (int i = 0; i < n; i++)
-            metrics.beginBinding();
-    }
-
     @SuppressWarnings({"unchecked", "rawtypes"}) private void sendBindingsThread() {
         Thread.currentThread().setName("sendBindingsThread-"+id());
         var serializer = new WsSerializer();
@@ -197,6 +293,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
         try {
             if (bindings == null)
                 throw noBindings("sendBindingsThread()");
+            assert sentBindings != null;
 
             bindings.preferred().tempEager();
             int allowed = 0; // bindings requested by the server
@@ -205,7 +302,9 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             buffer = frameSender.createSink();
             serializer.init(bindings.vars(), usefulBindingsVars, false, buffer);
             frameSender.sendFrame(buffer);
+            buffer = null;
             for (B b = null; (b = bindings.nextBatch(b)) != null; ) {
+                sentBindings.copy(b);
                 for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
                     while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
                         LockSupport.park(this);
@@ -216,8 +315,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                     buffer = frameSender.createSink();
                     serializer.serialize(b, r, taken, buffer);
                     frameSender.sendFrame(buffer);
-                    if (metrics != null)
-                        dummyBeginBinding(taken);
+                    buffer = null;
                 }
             }
         } catch (Throwable t) {
@@ -226,12 +324,15 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                 close();
             }
         } finally {
-            if (!isClosed()) {
+            if (sentBindings != null)
+                sentBindings.complete(null);
+            if (!serverSentTermination) {
                 serializer.serializeTrailer(buffer = frameSender.createSink());
-                //noinspection unchecked
                 frameSender.sendFrame(buffer);
+                buffer = null;
             }
-            if (buffer != null) frameSender.releaseSink(buffer);
+            if (buffer != null)
+                frameSender.releaseSink(buffer);
         }
     }
 }

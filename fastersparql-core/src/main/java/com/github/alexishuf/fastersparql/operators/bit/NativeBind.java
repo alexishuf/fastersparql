@@ -7,6 +7,8 @@ import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
@@ -17,13 +19,28 @@ import com.github.alexishuf.fastersparql.operators.plan.Union;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
 
 public class NativeBind {
+    private static final Logger log = LoggerFactory.getLogger(NativeBind.class);
+    private static final VarHandle SCATTER_NEXT_ID;
+    static {
+        try {
+            SCATTER_NEXT_ID = MethodHandles.lookup().findStaticVarHandle(NativeBind.class, "plainScatterNextId", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    @SuppressWarnings("unused") private static int plainScatterNextId;
+
     private static boolean allNativeOperands(Union right) {
         for (int i = 0, n = right.opCount(); i < n; i++) {
             if (!(right.op(i) instanceof Query q && q.client.usesBindingAwareProtocol()))
@@ -33,9 +50,10 @@ public class NativeBind {
     }
 
     @SuppressWarnings("GrazieInspection")
-    private static <B extends Batch<B>> BIt<B>
-    multiBind(Plan join, BIt<B> left, BindType type, Vars outVars, Union right,
-              @Nullable Binding binding, boolean canDedup, @Nullable JoinMetrics metrics) {
+    public static <B extends Batch<B>> BIt<B>
+    multiBind(BIt<B> left, BindType type, Vars outVars, Union right,
+              @Nullable Binding binding, boolean canDedup,
+              @Nullable JoinMetrics metrics, SparqlClient clientForAlgebra) {
         //          left
         //    +-------^------+      Scatter-planName VThread copies each batch from left
         //    |              |      to each of the queues
@@ -58,29 +76,65 @@ public class NativeBind {
             queues.add(q);
         }
 
-        Thread.startVirtualThread(() -> {
-            Thread.currentThread().setName("Scatter-"+join.id());
+        Thread scatter = Thread.ofVirtual().unstarted(() -> {
+            Thread.currentThread().setName("Scatter-"+(int)SCATTER_NEXT_ID.getAndAddAcquire(1));
             Throwable error = null;
             try {
                 left.tempEager();
                 for (B b = null; (b = left.nextBatch(b)) != null; ) {
-                    for (var q : queues) q.copy(b);
+                    for (var it = queues.iterator(); it.hasNext(); ) {
+                        var q = it.next();
+                        try {
+                            q.copy(b);
+                        } catch (Throwable t) {
+                            String bStr = "batch with "+b.rows+" rows";
+                            try {
+                                if (b.rows < 10) bStr = b.toString();
+                            } catch (Throwable t2) {
+                                log.error("Ignoring b.toString() failure", t2);
+                            }
+                            log.warn("{}.copy({}) failed", q, bStr);
+                            try {
+                                if (!q.isTerminated()) q.close();
+                            } catch (Throwable t2) {
+                                log.error("Ignoring q.close() failure", t2);
+                            }
+                            it.remove();
+                        }
+                    }
                 }
             } catch (Throwable t) {
                 error = t;
             }
-            for (var q : queues) q.complete(error);
+            for (var q : queues) {
+                try {
+                    q.complete(error);
+                } catch (Throwable t) {
+                    log.warn("Ignoring {}.complete({}) failure", q, error, t);
+                }
+            }
         });
 
         var boundIts = new ArrayList<BIt<B>>(queues.size());
-
         for (int i = 0; i < nOps; i++) {
-            Query query = (Query) right.op(i);
-            SparqlQuery sparql = query.sparql;
+            SPSCBIt<B> queue = queues.get(i);
+            Plan operand = right.op(i);
+            SparqlClient client;
+            SparqlQuery sparql;
+            if (operand instanceof Query query) {
+                sparql = query.sparql;
+                client = query.client;
+            } else {
+                sparql = operand;
+                client = clientForAlgebra;
+            }
             if (canDedup)        sparql = sparql.toDistinct(WEAK);
             if (binding != null) sparql = sparql.bound(binding);
-            boundIts.add(query.client.query(bt, sparql, queues.get(i), type));
+            boundIts.add(client.query(new BindQuery<>(sparql, queue, type)));
         }
+        // If something goes wrong really fast, scatter could remove items from queues while
+        // this tread is iterating it to fill boundIts.
+        scatter.start();
         int cdc = right.crossDedupCapacity;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
@@ -105,12 +159,12 @@ public class NativeBind {
                 var sparql = q.query();
                 if (binding != null) sparql = sparql.bound(binding);
                 if (canDedup)        sparql = sparql.toDistinct(WEAK);
-                left = q.client.query(batchType, sparql, left, type, jm);
+                left = q.client.query(new BindQuery<>(sparql, left, type, jm));
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
-                left = multiBind(join, left, type, projection, rUnion, binding, canDedup, jm);
+                left = multiBind(left, type, projection, rUnion, binding, canDedup, jm, null);
             } else {
                 if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(left, type, r, canDedup, projection, jm);
+                left = new PlanBindingBIt<>(new BindQuery<>(r, left, type, jm), canDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)

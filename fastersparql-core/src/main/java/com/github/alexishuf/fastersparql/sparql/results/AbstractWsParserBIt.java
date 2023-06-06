@@ -22,6 +22,7 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
 
     static final byte[] BIND_REQUEST     = "!bind-request ".getBytes(UTF_8);
+    static final byte[] BIND_EMPTY_UNTIL = "!bind-empty-streak ".getBytes(UTF_8);
     static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
     static final byte[] PING             = "!ping".getBytes(UTF_8);
     static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);

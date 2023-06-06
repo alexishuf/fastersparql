@@ -35,7 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class NettySparqlServerTest {
-
     private NettySparqlServer createServer(Results results,
                                            @Nullable ResultsSparqlClient innerClient) {
         if (innerClient == null) {//noinspection resource
@@ -76,12 +75,15 @@ class NettySparqlServerTest {
             Results withNegative = results(r.vars()).query(r.query()).bindings(List.of());
             data.add(new Proto(withNegative,
                                new ResultsSparqlClient(true)
-                                    .answerWith(r.query(), withNegative.noBindings())));
+                                    .answerWith(r.query(), withNegative.noBindings())
+                                    .forBindings(r.query(), Vars.EMPTY, r.vars()).end()));
             // positive ask bindings -> same results
             Results withPositive = r.bindings(List.of(List.of()));
             data.add(new Proto(withPositive,
                                new ResultsSparqlClient(true)
-                                    .answerWith(r.query(), withPositive.noBindings())));
+                                    .answerWith(r.query(), withPositive.noBindings())
+                                    .forBindings(r.query(), Vars.EMPTY, r.vars())
+                                       .answer().with(withPositive.expected()).end()));
         }
 
         //test JOIN bind
@@ -89,9 +91,9 @@ class NettySparqlServerTest {
                            new ResultsSparqlClient(true)
                                    .answerWith(wide.query(), wide)
                                    .forBindings(wide.query(), Vars.of("x"), Vars.of("y", "z"))
-                                        .answer(":Alice").withEmpty()
+                                        .answer(":Alice").with()
                                         .answer("exns:Bob").with("\"bob\"@en", 7)
-                                        .answer(":Charlie").withEmpty()
+                                        .answer(":Charlie").with()
                                         .end()));
 
         //test LEFT_JOIN bind
@@ -106,9 +108,9 @@ class NettySparqlServerTest {
                             new ResultsSparqlClient(true)
                                     .answerWith(wideLeft.query(), wideLeft)
                                     .forBindings(wideLeft.query(), Vars.of("x"), Vars.of("y", "z"))
-                                        .answer(":Alice").withEmpty()
+                                        .answer(":Alice").with(null, null)
                                         .answer("exns:Bob").with("\"bob\"@en", 7)
-                                        .answer(":Charlie").withEmpty()
+                                        .answer(":Charlie").with(null, null)
                                         .end()));
 
         // generate variations on results (format, method, batch type)
@@ -121,8 +123,14 @@ class NettySparqlServerTest {
                     for (var fmt : List.of(TSV, JSON))
                         list.add(new Scenario(r, ic, fmt, meth, bType));
                 }
-                var wsIC = new ResultsSparqlClient(true).answerWith(r.query(), r);
-                list.add(new Scenario(r, wsIC, SparqlResultFormat.WS, WS, bType));
+                if (ic == null) {
+                    ic = new ResultsSparqlClient(false)
+                            .forBindings(r.query(), Vars.EMPTY, r.query().publicVars())
+                                .answer()
+                                    .with(r.expected())
+                                .end();
+                }
+                list.add(new Scenario(r, ic.asEmulatingWs(), SparqlResultFormat.WS, WS, bType));
             }
         }
         return list;

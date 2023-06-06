@@ -7,30 +7,14 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.store.index.RopeHandlePool;
 
 import java.lang.foreign.MemorySegment;
-import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
+import static com.github.alexishuf.fastersparql.util.CSUtils.BASE64_2_BITS;
+import static com.github.alexishuf.fastersparql.util.CSUtils.BITS_2_BASE64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class Splitter {
-    private static final byte[] BITS_2_BASE64 = {
-            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-            'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-            'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-            'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
-            'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7',
-            '8', '9', '+', '/'
-    };
-
-    private static final byte[] BASE64_2_BITS;
-    static {
-        byte[] char2value = new byte[128];
-        Arrays.fill(char2value, (byte) -1);
-        for (int value = 0; value < BITS_2_BASE64.length; value++)
-            char2value[BITS_2_BASE64[value]] = (byte) value;
-        BASE64_2_BITS = char2value;
-    }
     public static final int MAX_SHARED_ID = 0x00ffffff;
 
     public SharedSide sharedSide = SharedSide.NONE;

@@ -34,9 +34,7 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
-import static com.github.alexishuf.fastersparql.model.BindType.JOIN;
 import static com.github.alexishuf.fastersparql.store.batch.StoreBatch.TYPE;
-import static com.github.alexishuf.fastersparql.util.Results.positiveResult;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -266,15 +264,17 @@ class StoreSparqlClientTest {
 
     @ParameterizedTest @MethodSource("test")
     void testWithDummyBinding(D d) {
-        Plan dummy = positiveResult().asPlan();
-        var r = d.results;
+        Results results = d.results.bindings(List.of(List.of()));
         try (var client = d.createClient()) {
-            r.check(client.query(TERM, r.query(), dummy.execute(TERM), JOIN));
-            r.check(client.query(COMPRESSED, r.query(), dummy.execute(COMPRESSED), JOIN));
+            results.check(client, TERM);
+            results.check(client, COMPRESSED);
             if (innerConcurrency) {
                 try {
                     platformRepeatAndWait(CLS_NAME + ".testWithDummyBinding", REPS,
-                            () -> d.results.check(client));
+                            () -> {
+                                d.results.check(client, TERM);
+                                d.results.check(client, COMPRESSED);
+                            });
                 } catch (Throwable t) {fail(t);}
             }
         }
@@ -319,7 +319,11 @@ class StoreSparqlClientTest {
             if (innerConcurrency) {
                 try {
                     platformRepeatAndWait(CLS_NAME + ".testBinding", REPS,
-                            () -> d.results.check(client));
+                            () -> {
+                                d.results.check(client);
+                                d.results.check(client, COMPRESSED);
+                                d.results.check(client, TYPE, it -> TYPE.convert(it, client.dictId()));
+                            });
                 } catch (Throwable t) {fail(t);}
             }
         }

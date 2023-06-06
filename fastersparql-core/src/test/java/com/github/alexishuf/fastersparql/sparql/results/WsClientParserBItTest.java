@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -106,13 +105,11 @@ class WsClientParserBItTest extends ResultsParserTest {
             fac = new ResultsParserBIt.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
                 @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-                    //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, batchType, vars, (BIt<B>) expected.bindingsBIt(), null, null, maxItems);
+                    return new WsClientParserBIt<>(frameSender, vars, expected.asBindQuery(batchType), null, maxItems);
                 }
                 @Override
                 public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-                    //noinspection unchecked
-                    return new WsClientParserBIt<>(frameSender, destination, (BIt<B>) expected.bindingsBIt(), null, null);
+                    return new WsClientParserBIt<>(frameSender, destination, expected.asBindQuery(destination.batchType()), null);
                 }
             };
         } else {

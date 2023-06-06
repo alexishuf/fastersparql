@@ -3,8 +3,10 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
@@ -34,6 +36,12 @@ import static org.junit.jupiter.api.Assertions.*;
 public class WsBindingParsersTest {
     private static final SegmentRope DIE = SegmentRope.of("!!!DIE!!!");
 
+    private static final Term[] SEQ = new Term[100];
+    static {
+        WsBindingSeq tmp = new WsBindingSeq();
+        for (int i = 0; i < SEQ.length; i++)
+            SEQ[i] = tmp.toTerm(i);
+    }
     private static final List<Throwable> threadErrors = synchronizedList(new ArrayList<>());
     private int byteOrBuf = 0;
 
@@ -91,15 +99,24 @@ public class WsBindingParsersTest {
     }
 
     private Map<List<Term>, Results> parseBindingRow2Results(Results ex, Object ... args) {
+        List<List<Term>> bindingsList = ex.bindingsList();
         Map<List<Term>, Results> map = new HashMap<>();
         for (int i = 0; i < args.length; i += 2) { //noinspection unchecked
             List<Term> row = (List<Term>) args[i];
             assertEquals(ex.bindingsVars().size(), row.size());
-            map.put(row, (Results)args[i+1]);
-            assertTrue(ex.bindingsList().contains(row), row+" is not a binding row");
+            assertTrue(bindingsList.contains(row), row+" is not a binding row");
+            List<Term> rowWithSeq = new ArrayList<>(row.size()+1);
+            rowWithSeq.add(Term.array(SEQ[i>>1])[0]);
+            rowWithSeq.addAll(row);
+            map.put(rowWithSeq, (Results)args[i+1]);
         }
-        for (List<Term> row : ex.bindingsList())
-            assertTrue(map.containsKey(row), "no results defined for " +row);
+        for (int i = 0; i < bindingsList.size(); i++) {
+            List<Term> row = bindingsList.get(i);
+            List<Term> rowWithSeq = new ArrayList<>(row.size());
+            rowWithSeq.add(Term.array(SEQ[i])[0]);
+            rowWithSeq.addAll(row);
+            assertTrue(map.containsKey(rowWithSeq), "no results defined for " + row);
+        }
         return map;
     }
 
@@ -122,7 +139,7 @@ public class WsBindingParsersTest {
     }
 
     private @Nullable Object server(Results ex, Map<List<Term>, Results> bRow2Res,
-                                    BIt<TermBatch> serverIt, Mailbox clientMBox) {
+                                    BIt<TermBatch> bindings, Mailbox clientMBox) {
         assertTrue(bRow2Res.values().stream().map(Results::vars).distinct().count() <= 1);
         var serverVars = bRow2Res.values().stream().map(Results::vars).distinct().findFirst()
                                  .orElse(ex.vars().minus(ex.bindingsVars()));
@@ -133,7 +150,7 @@ public class WsBindingParsersTest {
         int requested = ex.bindingsList().size() < 4 ? 23 : 2;
         int activeBinding = 0;
         clientMBox.send("!bind-request "+requested+"\n");
-        for (TermBatch b = null; (b = serverIt.nextBatch(b)) != null;) {
+        for (TermBatch b = null; (b = bindings.nextBatch(b)) != null;) {
             for (int r = 0; r < b.rows; r++, ++activeBinding) {
                 if (--requested == 0)
                     clientMBox.send("!bind-request "+(++requested)+"\n");
@@ -165,7 +182,8 @@ public class WsBindingParsersTest {
     }
 
 
-    private void test(Results ex, Object... bindingRow2results) {
+    private void test(Results expected, Object... bindingRow2results) {
+        var ex = expected.query(new OpaqueSparqlQuery("SELECT * WHERE {?x <dummy> ?y}"));
         assertTrue(ex.hasBindings());
         switch (ex.bindType()) {
             case JOIN,LEFT_JOIN          -> assertTrue(ex.vars().containsAll(ex.bindingsVars()));
@@ -177,13 +195,11 @@ public class WsBindingParsersTest {
         Thread serverFeeder = null, clientFeeder = null, server = null;
         try (var stuff = new AutoCloseableSet<>();
              var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxRows()));
-             var serverCb = stuff.put(new SPSCBIt<>(TERM, ex.bindingsVars(), queueMaxRows()));
-             var clientParser = new WsClientParserBIt<>(serverMB,
-                                                        clientCb, ex.bindingsBIt(), null, null);
-             var serverParser = new WsServerParserBIt<>(clientMB, serverCb)) {
+             var clientParser = new WsClientParserBIt<>(serverMB, clientCb, ex.asBindQuery(), null);
+             var serverParser = new WsServerParserBIt<>(clientMB, TERM, Vars.of(WsBindingSeq.VAR).union(ex.bindingsVars()), queueMaxRows())) {
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
-            server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));
+            server = startThread("server", () -> server(ex, bRow2Res, serverParser, clientMB));
             ex.check(clientCb);
         } finally {
             serverMB.send(DIE);
@@ -207,9 +223,13 @@ public class WsBindingParsersTest {
         threadErrors.clear();
     }
 
+    private String responseVars(String vars) {
+        return "?"+WsBindingSeq.VAR+" "+vars;
+    }
+
     @Test public void testSingleBindingSingleResult() {
         test(results("?x ?y", ":x1", ":y1").bindings("?x", ":x1"),
-             termList(":x1"), results("?x ?y", ":x1", ":y1"));
+             termList(":x1"), results(responseVars("?y"), SEQ[0], ":y1"));
     }
 
     @Test public void testEmptyBindings() {
@@ -217,18 +237,18 @@ public class WsBindingParsersTest {
     }
 
     @Test public void testIncreasingMatchesPerBinding() {
-        test(results("?y     ?x",
-                     ":y21", ":x2",
-                     "31",   ":x3",
-                     "32",   ":x3",
-                     "_:41", ":x4",
-                     "_:42", ":x4",
-                     "_:43", ":x4"
+        test(results("?x    ?y",
+                     ":x2", ":y21",
+                     ":x3", "31",
+                     ":x3", "32",
+                     ":x4", "_:41",
+                     ":x4", "_:42",
+                     ":x4", "_:43"
                 ).bindings("?x", ":x1", ":x2", ":x3", ":x4"),
-             termList(":x1"), results("?x ?y"),
-             termList(":x2"), results("?x ?y", ":x2", ":y21"),
-             termList(":x3"), results("?x ?y", ":x3", "31", ":x3", "32"),
-             termList(":x4"), results("?x ?y", ":x4", "_:41", ":x4", "_:42", ":x4", "_:43")
+             termList(":x1"), results(responseVars("?y")),
+             termList(":x2"), results(responseVars("?y"), SEQ[1], ":y21"),
+             termList(":x3"), results(responseVars("?y"), SEQ[2], "31", SEQ[2], "32"),
+             termList(":x4"), results(responseVars("?y"), SEQ[3], "_:41", SEQ[3], "_:42", SEQ[3], "_:43")
         );
     }
 
@@ -241,10 +261,10 @@ public class WsBindingParsersTest {
                      2,  22,
                      3,  31
                 ).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x ?y", 1, 11, 1, 12, 1, 13),
-             termList(2), results("?x ?y", 2, 21, 2, 22),
-             termList(3), results("?x ?y", 3, 31),
-             termList(4), results("?x ?y")
+             termList(1), results(responseVars("?y"), SEQ[0], 11, SEQ[0], 12, SEQ[0], 13),
+             termList(2), results(responseVars("?y"), SEQ[1], 21, SEQ[1], 22),
+             termList(3), results(responseVars("?y"), SEQ[2], 31),
+             termList(4), results(responseVars("?y"))
         );
     }
 
@@ -255,65 +275,65 @@ public class WsBindingParsersTest {
                      3, 31,
                      3, 32,
                      4, null).bindType(LEFT_JOIN).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x ?y", 1, 12),
-             termList(2), results("?x ?y", 2, null),
-             termList(3), results("?x ?y", 3, 31, 3, 32),
-             termList(4), results("?x ?y", 4, null)
+             termList(1), results(responseVars("?y"), SEQ[0], 12),
+             termList(2), results(responseVars("?y"), SEQ[1], null),
+             termList(3), results(responseVars("?y"), SEQ[2], 31, SEQ[2], 32),
+             termList(4), results(responseVars("?y"), SEQ[3], null)
         );
     }
 
     @Test public void testBindToAsk() {
         test(results("?x", 1, 3).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x", 1),
-             termList(2), results("?x"),
-             termList(3), results("?x", 3),
-             termList(4), results("?x")
+             termList(1), results(responseVars(""), SEQ[0]),
+             termList(2), results(responseVars("")),
+             termList(3), results(responseVars(""), SEQ[2]),
+             termList(4), results(responseVars(""))
         );
     }
 
 
     @Test public void testLeftJoinBindToAsk() {
         test(results("?x", 1, 2, 3, 4).bindType(LEFT_JOIN).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x", 1),
-             termList(2), results("?x", 2),
-             termList(3), results("?x", 3),
-             termList(4), results("?x", 4)
+             termList(1), results(responseVars(""), SEQ[0]),
+             termList(2), results(responseVars(""), SEQ[1]),
+             termList(3), results(responseVars(""), SEQ[2]),
+             termList(4), results(responseVars(""), SEQ[3])
         );
     }
 
     @Test public void testExistsAnsweredWithAsk() {
         test(results("?x", 1, 3).bindType(EXISTS).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x", 1),
-             termList(2), results("?x"),
-             termList(3), results("?x", 3),
-             termList(4), results("?x")
+             termList(1), results(responseVars(""), SEQ[0]),
+             termList(2), results(responseVars("")),
+             termList(3), results(responseVars(""), SEQ[2]),
+             termList(4), results(responseVars(""))
         );
     }
 
     @Test public void testExistsAnsweredWithValues() {
         test(results("?x", 1, 3).bindType(EXISTS).bindings("?x", 1, 2, 3, 4),
-                termList(1), results("?x", 1),
-                termList(2), results("?x"),
-                termList(3), results("?x", 3),
-                termList(4), results("?x")
+                termList(1), results(responseVars(""), SEQ[0]),
+                termList(2), results(responseVars("")),
+                termList(3), results(responseVars(""), SEQ[2]),
+                termList(4), results(responseVars(""))
         );
     }
 
     @Test public void testNotExists() {
         test(results("?x", 2, 4).bindType(NOT_EXISTS).bindings("?x", 1, 2, 3, 4),
-             termList(1), results("?x"),
-             termList(2), results("?x", 2),
-             termList(3), results("?x"),
-             termList(4), results("?x", 4)
+             termList(1), results(responseVars("")),
+             termList(2), results(responseVars(""), SEQ[1]),
+             termList(3), results(responseVars("")),
+             termList(4), results(responseVars(""), SEQ[3])
         );
     }
 
     @Test public void testMinusAnswerWithValues() {
         test(results("?x", 2, 4).bindType(MINUS).bindings("?x", 1, 2, 3, 4),
-                termList(1), results("?x"),
-                termList(2), results("?x", 2),
-                termList(3), results("?x"),
-                termList(4), results("?x", 4)
+                termList(1), results(responseVars("")),
+                termList(2), results(responseVars(""), SEQ[1]),
+                termList(3), results(responseVars("")),
+                termList(4), results(responseVars(""), SEQ[3])
         );
     }
 }
