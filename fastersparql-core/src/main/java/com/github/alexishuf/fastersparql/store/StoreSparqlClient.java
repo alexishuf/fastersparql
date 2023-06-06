@@ -224,9 +224,7 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         BIt<StoreBatch> storeIt;
         Modifier m = sparql instanceof Modifier mod ? mod : null;
-        TriplePattern tp = sparql instanceof TriplePattern t ? t
-                : (m != null && m.left instanceof TriplePattern t ? t : null);
-        if (tp != null) {
+        if ((m == null ? sparql : m.left) instanceof TriplePattern tp) {
             var l = lookup(dictId);
             Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
             storeIt = queryTP(tpVars, tp,
