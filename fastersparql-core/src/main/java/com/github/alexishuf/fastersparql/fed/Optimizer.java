@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.concurrent.CheapThreadLocal;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -22,6 +23,7 @@ import static java.lang.Long.MAX_VALUE;
 import static java.lang.Long.numberOfTrailingZeros;
 
 final class Optimizer extends CardinalityEstimator {
+    private static final long I_MAX = Integer.MAX_VALUE;
     private final Map<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
     private final CheapThreadLocal<State> stateThreadLocal = new CheapThreadLocal<>(State::new);
 
@@ -245,21 +247,90 @@ final class Optimizer extends CardinalityEstimator {
         /** Reorder a join with more than 2 operands so that operands are executed by
          *  increasing cost. Like {@link CardinalityEstimator}, cost of the {@code i-th}
          *  operand assumes all join vars are ground as would occur in a bind join. */
-        private void reorderNaryJoin(Plan[] ops) {
+        private void reorderNaryJoin(Plan p, Plan[] ops) {
+            long accCost = 1;
             for (int i = 0; i < ops.length; i++) {
-                // find minIdx >= i with lowest faEstimate
-                int minEstimate = faEstimate(ops[i], tmpBinding), minIdx = i;
-                for (int j = i+1; j < ops.length; j++) {
-                    int estimate = faEstimate(ops[j]);
-                    if (estimate < minEstimate) { minEstimate = estimate; minIdx = j; }
+                // find minIdx >= i with the lowest cost
+                long minEstimate = I_MAX;
+                int minIdx = i;
+                if (i == 0) {
+                    // for the first operand we must ensure it has no input vars. The general
+                    // case code would detect a false product and compute unnecessary stuff
+                    minIdx = -1; // we use minIdx sign to signal whether minIdx has input vars
+                    for (int j = 0; j < ops.length; j++) {
+                        int estimate = faEstimate(ops[j], tmpBinding);
+                        Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
+                        boolean hasInputVars = false;
+                        if (allVars.size() > pubVars.size()) {
+                            for (Rope in : allVars) {
+                                hasInputVars = !pubVars.contains(in) && tmpBinding.get(in) == null;
+                                if (hasInputVars) break;
+                            }
+                        }
+                        if (estimate < minEstimate && (!hasInputVars || minIdx < 0)) {
+                            minEstimate = estimate;
+                            minIdx = hasInputVars ? -(j+1) : j+1;
+                        }
+                    }
+                    minIdx = Math.abs(minIdx)-1; // reverse the the "sign as hasInputVars" hack
+                } else if (i < ops.length-1) {
+                    for (int j = i; j < ops.length; j++) {
+                        long estimate = faEstimate(ops[j], tmpBinding);
+                        boolean newVars = false, cartesian = true, fwdJoined = false;
+                        byte unjoinedVars = 0;
+                        Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
+                        for (Rope out : pubVars) {
+                            if (tmpBinding.get(out) == null) {
+                                newVars = true;
+                                boolean joined = false;
+                                for (int k = j + 1; !joined && k < ops.length; k++)
+                                    joined = ops[k].allVars().contains(out);
+                                if (joined) fwdJoined = true;
+                                else if (unjoinedVars < 127) ++unjoinedVars;
+                            } else {
+                                cartesian = false; // found a join with already known var
+                            }
+                        }
+                        // visit all non-public vars that are not bound by results from preceding
+                        // operands. Maybe they can be bound with outputs of later operands
+                        if (allVars.size() > pubVars.size()) {
+                            for (Rope in : allVars) {
+                                if (pubVars.contains(in) || tmpBinding.get(in) != null) continue;
+                                newVars = true; // an input will cause a product or a join
+                                for (int k = i + 1; k < ops.length; k++) {
+                                    if (ops[k].publicVars().contains(in))
+                                        cartesian = true; // penalize ops[j] in favor of ops[k]
+                                }
+                            }
+                        }
+                        if (!newVars) {
+                            // the operand yields no new public/non-public vars, thus it filters
+                            estimate = accCost - (accCost >> 4);
+                        } else if (cartesian) {
+                            estimate = (int) Math.min(I_MAX, accCost * estimate);
+                        } else if (fwdJoined) {
+                            // if the operand has vars that participate in joins with
+                            // subsequent operators, apply only 25% of the worst case
+                            // multiplicative effect
+                            estimate = (int)Math.min(I_MAX, accCost * Math.max(2, (estimate>>2)));
+                        } else {
+                            // new vars are introduced, but they do not seed new joins
+                            // they may have a filtering effect
+                            estimate += (int)Math.min(I_MAX, accCost * Math.max(1, unjoinedVars));
+                        }
+                        if (estimate < minEstimate) {
+                            minEstimate = estimate;
+                            minIdx = j;
+                        }
+                    }
                 }
                 // shift [i, minIdx) to [i+1, minIdx+1) and put best operand at ops[i]
-                // while a swap would faster, it would make the reorder non-stable by changing
-                // the ordering of operands with same cost estimate.
+                // while a swap would faster, it would make the reorder non-stable
                 Plan best = ops[minIdx];
                 for (int j = minIdx; j > i; j--)
                     ops[j] = ops[j-1];
                 ops[i] = best;
+                accCost = minEstimate;
                 // mark all vars produced by best as ground in subsequent estimations
                 for (Rope var : best.publicVars()) {
                     int varIdx = tmpBinding.vars.indexOf(var);
@@ -267,6 +338,8 @@ final class Optimizer extends CardinalityEstimator {
                         tmpBinding.set(varIdx, GROUND);
                 }
             }
+            p.left  = ops[0];
+            p.right = ops[1];
         }
 
         /**
@@ -318,7 +391,7 @@ final class Optimizer extends CardinalityEstimator {
                         p.replace(0, right);
                     }
                 } else {
-                    reorderNaryJoin(p.operandsArray);
+                    reorderNaryJoin(p, arr);
                     // try replacements like Join(A, B, C) -> Join(Filter(Join(A, B), F), C)
                     if (upFiltersCount != 0)
                         upFiltersTakenForParent |= takeFiltersOnSubJoins(p);
