@@ -427,11 +427,15 @@ public class Federation extends AbstractSparqlClient {
                 srcWExcl &= -1 >>> (64-nSrc);
 
                 // allocate Plan[] bound with exact length
-                Plan[] bound = new Plan[bitCount(nonTP)+bitCount(nonExcl)+bitCount(srcWExcl)];
+                Plan[] bound = new Plan[bitCount(nonTP|nonExcl)+bitCount(srcWExcl)];
                 int nBound = 0;
 
-                // add exclusive groups
-                for (int s = 0; (s+=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
+                // add exclusive groups. Iterate by ops to retain some of the input ordering
+                for (int o = 0; (o+=numberOfTrailingZeros(exclusive>>>o)) < 64; o++) {
+                    long sMask = op2src>>(o*nSrc);
+                    if ((srcWExcl & sMask) == 0) continue;
+                    srcWExcl &= ~sMask; // mark s as visited to avoid inserting same EG twice
+                    int s = numberOfTrailingZeros(sMask);
                     long sExclusive = src2op>>>(s*nOps) & exclusive;
                     bound[nBound++] = bindExclusive(sources.get(s).client, sExclusive, plan);
                 }
@@ -594,12 +598,17 @@ public class Federation extends AbstractSparqlClient {
         }
 
         // allocate bound array with exact size
-        Plan[] bound = new Plan[bitCount(nonTP) + bitCount(nonExcl) + bitCount(srcWExcl)];
+        Plan[] bound = new Plan[bitCount(nonTP|nonExcl) + bitCount(srcWExcl)];
         int nBound = 0;
 
-        // add exclusive groups
-        for (int s = 0; (s+=numberOfTrailingZeros(srcWExcl>>>s)) < 64; s++) {
-            int begin = s * nOps;
+        // add exclusive groups. iterate by ops in order to retain some of the input ordering
+        for (int o = 0, begin; (o+=numberOfTrailingZeros(exclusive>>>o)) < 64; o++) {
+            begin = o*nSrc;
+            long sMask = BS.get(op2src, begin, begin+nSrc);
+            if ((srcWExcl & sMask) == 0) continue;
+            srcWExcl &= ~sMask; // remove source, so we don't add the same EG twice
+            int s = numberOfTrailingZeros(sMask);
+            begin = s*nOps;
             long sExclusive = BS.get(src2op, begin, begin+nOps) & exclusive;
             bound[nBound++] = bindExclusive(sources.get(s).client, sExclusive, join);
         }
