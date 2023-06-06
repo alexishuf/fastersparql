@@ -364,19 +364,33 @@ final class Optimizer extends CardinalityEstimator {
                 pushed = null;
 
             boolean childrenCan; // whether our DIRECT children can take filters
-            if   (type == Operator.UNION) childrenCan = nonUniformVars(p);
-            else                          childrenCan = type != Operator.MODIFIER;
+            byte restoreTmpBinding; // whether we must save and restore tmpBinding
+            switch (type) {
+                case UNION -> { childrenCan = nonUniformVars(p); restoreTmpBinding = 1; }
+                case NOT_EXISTS,EXISTS,MINUS -> { childrenCan = true; restoreTmpBinding = 2; }
+                default -> { childrenCan = type != Operator.MODIFIER; restoreTmpBinding = 0; }
+            }
             // store filters taken by left-side siblings
             long upFiltersTakenForParent = upFiltersTakenByChildren;
             upFiltersTakenByChildren = 0L; // by this point our children took no filters (yet)
             var arr = p.operandsArray;
             if (arr == null) {
                 Plan o, oo;
-                if ((o = p.left ) != null && (oo = optimize(o, childrenCan)) != o) p.left  = oo;
-                if ((o = p.right) != null && (oo = optimize(o, childrenCan)) != o) p.right = oo;
+                Term[] tmpBindingValues = restoreTmpBinding == 1 ? tmpBinding.copyValues() : null;
+                if ((o = p.left ) != null && (oo = optimize(o, childrenCan)) != o)
+                    p.left  = oo;
+                if      (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
+                else if (restoreTmpBinding == 2)   tmpBindingValues = tmpBinding.copyValues();
+
+                if ((o = p.right) != null && (oo = optimize(o, childrenCan)) != o)
+                    p.right = oo;
+                if (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
             } else {
-                for (int i = 0; i < arr.length; i++)
+                Term[] tmpBindingValues = restoreTmpBinding == 1 ? tmpBinding.copyValues() : null;
+                for (int i = 0; i < arr.length; i++) {
                     arr[i] = optimize(arr[i], childrenCan);
+                    if (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
+                }
                 p.left  = arr[0];
                 p.right = arr[1];
             }

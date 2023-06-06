@@ -66,4 +66,10 @@ public class ArrayBinding extends Binding {
     }
 
     @Override public void clear() { Arrays.fill(values, null); }
+
+    public Term[] copyValues() { return Arrays.copyOf(values, values.length); }
+
+    public void setValues(Term[] arr) {
+        System.arraycopy(arr, 0, values, 0, arr.length);
+    }
 }
