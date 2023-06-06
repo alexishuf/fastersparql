@@ -54,7 +54,7 @@ public class Federation extends AbstractSparqlClient {
     private final List<MetricsListener> planListeners = new ArrayList<>();
     private final Path specPathsRelativeTo;
     private final Lock lock = new ReentrantLock();
-    private int cdc = FSProperties.dedupCapacity();
+    private int cdc = FSProperties.crossDedupCapacity();
     private boolean closed;
     private CompletableFuture<Void> init;
 
@@ -268,7 +268,7 @@ public class Federation extends AbstractSparqlClient {
 
     private Plan plan(SparqlQuery sparql, FedMetrics m) {
         // parse query or copy tree and sanitize
-        cdc = FSProperties.dedupCapacity();
+        cdc = FSProperties.crossDedupCapacity();
         Plan root = sparql instanceof Plan p
                 ? p.deepCopy() : new SparqlParser().parse(((OpaqueSparqlQuery) sparql).sparql);
         root = project(mutateSanitize(root), sparql.publicVars());
