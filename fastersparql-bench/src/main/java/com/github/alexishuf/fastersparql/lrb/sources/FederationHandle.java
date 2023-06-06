@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb.sources;
 
+import com.github.alexishuf.fastersparql.fed.CardinalityEstimator;
 import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.fed.Source;
 import com.github.alexishuf.fastersparql.fed.Spec;
@@ -126,6 +127,7 @@ public class FederationHandle implements AutoCloseable {
                         Source.NAME, handle.source.name().toLowerCase().replace("_", "-"),
                         "lrb-name", handle.source.name().toLowerCase(),
                         Source.URL, handle.specUrl,
+                        Source.ESTIMATOR, Spec.of(CardinalityEstimator.PREFER_NATIVE, true),
                         Source.SELECTOR, selKind.createSpec(handle)));
             }
             return Spec.of(Federation.URL, "http://fed.example.org/sparql",

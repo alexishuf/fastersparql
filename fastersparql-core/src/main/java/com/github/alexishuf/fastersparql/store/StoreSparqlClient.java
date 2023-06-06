@@ -17,10 +17,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
-import com.github.alexishuf.fastersparql.fed.CardinalityEstimator;
-import com.github.alexishuf.fastersparql.fed.Federation;
-import com.github.alexishuf.fastersparql.fed.Source;
-import com.github.alexishuf.fastersparql.fed.Spec;
+import com.github.alexishuf.fastersparql.fed.*;
 import com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.TripleRoleSet;
@@ -60,7 +57,8 @@ import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 
-public class StoreSparqlClient extends AbstractSparqlClient {
+public class StoreSparqlClient extends AbstractSparqlClient
+                               implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
     private static final StoreBatchType TYPE = StoreBatchType.INSTANCE;
     private static final VarHandle REFS;
@@ -197,6 +195,8 @@ public class StoreSparqlClient extends AbstractSparqlClient {
     public int dictId() { return dictId; }
 
     /* --- --- --- estimation --- --- --- */
+
+    public Estimator estimator() { return estimator; }
 
     public int estimate(TriplePattern tp) { return estimator.estimate(tp, null); }
 

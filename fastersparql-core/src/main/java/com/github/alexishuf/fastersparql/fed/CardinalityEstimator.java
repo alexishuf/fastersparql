@@ -21,10 +21,13 @@ import java.io.IOException;
 public abstract class CardinalityEstimator {
     public static final Term GROUND = Term.valueOf("<http://example.org/ground>");
     public static final String TYPE = "type";
+    public static final String PREFER_NATIVE = "prefer-native";
 
     /* --- --- --- load from spec --- --- --- */
 
     public static CardinalityEstimator load(SparqlClient client, Spec spec) throws IOException {
+        if (client instanceof CardinalityEstimatorProvider p && spec.getBool(PREFER_NATIVE))
+            return p.estimator();
         String name = spec.getOr(TYPE, PatternCardinalityEstimator.NAME);
         return NSL.get(name).load(client, spec);
     }
