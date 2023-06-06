@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.fed;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -84,15 +85,52 @@ public abstract class CardinalityEstimator {
 
     protected int estimateJoin(Plan plan, @Nullable Binding binding, int shift) {
         var accBinding = new ArrayBinding(plan.allVars(), binding);
-        int accCost = estimate(plan.op(0), accBinding);
+        int accCost = estimate(plan.left(), accBinding);
+        for (Rope name : plan.left().publicVars()) {
+            int varIdx = accBinding.vars.indexOf(name);
+            if (accBinding.get(varIdx) == null)
+                accBinding.set(varIdx, GROUND);
+        }
         for (int i = 1, n = plan.opCount(); i < n; i++) {
             Plan o = plan.op(i);
-            int half = 1 + estimate(o, accBinding) >> shift;
-            accCost = (int)Math.min(Integer.MAX_VALUE, accCost*(long)half);
-            for (Rope name : o.publicVars()) {
+            int cost = estimate(o, accBinding);
+            boolean noNewVars = true;
+            short unjoinedNewVars = 0, joins = 0;
+            Vars oVars = o.publicVars();
+            for (Rope name : oVars) {
                 int varIdx = accBinding.vars.indexOf(name);
-                if (accBinding.get(varIdx) == null)
+                if (accBinding.get(varIdx) == null) {
                     accBinding.set(varIdx, GROUND);
+                    noNewVars = false;
+                    boolean unjoined = true;
+                    for (int j = i+1; j < n; j++) {
+                        Plan oo = plan.op(j);
+                        Vars ooVars = (oo instanceof Modifier ? oo.left() : oo).allVars();
+                        if (ooVars.contains(name)) {
+                            ++joins;
+                            unjoined = false;
+                        }
+                    }
+                    if (unjoined) ++unjoinedNewVars;
+                }
+            }
+            if (noNewVars) {
+                if ((o instanceof Modifier m ? m.left() : o).allVars().equals(oVars))
+                    accCost -= accCost >> 4; // o is acting as a filter
+                else
+                    accCost = accCost + cost; // o has a small multiplicative effect, thus we add
+            } else if (joins == 0) {
+                // new vars were added, but they do not contribute to any subsequent join.
+                // assume these vars will not cause filtering. For > 1 new vars, assume that
+                // half of them have multiplicative effect and will introduce an additional row
+                accCost += cost + (accCost*(unjoinedNewVars >> 1));
+            } else {
+                // always assume that a join that introduces vars that feed another
+                // operand is multiplicative. In order to not be overly pessimistic,
+                // assume that for some bindings, o will produce no match. This is emulated by
+                // the shift. If a join involves more than one var, it may produce less results
+                // as each var begins a path and all paths must exist.
+                accCost *= Math.max(2, (cost >> shift) - (joins-1));
             }
         }
         return accCost;
@@ -111,8 +149,8 @@ public abstract class CardinalityEstimator {
                     sum += estimate(plan.op(i), binding);
                 yield sum;
             }
-            case MINUS,EXISTS,NOT_EXISTS -> estimateJoin(plan, binding, 4);
-            case JOIN,LEFT_JOIN -> estimateJoin(plan, binding, 1);
+            case MINUS,EXISTS,NOT_EXISTS -> estimateJoin(plan, binding, 8);
+            case JOIN,LEFT_JOIN -> estimateJoin(plan, binding, 2);
         };
     }
 
