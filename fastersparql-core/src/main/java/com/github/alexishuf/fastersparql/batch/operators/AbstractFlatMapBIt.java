@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -50,7 +51,7 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
     }
 
     @Override public @Nullable B recycle(B batch) {
-        if (batch != null && inner.recycle(batch) != null)
+        if (batch != null && !(inner instanceof EmptyBIt) && inner.recycle(batch) != null)
             return super.recycle(batch);
         return null;
     }
