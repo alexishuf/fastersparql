@@ -441,8 +441,9 @@ public class Federation extends AbstractSparqlClient {
                 }
 
                 // add non-exclusive Unions
+                long srcMask = (1L << nSrc)-1;
                 for (int o=0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; ++o)
-                    bound[nBound++] = bindToSources(plan.op(o), op2src>>o*nSrc, cdc);
+                    bound[nBound++] = bindToSources(plan.op(o), (op2src>>o*nSrc)&srcMask, cdc);
 
                 if (nonTP != 0)
                     addNonTP(plan, nonTP, bound, nBound);
