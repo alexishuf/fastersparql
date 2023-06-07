@@ -14,7 +14,10 @@ public enum SourceKind {
     HDT_TSV,
     HDT_JSON,
     HDT_WS,
-    FS_STORE;
+    FS_STORE,
+    FS_TSV,
+    FS_JSON,
+    FS_WS;
 
     public boolean isHdt() {
         return switch (this) {
@@ -23,14 +26,26 @@ public enum SourceKind {
         };
     }
 
-    public boolean isFsStore() { return this == FS_STORE; }
+    public boolean isFsStore() {
+        return switch (this) {
+            case FS_STORE,FS_TSV,FS_JSON,FS_WS -> true;
+            default -> false;
+        };
+    }
+
+    public boolean isNettySparqlServer() {
+        return switch (this) {
+            case HDT_TSV,HDT_JSON,HDT_WS,FS_TSV,FS_JSON,FS_WS -> true;
+            default -> false;
+        };
+    }
 
     private String augScheme() {
         return switch (this) {
             case HDT_FILE,FS_STORE -> "file://";
-            case HDT_TSV -> "post,tsv@http://";
-            case HDT_JSON -> "post,json@http://";
-            case HDT_WS -> "ws://";
+            case HDT_TSV,FS_TSV -> "post,tsv@http://";
+            case HDT_JSON,FS_JSON -> "post,json@http://";
+            case HDT_WS,FS_WS -> "ws://";
         };
     }
 
@@ -45,17 +60,15 @@ public enum SourceKind {
         var handle = switch (this) {
             case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS -> //noinspection resource
                     new SourceHandle("file://" + file, source, HDT_FILE);
-            case FS_STORE -> //noinspection resource
-                    new SourceHandle("file://"+file, source, this);
+            case FS_STORE,FS_TSV,FS_JSON,FS_WS -> //noinspection resource
+                    new SourceHandle("file://"+file, source, FS_STORE);
         };
-        return switch (this) {
-            case HDT_WS, HDT_TSV, HDT_JSON -> {
-                var hdt = FS.clientFor(parse(handle.specUrl));
-                var server = new NettySparqlServer(hdt, "0.0.0.0", 0);
-                String url = augScheme()+"127.0.0.1:"+server.port()+"/sparql";
-                yield new SourceHandle(url, source, this, AutoCloseableSet.of(server));
-            }
-            default -> handle;
-        };
+        if (isNettySparqlServer()) {
+            var inner = FS.clientFor(parse(handle.specUrl));
+            var server = new NettySparqlServer(inner, "0.0.0.0", 0);
+            String url = augScheme()+"127.0.0.1:"+server.port()+"/sparql";
+            return new SourceHandle(url, source, this, AutoCloseableSet.of(server));
+        }
+        return handle;
     }
 }

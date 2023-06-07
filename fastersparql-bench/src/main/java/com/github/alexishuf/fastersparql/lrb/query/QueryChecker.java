@@ -95,8 +95,10 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         rows += b.rows;
         if (expected == null || observed == null) return;
         for (int r = 0, rows = b.rows; r < rows; r++) {
-            if (!expected.contains(b, r)) unexpected.putRow(b, r);
-            else                          observed.add(b, r);
+            if (!expected.contains(b, r))
+                unexpected.putRow(b, r);
+            else
+                observed.add(b, r);
         }
     }
 }

@@ -250,12 +250,17 @@ public class Measure implements Callable<Void>{
             try {
                 if (error == null) {
                     if (isValid()) {
-                        log.info("No missing/unexpected rows for rep {} of {}", currRep, currTask);
+                        var query    = currTask == null ? null : currTask.query();
+                        var selector = currTask == null ? null : currTask.selector();
+                        var source   = currTask == null ? null : currTask.source();
+                        log.info("No missing/unexpected rows for rep {} of {}, sel={}, source={}",
+                                 currRep, query, selector, source);
                         delete(".missing.tsv");
                         delete(".unexpected.tsv");
                     } else if (currTask != null) {
                         log.error("Bad results for rep {} of {}:\n{}",
                                   currRep, currTask, explanation());
+                        error = new Exception("bad results: "+explanation().replace("\n", "\\n"));
                         var ser = ResultsSerializer.create(TSV);
                         var sink = new OutputStreamSink(null);
                         File file = taskFile(".missing.tsv");

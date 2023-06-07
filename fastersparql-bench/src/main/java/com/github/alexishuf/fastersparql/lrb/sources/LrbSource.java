@@ -43,7 +43,7 @@ public enum LrbSource {
     public String filename(SourceKind type) {
         return switch (type) {
             case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS -> name().replace('_', '-') + ".hdt";
-            case FS_STORE -> name().replace('_', '-');
+            case FS_STORE,FS_TSV,FS_JSON,FS_WS -> name().replace('_', '-');
         };
     }
 

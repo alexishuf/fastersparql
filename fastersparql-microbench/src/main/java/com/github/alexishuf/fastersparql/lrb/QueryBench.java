@@ -62,10 +62,7 @@ public class QueryBench {
             return switch (this) {
                 case ASK -> SelectorKind.ASK;
                 case DICT -> SelectorKind.DICT;
-                case PREFERRED -> switch (src) {
-                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS -> SelectorKind.ASK;
-                    case FS_STORE -> SelectorKind.FS_STORE;
-                };
+                case PREFERRED -> src.isFsStore() ? SelectorKind.FS_STORE : SelectorKind.ASK;
             };
         }
     }
@@ -82,7 +79,7 @@ public class QueryBench {
                 case TERM -> Batch.TERM;
                 case NATIVE -> switch (src) {
                     case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS -> HdtBatch.TYPE;
-                    case FS_STORE -> StoreBatch.TYPE;
+                    case FS_STORE,FS_TSV, FS_JSON, FS_WS  -> StoreBatch.TYPE;
                 };
             };
         }
