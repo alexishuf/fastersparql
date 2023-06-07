@@ -12,7 +12,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- constants --- --- --- */
     public static final String NAME = "pattern";
     public static final String PENALTY = "penalty";
-    public static final int DEFAULT_PENALTY = 1_000;
+    public static final int DEFAULT_PENALTY = 200;
 
     public static final PatternCardinalityEstimator DEFAULT
             = new PatternCardinalityEstimator(DEFAULT_PENALTY);
