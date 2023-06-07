@@ -450,13 +450,15 @@ public final class TermParser {
         assert begin != end;
         int colon = in.skip(begin, end, PN_PREFIX);
         if (colon != end && in.get(colon) == ':') {
-            boolean bn = colon == begin + 1 && in.get(begin) == '_';
-            int e = in.skip(colon + 1, end, bn ? BN_LABEL : PN_LOCAL);
+            int[] alphabet = colon == begin + 1 && in.get(begin) == '_' ? BN_LABEL : PN_LOCAL;
+            int e = in.skip(colon + 1, end, alphabet);
+            while (e <= end && in.get(e-1) == '\\')
+                e = in.skip(++e, end, alphabet);
             while (in.get(e - 1) == '.' && !in.isEscaped(e - 1)) --e; // remove trailing .
             if (!eager && e == end)
                 return Result.EOF;
             stopped = e;
-            if (bn) {
+            if (alphabet == BN_LABEL) {
                 ttlKind = TTL_KIND_BNODE;
                 return Result.TTL;
             } else if (prefixMap.expand(in, begin, colon, colon + 1) == null) {
