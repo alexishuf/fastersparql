@@ -424,7 +424,7 @@ public class Federation extends AbstractSparqlClient {
                 long srcWExcl = 0;
                 for (int o = 0; (o+=numberOfTrailingZeros(exclusive>>>o)) < 64; o++)
                     srcWExcl |= op2src>>>o*nSrc;
-                srcWExcl &= -1 >>> (64-nSrc);
+                srcWExcl &= -1 >>> -nSrc;
 
                 // allocate Plan[] bound with exact length
                 Plan[] bound = new Plan[bitCount(nonTP|nonExcl)+bitCount(srcWExcl)];
@@ -441,7 +441,7 @@ public class Federation extends AbstractSparqlClient {
                 }
 
                 // add non-exclusive Unions
-                long srcMask = (1L << nSrc)-1;
+                long srcMask = -1 >>> -nSrc;
                 for (int o=0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; ++o)
                     bound[nBound++] = bindToSources(plan.op(o), (op2src>>o*nSrc)&srcMask, cdc);
 
@@ -472,7 +472,7 @@ public class Federation extends AbstractSparqlClient {
         int n = bitCount(subset), first = numberOfTrailingZeros(subset);
         if (n == 1) return new Query(parent.op(first), client);
         if (n == 2) {
-            int second = numberOfTrailingZeros(subset >>> first + 1);
+            int second = numberOfTrailingZeros(subset & ~(1L << first));
             return new Query(new Join(null, parent.op(first), parent.op(second)), client);
         }
         Plan[] ops = new Plan[n];
