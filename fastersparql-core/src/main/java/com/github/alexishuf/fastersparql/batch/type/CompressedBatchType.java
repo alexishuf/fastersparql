@@ -37,9 +37,7 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         if (b instanceof CompressedBatch cb) return cb.bytesUsed();
         int required = 0;
         for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-            int rowBytes = 0;
-            for (int c = 0; c < cols; c++) rowBytes += b.localLen(r, c);
-            required += CompressedBatch.localsCeil(rowBytes);
+            for (int c = 0; c < cols; c++) required += b.localLen(r, c);
         }
         return required;
     }

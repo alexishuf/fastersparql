@@ -436,8 +436,6 @@ class BatchTest {
                 assertTrue(b1.hasCapacity(size.rows, reqBytes));
                 assertTrue(b2.hasCapacity(size.rows, reqBytes));
                 assertTrue(b3.hasCapacity(size.rows, reqBytes));
-                assertTrue(b4.hasCapacity(size.rows, reqBytes));
-                assertTrue(b5.hasCapacity(size.rows, reqBytes));
                 assertTrue(b6.hasCapacity(size.rows, reqBytes));
                 assertTrue(b7.hasCapacity(size.rows, reqBytes));
                 assertTrue(b8.hasCapacity(size.rows, reqBytes));
