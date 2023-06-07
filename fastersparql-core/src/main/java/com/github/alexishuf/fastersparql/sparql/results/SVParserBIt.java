@@ -114,7 +114,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     c = (byte)((begin = handleControl(rope, begin)) < end ? rope.get(begin) : 0);
                 int pseudTermLast = switch (c) {
                     case '<' -> rope.skipUntil(begin, end, '>');
-                    case '"' -> rope.skipUntilUnescaped(begin, end, '"');
+                    case '"' -> rope.skipUntilUnescaped(begin+1, end, '"');
                     default  -> begin;
                 };
                 if (rope.skipUntil(pseudTermLast, end, column == lastCol ? '\n' : '\t') == end) {
