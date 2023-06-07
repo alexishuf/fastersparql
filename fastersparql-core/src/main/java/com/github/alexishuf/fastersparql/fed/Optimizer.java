@@ -399,10 +399,25 @@ final class Optimizer extends CardinalityEstimator {
                 popFilters(pushed);
             } else if (type == Operator.JOIN) {
                 if (arr == null) {
-                    Plan right = p.right;
+                    Plan right = p.right();
                     if (faEstimate(right) < faEstimate(p.left())) {
-                        p.replace(1, p.left);
-                        p.replace(0, right);
+                        // do not swap if right has input vars fed by left
+                        boolean safe = true;
+                        Vars rPub = right.publicVars(), rAll = right.allVars();
+                        if (rAll.size() > rPub.size()) {
+                            Vars lPub = p.left().publicVars();
+                            for (Rope in : rAll) {
+                                if (rPub.contains(in)) continue;
+                                if (lPub.contains(in)) {
+                                    safe = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (safe) {
+                            p.replace(1, p.left);
+                            p.replace(0, right);
+                        }
                     }
                 } else {
                     reorderNaryJoin(p, arr);
