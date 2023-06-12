@@ -86,6 +86,10 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         long p = plain(dict, binding == null ? tp.p : binding.getIf(tp.p), PREDICATE);
         long o = plain(dict, binding == null ? tp.o : binding.getIf(tp.o), OBJECT);
         int pattern = super.estimate(tp, binding);
+        HdtEstimatorPeek peek = this.peek;
+        if (peek == HdtEstimatorPeek.ALWAYS
+                && (tp.s == GROUND || tp.p == GROUND || tp.o == GROUND))
+            peek = HdtEstimatorPeek.METADATA;
         return switch (peek) {
             case NEVER -> pattern;
             case METADATA, PREDICATES -> weight(p, pattern);
