@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
+import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.FS.project;
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
@@ -74,9 +75,22 @@ public class Federation extends AbstractSparqlClient {
         return load(Spec.parseToml(tomlFile));
     }
     public static  Federation load(Spec spec) throws IOException {
-        var sources = new ArrayList<Source>();
-        for (Spec sourceSpec : spec.getListOf(SOURCES, Spec.class))
-            sources.add(Source.load(sourceSpec));
+        List<Spec> specs = spec.getListOf(SOURCES, Spec.class);
+        int n = specs.size();
+        var sources = new ArrayList<Source>(n);
+        for (int i = 0; i < n; i++)
+            sources.add(null);
+        IOException error = IntStream.range(0, n).parallel().mapToObj(i -> {
+            try {
+                sources.set(i, Source.load(specs.get(i)));
+                return null;
+            } catch (IOException e) {
+                return e;
+            }
+        }).filter(Objects::nonNull).findFirst().orElse(null);
+        if (error != null)
+            throw error;
+
         SparqlEndpoint endpoint = SparqlEndpoint.parse(Source.readUrl(spec));
         Path relativeTo = spec.get(Spec.PATHS_RELATIVE_TO, Path.class);
         Federation fed = new Federation(endpoint, relativeTo);
