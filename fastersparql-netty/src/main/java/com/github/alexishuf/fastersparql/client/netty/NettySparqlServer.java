@@ -662,7 +662,7 @@ public class NettySparqlServer implements AutoCloseable {
                 } else if (waitingVarsRound > 0) {
                     readVarsFrame();
                 } else if (bindingsParser != null) {
-                    readBindings();
+                    readBindings(bindingsParser);
                 } else {
                     handleQueryCommand(ctx, f);
                 }
@@ -704,7 +704,7 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
 
-        private void readBindings() { //noinspection DataFlowIssue
+        private void readBindings(WsServerParserBIt<CompressedBatch> bindingsParser) {
             bindingsParser.feedShared(wrapperRope);
             if (bindingsParser.rowsEmitted() >= requestBindingsAt) {
                 requestBindingsAt += maxBindings>>1;
@@ -755,7 +755,7 @@ public class NettySparqlServer implements AutoCloseable {
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
                 Thread.startVirtualThread(() -> drainerThread(round));
-                readBindings();
+                readBindings(bindingsParser);
             }
         }
 
