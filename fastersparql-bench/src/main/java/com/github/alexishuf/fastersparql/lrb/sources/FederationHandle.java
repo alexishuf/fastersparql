@@ -35,7 +35,7 @@ public class FederationHandle implements AutoCloseable {
     }
 
     @Override public void close() {
-        closeAll(Stream.of(federation, sourceHandles).iterator());
+        closeAll(List.of(federation, sourceHandles));
     }
 
     public static Builder builder(File dataDir) {
@@ -84,7 +84,7 @@ public class FederationHandle implements AutoCloseable {
                     System.gc();
                     Async.waitStage(federation.init());
                 }
-                return new FederationHandle(federation, handles);
+                return new FederationHandle(federation, handles.parallelClose(true));
             } catch (Throwable t) {
                 try {
                     closeAll(Stream.of(federation, handles).filter(Objects::nonNull).iterator());
