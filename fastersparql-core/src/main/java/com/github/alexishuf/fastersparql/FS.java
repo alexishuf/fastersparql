@@ -103,9 +103,17 @@ public class FS {
         for (Runnable hook = shutdownHooks.poll(); hook != null; hook = shutdownHooks.poll()) {
             try {
                 hook.run();
-            } catch (Throwable t) { log.error("Failed to execute {}: ", hook, t); }
+            } catch (Throwable t) {
+                System.err.println("Failed to execute shutdown hook "+hook+": "+t);
+            }
         }
     }
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(FS::shutdown, "FS::shutdown"));
+    }
+
+    /* --- --- --- factory methods --- --- --- */
 
     public static Empty empty() { return Empty.EMPTY; }
 

@@ -12,6 +12,7 @@ public class SharedEventLoopGroupHolder {
     private static final SharedEventLoopGroupHolder INSTANCE = new SharedEventLoopGroupHolder();
 
     private @MonotonicNonNull EventLoopGroupHolder elgHolder;
+    private boolean warnedKeepAlive = false;
 
     public static EventLoopGroupHolder get() {
         return INSTANCE.doGet();
@@ -21,10 +22,11 @@ public class SharedEventLoopGroupHolder {
         int keepAliveSeconds = sharedEventLoopGroupKeepAliveSeconds();
         if (elgHolder == null) {
             elgHolder = new EventLoopGroupHolder(null, keepAliveSeconds, SECONDS);
-        } else if (elgHolder.keepAlive(SECONDS) != keepAliveSeconds) {
+        } else if (elgHolder.keepAlive(SECONDS) != keepAliveSeconds && !warnedKeepAlive) {
             log.warn("sharedEventLoopGroupKeepAliveSeconds={} will not be honored as " +
                      "shared EventLoopGroupHolder has already been instantiated",
                      keepAliveSeconds);
+            warnedKeepAlive = true;
         }
         return elgHolder;
     }

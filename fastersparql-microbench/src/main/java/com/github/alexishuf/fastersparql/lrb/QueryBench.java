@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb;
 
+import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -20,6 +21,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -212,6 +214,13 @@ public class QueryBench {
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
         fedHandle.close();
+    }
+
+    @TearDown(Level.Trial) public void tearDown() {
+        FS.shutdown();
+        IOUtils.fsync(1_000);
+        Async.uninterruptibleSleep(100);
+        System.gc();
     }
 
     private int checkResult(int r) {

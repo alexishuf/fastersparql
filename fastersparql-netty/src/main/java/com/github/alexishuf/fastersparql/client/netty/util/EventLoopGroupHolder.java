@@ -123,7 +123,7 @@ public class EventLoopGroupHolder {
                     shutdownHookAdded = true;
                     FS.addShutdownHook(() -> {
                         var dummy = new CompletableFuture<>();
-                        immediateShutdown(dummy, "FasterSparql.shutdown()");
+                        immediateShutdown(dummy, "FS.shutdown()");
                     });
                 }
             }
@@ -174,7 +174,7 @@ public class EventLoopGroupHolder {
         try {
             var future = shutdown == null ? shutdown = new CompletableFuture<>() : shutdown;
             if (references == 0 || group == null) {
-                log.error("{}.release() with {} references to {}!", this, references, group);
+                log.error("{}.release() with {} references!", this, references);
                 future.complete(null);
                 return this.shutdown;
             }
@@ -251,10 +251,18 @@ public class EventLoopGroupHolder {
     }
 
     @Override public String toString() {
-        return "EventLoopGroupHolder{" +
-                "transport=" + transport +
-                ", references=" + references +
-                ", keepAlive=" + keepAlive + keepAliveTimeUnit.name().toLowerCase() +
+        String katSuff = switch (keepAliveTimeUnit) {
+            case NANOSECONDS  -> "ns";
+            case MICROSECONDS -> "us";
+            case MILLISECONDS -> "ms";
+            case SECONDS      -> "s";
+            case MINUTES      -> "m";
+            case HOURS        -> "h";
+            case DAYS         -> "d";
+        };
+        return "EventLoopGroupHolder["+transport+"]{" +
+                ", refs=" + references +
+                ", ka=" + keepAlive + katSuff +
                 ", group=" + group +
                 '}';
     }
