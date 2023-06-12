@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
+import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
@@ -19,7 +20,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
@@ -99,6 +102,7 @@ class MeasureTest {
     private void doTest(SourceKind sourceKind, boolean jsonPlans, String queries,
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer) throws IOException {
+        int nReps = 2;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",
@@ -123,7 +127,7 @@ class MeasureTest {
                 "--warm-secs", "0",
                 "--warm-cool-ms", "500",
                 "--cool-ms", "600",
-                "--reps", "2",
+                "--reps", Integer.toString(nReps),
                 "--seed", "728305461",
                 "--consumer", consumer.name()
         ));
@@ -133,14 +137,21 @@ class MeasureTest {
             args.add("--builtin-plans-json");
         App.run(args.toArray(String[]::new));
         var measurements = MeasurementCsv.load(new File(destDir, "measurements.csv"));
-        assertEquals(2*nQueries, measurements.size());
+        assertEquals(nReps*nQueries, measurements.size());
+        Map<QueryName, Integer> expectedRows = new HashMap<>();
         for (Measurement m : measurements) {
-            String ctx = m.task().query() + ", rep="+m.rep()+", rows="+m.rows();
+            int rows = m.rows();
+            String ctx = m.task().query() + ", rep="+m.rep()+", rows="+ rows;
             assertTrue(m.error() == null || m.error().isEmpty(),
                     ctx+", error="+m.error());
             assertTrue(m.firstRowNs() >= 0, "firstRowNs="+m.firstRowNs()+", "+ctx);
             assertTrue(m.allRowsNs() >= 0, "allRowsNs="+m.allRowsNs()+", "+ctx);
-            assertTrue(m.rows() >= 0, "negative row count for "+m.task()+ctx);
+            assertTrue(rows >= 0, "negative row count for "+m.task()+ctx);
+            int exRows = expectedRows.getOrDefault(m.task().query(), -1);
+            if (exRows == -1)
+                expectedRows.put(m.task().query(), rows);
+            else
+                assertEquals(exRows, rows, "unstable row count"+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
             log.debug("{}, rep {} allRows={}us", m.task().query(), m.rep(),
