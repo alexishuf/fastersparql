@@ -45,6 +45,8 @@ import java.io.PrintStream;
 import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -60,6 +62,7 @@ import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.util.AsciiString.indexOfIgnoreCaseAscii;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 /**
  * Expose a {@link SparqlClient} (which includes a {@link Federation}) through the SPARQL
@@ -122,10 +125,23 @@ public class NettySparqlServer implements AutoCloseable {
 
     @Override public void close()  {
         sparqlClient.close();
+        CountDownLatch latch = new CountDownLatch(3);
         server.close().addListener(f -> {
-            acceptGroup.shutdownGracefully();
-            workerGroup.shutdownGracefully();
+            latch.countDown();
+            acceptGroup.shutdownGracefully(10, 50, MILLISECONDS)
+                       .addListener(f2 -> {
+                           latch.countDown();
+                           workerGroup.shutdownGracefully(10, 50, MILLISECONDS)
+                                      .addListener(f3 -> latch.countDown());
+                       });
         });
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS))
+                log.warn("{} is taking too long to shutdown, leaking.", this);
+        } catch (InterruptedException e) {
+            log.warn("Interrupted while closing {}, leaking.", this);
+            Thread.currentThread().interrupt();
+        }
     }
 
     /* --- --- --- handlers --- --- --- */
