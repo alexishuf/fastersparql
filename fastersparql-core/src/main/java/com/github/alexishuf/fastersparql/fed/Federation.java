@@ -576,8 +576,7 @@ public class Federation extends AbstractSparqlClient {
             default -> {
                 for (int i = 0, n = plan.opCount(); i < n; i++) {
                     Plan o = plan.op(i), bound = trivialPlan(o);
-                    if (bound != o)
-                        plan.replace(i, trivialPlan(plan.op(i)));
+                    if (bound != o) plan.replace(i, bound);
                 }
                 yield plan;
             }
