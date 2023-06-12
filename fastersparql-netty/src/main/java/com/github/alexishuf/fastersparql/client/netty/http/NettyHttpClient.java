@@ -38,6 +38,7 @@ public final class NettyHttpClient implements AutoCloseable {
     private final Bootstrap bootstrap;
     private final String connectionHeaderValue;
     private final ChannelRecycler recycler;
+    private boolean closed = false;
 
     public NettyHttpClient(EventLoopGroupHolder groupHolder, String baseUri,
                            Supplier<? extends NettyHttpHandler> handlerFactory,
@@ -132,6 +133,7 @@ public final class NettyHttpClient implements AutoCloseable {
 
     public <T extends NettyHttpHandler> void
     request(HttpRequest request, BiConsumer<Channel, T> onConnected, Consumer<Throwable> onError) {
+        if (closed) throw new IllegalStateException("already close()ed");
         (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
             try {
                 Channel ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
@@ -158,6 +160,8 @@ public final class NettyHttpClient implements AutoCloseable {
     }
 
     @Override public void close() {
+        if (closed) return;
+        closed = true;
         activeChannels.close();
         groupHolder.release();
         if (pool != null)
