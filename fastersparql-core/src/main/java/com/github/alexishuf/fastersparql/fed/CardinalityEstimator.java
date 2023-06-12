@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
@@ -54,9 +53,8 @@ public abstract class CardinalityEstimator {
 
     public abstract int estimate(TriplePattern tp, @Nullable Binding binding);
     public int estimate(Query q, @Nullable Binding binding) {
-        SparqlQuery sparql = q.sparql;
-        if (sparql instanceof Plan p) return estimate(p, binding);
-        return estimate(new SparqlParser().parse(sparql), binding);
+        var parsed = q.sparql instanceof Plan p ? p : new SparqlParser().parse(q.sparql);
+        return estimate(parsed, binding);
     }
 
     protected int estimateModifier(Modifier modifier, @Nullable Binding binding) {

@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -16,6 +17,10 @@ public final class EmptyBIt<B extends Batch<B>> extends AbstractBIt<B> {
     private static final EmptyBIt<StoreBatch> STORE_EMPTY           = new EmptyBIt<>(StoreBatch.TYPE, Vars.EMPTY);
 
     public EmptyBIt(BatchType<B> batchType, Vars vars) { super(batchType, vars); }
+    public EmptyBIt(BatchType<B> batchType, Vars vars, @Nullable MetricsFeeder metrics) {
+        super(batchType, vars);
+        this.metrics = metrics;
+    }
 
     @SuppressWarnings("unchecked")
     public static <B extends Batch<B>> EmptyBIt<B> of(BatchType<B> type) {

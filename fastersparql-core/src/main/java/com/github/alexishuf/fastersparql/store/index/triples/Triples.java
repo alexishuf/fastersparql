@@ -88,6 +88,20 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
         return "Triples{keys="+keysCount()+", path="+path+"]";
     }
 
+    /**
+     * The lowest key stored in this index. Keys in the {@code [1, firstKey())}
+     * have no pairs stored.
+     *
+     * <p>This should not be used to query the index with {@link #values(long, long)},
+     * {@link #pairs(long)} and similar methods. Instead, it should be used if iterating over
+     * all stored keys:</p>
+     *
+     * <pre>{@code
+     * for (long k = firstKey(), end = k+keysCount(); i < end; ++k)
+     *     // ... do something with key k
+     * }</pre>
+     */
+    public long firstKey() { return firstKey; }
     public long keysCount() { return offsCount-1; }
 
     public long triplesCount() {

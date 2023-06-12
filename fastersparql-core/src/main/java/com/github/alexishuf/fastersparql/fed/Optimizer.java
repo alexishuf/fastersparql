@@ -16,15 +16,14 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
 import static java.lang.Long.MAX_VALUE;
 import static java.lang.Long.numberOfTrailingZeros;
 
-final class Optimizer extends CardinalityEstimator {
+public class Optimizer extends CardinalityEstimator {
     private static final long I_MAX = Integer.MAX_VALUE;
-    private final Map<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
+    private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
     private final CheapThreadLocal<State> stateThreadLocal = new CheapThreadLocal<>(State::new);
 
     public void estimator(SparqlClient client, CardinalityEstimator estimator) {
@@ -49,7 +48,7 @@ final class Optimizer extends CardinalityEstimator {
         private long upFiltersTaken = 0L;
         private long upFiltersTakenByChildren = 0L;
         private final ArrayList<Expr> tmpFilters = new ArrayList<>();
-        private ArrayBinding tmpBinding = null;
+        private ArrayBinding grounded = null;
 
         private boolean isEmptyState() {
             return tmpFilters.isEmpty()
@@ -64,10 +63,10 @@ final class Optimizer extends CardinalityEstimator {
         public void setup(Plan plan) {
             assert isEmptyState();
             Vars allVars = plan.allVars();
-            if (tmpBinding == null || !tmpBinding.vars.equals(allVars))
-                tmpBinding = new ArrayBinding(allVars);
+            if (grounded == null || !grounded.vars.equals(allVars))
+                grounded = new ArrayBinding(allVars);
             else
-                tmpBinding.clear();
+                grounded.clear();
         }
 
         /**
@@ -196,29 +195,11 @@ final class Optimizer extends CardinalityEstimator {
             upFilterVars = depth == 0 ? Vars.EMPTY : upFilterVarsSets.get(depth-1);
         }
 
-        /** Estimate cost of {@code plan} and apply discounts for each {@code upFilter} it
-         *  can feed. This allows join-reordering to prioritize feeding a filter when cost are
-         *  otherwise close. */
-        private int faEstimate(Plan plan) {
-            int cost = estimate(plan, null);
-            Vars inVars = plan.publicVars();
-            if (upFilterVars.isEmpty())
-                return cost; // no filters to evaluate
-            if (!inVars.intersects(upFilterVars))
-                return cost + (cost>>4); //penalty for not contributing any filter var
-            int nFilters = 0;
-            for (List<Expr> filterList : upFilters) {
-                for (Expr e : filterList) {
-                    if (inVars.containsAll(e.vars())) nFilters++;
-                }
-            }
-            return cost - Math.min(nFilters * (cost >> 4), cost >> 2);
-        }
-
-
-        /** Similar to {@link State#faEstimate(Plan)} but uses {@code binding} to estimate the
-         * cost of {@code plan} and also considers that bound vars in {@code binding} can be used
-         * to feed candidate filters in {@code upFilters}. */
+        /**
+         * Estimate cost of {@code plan} after binding it with {@code binding} and apply discounts
+         * for each {@code upFilter} it can feed. This allows join-reordering to prioritize
+         * feeding a filter when cost are otherwise close.
+         */
         private int faEstimate(Plan plan, ArrayBinding binding) {
             int cost = estimate(plan, binding);
             Vars planVars = plan.publicVars();
@@ -244,10 +225,125 @@ final class Optimizer extends CardinalityEstimator {
             return cost - Math.min(nFilters * (cost >> 4), cost >> 2); // apply discount per filter
         }
 
+        /**
+         * Optimizes (filter-pushing and join-reordering) a tree rooted at {@code p}.
+         *
+         * @param p a {@link Plan}
+         * @param canTakeFilters if true, {@code p} may receive additional filters from
+         *                       indirect parents or be replaced with a Modifier that runs such
+         *                       filters over its output. This should only be false when
+         *                       {@code p}'s parent is a {@link Modifier} or a {@link Union}
+         *                       with uniform vars across its operands: in such cases the parent
+         *                       should absorb applicable filters.
+         * @return {@code p}, possibly mutated, or a {@link Modifier} with a possibly mutated
+         *         {@code p} as input.
+         */
+        public Plan optimize(Plan p, boolean canTakeFilters) {
+            Operator type = p.type;
+
+            // push filters if p is a filtering Modifier and upFiltersCount + filters.size() <= 64
+            Modifier pushed = p instanceof Modifier m ? m : null;
+            if (pushed != null && (pushed.filters.isEmpty() || !pushFilters(pushed)))
+                pushed = null;
+
+            boolean childrenCan; // whether our DIRECT children can take filters
+            byte restoreTmpBinding; // whether we must save and restore tmpBinding
+            switch (type) {
+                case UNION -> { childrenCan = nonUniformVars(p); restoreTmpBinding = 1; }
+                case NOT_EXISTS,EXISTS,MINUS -> { childrenCan = true; restoreTmpBinding = 2; }
+                default -> { childrenCan = type != Operator.MODIFIER; restoreTmpBinding = 0; }
+            }
+            // store filters taken by left-side siblings
+            long upFiltersTakenForParent = upFiltersTakenByChildren;
+            upFiltersTakenByChildren = 0L; // by this point our children took no filters (yet)
+            var arr = p.operandsArray;
+            if (arr == null) {
+                Plan o, oo;
+                Term[] tmpBindingValues = restoreTmpBinding == 1 ? grounded.copyValues() : null;
+                if ((o = p.left ) != null && (oo = optimize(o, childrenCan)) != o)
+                    p.left  = oo;
+                if      (tmpBindingValues != null) grounded.setValues(tmpBindingValues);
+                else if (restoreTmpBinding == 2)   tmpBindingValues = grounded.copyValues();
+
+                if ((o = p.right) != null && (oo = optimize(o, childrenCan)) != o)
+                    p.right = oo;
+                if (tmpBindingValues != null) grounded.setValues(tmpBindingValues);
+            } else {
+                Term[] tmpBindingValues = restoreTmpBinding == 1 ? grounded.copyValues() : null;
+                for (int i = 0; i < arr.length; i++) {
+                    arr[i] = optimize(arr[i], childrenCan);
+                    if (tmpBindingValues != null) grounded.setValues(tmpBindingValues);
+                }
+                p.left  = arr[0];
+                p.right = arr[1];
+            }
+
+            if (pushed != null)
+                popFilters(pushed);
+            else if (type == Operator.JOIN)
+                upFiltersTakenForParent |= reorder(p);
+
+            // tries applying filters to p itself
+            if (canTakeFilters) {
+                long bitset = findFilters((p instanceof Modifier m ? m.left() : p).publicVars());
+                if (bitset != 0) {
+                    upFiltersTakenForParent |= bitset;
+                    p = addFilters(p);
+                }
+            }
+            if (pushed != null && pushed.isNoOp())
+                p = p.left();
+            upFiltersTaken |= upFiltersTakenForParent;
+            upFiltersTakenByChildren  = upFiltersTakenForParent;
+            return p;
+        }
+
+        /**
+         * Reorder a Join. Operands of the join will not be modified and are assumed to already
+         * be optimized. The implementation is greedy and stable. If an operand can host upstream
+         * filter clauses, ist cost will be reduced. The resulting order will not contain
+         * cartesian products with variables, if they can be avoided.
+         *
+         * @param p the join node
+         * @return If {@code p.opCount() > 2}, sets of {@code m > 1 && < n} neighboring operands
+         *         in the optimized order may be replaced by a
+         *         {@code Modifier[filters](Join(o1, ..., om))} operand, where {@code filters}
+         *         is a subset of {@code this.upFilters}. This method returns a bitset of
+         *         filters taken.
+         */
+        public long reorder(Plan p) {
+            Plan[] arr = p.operandsArray;
+            if (arr == null) {
+                Plan right = p.right();
+                if (faEstimate(right, grounded) < faEstimate(p.left(), grounded)) {
+                    // do not swap if right has input vars fed by left
+                    boolean safe = true;
+                    Vars rPub = right.publicVars(), rAll = right.allVars();
+                    if (rAll.size() > rPub.size()) {
+                        Vars lPub = p.left().publicVars();
+                        for (Rope in : rAll) {
+                            if (rPub.contains(in)) continue;
+                            if (lPub.contains(in)) {
+                                safe = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (safe) {
+                        p.replace(1, p.left);
+                        p.replace(0, right);
+                    }
+                }
+                return 0;
+            } else {
+                return reorderNary(p, arr);
+            }
+        }
+
         /** Reorder a join with more than 2 operands so that operands are executed by
          *  increasing cost. Like {@link CardinalityEstimator}, cost of the {@code i-th}
          *  operand assumes all join vars are ground as would occur in a bind join. */
-        private void reorderNaryJoin(Plan p, Plan[] ops) {
+        private long reorderNary(Plan p, Plan[] ops) {
             long accCost = 1;
             for (int i = 0; i < ops.length; i++) {
                 // find minIdx >= i with the lowest cost
@@ -258,12 +354,12 @@ final class Optimizer extends CardinalityEstimator {
                     // case code would detect a false product and compute unnecessary stuff
                     minIdx = -1; // we use minIdx sign to signal whether minIdx has input vars
                     for (int j = 0; j < ops.length; j++) {
-                        int estimate = faEstimate(ops[j], tmpBinding);
+                        int estimate = faEstimate(ops[j], grounded);
                         Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
                         boolean hasInputVars = false;
                         if (allVars.size() > pubVars.size()) {
                             for (Rope in : allVars) {
-                                hasInputVars = !pubVars.contains(in) && tmpBinding.get(in) == null;
+                                hasInputVars = !pubVars.contains(in) && grounded.get(in) == null;
                                 if (hasInputVars) break;
                             }
                         }
@@ -275,12 +371,12 @@ final class Optimizer extends CardinalityEstimator {
                     minIdx = Math.abs(minIdx)-1; // reverse the the "sign as hasInputVars" hack
                 } else if (i < ops.length-1) {
                     for (int j = i; j < ops.length; j++) {
-                        long estimate = faEstimate(ops[j], tmpBinding);
+                        long estimate = faEstimate(ops[j], grounded);
                         boolean newVars = false, cartesian = true, fwdJoined = false;
                         byte unjoinedVars = 0;
                         Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
                         for (Rope out : pubVars) {
-                            if (tmpBinding.get(out) == null) {
+                            if (grounded.get(out) == null) {
                                 newVars = true;
                                 boolean joined = false;
                                 for (int k = j + 1; !joined && k < ops.length; k++)
@@ -295,7 +391,7 @@ final class Optimizer extends CardinalityEstimator {
                         // operands. Maybe they can be bound with outputs of later operands
                         if (allVars.size() > pubVars.size()) {
                             for (Rope in : allVars) {
-                                if (pubVars.contains(in) || tmpBinding.get(in) != null) continue;
+                                if (pubVars.contains(in) || grounded.get(in) != null) continue;
                                 newVars = true; // an input will cause a product or a join
                                 for (int k = i + 1; k < ops.length; k++) {
                                     if (ops[k].publicVars().contains(in))
@@ -333,128 +429,66 @@ final class Optimizer extends CardinalityEstimator {
                 accCost = minEstimate;
                 // mark all vars produced by best as ground in subsequent estimations
                 for (Rope var : best.publicVars()) {
-                    int varIdx = tmpBinding.vars.indexOf(var);
-                    if (tmpBinding.get(varIdx) == null)
-                        tmpBinding.set(varIdx, GROUND);
+                    int varIdx = grounded.vars.indexOf(var);
+                    if (grounded.get(varIdx) == null)
+                        grounded.set(varIdx, GROUND);
                 }
             }
             p.left  = ops[0];
             p.right = ops[1];
-        }
-
-        /**
-         * Optimizes (filter-pushing and join-reordering) a tree rooted at {@code p}.
-         *
-         * @param p a {@link Plan}
-         * @param canTakeFilters if true, {@code p} may receive additional filters from
-         *                       indirect parents or be replaced with a Modifier that runs such
-         *                       filters over its output. This should only be false when
-         *                       {@code p}'s parent is a {@link Modifier} or a {@link Union}
-         *                       with uniform vars across its operands: in such cases the parent
-         *                       should absorb applicable filters.
-         * @return {@code p}, possibly mutated, or a {@link Modifier} with a possibly mutated
-         *         {@code p} as input.
-         */
-        public Plan optimize(Plan p, boolean canTakeFilters) {
-            Operator type = p.type;
-
-            // push filters if p is a filtering Modifier and upFiltersCount + filters.size() <= 64
-            Modifier pushed = p instanceof Modifier m ? m : null;
-            if (pushed != null && (pushed.filters.isEmpty() || !pushFilters(pushed)))
-                pushed = null;
-
-            boolean childrenCan; // whether our DIRECT children can take filters
-            byte restoreTmpBinding; // whether we must save and restore tmpBinding
-            switch (type) {
-                case UNION -> { childrenCan = nonUniformVars(p); restoreTmpBinding = 1; }
-                case NOT_EXISTS,EXISTS,MINUS -> { childrenCan = true; restoreTmpBinding = 2; }
-                default -> { childrenCan = type != Operator.MODIFIER; restoreTmpBinding = 0; }
-            }
-            // store filters taken by left-side siblings
-            long upFiltersTakenForParent = upFiltersTakenByChildren;
-            upFiltersTakenByChildren = 0L; // by this point our children took no filters (yet)
-            var arr = p.operandsArray;
-            if (arr == null) {
-                Plan o, oo;
-                Term[] tmpBindingValues = restoreTmpBinding == 1 ? tmpBinding.copyValues() : null;
-                if ((o = p.left ) != null && (oo = optimize(o, childrenCan)) != o)
-                    p.left  = oo;
-                if      (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
-                else if (restoreTmpBinding == 2)   tmpBindingValues = tmpBinding.copyValues();
-
-                if ((o = p.right) != null && (oo = optimize(o, childrenCan)) != o)
-                    p.right = oo;
-                if (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
-            } else {
-                Term[] tmpBindingValues = restoreTmpBinding == 1 ? tmpBinding.copyValues() : null;
-                for (int i = 0; i < arr.length; i++) {
-                    arr[i] = optimize(arr[i], childrenCan);
-                    if (tmpBindingValues != null) tmpBinding.setValues(tmpBindingValues);
-                }
-                p.left  = arr[0];
-                p.right = arr[1];
-            }
-
-            if (pushed != null) {
-                popFilters(pushed);
-            } else if (type == Operator.JOIN) {
-                if (arr == null) {
-                    Plan right = p.right();
-                    if (faEstimate(right) < faEstimate(p.left())) {
-                        // do not swap if right has input vars fed by left
-                        boolean safe = true;
-                        Vars rPub = right.publicVars(), rAll = right.allVars();
-                        if (rAll.size() > rPub.size()) {
-                            Vars lPub = p.left().publicVars();
-                            for (Rope in : rAll) {
-                                if (rPub.contains(in)) continue;
-                                if (lPub.contains(in)) {
-                                    safe = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if (safe) {
-                            p.replace(1, p.left);
-                            p.replace(0, right);
-                        }
-                    }
-                } else {
-                    reorderNaryJoin(p, arr);
-                    // try replacements like Join(A, B, C) -> Join(Filter(Join(A, B), F), C)
-                    if (upFiltersCount != 0)
-                        upFiltersTakenForParent |= takeFiltersOnSubJoins(p);
-                }
-            }
-
-            // tries applying filters to p itself
-            if (canTakeFilters) {
-                long bitset = findFilters((p instanceof Modifier m ? m.left() : p).publicVars());
-                if (bitset != 0) {
-                    upFiltersTakenForParent |= bitset;
-                    p = addFilters(p);
-                }
-            }
-            if (pushed != null && pushed.isNoOp())
-                p = p.left();
-            upFiltersTaken |= upFiltersTakenForParent;
-            upFiltersTakenByChildren  = upFiltersTakenForParent;
-            return p;
+            // try replacements like Join(A, B, C) -> Join(Filter(Join(A, B), F), C)
+            return upFiltersCount == 0 ? 0 : takeFiltersOnSubJoins(p);
         }
     }
 
-    /**
-     * Performs filter-pushing and join-reordering on the plan rooted at {@code plan}.
-     *
-     * @param plan a {@link Plan} tree
-     * @return plan itself, with possibly mutated tree or a {@link Modifier} wrapping a
-     *         possibly mutated tree.
-     */
+    /** Equivalent to {@link #optimize(Plan, Vars)} with {@link Vars#EMPTY} */
     public Plan optimize(Plan plan) {
         State state = stateThreadLocal.get();
         state.setup(plan);
         return state.optimize(plan, true);
     }
+    /**
+     * Recursively performs filter-pushing and join-reordering on the plan rooted at {@code plan}.
+     *
+     * @param plan a {@link Plan} tree
+     * @return plan itself, with possibly mutated tree or a {@link Modifier} wrapping a
+     *         possibly mutated tree.
+     */
+    public Plan optimize(Plan plan, Vars boundVars) {
+        State state = stateThreadLocal.get();
+        state.setup(plan);
+        var grounded = state.grounded;
+        for (Rope name : boundVars) {
+            int i = grounded.vars.indexOf(name);
+            if (i >= 0)
+                grounded.set(i, GROUND);
+        }
+        return state.optimize(plan, true);
+    }
+
+    public void shallowOptimize(Plan join) { shallowOptimize(join, Vars.EMPTY); }
+    /**
+     * Reorders operands in {@code join} to minimize cost of iterating over all results.
+     *
+     * <p>Unlike {@link #optimize(Plan)}, the operands themselves will not be optimized dded, removed nor
+     * modified.</p>
+     *
+     * @param boundVars set of vars to be considered as bound when estimating costs.
+     * @param join the join to optimize
+     */
+    public void shallowOptimize(Plan join, Vars boundVars) {
+        if (join.type != Operator.JOIN) return;
+        State state = stateThreadLocal.get();
+        state.setup(join);
+        var grounded = state.grounded;
+        for (Rope name : boundVars) {
+            int i = grounded.vars.indexOf(name);
+            if (i >= 0)
+                grounded.set(i, GROUND);
+        }
+        state.reorder(join);
+    }
+
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
         return DEFAULT.estimate(tp, binding);

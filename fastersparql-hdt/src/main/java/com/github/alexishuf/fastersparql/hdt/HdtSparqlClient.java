@@ -15,20 +15,19 @@ import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
-import com.github.alexishuf.fastersparql.fed.Federation;
-import com.github.alexishuf.fastersparql.fed.Source;
-import com.github.alexishuf.fastersparql.fed.Spec;
-import com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector;
+import com.github.alexishuf.fastersparql.fed.SingletonFederator;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.hdt.cardinality.HdtCardinalityEstimator;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
@@ -62,11 +61,11 @@ public class HdtSparqlClient extends AbstractSparqlClient {
     }
 
     private final HDT hdt;
-    private final Federation federation;
     final int dictId;
     private final CompletionStage<HdtSparqlClient> estimatorReady;
     @SuppressWarnings("unused") // accessed through DICT_REFS
     private int plainHdtRefs;
+    private final SingletonFederator federator;
 
     public HdtSparqlClient(SparqlEndpoint ep) {
         super(ep);
@@ -83,11 +82,9 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
         dictId = IdAccess.register(hdt.getDictionary());
         HDT_REFS.setRelease(this, 1);
-        federation = new Federation(ep, null);
         var estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
+        federator = new SingletonFederator(this, TYPE, estimator);
         estimatorReady = estimator.ready().thenApply(ignored -> this);
-        var selector = new TrivialSelector(ep, Spec.EMPTY);
-        federation.addSource(new Source(this, selector, estimator, Spec.EMPTY));
     }
 
     public CompletionStage<HdtSparqlClient> estimatorReady() {
@@ -95,29 +92,35 @@ public class HdtSparqlClient extends AbstractSparqlClient {
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
+        var plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);
         BIt<HdtBatch> hdtIt;
-        if (sparql instanceof Modifier m && m.left instanceof TriplePattern tp) {
+        if (plan instanceof Modifier m && m.left instanceof TriplePattern tp) {
             Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
             hdtIt = m.executeFor(queryTP(vars, tp), null, false);
-        } else if (sparql instanceof TriplePattern tp) {
+        } else if (plan instanceof TriplePattern tp) {
             hdtIt = queryTP(tp.publicVars(), tp);
         } else {
-            hdtIt = federation.query(TYPE, sparql);
+            hdtIt = federator.execute(TYPE, plan);
         }
         return batchType.convert(hdtIt);
     }
 
     private BIt<HdtBatch> queryTP(Vars vars, TriplePattern tp) {
         long s, p, o;
+        BIt<HdtBatch> it;
         var dict = hdt.getDictionary();
         if (       (s = plain(dict, tp.s,   SUBJECT)) == NOT_FOUND
                 || (p = plain(dict, tp.p, PREDICATE)) == NOT_FOUND
                 || (o = plain(dict, tp.o,    OBJECT)) == NOT_FOUND) {
-            return new EmptyBIt<>(TYPE, vars);
+            it = new EmptyBIt<>(TYPE, vars);
         } else {
-            var it = hdt.getTriples().search(new TripleID(s, p, o));
-            return new HdtIteratorBIt(vars, tp.s, tp.p, tp.o, it);
+            var hdtIt = hdt.getTriples().search(new TripleID(s, p, o));
+            it = new HdtIteratorBIt(vars, tp.s, tp.p, tp.o, hdtIt);
         }
+        var metrics = Metrics.createIf(tp);
+        if (metrics != null)
+            it.metrics(metrics);
+        return it;
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {

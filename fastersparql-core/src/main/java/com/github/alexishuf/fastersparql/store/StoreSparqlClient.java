@@ -17,8 +17,9 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
-import com.github.alexishuf.fastersparql.fed.*;
-import com.github.alexishuf.fastersparql.fed.selectors.TrivialSelector;
+import com.github.alexishuf.fastersparql.fed.CardinalityEstimator;
+import com.github.alexishuf.fastersparql.fed.CardinalityEstimatorProvider;
+import com.github.alexishuf.fastersparql.fed.SingletonFederator;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.TripleRoleSet;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -26,19 +27,18 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
-import com.github.alexishuf.fastersparql.operators.plan.Modifier;
-import com.github.alexishuf.fastersparql.operators.plan.Operator;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
+import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,12 +49,16 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
+import static com.github.alexishuf.fastersparql.model.TripleRoleSet.PRE;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
+import static java.util.Arrays.copyOfRange;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 
 public class StoreSparqlClient extends AbstractSparqlClient
@@ -73,8 +77,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private final LocalityCompositeDict dict;
     private final int dictId;
     private final Triples spo, pso, ops;
-    private final Federation federation;
-    private final Estimator estimator = new Estimator();
+    private final SingletonFederator federator;
     @SuppressWarnings("unused") private int plainRefs;
     private final int prefixesMask;
     private final SegmentRope[] prefixes;
@@ -122,9 +125,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.spo = spo;
         this.pso = pso;
         this.ops = ops;
-        federation = new Federation(ep, null);
-        var selector = new TrivialSelector(ep, Spec.EMPTY);
-        federation.addSource(new Source(this, selector, estimator, Spec.EMPTY));
+        this.federator = new StoreSingletonFederator(this);
         REFS.setRelease(this, 1);
         log.info("Loaded{} {}...", validate ? "/validated" : "", dir);
     }
@@ -138,7 +139,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     /** An {@link AutoCloseable} that ensures the {@link StoreSparqlClient} and the
      *  underlying storage remains open (i.e., {@link StoreSparqlClient#close()} will be
-     *  silently delayed if there are unterminated {@link BIt}s or unclosed refs. */
+     *  silently delayed if there are unterminated {@link BIt}s or unclosed refs). */
     public class Ref implements AutoCloseable {
         private boolean closed;
 
@@ -172,7 +173,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         int refs = (int)REFS.getAndAddRelease(this, -1);
         if (refs == 1) {
             IdTranslator.deregister(dictId, dict);
-            federation.close();
             dict.close();
             spo.close();
             pso.close();
@@ -194,50 +194,235 @@ public class StoreSparqlClient extends AbstractSparqlClient
     void usesBindingAwareProtocol(boolean value) { bindingAwareProtocol = value; }
     public int dictId() { return dictId; }
 
-    /* --- --- --- estimation --- --- --- */
+    /* --- --- --- estimation & optimization --- --- --- */
 
-    public Estimator estimator() { return estimator; }
+    public CardinalityEstimator estimator() { return federator; }
 
-    public int estimate(TriplePattern tp) { return estimator.estimate(tp, null); }
+    public int estimate(TriplePattern tp) { return federator.estimate(tp, null); }
 
-    private final class Estimator extends CardinalityEstimator {
+    private static final class StoreSingletonFederator extends SingletonFederator {
+        private final int dictId;
+        private final Triples spo, pso, ops;
+        private final int avgS, avgP, avgO, avgSP, avgSO, avgPO;
+        private final float invAvgSP, invAvgSO, invAvgPO;
+
+        public StoreSingletonFederator(StoreSparqlClient parent) {
+            super(parent, StoreSparqlClient.TYPE);
+            this.spo = parent.spo;
+            this.pso = parent.pso;
+            this.ops = parent.ops;
+            this.dictId = parent.dictId;
+            int[] avg = new int[3];
+            Thread sThread = Thread.startVirtualThread(() -> avg[0] = computeAvgPairs(spo));
+            Thread pThread = Thread.startVirtualThread(() -> avg[1] = computeAvgPairs(pso));
+            Thread oThread = Thread.startVirtualThread(() -> avg[2] = computeAvgPairs(ops));
+            Async.uninterruptibleJoin(sThread);
+            Async.uninterruptibleJoin(pThread);
+            Async.uninterruptibleJoin(oThread);
+            this.avgS = avg[0];
+            this.avgP = avg[1];
+            this.avgO = avg[2];
+            avgSP = (int)Math.min(Integer.MAX_VALUE, 1+ops.triplesCount()/(float)ops.keysCount());
+            avgSO = (int)Math.min(Integer.MAX_VALUE, 1+pso.triplesCount()/(float)pso.keysCount());
+            avgPO = (int)Math.min(Integer.MAX_VALUE, 1+spo.triplesCount()/(float)spo.keysCount());
+            invAvgSP = 1/(float)avgSP;
+            invAvgSO = 1/(float)avgSO;
+            invAvgPO = 1/(float)avgPO;
+        }
+
+        private int computeAvgPairs(Triples triples) {
+            long sum = 0;
+            for (long k = triples.firstKey(), end = k+triples.keysCount(); k < end; k++)
+                sum += triples.estimatePairs(k);
+            return (int)Math.min(Integer.MAX_VALUE, (long)((float)sum/triples.keysCount()));
+        }
+
         @Override public int estimate(TriplePattern t, @Nullable Binding binding) {
             var l = lookup(dictId);
             long s = t.s.type() == VAR ? 0 : l.find(t.s);
             long p = t.p.type() == VAR ? 0 : l.find(t.p);
             long o = t.o.type() == VAR ? 0 : l.find(t.o);
-            long estimate = switch (binding == null ? t.varRoles() : t.varRoles(binding)) {
-                case EMPTY        -> 1;
-                case OBJ          -> spo.estimateValues(s, p);
-                case PRE, PRE_OBJ -> spo.estimatePairs(s);
-                case SUB          -> ops.estimateValues(o, p);
+            var vars = binding == null ? t.varRoles() : t.varRoles(binding);
+            if (vars == EMPTY)
+                return 1; // short circuit for ask queries
+
+            // we cannot delegate estimation if we have a GROUND dummy term. Doing so would get
+            // estimate == 0 even for expensive queries. When returning an avg*, field is not
+            // enough, estimation relies on weighing avgS/avgP/avgO by an estimatePairs() of
+            // another non-dummy grounded term. The following switch is not the prettiest, but
+            // it avoids having 7 call sites to estimatePairs(). Too many call sites are a slight
+            // perf issue as the JIT will give up inlining or will output huge code
+            var dummies = TripleRoleSet.fromBitset((t.s == GROUND ? 0x4 : 0x0)
+                                                 | (t.p == GROUND ? 0x2 : 0x0)
+                                                 | (t.o == GROUND ? 0x1 : 0x0));
+            Triples epObj = null;
+            long epKey = 0;
+            float dummyWeight = 1;
+            switch (dummies) {
+                case SUB -> {
+                    switch (vars) {
+                        case PRE     -> { epObj = ops; epKey = o; dummyWeight = invAvgSP; }
+                        case OBJ     -> { epObj = pso; epKey = p; dummyWeight = invAvgSO; }
+                        case PRE_OBJ -> { return avgPO; }
+                    }
+                }
+                case PRE -> {
+                    switch (vars) {
+                        case SUB     -> { epObj = ops; epKey = o; dummyWeight = invAvgSP; }
+                        case OBJ     -> { epObj = spo; epKey = s; dummyWeight = invAvgPO; }
+                        case SUB_OBJ -> { return avgSO; }
+                    }
+                }
+                case OBJ -> {
+                    switch (vars) {
+                        case SUB -> { epObj = pso; epKey = p; dummyWeight = invAvgSO; }
+                        case PRE -> { epObj = spo; epKey = s; dummyWeight = invAvgPO; }
+                        case SUB_PRE -> { return avgSP; }
+                    }
+                }
+                case SUB_PRE -> { return avgO; }
+                case SUB_OBJ -> { return avgP; }
+                case PRE_OBJ -> { return avgS; }
+                case EMPTY -> {
+                    if (vars == PRE) { epObj = ops; epKey = o; }
+                }
+            }
+            if (epObj != null)
+                dummyWeight *= epObj.estimatePairs(epKey);
+
+            // at this point, avg* fields and 1 are not answers, delegate to Triples or
+            // approximate using some avgS/avgP/avgO and dummyWeight
+            long estimate = switch (vars) { //noinspection DataFlowIssue
+                case EMPTY        -> 1; // already handled, repeat to satisfy compiler
+                case PRE_OBJ      -> spo.estimatePairs(s);
                 case SUB_OBJ      -> pso.estimatePairs(p);
                 case SUB_PRE      -> ops.estimatePairs(o);
                 case SUB_PRE_OBJ  -> spo.triplesCount();
+                case SUB -> dummies == EMPTY ? ops.estimateValues(o, p)
+                                             : (int)(1 + avgS*dummyWeight);
+                case OBJ -> dummies == EMPTY ? spo.estimateValues(s, p)
+                                             : (int)(1 + avgO*dummyWeight);
+                case PRE -> {
+                    if (dummies == EMPTY)
+                        dummyWeight = Math.min(dummyWeight, spo.estimatePairs(s));
+                    yield (int)(1 + avgP * dummyWeight);
+                }
             };
             return (int)Math.min(Integer.MAX_VALUE, estimate);
+        }
+
+        @Override protected Plan bind(Plan plan) {
+            return supportedQueryMeat(plan) == null ? bindInner(plan) : new Query(plan, client);
         }
     }
 
     /* --- --- --- query --- --- --- */
 
-    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        BIt<StoreBatch> storeIt;
-        Modifier m = sparql instanceof Modifier mod ? mod : null;
-        if ((m == null ? sparql : m.left) instanceof TriplePattern tp) {
-            var l = lookup(dictId);
-            Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-            storeIt = queryTP(tpVars, tp,
-                    tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
-                    tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
-                    tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
-                    tp.varRoles());
-            if (m != null)
-                storeIt = m.executeFor(storeIt, null, false);
-        } else {
-            storeIt = federation.query(TYPE, sparql);
+    private static Plan supportedQueryMeat(Plan p) {
+        if (p.type == MODIFIER) {
+            p = p.left();
+            if (p.type == UNION || p.type == JOIN) {
+                var tp = p.right == null && p.left instanceof TriplePattern t ? t : null;
+                if (tp != null || p.type == UNION) return tp;
+            }
         }
+        return switch (p.type) {
+            case TRIPLE -> p;
+            case UNION -> p.left instanceof TriplePattern tp && p.right == null ? tp : null;
+            case JOIN -> {
+                Plan r = p.right;
+                if (r == null)
+                    yield p.left instanceof TriplePattern tp ? tp : null;
+                Plan rJoin = p;
+                int rIdx = 1, n = p.opCount();
+                if (n == 2) {
+                    if (r.type == MODIFIER)
+                        r = r.left();
+                    if (r.type == JOIN) {
+                        rJoin = r;
+                        rIdx = 0;
+                    } else {
+                        yield r.type == TRIPLE ? p : null;
+                    }
+                }
+                while (rIdx < n && rJoin.op(rIdx).type == TRIPLE) ++rIdx;
+                yield rIdx == n ? p : null;
+            }
+            default -> null;
+        };
+    }
+
+    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
+        Plan plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);
+        Plan meat = supportedQueryMeat(plan);
+        BIt<StoreBatch> storeIt = null;
+        var l = meat == null ? null : lookup(dictId);
+        if (meat instanceof TriplePattern tp) {
+            Modifier m = plan instanceof Modifier mod ? mod : null;
+            // if possible, push projection to when turning Triple.* iterators into batches
+            Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+            storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
+                                          tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
+                                          tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
+                                          tp.varRoles());
+            if (m != null) // apply the modifier. executeFor() detects a no-op
+                storeIt = m.executeFor(storeIt, null, false);
+            storeIt.metrics(Metrics.createIf(plan));
+        } else if (meat != null) {
+            Plan mutableJoin = plan.type == MODIFIER ? plan.left() : plan;
+            if (plan == sparql)
+                mutableJoin = mutableJoin.copy();
+            storeIt = queryBGP(plan, mutableJoin, l);
+        }
+        if (meat == null || storeIt == null)
+            return federator.execute(batchType, plan);
         return batchType.convert(storeIt);
+    }
+
+    private BIt<StoreBatch> queryBGP(Plan joinOrMod, Plan join,
+                                     LocalityCompositeDict.Lookup lookup) {
+        Vars outVars = joinOrMod.publicVars();
+        federator.shallowOptimize(join);
+        Plan rightJoin = join;
+        int rIdx = 1, n = join.opCount();
+        if (n == 2) {
+            Plan r = join.right();
+            if (r.type == MODIFIER) r = r.left();
+            switch (r.type) {
+                case JOIN   -> { rightJoin = r; rIdx = 0; }
+                case TRIPLE ->   rIdx = 2; // accept even if wrapped in Modifier
+                default     -> { return null; }
+            }
+        }
+        while (rIdx < n && rightJoin.op(rIdx).type == TRIPLE) ++rIdx;
+        if (rIdx < n) return null; // non-triple operand in r BGP
+        Plan r = join.right();
+        if (rightJoin == join && n > 2) { //noinspection DataFlowIssue
+            r = n == 3 ? new Join(r, join.op(2))
+                       : new Join(copyOfRange(join.operandsArray, 1, n));
+        }
+        var metrics = Metrics.createIf(join);
+        var bq = new BindQuery<>(r, query(TYPE, join.left), BindType.JOIN,
+                                 metrics == null ? null : metrics.joinMetrics[1]);
+        var tp = (r.type == MODIFIER ? r.left : r) instanceof TriplePattern t ? t : null;
+        BIt<StoreBatch> it;
+        if (tp != null) {
+            long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+            boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
+                    || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
+                    || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
+            if (empty)
+                return new EmptyBIt<>(TYPE, outVars, metrics);
+            var notifier = new BindingNotifier(bq);
+            it = new StoreBindingBIt<>(bq.bindings, bq.type, r, tp, s, p, o,
+                                         outVars, notifier, notifier);
+        } else {
+            var rMod = r instanceof Modifier m ? m : null;
+            it = bindWithModifiedBGP(bq, rMod, r, outVars, lookup);
+        }
+        if (joinOrMod instanceof Modifier m)
+            it = m.executeFor(it, null, false);
+        return it;
     }
 
     private BIt<StoreBatch> queryTP(Vars vars, TriplePattern t, long si, long pi, long oi,
@@ -268,10 +453,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (bq.query.isGraph())
                 throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
             Vars outVars = bq.resultVars();
-            TriplePattern tp = StoreBindingBIt.supportedTP(right);
             BIt<B> it;
+            var l = lookup(dictId);
+            var tp = (right.type == MODIFIER ? right.left : right) instanceof TriplePattern t
+                   ? t : null;
             if (tp != null) {
-                var l = lookup(dictId);
                 long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
                 boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
                              || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
@@ -284,9 +470,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                                outVars, notifier, notifier);
                 }
             } else {
-                it = tryModifiedBGP(bq, right, outVars);
-//                if (it == null)
-//                    it = tryModifiedUnion(bq, right, outVars);
+                it = tryBindWithModifiedBGP(bq, right, outVars, l);
                 if (it == null)
                     it = new ClientBindingBIt<>(bq, this);
             }
@@ -297,35 +481,45 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     private <B extends Batch<B>>
-    BIt<B> tryModifiedBGP(BindQuery<B> bq, Plan right, Vars outVars) {
+    BIt<B> tryBindWithModifiedBGP(BindQuery<B> bq, Plan right, Vars outVars,
+                                  LocalityCompositeDict.Lookup lookup) {
         Plan join = right instanceof Modifier m ? m.left() : right;
         if (join.type.bindType() != BindType.JOIN) return null;
-        int n = join.opCount();
-        for (int i = 0; i < n; i++) {
-            if (!(join.op(i) instanceof TriplePattern)) return null;
+        for (int i = 0, n = join.opCount(); i < n; i++) {
+            if (join.op(i).type != TRIPLE) return null;
         }
-        Plan lastOp = join.op(n-1);
-        if (right instanceof Modifier m) {
-            Modifier m2 = (Modifier) m.copy();
+        join = join.deepCopy();
+        federator.shallowOptimize(join.deepCopy(), bq.bindings.vars());
+        var mod = right instanceof Modifier m ? m : null;
+        return bindWithModifiedBGP(bq, mod, join, outVars, lookup);
+    }
+
+    private <B extends Batch<B>>
+    BIt<B> bindWithModifiedBGP(BindQuery<B> bq, @Nullable Modifier modifier,
+                               Plan rightJoin, Vars outVars,
+                               LocalityCompositeDict.Lookup lookup) {
+        int n            = rightJoin.opCount();
+        var left         = bq.bindings;
+        var bindNotifier = new BindingNotifier(bq);
+        var lastOp       = rightJoin.op(n -1);
+        if (modifier != null) {
+            Modifier m2 = (Modifier) modifier.copy();
             m2.replace(0, lastOp);
-            m2.projection = m.publicVars();
+            m2.projection = modifier.publicVars();
             lastOp = m2;
         }
-        var lookup    = lookup(dictId);
-        var left      = bq.bindings;
-        BindingNotifier bindNotifier = new BindingNotifier(bq);
         for (int i = 0; i < n; i++) {
-            var tp = (TriplePattern)join.op(i);
+            var tp = (TriplePattern)rightJoin.op(i);
             long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
             boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
                          || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
                          || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
             if (empty)
-                return new EmptyBIt<>(left.batchType(), outVars);
+                return new EmptyBIt<>(left.batchType(), outVars, bq.metrics);
             Vars vars;
             Plan opRight;
             BindingNotifier opBindNotifier;
-            if (i == n-1) {
+            if (i == n -1) {
                 vars = outVars;
                 opRight = lastOp;
                 opBindNotifier = bindNotifier;
@@ -339,18 +533,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
         return left;
     }
-
-//    private <B extends Batch<B>> BIt<B>
-//    tryModifiedUnion(BindQuery<B> bq, Plan right, Vars outVars) {
-//        var mod = right instanceof Modifier m ? m : null;
-//        var union = (mod == null ? right : mod.left()) instanceof Union u ? u : null;
-//        if (union == null) return null;
-//        BIt<B> it = NativeBind.multiBind(bq.bindings, bq.type, outVars, union, null,
-//                                         false, bq.metrics, this);
-//        if (mod != null)
-//            it = mod.executeFor(it, null, false);
-//        return it;
-//    }
 
     /* --- --- --- iterators --- --- --- */
 
@@ -480,6 +662,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         public void startBinding() {
             ++seq;
             notified = false;
+            var metrics = bindQuery.metrics;
+            if (metrics != null) metrics.beginBinding();
         }
 
         public void notifyBinding(boolean empty) {
@@ -512,18 +696,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final TwoSegmentRope ropeView;
         private final @Nullable BatchMerger<B> preFilterMerger;
         private final @Nullable BatchFilter<B> rightFilter;
-
-        public static TriplePattern supportedTP(Plan right) {
-            if (right instanceof TriplePattern t) return t;
-            if (right instanceof Modifier m) {
-                Plan c = m.left();
-                if (c instanceof TriplePattern t) return t;
-                if (c.right == null && c.left instanceof TriplePattern t
-                        && (c.type == Operator.JOIN || c.type == Operator.UNION))
-                    return t;
-            }
-            return null;
-        }
 
         public StoreBindingBIt(BIt<B> left, BindType bindType, Plan right, TriplePattern tp,
                                long s, long p, long o, Vars projection,
@@ -731,6 +903,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         rEnd = true;
                     if (bindingNotifier != null) bindingNotifier.notifyBinding(!pub && rEnd);
                 } while (readyInNanos(b.rows, startNs) > 0);
+                if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
+                    bindingNotifier.bindQuery.metrics.batch(b.rows);
                 if (b.rows == 0) b = handleEmptyBatch(b);
                 else             onBatch(b);
             } catch (Throwable t) {
