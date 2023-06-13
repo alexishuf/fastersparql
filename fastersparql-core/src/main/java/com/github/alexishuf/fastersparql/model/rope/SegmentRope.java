@@ -51,7 +51,10 @@ public class SegmentRope extends PlainRope {
     public MemorySegment segment;
 
     public SegmentRope() {
-        this(ByteRope.EMPTY_SEGMENT, ByteRope.EMPTY_UTF8, 0, 0);
+        super(0);
+        this.offset = 0;
+        this.utf8 = ByteRope.EMPTY_UTF8;
+        this.segment = ByteRope.EMPTY_SEGMENT;
     }
     public SegmentRope(ByteBuffer buffer) {
         this(MemorySegment.ofBuffer(buffer), null, 0, buffer.remaining());
