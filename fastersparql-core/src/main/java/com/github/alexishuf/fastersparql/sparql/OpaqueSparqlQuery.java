@@ -265,7 +265,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         private void readVar(int aliasStart) { //in.charAt(pos) is '?' or '$'
             int start = pos;
             pos = in.skip(start+1, len, VARNAME);
-            Rope name = in.sub(start+1, pos);
+            SegmentRope name = in.sub(start+1, pos);
             allVars.add(name);
             if (aliasStart != -1) {
                 aliasVars.add(name);

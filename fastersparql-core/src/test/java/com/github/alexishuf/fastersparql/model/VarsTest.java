@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.model;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -23,12 +24,12 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @SuppressWarnings("unused")
 class VarsTest {
-    private static List<Rope> list(int begin, int end) {
-        return range(begin, end).mapToObj(Rope::of).collect(toList());
+    private static List<SegmentRope> list(int begin, int end) {
+        return range(begin, end).mapToObj(SegmentRope::of).collect(toList());
     }
 
-    private static List<Rope> revList(int begin, int end) {
-        var list = new ArrayList<>(range(begin, end).mapToObj(Rope::of).toList());
+    private static List<SegmentRope> revList(int begin, int end) {
+        var list = new ArrayList<>(range(begin, end).mapToObj(SegmentRope::of).toList());
         Collections.reverse(list);
         return list;
     }
@@ -41,9 +42,9 @@ class VarsTest {
 
     private static class WrapFactory extends Factory {
         @Override public Vars create(int size, int slack) {
-            Rope[] array = new Rope[size+slack];
+            SegmentRope[] array = new SegmentRope[size+slack];
             for (int i = 0; i < size; i++)
-                array[i] = Rope.of(i);
+                array[i] = SegmentRope.of(i);
             return Vars.wrapSet(array, size);
         }
     }
@@ -68,7 +69,7 @@ class VarsTest {
         @Override public Vars create(int size, int slack) {
             Vars.Mutable vars = new Vars.Mutable(size+slack);
             for (int i = 0; i < size; i++)
-                vars.add(Rope.of(i));
+                vars.add(SegmentRope.of(i));
             return vars;
         }
     }
@@ -217,8 +218,8 @@ class VarsTest {
     public void testAddReversedDoubled(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         for (int i = size*2; i >= size; i--) {
-            assertTrue(v.add(Rope.of(i)));
-            assertFalse(v.add(Rope.of(i)));
+            assertTrue(v.add(SegmentRope.of(i)));
+            assertFalse(v.add(SegmentRope.of(i)));
         }
         var expected = list(0, size);
         expected.addAll(revList(size, size*2+1));
@@ -267,7 +268,7 @@ class VarsTest {
         assertEquals(1, v.novelItems(list(size, size+2), 1, 1));
 
 
-        List<Rope> list = revList(size - 1, size + 1);
+        List<SegmentRope> list = revList(size - 1, size + 1);
         assertEquals(v.isEmpty() ? 2 : 1, v.novelItems(list, MAX_VALUE, 0));
         assertEquals(v.isEmpty() ? 1 : 0, v.novelItems(list, MAX_VALUE, 1));
         assertEquals(v.isEmpty() ? 1 : 0, v.novelItems(list, 1, 1));
@@ -311,8 +312,8 @@ class VarsTest {
         // remove one item
         for (int i = 0; i < size; i++) {
             Vars right = Vars.of(Rope.of(i));
-            List<Rope> expected = list(0, size);
-            expected.remove(Rope.of(i));
+            List<SegmentRope> expected = list(0, size);
+            expected.remove(SegmentRope.of(i));
             assertEquals(expected, new ArrayList<>(left.minus(right)));
             assertEquals(list(0, size), new ArrayList<>(left), "left mutated");
         }

@@ -767,7 +767,7 @@ public class NettySparqlServer implements AutoCloseable {
                 Vars itVars = it.vars();
                 var serializeVars = new Vars.Mutable(itVars.size()+1);
                 serializeVars.add(WsBindingSeq.VAR);
-                for (Rope v : itVars)
+                for (var v : itVars)
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
                 Thread.startVirtualThread(() -> drainerThread(round));

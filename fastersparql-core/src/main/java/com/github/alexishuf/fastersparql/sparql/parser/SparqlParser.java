@@ -102,7 +102,7 @@ public class SparqlParser {
         return termParser.asTerm();
     }
 
-    private Rope pVarName() {
+    private SegmentRope pVarName() {
         int begin = pos+1, e = in.skip(begin, end, VARNAME);
         while (e > begin && in.get(e) == '.') --e;
         if (e == begin)

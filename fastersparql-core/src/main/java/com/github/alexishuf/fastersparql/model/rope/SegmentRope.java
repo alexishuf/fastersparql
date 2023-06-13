@@ -82,8 +82,17 @@ public class SegmentRope extends PlainRope {
         this(MemorySegment.ofArray(utf8), utf8, offset, len);
     }
 
+    public static SegmentRope of(Rope r) {
+        if (r instanceof SegmentRope sr)
+            return sr;
+        return new SegmentRope(r.toArray(0, r.len), 0, r.len);
+    }
+
     public static SegmentRope of(Object cs) {
-        if (cs instanceof SegmentRope sr) return sr;
+        if (cs instanceof SegmentRope sr)
+            return sr;
+        if (cs instanceof TwoSegmentRope tsr)
+            return new SegmentRope(tsr.toArray(0, tsr.len), 0, tsr.len);
         byte[] u8 = cs.toString().getBytes(UTF_8);
         return new SegmentRope(u8, 0, u8.length);
     }

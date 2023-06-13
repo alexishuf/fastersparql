@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.model;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.IndexOrHigh;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
@@ -29,38 +30,38 @@ import static java.lang.System.arraycopy;
  *
  *
  * */
-public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set<Rope> {
-    public static final Vars EMPTY = new Vars(new Rope[0], 0L, 0);
+public sealed class Vars extends AbstractList<SegmentRope> implements RandomAccess, Set<SegmentRope> {
+    public static final Vars EMPTY = new Vars(new SegmentRope[0], 0L, 0);
 
-    protected Rope[] array;
+    protected SegmentRope[] array;
     protected long has;
     protected @IndexOrHigh("array") int size;
 
     /* --- --- --- constructor & factory methods --- --- --- */
 
-    private Vars(Rope[] array, long has, int size) {
+    private Vars(SegmentRope[] array, long has, int size) {
         this.array = array;
         this.has = has;
         this.size = size;
     }
 
     /** Create a {@link Vars} wrapping (by reference) the varargs array */
-    public static Vars of(Rope... vars) {
+    public static Vars of(SegmentRope... vars) {
         if (vars == null || vars.length == 0) return EMPTY;
         return new Vars(vars, hashAll(vars, vars.length), vars.length);
     }
 
     /** Convert the strings into {@link Rope}s and add them into a new {@link Vars} instance. */
-    public static Vars of(String... strings) {
+    public static Vars of(CharSequence... strings) {
         if (strings == null || strings.length == 0) return EMPTY;
         Mutable set = new Mutable(strings.length);
-        for (String s : strings)
+        for (var s : strings)
             set.add(new ByteRope(s));
         return set;
     }
 
     /** Wrap an existing array (by reference) into a Vars instance */
-    public static Vars wrapSet(Rope[] array, @IndexOrHigh("array") int size) {
+    public static Vars wrapSet(SegmentRope[] array, @IndexOrHigh("array") int size) {
         return new Vars(array, hashAll(array, size), size);
     }
 
@@ -76,7 +77,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
     /** Copy a non-distinct collection into a new mutable Vars instance with given capacity. */
     public static Mutable from(Collection<?> collection, int capacity) {
-        Mutable vars = new Mutable(new Rope[capacity], 0L, 0);
+        Mutable vars = new Mutable(new SegmentRope[capacity], 0L, 0);
         vars.addAllConverting(collection);
         return vars;
     }
@@ -96,10 +97,10 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     public static Mutable fromSet(Collection<?> set, int capacity) {
         if (set instanceof Vars vars) return Vars.fromSet(vars, capacity);
         int size = set.size();
-        Rope[] array = new Rope[Math.max(size, capacity)];
+        SegmentRope[] array = new SegmentRope[Math.max(size, capacity)];
         int i = 0;
         for (Object o : set)
-            array[i++] = o instanceof Rope r ? r : new ByteRope(o.toString());
+            array[i++] = o instanceof SegmentRope r ? r : new ByteRope(o.toString());
         return new Mutable(array, hashAll(array, size), size);
     }
 
@@ -109,7 +110,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
      *  in {@code this} and in {@code right}. */
     public final Vars union(Vars right) {
         if (containsAll(right)) return this;
-        Rope[] array = grownFor(right, 0);
+        SegmentRope[] array = grownFor(right, 0);
         if (array == this.array) return this;
         var copy = new Mutable(array, has, size);
         copy.addAll(right);
@@ -124,9 +125,9 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
         if (size < 32) {
             int remove = 0;
             long has = 0, rightHas = right.has;
-            Rope[] array = this.array, rArray = right.array;
+            SegmentRope[] array = this.array, rArray = right.array;
             outer: for (int i = 0; i < size; i++) {
-                Rope name = array[i];
+                SegmentRope name = array[i];
                 long bit = 1L << name.hashCode();
                 if ((rightHas & bit) == 0) {
                     has |= bit;
@@ -137,7 +138,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
                 }
             }
             if (remove == 0) return this;
-            Rope[] rem = new Rope[array.length];
+            SegmentRope[] rem = new SegmentRope[array.length];
             int nRem = 0;
             for (int i = 0; i < size; i++) {
                 if ((remove & (1 << i)) == 0) rem[nRem++] = array[i];
@@ -149,10 +150,10 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     }
 
     private Vars coldMinus(Vars right) {
-        Rope[] array = this.array;
+        SegmentRope[] array = this.array;
         Mutable rem = new Mutable(array.length);
         for (int i = 0, size = this.size; i < size; i++) {
-            Rope name = array[i];
+            SegmentRope name = array[i];
             if (!right.contains(name)) rem.add(name);
         }
         return rem.size == size ? this : rem;
@@ -160,8 +161,8 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
 
     /** Get the subset of items in {@code this} that are also present in {@code other} */
-    public final Vars intersection(Collection<Rope> other) {
-        Rope[] array = new Rope[Math.min(size, other.size())];
+    public final Vars intersection(Collection<SegmentRope> other) {
+        SegmentRope[] array = new SegmentRope[Math.min(size, other.size())];
         long has = 0;
         int size = 0;
         for (Rope s : other) {
@@ -170,7 +171,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
                 for (int i = 0; i < this.size; i++) {
                     if (s.equals(this.array[i])) {
                         has |= mask;
-                        array[size++] = s;
+                        array[size++] = SegmentRope.of(s);
                         break;
                     }
                 }
@@ -185,13 +186,13 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     /* --- --- --- non-overridden query methods --- --- --- */
 
     /**
-     * Get a reference to the backing {@code Rope[]}.
+     * Get a reference to the backing {@code SegmentRope[]}.
      *
      * <p>Changes to the array will reflect on {@code this} {@link Vars} even if the instance
      * is immutable. Likewise, mutations on the {@link Vars} object may cause this method
      * to return a different reference.</p>
      */
-    public final Rope[] array() { return array; }
+    public final SegmentRope[] array() { return array; }
 
 
     /** Count up to {@code maxCount} items from {@code other} (starting at {@code from})
@@ -217,7 +218,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     @EnsuresNonNullIf(expression = "#1", result = true)
     public boolean intersects(Collection<? extends Rope> other) {
         if (other == null || other instanceof Vars v && (has & v.has) == 0) return false;
-        for (Rope s : other) {
+        for (var s : other) {
             if (indexOf(s) > -1) return true;
         }
         return false;
@@ -225,7 +226,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
     /* --- --- --- overridden query methods --- --- --- */
 
-    @Override public final Rope get(int index) {
+    @Override public final SegmentRope get(int index) {
         if (index >= size) throw new IndexOutOfBoundsException(index);
         return array[index];
     }
@@ -235,7 +236,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     /**
      * Gets the {@code i} such that
      * <pre>
-     *     Rope name = varOrVarName instanceof Term t && t.type() == VAR ? t.name() : varOrVarName
+     *     SegmentRope name = varOrVarName instanceof Term t && t.type() == VAR ? t.name() : varOrVarName
      *     get(i).equals(name)
      * </pre>
      *
@@ -259,7 +260,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
     @Override public final boolean isEmpty() { return size == 0; }
 
-    @Override public final Spliterator<Rope> spliterator() { return super.spliterator(); }
+    @Override public final Spliterator<SegmentRope> spliterator() { return super.spliterator(); }
 
     @Override public boolean equals(Object o) {
         if (o == this) return true;
@@ -272,43 +273,52 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
         return true;
     }
 
+    /* --- --- --- specialized mutation methods --- --- --- */
+
+    public boolean add(Term var) { throw new UnsupportedOperationException(); }
+    public boolean addAll(@NonNull Vars other) {
+        throw new UnsupportedOperationException();
+    }
+
     /* --- --- --- mutable subclass --- --- --- */
 
     /** A Mutable {@link Vars} instance */
     public final static class Mutable extends Vars {
-        private Mutable(Rope[] array, long has, int size) { super(array, has, size); }
+        private Mutable(SegmentRope[] array, long has, int size) { super(array, has, size); }
 
         /** Create an empty mutable {@link Vars} backed by an array of length {@code capacity}. */
-        public Mutable(int capacity) { super(new Rope[capacity], 0L, 0); }
+        public Mutable(int capacity) { super(new SegmentRope[capacity], 0L, 0); }
 
         /**
          * Adds the given var name (will call {@link Term#name()} if given a {@link Term.Type#VAR})
          *
-         * @param varOrVarName element whose presence in this collection is to be ensured
+         * @param name element whose presence in this collection is to be ensured
          * @return {@code true} iff the var was not already present.
          */
-        @Override public boolean add(Rope varOrVarName) {
-            if (varOrVarName == null) throw new NullPointerException();
-            if (indexOf(varOrVarName) >= 0) return false;
-            if (varOrVarName instanceof Term t) {
-                varOrVarName = t.name();
-                if (varOrVarName == null) throw new IllegalArgumentException("Non-var Term instance");
-            }
+        @Override public boolean add(SegmentRope name) {
+            if (name == null) throw new NullPointerException();
+            if (indexOf(name) >= 0) return false;
             if (size >= array.length) //must grow array
                 array = grownFor(null, 0); // do not inline: cold code
-            array[size++] = varOrVarName;
-            has |= 1L << varOrVarName.hashCode();
+            array[size++] = name;
+            has |= 1L << name.hashCode();
             return true;
         }
 
-        @Override public boolean addAll(@NonNull Collection<? extends Rope > c) {
+        @Override public boolean add(Term var) {
+            if (!var.isVar())
+                throw new IllegalArgumentException("Non-var Term instance");
+            return add(new ByteRope(var.toArray(1, var.len)));
+        }
+
+        @Override public boolean addAll(@NonNull Collection<? extends SegmentRope > c) {
             return addAllConverting(c);
         }
 
-        public boolean addAll(@NonNull Vars other) {
+        @Override public boolean addAll(@NonNull Vars other) {
             int size = this.size;
             outer: for (int i = 0, otherSize = other.size; i < otherSize; i++) {
-                Rope name = other.get(i);
+                SegmentRope name = other.get(i);
                 long bit = 1L << name.hashCode();
                 if ((has & bit) != 0) {
                     for (int j = 0; j < size; j++) {
@@ -328,11 +338,11 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
             int i = 0;
             outer: for (Object object : c) {
                 if (object == null) continue;
-                Rope s;
+                SegmentRope s;
                 if (object instanceof Term t) {
                     s = t.name();
                     if (s == null) throw new IllegalArgumentException("Non-var Term");
-                } else if (object instanceof Rope r) {
+                } else if (object instanceof SegmentRope r) {
                     s = r;
                 } else {
                     s = new ByteRope(object.toString());
@@ -352,10 +362,10 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
             return size != oldSize;
         }
 
-        @Override public Rope remove(int index) {
+        @Override public SegmentRope remove(int index) {
             if (index >= size)
                 throw new IndexOutOfBoundsException(index);
-            Rope old = array[index];
+            SegmentRope old = array[index];
             arraycopy(array, index+1, array, index, size-(index+1));
             --size;
             has = hashAll(array, size);
@@ -367,14 +377,14 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
 
     /* --- --- --- helpers --- --- --- */
 
-    private static long hashAll(Rope[] array, int size) {
+    private static long hashAll(SegmentRope[] array, int size) {
         long has = 0L;
         for (int i = 0; i < size; i++)
             has |= 1L << array[i].hashCode();
         return has;
     }
 
-    protected final Rope[] grownFor(@Nullable Collection<?> source, int from) {
+    protected final SegmentRope[] grownFor(@Nullable Collection<?> source, int from) {
         int next = Math.max(10, array.length + (array.length>>1));
         // when this is called with non-null source, it typically overlaps (join vars) or
         // is equal to this (union/gather) as cartesian products are not frequent.

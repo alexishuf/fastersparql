@@ -944,7 +944,7 @@ public final class Term extends Rope implements Expr {
     @Override public Expr bound(Binding binding) { return binding.getIf(this); }
 
     @Override public Vars vars() {
-        Rope name = name();
+        var name = name();
         if (name == null) return Vars.EMPTY;
         var singleton = new Vars.Mutable(1);
         singleton.add(name);
@@ -1058,7 +1058,7 @@ public final class Term extends Rope implements Expr {
 
 
     /** If this is a var, gets its name (without leading '?'/'$'). Else, return {@code null}. */
-    public @Nullable Rope name() {
+    public @Nullable SegmentRope name() {
         return type() == Type.VAR ? second.sub(1, len) : null;
     }
 

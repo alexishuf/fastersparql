@@ -511,7 +511,7 @@ class BatchTest {
                         },
                         (Function<Vars, Vars>)in -> {
                             var set = new Vars.Mutable(in.size() + 1);
-                            set.add(Rope.of("empty"));
+                            set.add(SegmentRope.of("empty"));
                             set.addAll(in);
                             return set;
                         }
@@ -709,7 +709,7 @@ class BatchTest {
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
                             for (int i = in.size()/2; i < in.size(); i++)  out.add(in.get(i));
-                            out.add(Rope.of("dummy"));
+                            out.add(SegmentRope.of("dummy"));
                             return out;
                         }
                 )

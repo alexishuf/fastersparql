@@ -360,7 +360,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
 
             if ((c = rope.get(begin)) == '?' || c == '$')
                 ++begin; // do not include var marker into var name
-            Rope varName = new ByteRope(termEnd-begin).append(rope, begin, termEnd);
+            var varName = new ByteRope(termEnd-begin).append(rope, begin, termEnd);
             if (rope.skip(begin, termEnd, SparqlSkip.VARNAME) != termEnd)
                 throw new InvalidSparqlResultsException("Invalid var name: "+varName);
             offer.add(varName);

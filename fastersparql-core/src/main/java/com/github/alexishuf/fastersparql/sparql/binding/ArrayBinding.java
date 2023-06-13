@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -45,7 +46,7 @@ public class ArrayBinding extends Binding {
         var vars = new Vars.Mutable(varAndValues.length >> 1);
         var terms = new Term[varAndValues.length>>1];
         for (int i = 0; i < varAndValues.length; i += 2) {
-            Rope name = Rope.of(varAndValues[i]);
+            var name = SegmentRope.of(varAndValues[i]);
             if (name.len() > 0 && (name.get(0) == '?' || name.get(0) == '$'))
                 name = name.sub(1, name.len());
             if (name.len() == 0)
