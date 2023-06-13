@@ -124,7 +124,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
         int size = 0;
         outer: for (int i = 0; i < this.size; i++) {
             Rope s = this.array[i];
-            long mask = 1L << (s.hashCode()&63);
+            long mask = 1L << s.hashCode();
             if ((right.has & mask) != 0) {
                 for (int j = 0; j < right.size; j++) {
                     if (s.equals(right.array[j])) continue outer;
@@ -142,7 +142,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
         long has = 0;
         int size = 0;
         for (Rope s : other) {
-            long mask = 1L << (s.hashCode() & 63);
+            long mask = 1L << s.hashCode();
             if ((this.has & mask) != 0) {
                 for (int i = 0; i < this.size; i++) {
                     if (s.equals(this.array[i])) {
@@ -222,7 +222,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     @Override public final int indexOf(Object varOrVarName) {
         if (varOrVarName instanceof Term t) varOrVarName = t.name();
         if (varOrVarName == null) return -1;
-        if ((has & (1L << (varOrVarName.hashCode() & 63))) == 0) return -1;
+        if ((has & (1L << varOrVarName.hashCode())) == 0) return -1;
         for (int i = 0; i < size; i++) {
             if (varOrVarName.equals(array[i])) return i;
         }
@@ -274,12 +274,30 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
             if (size >= array.length) //must grow array
                 array = grownFor(null, 0); // do not inline: cold code
             array[size++] = varOrVarName;
-            has |= 1L << (varOrVarName.hashCode() & 63);
+            has |= 1L << varOrVarName.hashCode();
             return true;
         }
 
         @Override public boolean addAll(@NonNull Collection<? extends Rope > c) {
             return addAllConverting(c);
+        }
+
+        public boolean addAll(@NonNull Vars other) {
+            int size = this.size;
+            outer: for (int i = 0, otherSize = other.size; i < otherSize; i++) {
+                Rope name = other.get(i);
+                long bit = 1L << name.hashCode();
+                if ((has & bit) != 0) {
+                    for (int j = 0; j < size; j++) {
+                        if (name.equals(array[j])) continue outer;
+                    }
+                }
+                has |= bit;
+                if (this.size == array.length)
+                    grownFor(other, i);
+                array[this.size++] = name;
+            }
+            return this.size != size;
         }
 
         private boolean addAllConverting(@NonNull Collection<?> c) {
@@ -296,7 +314,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
                 } else {
                     s = new ByteRope(object.toString());
                 }
-                long mask = 1L << (s.hashCode() & 63);
+                long mask = 1L << s.hashCode();
                 if ((has & mask) != 0) { // s may be present
                     for (int j = 0; j < size; j++) { // continue outer if s is in array
                         if (s.equals(array[j])) continue outer;
@@ -306,6 +324,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
                      array = grownFor(c, i); // do a single reallocation. Do not inline as this is cold code
                 array[size++] = s;
                 has |= mask;
+                ++i;
             }
             return size != oldSize;
         }
@@ -328,7 +347,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     private static long hashAll(Rope[] array, int size) {
         long has = 0L;
         for (int i = 0; i < size; i++)
-            has |= 1L << (array[i].hashCode()&63);
+            has |= 1L << array[i].hashCode();
         return has;
     }
 
@@ -338,7 +357,7 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
         // is equal to this (union/gather) as cartesian products are not frequent.
         // If a 50% growth cannot handle the worst case scenario of no intersection,
         // then we count the precise growth need for adding source and resize to accommodate that count
-        if (source != null && size+source.size() > next) {
+        if (source != null && size+(source.size()-from) > next) {
             if (source instanceof List<?> list)
                 next = size + novelItems(list, MAX_VALUE, from);
             else
