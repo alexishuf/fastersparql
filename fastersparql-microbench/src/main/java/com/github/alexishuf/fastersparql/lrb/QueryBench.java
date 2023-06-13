@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -36,7 +37,10 @@ import java.util.function.IntSupplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static com.github.alexishuf.fastersparql.FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY;
+import static com.github.alexishuf.fastersparql.FSProperties.OP_CROSS_DEDUP_CAPACITY;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
+import static java.lang.System.setProperty;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -52,6 +56,7 @@ public class QueryBench {
     @Param({"FS_STORE", "HDT_FILE"}) SourceKind srcKind;
     @Param({"PREFERRED"}) SelectorKindType selKind;
     @Param({"true"}) boolean builtinPlans;
+    @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
 //    @Param({"true"}) boolean alt;
 
@@ -136,20 +141,32 @@ public class QueryBench {
 
     private static final class TermLenCounter extends BatchConsumer {
         private final Term tmp = new Term();
-        private int acc;
+        private int acc, rows;
+        private StringBuilder prev = new StringBuilder(), curr = new StringBuilder();
 
         public TermLenCounter(BatchType<?> batchType) {super(batchType);}
         public int len() { return acc; }
 
-        @Override public void start(BIt<?> it) { acc = 0; }
-        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+        @Override public void start(BIt<?> it) {
+            acc = 0;
+            rows = 0;
+            StringBuilder tmp = prev;
+            prev = curr;
+            (curr = tmp).setLength(0);
+        }
+        @Override public void finish(@Nullable Throwable error) {
+            throwAsUnchecked(error);
+        }
         @Override public void accept(Batch<?> batch) {
             for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
                 for (int c = 0; c < cols; c++) {
-                    if (batch.getView(r, c, tmp))
+                    if (batch.getView(r, c, tmp)) {
                         acc += tmp.len;
+                        curr.append(this.rows+r).append(' ').append(c).append(' ').append(tmp).append('\n');
+                    }
                 }
             }
+            this.rows += batch.rows;
         }
     }
 
@@ -165,6 +182,9 @@ public class QueryBench {
     }
 
     @Setup(Level.Trial) public void setup() throws IOException {
+        setProperty(OP_CROSS_DEDUP_CAPACITY,
+                    String.valueOf(crossSourceDedup ? DEF_OP_CROSS_DEDUP_CAPACITY : 0));
+        FSProperties.refresh();
         String dataDirPath = System.getProperty("fs.data.dir");
         if (dataDirPath == null || dataDirPath.isEmpty())
             throw new IllegalArgumentException("fs.data.dir property not set!");
@@ -193,6 +213,9 @@ public class QueryBench {
         fedHandle = FederationHandle.builder(dataDir).srcKind(srcKind)
                                     .selKind(selKind.forSource(srcKind))
                                     .waitInit(true).create();
+        setProperty(OP_CROSS_DEDUP_CAPACITY,
+                String.valueOf(crossSourceDedup ? DEF_OP_CROSS_DEDUP_CAPACITY : 0));
+        FSProperties.refresh();
         if (builtinPlans) {
             var reg = PlanRegistry.parseBuiltin();
             reg.resolve(fedHandle.federation);
@@ -226,7 +249,7 @@ public class QueryBench {
     private int checkResult(int r) {
         if (lastBenchResult == -1)
             lastBenchResult = r;
-        else if (lastBenchResult != r)
+        else if (lastBenchResult != r && !crossSourceDedup)
             throw new RuntimeException("Unstable r. Expected "+lastBenchResult+", got "+r);
         return r;
     }
