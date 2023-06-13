@@ -99,17 +99,19 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     @Override public OpaqueSparqlQuery bound(Binding binding) {
-        Binder b = new Binder(binding);
-        if (b.nAllVars == allVars)
+        if (!allVars.intersects(binding.vars))
             return this; // no-op
+        Binder b = new Binder(binding);
         if (b.nPublicVars.isEmpty() && !publicVars.isEmpty())
             b.replaceWithAsk();
+        var name = new SegmentRope(sparql.segment, sparql.utf8, sparql.offset, sparql.len);
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
             int vBegin = varPos[b.posIdx], vEnd = varPos[b.posIdx + 1], gap = vEnd-vBegin;
             // if vBegin points to '(', gap spans the whole "( ... AS ?name)" segment
-            Rope name = sparql.get(vBegin) == '('
-                    ? aliasVar(sparql, vEnd)
-                    : sparql.sub(vBegin+1, vEnd);
+            if (sparql.get(vBegin) == '(')
+                aliasVar(name, vEnd);
+            else
+                name.slice(sparql.offset+vBegin+1, vEnd-(vBegin+1));
             Term term = binding.get(name);
             if (term != null) {
                 b.b.append(sparql, b.consumed, vBegin);
@@ -138,10 +140,10 @@ public class OpaqueSparqlQuery implements SparqlQuery {
 
     /* --- --- --- implementation details --- --- --- */
 
-    private static Rope aliasVar(Rope sparql, int end) {
+    private void aliasVar(SegmentRope name, int end) {
         int nameBegin = sparql.reverseSkip(0, end, VAR_MARK)+1;
         int nameEnd = sparql.skip(nameBegin, end, VARNAME);
-        return sparql.sub(nameBegin, nameEnd);
+        name.slice(sparql.offset+nameBegin, nameEnd-nameBegin);
     }
 
     private final class Binder {
