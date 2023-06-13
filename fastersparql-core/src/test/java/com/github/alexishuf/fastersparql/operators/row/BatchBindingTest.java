@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.operators.row;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -54,7 +54,7 @@ class BatchBindingTest {
             assertEquals(batch.get(1, c), b.get(c), "c="+c);
             assertEquals(batch.get(1, c), b.get(vars.get(c)), "c="+c);
         }
-        assertNull(b.get(Rope.of("outside")));
+        assertNull(b.get(SegmentRope.of("outside")));
         assertNull(b.get(Term.valueOf("?outside")));
         if (b.size() > 0) {
             assertThrows(IndexOutOfBoundsException.class, () -> b.get(-1));

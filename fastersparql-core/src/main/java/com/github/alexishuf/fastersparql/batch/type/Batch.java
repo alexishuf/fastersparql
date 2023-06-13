@@ -333,11 +333,13 @@ public abstract class Batch<B extends Batch<B>> {
      * @param column The column from where to get the RDF value.
      * @param prefixAssigner Used to get prefix names for an IRI prefix that appears in an IRI
      *                       or on a datatype IRI and is likely to be shared.
+     * @return the number of bytes written
      */
-    public void writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
         Term term = get(row, column);
         if (term != null)
-            term.toSparql(dest, prefixAssigner);
+            return term.toSparql(dest, prefixAssigner);
+        return 0;
     }
 
     /**

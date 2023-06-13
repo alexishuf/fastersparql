@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -43,5 +45,14 @@ public final class BatchBinding<B extends Batch<B>> extends Binding {
         if (batch == null || (row == 0 && batch.rows == 0))
             return null;
         return batch.get(row, i);
+    }
+
+    @Override public boolean has(int i) {
+        return batch != null && batch.rows != 0 && batch.termType(row, i) != null;
+    }
+
+    @Override public int writeSparql(int i, ByteSink<?> dest, PrefixAssigner assigner) {
+        return batch != null && batch.rows != 0
+                ? batch.writeSparql(dest, row, i, assigner) : 0;
     }
 }

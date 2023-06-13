@@ -239,9 +239,9 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     @Override
-    public void writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
         TwoSegmentRope tmp = tmpRope(row, column);
-        if (tmp == null || tmp.len == 0) return;
+        if (tmp == null || tmp.len == 0) return 0;
         SegmentRope sh;
         MemorySegment local;
         long localOff;
@@ -260,7 +260,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
             localOff = tmp.sndOff;
             localLen = tmp.sndLen;
         }
-        Term.toSparql(dest, prefixAssigner, sh, local, localOff, localLen, isLit);
+        return Term.toSparql(dest, prefixAssigner, sh, local, localOff, localLen, isLit);
     }
 
     @Override public void writeNT(ByteSink<?> dest, int row, int col) {

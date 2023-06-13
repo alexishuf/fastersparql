@@ -956,18 +956,19 @@ public final class Term extends Rope implements Expr {
      * becomes "a" and literals typed as XSD integer, decimal double and boolean are replaced by
      * their lexical forms (without quotes and datatype suffix).
      */
-    @Override public void toSparql(ByteSink<?> dest, PrefixAssigner assigner) {
+    @Override public int toSparql(ByteSink<?> dest, PrefixAssigner assigner) {
         SegmentRope local = local();
-        toSparql(dest, assigner, shared(),
+        return toSparql(dest, assigner, shared(),
                  local.segment, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
-    public static void toSparql(ByteSink<?> dest, PrefixAssigner assigner, SegmentRope shared,
+    public static int toSparql(ByteSink<?> dest, PrefixAssigner assigner, SegmentRope shared,
                                 MemorySegment local, long localOff, int localLen, boolean isLit) {
         if (shared == null || shared.len == 0) {
             dest.append(local, localOff, localLen);
-            return;
+            return localLen;
         }
+        int oldLen = dest.len();
         if (isLit) {
             if (shared == DT_DOUBLE) {
                 boolean exp = false;
@@ -977,11 +978,11 @@ public final class Term extends Rope implements Expr {
                 }
                 if (exp) {
                     dest.append(local, localOff+1, localLen-1);
-                    return;
+                    return localLen-1;
                 }
             } else if (shared == DT_integer || shared == DT_decimal || shared == DT_BOOLEAN) {
                 dest.append(local, localOff + 1, localLen - 1);
-                return;
+                return localLen-1;
             }
             dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
             if (shared.get(1) == '^') {
@@ -1020,6 +1021,7 @@ public final class Term extends Rope implements Expr {
                 dest.append(local, localOff, localLen);
             }
         }
+        return dest.len()-oldLen;
     }
 
     /* --- --- --- term methods --- --- --- */

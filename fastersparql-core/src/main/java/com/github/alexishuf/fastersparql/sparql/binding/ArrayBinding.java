@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -24,7 +23,7 @@ public class ArrayBinding extends Binding {
         this.values = new Term[vars.size()];
         if (parent != null) {
             for (int i = 0; i < this.values.length; i++) {
-                Rope name = vars.get(i);
+                SegmentRope name = vars.get(i);
                 values[i] = parent.get(name);
             }
         }

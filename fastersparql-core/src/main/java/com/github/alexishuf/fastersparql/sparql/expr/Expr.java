@@ -48,7 +48,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     }
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
-    void toSparql(ByteSink<?> out, PrefixAssigner prefixAssigner);
+    int toSparql(ByteSink<?> out, PrefixAssigner prefixAssigner);
 
     default Rope toSparql() {
         ByteRope r = new ByteRope();
@@ -95,7 +95,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         private static final byte[] NOT_EXISTS = "NOT EXISTS".getBytes(UTF_8);
         private static final byte[] EXISTS = "EXISTS".getBytes(UTF_8);
-        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+            int oldLen = out.len();
             int indent = 0;
             if (out instanceof ByteRope r) {
                 if (r.len() != 0) {
@@ -106,6 +107,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             }
             out.append(negate ? NOT_EXISTS : EXISTS);
             filter.groupGraphPattern(out, indent, assigner);
+            return out.len()-oldLen;
         }
 
         @Override public String toString() {
@@ -165,7 +167,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return hash;
         }
 
-        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+            int oldLen = out.len();
             out.append(sparqlName()).append('(');
             int n = argCount();
             for (int i = 0; i < n; i++) {
@@ -173,6 +176,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 arg(i).toSparql(out, assigner);
             }
             out.append(')');
+            return out.len()-oldLen;
         }
 
         @Override public final String toString() {
@@ -197,8 +201,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class UnaryOperator extends UnaryFunction {
         public UnaryOperator(Expr in) { super(in); }
 
-        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
-            in.toSparql(out.append(sparqlName()), assigner);
+        @Override public int toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+            return in.toSparql(out.append(sparqlName()), assigner);
         }
     }
 
@@ -217,12 +221,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class BinaryOperator extends BinaryFunction {
         public BinaryOperator(Expr l, Expr r) { super(l, r); }
 
-        @Override public void toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?> out, PrefixAssigner assigner) {
+            int oldLen = out.len();
             out.append('(');
             l.toSparql(out, assigner);
             out.append(' ').append(sparqlName()).append(' ');
             r.toSparql(out, assigner);
             out.append(')');
+            return out.len()-oldLen;
         }
     }
 
@@ -508,7 +514,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Bound(Expr in) { super(in); }
         @Override public Term eval(Binding b) {
             Term term = in instanceof Term t ? t : in.eval(b);
-            return term.type() != Type.VAR || b.get(term) != null ? TRUE : FALSE;
+            return term.type() != Type.VAR || b.has(term) ? TRUE : FALSE;
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);

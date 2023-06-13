@@ -16,7 +16,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ropeList;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
-import static java.lang.Integer.MAX_VALUE;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
@@ -130,7 +129,7 @@ class VarsTest {
                     tasks.add(() -> m.invoke(this, d.factory, d.size, d.slack));
             }
         }
-        assertEquals(14, methods); //will break with new methods: thats intentional
+        assertEquals(12, methods); //will break with new methods: thats intentional
     }
 
     @ParameterizedTest @MethodSource("data")
@@ -154,7 +153,7 @@ class VarsTest {
 
         // indexOf
         for (int i = 0; i < size; i++) {
-            var iStr = Rope.of(i);
+            var iStr = SegmentRope.of(i);
             assertEquals(i, vars.indexOf(iStr), "i="+i);
             assertEquals(i, vars.indexOf(Term.valueOf("?"+i)), "i="+i);
             assertEquals(i, vars.indexOf(Term.valueOf("$"+i)), "i="+i);
@@ -164,16 +163,16 @@ class VarsTest {
         // negative indexOf
         assertEquals(-1, vars.indexOf(ByteRope.EMPTY));
         for (int i = size; i < size + slack + 1; i++)
-            assertEquals(-1, vars.indexOf(Rope.of(i)));
+            assertEquals(-1, vars.indexOf(SegmentRope.of(i)));
 
         // contains
         for (int i = 0; i < size; i++)
-            assertTrue(vars.contains(Rope.of(i)));
+            assertTrue(vars.contains(SegmentRope.of(i)));
 
         // negative contains
         assertFalse(vars.contains(ByteRope.EMPTY));
         for (int i = size; i < size + slack + 1; i++)
-            assertFalse(vars.contains(Rope.of(i)));
+            assertFalse(vars.contains(SegmentRope.of(i)));
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
@@ -243,49 +242,6 @@ class VarsTest {
         var suffix = list(0, 2*size+slack+1);
         assertTrue(v.addAll(suffix));
         assertEquals(list(0, 2*size+slack+1), new ArrayList<>(v));
-    }
-
-//    @ParameterizedTest @MethodSource("mutableData")
-    public void testNovelItemsList(Factory factory, int size, int slack) {
-        Vars v = factory.create(size, slack);
-        assertEquals(0, v.novelItems(list(0, size), MAX_VALUE, 0));
-        assertEquals(0, v.novelItems(list(0, size), 1, 0));
-
-        assertEquals(0, v.novelItems(revList(0, size), MAX_VALUE, 0));
-        assertEquals(0, v.novelItems(revList(0, size), 1, 0));
-
-        assertEquals(slack+1, v.novelItems(list(size, size+slack+1), MAX_VALUE, 0));
-        assertEquals(1, v.novelItems(list(size, size+slack+1), MAX_VALUE, slack));
-        assertEquals(1, v.novelItems(revList(size, size+slack+1), MAX_VALUE, slack));
-
-        assertEquals(1, v.novelItems(list(-1, 0), MAX_VALUE, 0));
-        assertEquals(2, v.novelItems(list(-2, 0), MAX_VALUE, 0));
-
-        assertEquals(2, v.novelItems(list(size, size+2), 2, 0));
-        assertEquals(2, v.novelItems(revList(size, size+2), 2, 0));
-        assertEquals(1, v.novelItems(list(size, size+2), 1, 0));
-        assertEquals(1, v.novelItems(list(size, size+2), 1, 1));
-        assertEquals(1, v.novelItems(list(size, size+2), 1, 1));
-
-
-        List<SegmentRope> list = revList(size - 1, size + 1);
-        assertEquals(v.isEmpty() ? 2 : 1, v.novelItems(list, MAX_VALUE, 0));
-        assertEquals(v.isEmpty() ? 1 : 0, v.novelItems(list, MAX_VALUE, 1));
-        assertEquals(v.isEmpty() ? 1 : 0, v.novelItems(list, 1, 1));
-    }
-
-//    @ParameterizedTest @MethodSource("mutableData")
-    public void testNovelItemsSet(Factory factory, int size, int slack) {
-        Vars v = factory.create(size, slack);
-
-        assertEquals(1, v.novelItems(new HashSet<>(list(size, size+1)), MAX_VALUE));
-        assertEquals(v.isEmpty() ? 1 : 0, v.novelItems(new HashSet<>(list(size-1, size)), MAX_VALUE));
-        assertEquals(slack+1, v.novelItems(new HashSet<>(list(size, size+slack+1)), MAX_VALUE));
-        assertEquals(1, v.novelItems(new HashSet<>(list(size, size+slack+1)), 1));
-        assertEquals(1, v.novelItems(new HashSet<>(list(size, size+slack+2)), 1));
-
-        assertEquals(2, v.novelItems(Set.of("-2", "-1"), MAX_VALUE));
-        assertEquals(1, v.novelItems(Set.of("-2", "-1"), 1));
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")

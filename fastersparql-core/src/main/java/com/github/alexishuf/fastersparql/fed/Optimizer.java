@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.fed;
 
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
@@ -321,7 +320,7 @@ public class Optimizer extends CardinalityEstimator {
                     Vars rPub = right.publicVars(), rAll = right.allVars();
                     if (rAll.size() > rPub.size()) {
                         Vars lPub = p.left().publicVars();
-                        for (Rope in : rAll) {
+                        for (var in : rAll) {
                             if (rPub.contains(in)) continue;
                             if (lPub.contains(in)) {
                                 safe = false;
@@ -358,8 +357,8 @@ public class Optimizer extends CardinalityEstimator {
                         Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
                         boolean hasInputVars = false;
                         if (allVars.size() > pubVars.size()) {
-                            for (Rope in : allVars) {
-                                hasInputVars = !pubVars.contains(in) && grounded.get(in) == null;
+                            for (var in : allVars) {
+                                hasInputVars = !pubVars.contains(in) && !grounded.has(in);
                                 if (hasInputVars) break;
                             }
                         }
@@ -375,23 +374,23 @@ public class Optimizer extends CardinalityEstimator {
                         boolean newVars = false, cartesian = true, fwdJoined = false;
                         byte unjoinedVars = 0;
                         Vars pubVars = ops[j].publicVars(), allVars = ops[j].allVars();
-                        for (Rope out : pubVars) {
-                            if (grounded.get(out) == null) {
+                        for (var out : pubVars) {
+                            if (grounded.has(out)) {
+                                cartesian = false; // found a join with already known var
+                            } else {
                                 newVars = true;
                                 boolean joined = false;
                                 for (int k = j + 1; !joined && k < ops.length; k++)
                                     joined = ops[k].allVars().contains(out);
                                 if (joined) fwdJoined = true;
                                 else if (unjoinedVars < 127) ++unjoinedVars;
-                            } else {
-                                cartesian = false; // found a join with already known var
                             }
                         }
                         // visit all non-public vars that are not bound by results from preceding
                         // operands. Maybe they can be bound with outputs of later operands
                         if (allVars.size() > pubVars.size()) {
-                            for (Rope in : allVars) {
-                                if (pubVars.contains(in) || grounded.get(in) != null) continue;
+                            for (var in : allVars) {
+                                if (pubVars.contains(in) || grounded.has(in)) continue;
                                 newVars = true; // an input will cause a product or a join
                                 for (int k = i + 1; k < ops.length; k++) {
                                     if (ops[k].publicVars().contains(in))
@@ -428,7 +427,7 @@ public class Optimizer extends CardinalityEstimator {
                 ops[i] = best;
                 accCost = minEstimate;
                 // mark all vars produced by best as ground in subsequent estimations
-                for (Rope var : best.publicVars()) {
+                for (var var : best.publicVars()) {
                     int varIdx = grounded.vars.indexOf(var);
                     if (grounded.get(varIdx) == null)
                         grounded.set(varIdx, GROUND);
@@ -458,7 +457,7 @@ public class Optimizer extends CardinalityEstimator {
         State state = stateThreadLocal.get();
         state.setup(plan);
         var grounded = state.grounded;
-        for (Rope name : boundVars) {
+        for (var name : boundVars) {
             int i = grounded.vars.indexOf(name);
             if (i >= 0)
                 grounded.set(i, GROUND);
@@ -481,7 +480,7 @@ public class Optimizer extends CardinalityEstimator {
         State state = stateThreadLocal.get();
         state.setup(join);
         var grounded = state.grounded;
-        for (Rope name : boundVars) {
+        for (var name : boundVars) {
             int i = grounded.vars.indexOf(name);
             if (i >= 0)
                 grounded.set(i, GROUND);

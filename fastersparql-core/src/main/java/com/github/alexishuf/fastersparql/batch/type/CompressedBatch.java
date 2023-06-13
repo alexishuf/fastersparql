@@ -549,13 +549,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void writeSparql(ByteSink<?> dest, int row, int col, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?> dest, int row, int col, PrefixAssigner prefixAssigner) {
         int base = slBase(row, col), len = slices[base + SL_LEN];
         boolean suffix = len < 0;
         len &= LEN_MASK;
         var sh = shared[row*cols + col];
         if (len != 0 || sh != null)
-            Term.toSparql(dest, prefixAssigner, sh, localsSeg, slices[base+SL_OFF], len, suffix);
+            return Term.toSparql(dest, prefixAssigner, sh, localsSeg, slices[base+SL_OFF], len, suffix);
+        return 0;
     }
 
     @Override public void writeNT(ByteSink<?> dest, int row, int col) {

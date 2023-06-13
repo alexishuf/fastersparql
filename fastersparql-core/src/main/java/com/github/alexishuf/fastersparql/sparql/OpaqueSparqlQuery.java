@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 
 import java.util.Arrays;
@@ -112,16 +111,15 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 aliasVar(name, vEnd);
             else
                 name.slice(sparql.offset+vBegin+1, vEnd-(vBegin+1));
-            Term term = binding.get(name);
-            if (term != null) {
+            int col = binding.vars.indexOf(name);
+            if (col >= 0 && binding.has(col)) {
                 b.b.append(sparql, b.consumed, vBegin);
                 b.consumed = vEnd;
                 if (vBegin < verbEnd && publicVars.contains(name)) { //erase ?name/(... AS ?name)
                     b.growth -= gap;
                     b.nVerbEnd -= gap;
                 } else { // replace ?name with term
-                    term.toSparql(b.b, PrefixAssigner.NOP);
-                    b.growth += term.len() - gap;
+                    b.growth += binding.writeSparql(col, b.b, PrefixAssigner.NOP) - gap;
                 }
             } else { // adjust varPos for ?name in the bound sparql
                 int nBegin = vBegin+ b.growth;

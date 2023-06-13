@@ -47,15 +47,15 @@ public final class TriplePattern extends Plan {
 
     @SuppressWarnings("unused")
     public TripleRoleSet groundRoles(Binding binding) {
-        return fromBitset((s.type() != VAR || binding.get(s) != null ? 0x4 : 0x0) |
-                          (p.type() != VAR || binding.get(p) != null ? 0x2 : 0x0) |
-                          (o.type() != VAR || binding.get(o) != null ? 0x1 : 0x0));
+        return fromBitset((s.type() != VAR || binding.has(s) ? 0x4 : 0x0) |
+                          (p.type() != VAR || binding.has(p) ? 0x2 : 0x0) |
+                          (o.type() != VAR || binding.has(o) ? 0x1 : 0x0));
     }
 
     public TripleRoleSet varRoles(Binding binding) {
-        return fromBitset((s.type() == VAR && binding.get(s) == null ? 0x4 : 0x0) |
-                          (p.type() == VAR && binding.get(p) == null ? 0x2 : 0x0) |
-                          (o.type() == VAR && binding.get(o) == null ? 0x1 : 0x0));
+        return fromBitset((s.type() == VAR && !binding.has(s) ? 0x4 : 0x0) |
+                          (p.type() == VAR && !binding.has(p) ? 0x2 : 0x0) |
+                          (o.type() == VAR && !binding.has(o) ? 0x1 : 0x0));
     }
 
     @Override public Plan copy(@Nullable Plan[] ops) { return new TriplePattern(s, p, o); }

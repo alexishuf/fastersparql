@@ -2,9 +2,12 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.Objects;
 
@@ -19,9 +22,48 @@ public abstract class Binding {
     public final int size() { return vars.size(); }
 
     /** Get the {@link Term} bound to the given var or {@code null} if var is not bound. */
-    public final @Nullable Term get(Rope varOrVarName) {
-        int i = vars.indexOf(varOrVarName);
+    public final @Nullable Term get(SegmentRope name) {
+        int i = vars.indexOf(name);
         return i < 0 ? null : get(i);
+    }
+
+    /** Get the {@link Term} bound to the given var or {@code null} if var is not bound. */
+    public final @Nullable Term get(Term var) {
+        int i = vars.indexOf(var);
+        return i < 0 ? null : get(i);
+    }
+
+    /**
+     * Equivalent to {@code get(name) != null}, but may avoid instantiating a {@link Term}.
+     */
+    public final boolean has(SegmentRope name) {
+        int i = vars.indexOf(name);
+        return i >= 0 && has(i);
+    }
+
+    /**
+     * Equivalent to {@code get(var) != null}, but may avoid instantiating a {@link Term}.
+     */
+    public final boolean has(Term var) {
+        int i = vars.indexOf(var);
+        return i >= 0 && has(i);
+    }
+
+    /**
+     * Equivalent to
+     * <pre>{@code
+     *     Term term = get(i);
+     *     if (term != null)
+     *         term.toSparql(dest, prefixAssigner);
+     * }</pre>
+     *
+     * @param i column to be fetched in this {@link Binding}
+     * @param dest see {@link Term#toSparql(ByteSink, PrefixAssigner)}
+     * @param prefixAssigner see {@link Term#toSparql(ByteSink, PrefixAssigner)}
+     */
+    public int writeSparql(int i, ByteSink<?> dest, PrefixAssigner prefixAssigner) {
+        Term term = get(i);
+        return term == null ? 0 : term.toSparql(dest, prefixAssigner);
     }
 
     /** If {@code term} is var that is bound, get the value, else return {@code term} itself. */
@@ -39,6 +81,9 @@ public abstract class Binding {
      * @throws IndexOutOfBoundsException if {@code i < 0 || i >= size()}
      */
     public abstract @Nullable Term get(int i);
+
+    /** Equivalent to {@code get(i) != null}, but may avoid instantiating {@link Term}. */
+    public boolean has(int i) { return get(i) != null; }
 
     /** Whether no var in this binding has a value associated, i.e., {@code get(i)==null}
      *  for every {@code i} in {@code [0, size())}. */
@@ -72,7 +117,7 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IllegalArgumentException if {@code var} is unknown to this {@link Binding}
      */
-    public final Binding clear(Rope var) { return set(var, null); }
+    public final @This Binding clear(SegmentRope var) { return set(var, null); }
 
     /**
      * Maps the {@code i}-th variable to {@code value}.
@@ -82,7 +127,7 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IndexOutOfBoundsException if {@code i < 0 || i > size()}.
      */
-    public abstract Binding set(int i, @Nullable Term value);
+    public abstract @This Binding set(int i, @Nullable Term value);
 
     /**
      * Maps {@code var} to {@code value}.
@@ -92,7 +137,14 @@ public abstract class Binding {
      * @return this {@link Binding}
      * @throws IllegalArgumentException if {@code var} is not known to this {@link Binding}
      */
-    public final Binding set(Rope var, @Nullable Term value) {
+    public final @This Binding set(SegmentRope var, @Nullable Term value) {
+        int i = vars.indexOf(var);
+        if (i == -1)
+            throw new IllegalArgumentException("var="+var+" is not present in "+this);
+        return set(i, value);
+    }
+
+    public final @This Binding set(Term var, @Nullable Term value) {
         int i = vars.indexOf(var);
         if (i == -1)
             throw new IllegalArgumentException("var="+var+" is not present in "+this);

@@ -44,9 +44,9 @@ import static java.lang.System.setProperty;
 
 @State(Scope.Thread)
 @Threads(1)
-@Fork(value = 1, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
-@Measurement(iterations = 5, time = 1_000, timeUnit = TimeUnit.MILLISECONDS)
-@Warmup(iterations = 2, time = 1_000, timeUnit = TimeUnit.MILLISECONDS)
+@Fork(value = 3, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
+@Measurement(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Warmup(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
 @BenchmarkMode({Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class QueryBench {
@@ -231,19 +231,23 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
-        System.gc();
-        IOUtils.fsync(50_000);
+        coolDown();
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
         fedHandle.close();
+        coolDown();
     }
 
     @TearDown(Level.Trial) public void tearDown() {
         FS.shutdown();
-        IOUtils.fsync(1_000);
-        Async.uninterruptibleSleep(100);
+        coolDown();
+    }
+
+    private static void coolDown() {
         System.gc();
+        IOUtils.fsync(50_000);
+        Async.uninterruptibleSleep(50);
     }
 
     private int checkResult(int r) {

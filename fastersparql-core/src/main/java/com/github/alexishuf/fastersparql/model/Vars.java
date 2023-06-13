@@ -7,12 +7,10 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.IndexOrHigh;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.*;
 import java.util.stream.Stream;
 
-import static java.lang.Integer.MAX_VALUE;
 import static java.lang.System.arraycopy;
 
 /**
@@ -194,26 +192,6 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
      */
     public final SegmentRope[] array() { return array; }
 
-
-    /** Count up to {@code maxCount} items from {@code other} (starting at {@code from})
-     *  which are not present in {@code this}. */
-    public final int novelItems(List<?> list, int maxCount, int from) {
-        int novel = 0;
-        for (int i = from, size = list.size(); i < size; i++) {
-            if (indexOf(list.get(i)) == -1 && ++novel >= maxCount) break;
-        }
-        return novel;
-    }
-
-    /** Count up to {@code maxCount} items from {@code other} not present in {@code this}. */
-    public final int novelItems(Iterable<?> other, int maxCount) {
-        int novel = 0;
-        for (Object o : other) {
-            if (indexOf(o) == -1 && ++novel >= maxCount) break;
-        }
-        return novel;
-    }
-
     /** Test whether {@code this} and {@code other} share at least one item. */
     @EnsuresNonNullIf(expression = "#1", result = true)
     public boolean intersects(Collection<? extends Rope> other) {
@@ -234,21 +212,50 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     @Override public final int lastIndexOf(Object o) { return indexOf(o); }
 
     /**
-     * Gets the {@code i} such that
-     * <pre>
-     *     SegmentRope name = varOrVarName instanceof Term t && t.type() == VAR ? t.name() : varOrVarName
-     *     get(i).equals(name)
-     * </pre>
+     * Gets the {@code i} such that {@code get(i).equals(obj)}.
      *
-     * @param varOrVarName var name or var (as a {@link Term}) to search for
+     * @param obj var obj to search for
      * @return index of the var in this {@link Vars} or -1 if it is not present.
      */
-    @Override public final int indexOf(Object varOrVarName) {
-        if (varOrVarName instanceof Term t) varOrVarName = t.name();
-        if (varOrVarName == null) return -1;
-        if ((has & (1L << varOrVarName.hashCode())) == 0) return -1;
+    @Override public final int indexOf(Object obj) {
+        if (obj == null)           return -1;
+        if (obj instanceof Term t) return indexOf(t);
+        var name = SegmentRope.of(obj);
+        if ((has & (1L << name.hashCode())) == 0) return -1;
         for (int i = 0; i < size; i++) {
-            if (varOrVarName.equals(array[i])) return i;
+            if (name.equals(array[i])) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Gets the {@code i} such that {@code get(i).equals(name)}.
+     *
+     * @param name var name to search for
+     * @return index of the var in this {@link Vars} or -1 if it is not present.
+     */
+    public final int indexOf(SegmentRope name) {
+        if (name == null) return -1;
+        if ((has & (1L << name.hashCode())) == 0) return -1;
+        for (int i = 0; i < size; i++) {
+            if (name.equals(array[i])) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Get the {@code i} such that {@code get(i).equals(term.name())} or -1
+     *
+     * @param term a {@link Term} that MAY be {@link Term.Type#VAR}. if ground, will return -1.
+     * @return -1 if {@link Term#name()} is not present in this set, if {@code term} is
+     *         null or if {@code term} is not a var. Else return the {@code i} such that
+     *         {@code get(i).equals(term.name()}.
+     */
+    public final int indexOf(Term term) {
+        if (term == null || !term.isVar()) return -1;
+        for (int i = 0, n = size; i < n; i++) {
+            SegmentRope local = term.local();
+            if (array[i].has(0, local, 1, term.len)) return i;
         }
         return -1;
     }
@@ -299,7 +306,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
             if (name == null) throw new NullPointerException();
             if (indexOf(name) >= 0) return false;
             if (size >= array.length) //must grow array
-                array = grownFor(null, 0); // do not inline: cold code
+                array = grownFor(Collections.emptyList(), 0);
             array[size++] = name;
             has |= 1L << name.hashCode();
             return true;
@@ -327,7 +334,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
                 }
                 has |= bit;
                 if (this.size == array.length)
-                    grownFor(other, i);
+                    array = grownFor(other, i);
                 array[this.size++] = name;
             }
             return this.size != size;
@@ -384,19 +391,9 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         return has;
     }
 
-    protected final SegmentRope[] grownFor(@Nullable Collection<?> source, int from) {
-        int next = Math.max(10, array.length + (array.length>>1));
-        // when this is called with non-null source, it typically overlaps (join vars) or
-        // is equal to this (union/gather) as cartesian products are not frequent.
-        // If a 50% growth cannot handle the worst case scenario of no intersection,
-        // then we count the precise growth need for adding source and resize to accommodate that count
-        if (source != null && size+(source.size()-from) > next) {
-            if (source instanceof List<?> list)
-                next = size + novelItems(list, MAX_VALUE, from);
-            else
-                next = size + novelItems(source, MAX_VALUE);
-            if (next == size) return array;
-        }
-        return Arrays.copyOf(array, next);
+    protected final SegmentRope[] grownFor(Collection<?> source, int from) {
+        int items = source.size() - from;
+        int n = Math.max(10, Math.max(size+items, array.length + (array.length>>1)));
+        return Arrays.copyOf(array, n);
     }
 }

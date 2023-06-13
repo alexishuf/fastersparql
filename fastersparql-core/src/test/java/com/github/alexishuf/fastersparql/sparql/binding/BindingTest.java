@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -103,7 +103,7 @@ class BindingTest {
             assertEquals(term, binding.get(Term.valueOf("?"+ binding.vars.get(i))));
         }
 
-        assertNull(binding.get(Rope.of("notPresent")));
+        assertNull(binding.get(SegmentRope.of("notPresent")));
         assertNull(binding.get(Term.valueOf("?notPresent")));
         assertThrows(IndexOutOfBoundsException.class, () -> binding.get(-1));
         assertThrows(IndexOutOfBoundsException.class, () -> binding.get(binding.size()));
@@ -121,16 +121,16 @@ class BindingTest {
     void testArrayBindingFactoryMethod() {
         var b = ArrayBinding.of("?x", "<a>", "y", "23", "$zzz", "\"bob\"@en");
         assertEquals(3, b.size());
-        assertEquals(Term.iri("<a>"), b.get(Rope.of("x")));
+        assertEquals(Term.iri("<a>"), b.get(SegmentRope.of("x")));
         assertEquals(Term.iri("<a>"), b.get(Term.valueOf("?x")));
         assertEquals(Term.iri("<a>"), b.get(0));
 
         assertEquals(Term.typed(23, DT_integer), b.get(1));
-        assertEquals(Term.typed(23, DT_integer), b.get(Rope.of("y")));
+        assertEquals(Term.typed(23, DT_integer), b.get(SegmentRope.of("y")));
         assertEquals(Term.typed(23, DT_integer), b.get(Term.valueOf("?y")));
 
         assertEquals(Term.lang("bob", "en"), b.get(2));
-        assertEquals(Term.lang("bob", "en"), b.get(Rope.of("zzz")));
+        assertEquals(Term.lang("bob", "en"), b.get(SegmentRope.of("zzz")));
         assertEquals(Term.lang("bob", "en"), b.get(Term.valueOf("?zzz")));
     }
 }
