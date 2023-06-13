@@ -197,7 +197,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             this.channel = ctx.channel();
-            bbSink.alloc(this.channel.alloc());
+            bbSink.alloc(ctx);
             ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
         }
 

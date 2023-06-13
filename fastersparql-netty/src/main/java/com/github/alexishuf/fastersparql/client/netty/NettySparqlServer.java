@@ -14,7 +14,6 @@ import com.github.alexishuf.fastersparql.model.ContentNegotiator;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -376,7 +375,7 @@ public class NettySparqlServer implements AutoCloseable {
                 fail("null query or it");
                 return;
             }
-            var sink = new ByteBufSink(ctx.alloc());
+            var sink = new ByteBufSink(ctx);
             try {
                 serializer.init(it.vars(), serializeVars, query.isAsk(), sink.touch());
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
@@ -539,7 +538,7 @@ public class NettySparqlServer implements AutoCloseable {
                 fail("null query or it");
                 return;
             }
-            var sink = new ByteBufSink(ctx.alloc()).touch();
+            var sink = new ByteBufSink(ctx).touch();
             try {
                 serializer.init(it.vars(), it.vars(), query.isAsk(), sink);
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
@@ -659,7 +658,7 @@ public class NettySparqlServer implements AutoCloseable {
         /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
 
         @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
-            fsSink = new ByteBufSink(ctx.alloc());
+            fsSink = new ByteBufSink(ctx);
             super.channelActive(ctx);
         }
 

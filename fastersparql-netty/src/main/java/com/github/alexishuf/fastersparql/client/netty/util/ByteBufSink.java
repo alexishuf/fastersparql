@@ -7,21 +7,61 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.util.concurrent.locks.LockSupport;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink> {
+    private static final VarHandle CONSUMER, ASYNC_BB;
+    static {
+        try {
+            CONSUMER = MethodHandles.lookup().findVarHandle(ByteBufSink.class, "plainConsumer", Thread.class);
+            ASYNC_BB = MethodHandles.lookup().findVarHandle(ByteBufSink.class, "plainAsyncBB", ByteBuf.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private ByteBufAllocator alloc;
     private ByteBuf bb;
+    @SuppressWarnings("unused") private ByteBuf plainAsyncBB;
+    @SuppressWarnings("unused") private Thread plainConsumer;
+    private EventExecutor executor;
+    private Runnable allocTask;
+    private boolean spawnedAllocTask = false;
     private int sizeHint = 256;
 
-    public ByteBufSink(ByteBufAllocator alloc) { this.alloc = alloc; }
+    public ByteBufSink(ChannelHandlerContext   ctx) { alloc(ctx); }
+    public ByteBufSink(ByteBufAllocator      alloc) { this.alloc = alloc; }
+
+    public void alloc(ChannelHandlerContext ctx) {
+        this.alloc = ctx.alloc();
+        this.executor = ctx.executor();
+        this.allocTask = this::doAlloc;
+        spawnAllocTask();
+    }
 
     public void alloc(ByteBufAllocator alloc) {
         this.alloc = alloc;
+    }
+
+    private void doAlloc() {
+        ASYNC_BB.setRelease(this, this.alloc.buffer(sizeHint));
+        LockSupport.unpark((Thread) CONSUMER.getAcquire(this));
+    }
+
+    private void spawnAllocTask() {
+        if (!spawnedAllocTask && executor != null) {
+            spawnedAllocTask = true;
+            executor.execute(allocTask);
+        }
     }
 
     public ByteBuf take() {
@@ -29,14 +69,25 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         this.bb = null;
         if (bb == null)
             throw new IllegalStateException("no ByteBuf to take()");
-        // increase/decrease size rounding UP to a multiple of 64
-        sizeHint = 64 + ((sizeHint + bb.readableBytes()) >> 1 & ~63);
+        // average sizeHint and bytes written, then generously align to 64 bytes
+        sizeHint = 64 + (((sizeHint + bb.readableBytes()) >> 1) & ~63);
         return bb;
     }
 
     public ByteBufSink touch() {
-        if (bb == null)
-            bb = alloc.buffer(sizeHint);
+        if (bb == null) {
+            Thread consumer;
+            if (executor == null || executor.inEventLoop(consumer = Thread.currentThread())) {
+                bb = alloc.buffer(sizeHint);
+            } else {
+                CONSUMER.setRelease(this, consumer);
+                spawnAllocTask(); // spawn task in case of previous release()
+                while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
+                    LockSupport.park(executor);
+                spawnedAllocTask = false;
+                spawnAllocTask(); // spawn task to satisfy next touch() call
+            }
+        }
         return this;
     }
 
@@ -45,6 +96,13 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         this.bb = null;
         if (bb != null)
             bb.release();
+        if (spawnedAllocTask) {
+            CONSUMER.setRelease(this, Thread.currentThread());
+            while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
+                LockSupport.park(executor);
+            bb.release();
+            spawnedAllocTask = false;
+        }
     }
 
     @Override public boolean isEmpty() {
