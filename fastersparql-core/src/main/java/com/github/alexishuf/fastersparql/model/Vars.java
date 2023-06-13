@@ -119,22 +119,45 @@ public sealed class Vars extends AbstractList<Rope> implements RandomAccess, Set
     /** Get a {@link Vars} (which may be {@code this}) with all items in {@code this} that are
      *  not present in {@code right} */
     public final Vars minus(Vars right) {
-        Rope[] array = new Rope[size];
-        long has = 0L;
-        int size = 0;
-        outer: for (int i = 0; i < this.size; i++) {
-            Rope s = this.array[i];
-            long mask = 1L << s.hashCode();
-            if ((right.has & mask) != 0) {
-                for (int j = 0; j < right.size; j++) {
-                    if (s.equals(right.array[j])) continue outer;
+        int size = this.size, rightSize = right.size;
+        if (size == 0 || rightSize == 0) return this;
+        if (size < 32) {
+            int remove = 0;
+            long has = 0, rightHas = right.has;
+            Rope[] array = this.array, rArray = right.array;
+            outer: for (int i = 0; i < size; i++) {
+                Rope name = array[i];
+                long bit = 1L << name.hashCode();
+                if ((rightHas & bit) == 0) {
+                    has |= bit;
+                } else {
+                    for (int j = 0; j < rightSize; j++) {
+                        if (rArray[j].equals(name)) { remove |= 1 << i; continue outer; }
+                    }
                 }
             }
-            array[size++] = s;
-            has |= mask;
+            if (remove == 0) return this;
+            Rope[] rem = new Rope[array.length];
+            int nRem = 0;
+            for (int i = 0; i < size; i++) {
+                if ((remove & (1 << i)) == 0) rem[nRem++] = array[i];
+            }
+            return new Mutable(rem, has, nRem);
+        } else {
+            return coldMinus(right);
         }
-        return size == this.size ? this : new Mutable(array, has, size);
     }
+
+    private Vars coldMinus(Vars right) {
+        Rope[] array = this.array;
+        Mutable rem = new Mutable(array.length);
+        for (int i = 0, size = this.size; i < size; i++) {
+            Rope name = array[i];
+            if (!right.contains(name)) rem.add(name);
+        }
+        return rem.size == size ? this : rem;
+    }
+
 
     /** Get the subset of items in {@code this} that are also present in {@code other} */
     public final Vars intersection(Collection<Rope> other) {
