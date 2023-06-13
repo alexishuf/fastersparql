@@ -160,7 +160,9 @@ public class SegmentRope extends PlainRope {
 
     @Override public byte get(int i) {
         if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
-        return segment.get(JAVA_BYTE, offset+i);
+        if (U == null)
+            return segment.get(JAVA_BYTE, offset+i);
+        return U.getByte(utf8, segment.address()+offset+i+(utf8 == null ? 0 : U8_BASE));
     }
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
