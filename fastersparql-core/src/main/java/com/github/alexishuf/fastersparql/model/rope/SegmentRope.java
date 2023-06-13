@@ -171,7 +171,7 @@ public class SegmentRope extends PlainRope {
 
     @Override public SegmentRope sub(int begin, int end) {
         int rLen = rangeLen(begin, end);
-        return rLen == len ? this : new SegmentRope(segment, offset + begin, rLen);
+        return rLen == len ? this : new SegmentRope(segment, utf8, offset + begin, rLen);
     }
 
     static long skipUntil(MemorySegment segment, long i, long e, char c0) {
