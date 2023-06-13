@@ -18,7 +18,7 @@ public final class BatchBinding<B extends Batch<B>> extends Binding {
     }
 
     public BatchBinding<B> setRow(@Nullable B batch, int row) {
-        this.batch = batch == null || row < 0 || row >= batch.rows ? null : batch;
+        this.batch = batch;
         this.row = row;
         return this;
     }
