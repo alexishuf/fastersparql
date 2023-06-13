@@ -376,6 +376,17 @@ public class SegmentRope extends PlainRope {
 //        }
 //        return true;
     }
+    public boolean has(int pos, SegmentRope rope, int begin, int end) {
+        int rLen = end - begin;
+        if (pos < 0 || rLen < 0) throw new IndexOutOfBoundsException();
+        if (pos + rLen > len) return false;
+
+        long lOff = offset + pos, rOff = rope.offset + begin;
+        if (U == null)
+            return compare1_1(segment, lOff, rLen, rope.segment, rOff, rLen) == 0;
+        return compare1_1(utf8, segment.address()+lOff, rLen,
+                          rope.utf8, rope.segment.address()+rOff, rLen) == 0;
+    }
 
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
         int rLen = end - begin;
