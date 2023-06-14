@@ -127,21 +127,21 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
             outer: for (int i = 0; i < size; i++) {
                 SegmentRope name = array[i];
                 long bit = 1L << name.hashCode();
-                if ((rightHas & bit) == 0) {
-                    has |= bit;
-                } else {
+                if ((rightHas & bit) != 0) {
                     for (int j = 0; j < rightSize; j++) {
                         if (rArray[j].equals(name)) { remove |= 1 << i; continue outer; }
                     }
                 }
+                has |= bit;
             }
             if (remove == 0) return this;
-            SegmentRope[] rem = new SegmentRope[array.length];
-            int nRem = 0;
+            if (remove == (1L << size) - 1) return EMPTY;
+            SegmentRope[] survivors = new SegmentRope[array.length];
+            int nSurvivors = 0;
             for (int i = 0; i < size; i++) {
-                if ((remove & (1 << i)) == 0) rem[nRem++] = array[i];
+                if ((remove & (1 << i)) == 0) survivors[nSurvivors++] = array[i];
             }
-            return new Mutable(rem, has, nRem);
+            return new Mutable(survivors, has, nSurvivors);
         } else {
             return coldMinus(right);
         }
