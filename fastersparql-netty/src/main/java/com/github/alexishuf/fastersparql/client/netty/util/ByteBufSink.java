@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -17,6 +18,8 @@ import java.util.concurrent.locks.LockSupport;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink> {
+    private static final long releaseWaitNanos = 1_000_000L;
+
     private ByteBufAllocator alloc;
     private ByteBuf bb;
     private volatile ByteBuf asyncBB;
@@ -88,11 +91,11 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
             bb.release();
         if (spawnedAllocTask) {
             consumer = Thread.currentThread();
-            while ((bb = asyncBB) == null) LockSupport.park(executor);
-//            CONSUMER.setRelease(this, Thread.currentThread());
-//            while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
-//                LockSupport.park(executor);
-            bb.release();
+            long deadline = Timestamp.nanoTime() + releaseWaitNanos;
+            while ((bb = asyncBB) == null && spawnedAllocTask && Timestamp.nanoTime() < deadline)
+                LockSupport.parkNanos(executor, 1_000_000);
+            if (bb != null)
+                bb.release();
             spawnedAllocTask = false;
         }
     }
