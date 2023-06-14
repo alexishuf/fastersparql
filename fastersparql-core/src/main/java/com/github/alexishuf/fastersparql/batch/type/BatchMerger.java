@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
@@ -11,7 +10,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     public static int[] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
         int[] sources = new int[out.size()];
         for (int i = 0; i < sources.length; i++) {
-            Rope var = out.get(i);
+            var var = out.get(i);
             int s = leftVars.indexOf(var);
             sources[i] = s >= 0 ? s+1 : -rightVars.indexOf(var)-1;
         }
