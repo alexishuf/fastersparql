@@ -12,27 +12,15 @@ import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink> {
-    private static final VarHandle CONSUMER, ASYNC_BB;
-    static {
-        try {
-            CONSUMER = MethodHandles.lookup().findVarHandle(ByteBufSink.class, "plainConsumer", Thread.class);
-            ASYNC_BB = MethodHandles.lookup().findVarHandle(ByteBufSink.class, "plainAsyncBB", ByteBuf.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
     private ByteBufAllocator alloc;
     private ByteBuf bb;
-    @SuppressWarnings("unused") private ByteBuf plainAsyncBB;
-    @SuppressWarnings("unused") private Thread plainConsumer;
+    private volatile ByteBuf asyncBB;
+    private volatile Thread consumer;
     private EventExecutor executor;
     private Runnable allocTask;
     private boolean spawnedAllocTask = false;
@@ -45,7 +33,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         this.alloc = ctx.alloc();
         this.executor = ctx.executor();
         this.allocTask = this::doAlloc;
-        spawnAllocTask();
+        consumer = Thread.currentThread();
     }
 
     public void alloc(ByteBufAllocator alloc) {
@@ -53,8 +41,8 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
     }
 
     private void doAlloc() {
-        ASYNC_BB.setRelease(this, this.alloc.buffer(sizeHint));
-        LockSupport.unpark((Thread) CONSUMER.getAcquire(this));
+        asyncBB = this.alloc.buffer(sizeHint);
+        LockSupport.unpark(consumer);
     }
 
     private void spawnAllocTask() {
@@ -80,10 +68,12 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
             if (executor == null || executor.inEventLoop(consumer = Thread.currentThread())) {
                 bb = alloc.buffer(sizeHint);
             } else {
-                CONSUMER.setRelease(this, consumer);
+                if (this.consumer != consumer)
+                    this.consumer = consumer;
                 spawnAllocTask(); // spawn task in case of previous release()
-                while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
+                while ((bb = asyncBB) == null)
                     LockSupport.park(executor);
+                asyncBB = null;
                 spawnedAllocTask = false;
                 spawnAllocTask(); // spawn task to satisfy next touch() call
             }
@@ -97,9 +87,11 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         if (bb != null)
             bb.release();
         if (spawnedAllocTask) {
-            CONSUMER.setRelease(this, Thread.currentThread());
-            while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
-                LockSupport.park(executor);
+            consumer = Thread.currentThread();
+            while ((bb = asyncBB) == null) LockSupport.park(executor);
+//            CONSUMER.setRelease(this, Thread.currentThread());
+//            while ((bb = (ByteBuf) ASYNC_BB.getAndSetAcquire(this, null)) == null)
+//                LockSupport.park(executor);
             bb.release();
             spawnedAllocTask = false;
         }
