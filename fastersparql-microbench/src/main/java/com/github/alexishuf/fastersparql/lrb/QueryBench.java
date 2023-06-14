@@ -141,18 +141,13 @@ public class QueryBench {
 
     private static final class TermLenCounter extends BatchConsumer {
         private final Term tmp = new Term();
-        private int acc, rows;
-        private StringBuilder prev = new StringBuilder(), curr = new StringBuilder();
+        private int acc;
 
         public TermLenCounter(BatchType<?> batchType) {super(batchType);}
         public int len() { return acc; }
 
         @Override public void start(BIt<?> it) {
             acc = 0;
-            rows = 0;
-            StringBuilder tmp = prev;
-            prev = curr;
-            (curr = tmp).setLength(0);
         }
         @Override public void finish(@Nullable Throwable error) {
             throwAsUnchecked(error);
@@ -160,13 +155,10 @@ public class QueryBench {
         @Override public void accept(Batch<?> batch) {
             for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
                 for (int c = 0; c < cols; c++) {
-                    if (batch.getView(r, c, tmp)) {
+                    if (batch.getView(r, c, tmp))
                         acc += tmp.len;
-                        curr.append(this.rows+r).append(' ').append(c).append(' ').append(tmp).append('\n');
-                    }
                 }
             }
-            this.rows += batch.rows;
         }
     }
 
