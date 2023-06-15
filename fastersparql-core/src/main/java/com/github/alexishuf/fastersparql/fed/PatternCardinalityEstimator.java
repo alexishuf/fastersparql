@@ -4,9 +4,11 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
 
 public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- constants --- --- --- */
@@ -22,6 +24,13 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
     protected final int uncertaintyPenalty;
 
     public PatternCardinalityEstimator(int uncertaintyPenalty) {
+        this(uncertaintyPenalty, new CompletableFuture<>());
+        ready.complete(this);
+    }
+
+    public PatternCardinalityEstimator(int uncertaintyPenalty,
+                                       CompletableFuture<CardinalityEstimator> ready) {
+        super(ready);
         this.uncertaintyPenalty = uncertaintyPenalty;
     }
 

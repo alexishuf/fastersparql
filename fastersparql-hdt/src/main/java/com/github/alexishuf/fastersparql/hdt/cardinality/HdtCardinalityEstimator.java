@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.plain;
 import static java.lang.Integer.MAX_VALUE;
@@ -29,12 +28,10 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
     private final Triples triples;
     private final int[] predicateCard;
     private int maxPredicateCard;
-    private final CompletableFuture<?> ready = new CompletableFuture<>();
 
     public HdtCardinalityEstimator(HDT hdt, HdtEstimatorPeek peek,
                                    @Nullable String name) {
-        super(uncertaintyPenalty(hdt, peek));
-
+        super(uncertaintyPenalty(hdt, peek), new CompletableFuture<>());
         this.triples = hdt.getTriples();
         this.peek = peek;
         this.dict = hdt.getDictionary();
@@ -56,7 +53,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
                     }
                     log.info("Cached cardinality of {} predicates at {} in {}ms",
                             predicateCard.length, lName, (Timestamp.nanoTime() - start) / 1_000_000.0);
-                    ready.complete(null);
+                    ready.complete(this);
                 } catch (Throwable t) {
                     ready.completeExceptionally(t);
                     log.error("Predicate cardinality caching failed for {} after {}ms",
@@ -64,12 +61,10 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
                 }
             });
         } else if (name != null) {
-            ready.complete(null);
+            ready.complete(this);
             log.info("Will not use predicate cardinalities for {}", name);
         }
     }
-
-    public CompletionStage<?> ready() { return ready; }
 
     private static int uncertaintyPenalty(HDT hdt, HdtEstimatorPeek peek) {
         int thousandth = (int) Math.min(hdt.getTriples().getNumberOfElements()>>10, MAX_VALUE);

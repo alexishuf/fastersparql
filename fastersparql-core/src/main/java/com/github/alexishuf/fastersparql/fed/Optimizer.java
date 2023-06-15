@@ -15,6 +15,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
 import static java.lang.Long.MAX_VALUE;
@@ -24,6 +25,11 @@ public class Optimizer extends CardinalityEstimator {
     private static final long I_MAX = Integer.MAX_VALUE;
     private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
     private final CheapThreadLocal<State> stateThreadLocal = new CheapThreadLocal<>(State::new);
+
+    public Optimizer() {
+        super(new CompletableFuture<>());
+        ready.complete(this);
+    }
 
     public void estimator(SparqlClient client, CardinalityEstimator estimator) {
         client2estimator.put(client, estimator);

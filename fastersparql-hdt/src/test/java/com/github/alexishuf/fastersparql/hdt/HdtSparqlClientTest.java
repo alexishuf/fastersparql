@@ -80,7 +80,8 @@ class HdtSparqlClientTest {
 
     @Test public void testWaitEstimator() {
         try (var c = (HdtSparqlClient)FS.clientFor(endpoint)) {
-            assertSame(c, assertTimeout(ofMillis(100), () -> waitStage(c.estimatorReady())));
+            var e = c.estimator();
+            assertSame(e, assertTimeout(ofMillis(100), () -> waitStage(e.ready())));
         }
     }
 
@@ -176,7 +177,8 @@ class HdtSparqlClientTest {
             System.setProperty(ESTIMATOR_PEEK, peek.name());
             FSHdtProperties.refresh();
             try (var client = new HdtSparqlClient(endpoint)) {
-                assertSame(client, waitStage(client.estimatorReady()));
+                var estimator = client.estimator();
+                assertSame(estimator, waitStage(estimator.ready()));
                 results.check(client);
                 results.check(client, TYPE);
             } finally {

@@ -58,7 +58,7 @@ public class HdtBench {
         FSHdtProperties.refresh();
         String url = "file://" + nytFile.getAbsolutePath().replace(" ", "%20");
         nyt = new HdtSparqlClient(SparqlEndpoint.parse(url));
-        nyt = Async.waitStage(nyt.estimatorReady());
+        Async.waitStage(nyt.estimator().ready());
         var p = new SparqlParser();
         dump = p.parse(Rope.of(PROLOGUE, "SELECT * WHERE { ?s ?p ?o }"));
         distinctPredicates = p.parse(Rope.of(PROLOGUE,"SELECT DISTINCT ?p WHERE { ?s ?p ?o }"));

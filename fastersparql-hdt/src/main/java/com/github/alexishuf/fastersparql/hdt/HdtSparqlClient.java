@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
+import com.github.alexishuf.fastersparql.fed.CardinalityEstimatorProvider;
 import com.github.alexishuf.fastersparql.fed.SingletonFederator;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
@@ -40,7 +41,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.VarHandle;
-import java.util.concurrent.CompletionStage;
 
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorPeek;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatch.TYPE;
@@ -49,7 +49,7 @@ import static java.lang.String.format;
 import static java.lang.invoke.MethodHandles.lookup;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
-public class HdtSparqlClient extends AbstractSparqlClient {
+public class HdtSparqlClient extends AbstractSparqlClient implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(HdtSparqlClient.class);
     private static final VarHandle HDT_REFS;
     static {
@@ -62,10 +62,10 @@ public class HdtSparqlClient extends AbstractSparqlClient {
 
     private final HDT hdt;
     final int dictId;
-    private final CompletionStage<HdtSparqlClient> estimatorReady;
     @SuppressWarnings("unused") // accessed through DICT_REFS
     private int plainHdtRefs;
     private final SingletonFederator federator;
+    private final HdtCardinalityEstimator estimator;
 
     public HdtSparqlClient(SparqlEndpoint ep) {
         super(ep);
@@ -82,14 +82,11 @@ public class HdtSparqlClient extends AbstractSparqlClient {
         }
         dictId = IdAccess.register(hdt.getDictionary());
         HDT_REFS.setRelease(this, 1);
-        var estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
+        estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
         federator = new SingletonFederator(this, TYPE, estimator);
-        estimatorReady = estimator.ready().thenApply(ignored -> this);
     }
 
-    public CompletionStage<HdtSparqlClient> estimatorReady() {
-        return estimatorReady;
-    }
+    @Override public HdtCardinalityEstimator estimator() { return estimator; }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         var plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);

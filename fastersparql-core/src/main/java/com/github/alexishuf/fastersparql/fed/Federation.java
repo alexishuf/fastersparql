@@ -9,7 +9,6 @@ import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
-import com.github.alexishuf.fastersparql.fed.Selector.InitOrigin;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
@@ -214,8 +213,11 @@ public class Federation extends AbstractSparqlClient {
             sources.addAll(collection);
             for (Source s : collection)
                 optimizer.estimator(s.client(), s.estimator());
-            this.<InitOrigin>forEachSource(
-                    (s, handler) -> s.selector().initialization().handle(handler)
+            // initialized.complete(null) once all selectors and estimators are ready
+            // if any selector or estimator fails, initialized also fails
+            this.<CardinalityEstimator>forEachSource(
+                    (s, handler) -> s.selector.initialization()
+                            .thenCompose(origin -> s.estimator.ready()).handle(handler)
             ).thenAccept(initialized::complete);
         } finally {
             lock.unlock();

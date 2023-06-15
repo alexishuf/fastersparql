@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -16,6 +15,8 @@ import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 public abstract class CardinalityEstimator {
     public static final Term GROUND = Term.valueOf("<http://example.org/ground>");
@@ -41,9 +42,16 @@ public abstract class CardinalityEstimator {
         }
     };
 
-    /* --- --- --- fields --- --- --- */
+    /* --- --- --- fields & lifecycle --- --- --- */
     private final int lowDistinctCap = 2*FSProperties.dedupCapacity();
     private final int highDistinctCap = 2*FSProperties.reducedCapacity();
+    protected final CompletableFuture<CardinalityEstimator> ready;
+
+    public CardinalityEstimator(CompletableFuture<CardinalityEstimator> ready) {
+        this.ready = ready;
+    }
+
+    public CompletionStage<? extends CardinalityEstimator> ready() { return ready; }
 
     /* --- --- --- cardinality estimation --- --- --- */
 
@@ -87,7 +95,7 @@ public abstract class CardinalityEstimator {
     protected int estimateJoin(Plan plan, @Nullable Binding binding, int shift) {
         var accBinding = new ArrayBinding(plan.allVars(), binding);
         int accCost = estimate(plan.left(), accBinding);
-        for (Rope name : plan.left().publicVars()) {
+        for (var name : plan.left().publicVars()) {
             int varIdx = accBinding.vars.indexOf(name);
             if (accBinding.get(varIdx) == null)
                 accBinding.set(varIdx, GROUND);
@@ -98,7 +106,7 @@ public abstract class CardinalityEstimator {
             Vars oVars = o.publicVars();
             boolean noNewVars = true, cartesian = true;
             short unjoinedNewVars = 0, joins = 0;
-            for (Rope name : oVars) {
+            for (var name : oVars) {
                 int varIdx = accBinding.vars.indexOf(name);
                 if (accBinding.get(varIdx) == null) {
                     accBinding.set(varIdx, GROUND);
