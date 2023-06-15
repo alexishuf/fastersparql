@@ -22,6 +22,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- lifecycle --- --- --- */
 
     protected final int uncertaintyPenalty;
+    protected final int typePenalty;
 
     public PatternCardinalityEstimator(int uncertaintyPenalty) {
         this(uncertaintyPenalty, new CompletableFuture<>());
@@ -32,6 +33,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
                                        CompletableFuture<CardinalityEstimator> ready) {
         super(ready);
         this.uncertaintyPenalty = uncertaintyPenalty;
+        this.typePenalty = uncertaintyPenalty + 21;
     }
 
     public static class PatternLoader implements Loader {
@@ -52,7 +54,8 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
             case OBJ         -> 20;      // SUB_PRE
             case PRE         -> 10;      // SUB_OBJ
             case PRE_OBJ     -> 100;     // SUB
-            case SUB         -> 1_000;   // PRE_OBJ
+            case SUB         -> 1_000    // PRE_OBJ
+                    + (tp.p == Term.RDF_TYPE ? typePenalty : 0);
             case SUB_OBJ     -> 10_000;  // PRE
             case SUB_PRE     -> 2_000;   // OBJ
             case SUB_PRE_OBJ -> 10_0000; // EMPTY
