@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -17,9 +16,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class ByteBufSink implements ByteSink<ByteBufSink> {
-    private static final long releaseWaitNanos = 1_000_000L;
-
+public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     private ByteBufAllocator alloc;
     private ByteBuf bb;
     private volatile ByteBuf asyncBB;
@@ -37,6 +34,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         this.executor = ctx.executor();
         this.allocTask = this::doAlloc;
         consumer = Thread.currentThread();
+        spawnAllocTask();
     }
 
     public void alloc(ByteBufAllocator alloc) {
@@ -55,7 +53,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         }
     }
 
-    public ByteBuf take() {
+    @Override public ByteBuf take() {
         ByteBuf bb = this.bb;
         this.bb = null;
         if (bb == null)
@@ -65,7 +63,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         return bb;
     }
 
-    public ByteBufSink touch() {
+    @Override public ByteBufSink touch() {
         if (bb == null) {
             Thread consumer;
             if (executor == null || executor.inEventLoop(consumer = Thread.currentThread())) {
@@ -84,19 +82,23 @@ public class ByteBufSink implements ByteSink<ByteBufSink> {
         return this;
     }
 
-    public void release() {
+    @Override public void release() {
         ByteBuf bb = this.bb;
         this.bb = null;
         if (bb != null)
             bb.release();
         if (spawnedAllocTask) {
-            consumer = Thread.currentThread();
-            long deadline = Timestamp.nanoTime() + releaseWaitNanos;
-            while ((bb = asyncBB) == null && spawnedAllocTask && Timestamp.nanoTime() < deadline)
-                LockSupport.parkNanos(executor, 1_000_000);
-            if (bb != null)
+            if (executor.inEventLoop()) {
+                bb = asyncBB;
+            } else {
+                while ((bb = asyncBB) == null && spawnedAllocTask && !executor.isTerminated())
+                    LockSupport.park(executor);
+            }
+            if (bb != null) {
                 bb.release();
-            spawnedAllocTask = false;
+                asyncBB = null;
+                spawnedAllocTask = false;
+            }
         }
     }
 

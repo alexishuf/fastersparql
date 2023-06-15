@@ -66,17 +66,17 @@ public class ResultsParserBench {
         long last = Timestamp.nanoTime();
         fragmentsLists = new ArrayList<>(FRAGMENTS_LISTS);
         nextFragmentList = 0;
+        ByteSink sink = ropeTypeHolder.byteSink();
         var serializer = ResultsSerializer.create(format);
         for (int i = 0; i < FRAGMENTS_LISTS; i++) {
             List<SegmentRope> fragments = new ArrayList<>();
-            ByteSink sink = ropeTypeHolder.byteSink();
-            serializer.init(vars, vars, false, sink);
+            serializer.init(vars, vars, false, sink.touch());
             fragments.add(ropeTypeHolder.takeRope(sink));
             for (Batch b : batches) {
-                serializer.serialize(b, sink = ropeTypeHolder.byteSink());
+                serializer.serialize(b, sink.touch());
                 fragments.add(ropeTypeHolder.takeRope(sink));
             }
-            serializer.serializeTrailer(sink = ropeTypeHolder.byteSink());
+            serializer.serializeTrailer(sink.touch());
             fragments.add(ropeTypeHolder.takeRope(sink));
             fragmentsLists.add(fragments);
             if (Timestamp.nanoTime()-last > 5_000_000_000L) {
@@ -86,6 +86,7 @@ public class ResultsParserBench {
             if ((i&31) == 0)
                 System.gc();
         }
+        sink.release();
         Integer listBytes = fragmentsLists.get(0).stream().map(Rope::len).reduce(Integer::sum).orElse(0);
         System.out.printf("Serialized fragments in %.3fms. Built %d lists with %d fragments each, " +
                           "totaling %.3f KiB per list. Will gc() and cooldown sleep(500)\n",
@@ -102,10 +103,10 @@ public class ResultsParserBench {
         drainer.join();
     }
 
-    private static class NopWsFrameSender<S extends ByteSink<S>> implements WsFrameSender<S>{
-        @Override public void sendFrame(S content) {}
+    private static class NopWsFrameSender<S extends ByteSink<S, T>, T>
+            implements WsFrameSender<S, T>{
+        @Override public void sendFrame(T content) {}
         @Override public S createSink() {return null;}
-        @Override public void releaseSink(S sink) {}
     }
 
     @SuppressWarnings("unchecked") private <B extends Batch<B>>void drain() {

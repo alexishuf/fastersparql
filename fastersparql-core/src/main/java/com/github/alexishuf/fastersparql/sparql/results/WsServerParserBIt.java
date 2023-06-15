@@ -9,7 +9,8 @@ public class WsServerParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
     private final int bindingSeqCol;
     private final WsBindingSeq seqWriter;
 
-    public WsServerParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, Vars vars, int maxBatches) {
+    public WsServerParserBIt(WsFrameSender<?, ?> frameSender, BatchType<B> batchType,
+                             Vars vars, int maxBatches) {
         super(frameSender, batchType, vars, maxBatches);
         bindingSeqCol = vars.indexOf(WsBindingSeq.VAR);
         seqWriter = bindingSeqCol < 0 ? null : new WsBindingSeq();

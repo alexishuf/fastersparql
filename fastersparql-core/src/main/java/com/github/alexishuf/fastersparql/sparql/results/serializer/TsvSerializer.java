@@ -24,7 +24,7 @@ public class TsvSerializer extends ResultsSerializer {
         super(TSV, TSV.contentType());
     }
 
-    @Override protected void init(Vars subset, ByteSink<?> dest) {
+    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
         for (int i = 0, n = subset.size(); i < n; ++i) {
             if (i > 0) dest.append('\t');
             dest.append('?').append(subset.get(i));
@@ -32,7 +32,7 @@ public class TsvSerializer extends ResultsSerializer {
         dest.append('\n');
     }
 
-    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?> dest) {
+    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest) {
         for (int end = begin+nRows; begin < end; begin++) {
             for (int i = 0; i < columns.length; i++) {
                 int col = columns[i];
@@ -44,5 +44,5 @@ public class TsvSerializer extends ResultsSerializer {
         }
     }
 
-    @Override public void serializeTrailer(ByteSink<?> dest) { }
+    @Override public void serializeTrailer(ByteSink<?, ?> dest) { }
 }

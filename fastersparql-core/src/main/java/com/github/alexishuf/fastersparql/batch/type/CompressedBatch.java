@@ -549,7 +549,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public int writeSparql(ByteSink<?> dest, int row, int col, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?, ?> dest, int row, int col, PrefixAssigner prefixAssigner) {
         int base = slBase(row, col), len = slices[base + SL_LEN];
         boolean suffix = len < 0;
         len &= LEN_MASK;
@@ -559,7 +559,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return 0;
     }
 
-    @Override public void writeNT(ByteSink<?> dest, int row, int col) {
+    @Override public void writeNT(ByteSink<?, ?> dest, int row, int col) {
         int base = slBase(row, col), len = slices[base+SL_LEN], off = slices[base+SL_OFF];
         var sh = shared[row*cols + col];
         if (len < 0) {
@@ -572,7 +572,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
-    @Override public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
+    @Override public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {
         int base = slBase(row, col);
         MemorySegment fst = localsSeg, snd = EMPTY.segment;
         long fstOff = slices[base+SL_OFF], sndOff = 0;

@@ -22,7 +22,7 @@ import static java.util.Arrays.copyOf;
 import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings("UnusedReturnValue")
-public final class ByteRope extends SegmentRope implements ByteSink<ByteRope> {
+public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, ByteRope> {
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     private static final int READLINE_CHUNK = 128;
@@ -90,6 +90,12 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope> {
         int len = this.len;
         this.len += increment;
         return len;
+    }
+
+    @Override public ByteRope take() {
+        var copy = new ByteRope(toArray(0, len));
+        len = 0;
+        return copy;
     }
 
     @Override public @This ByteRope ensureFreeCapacity(int increment) {

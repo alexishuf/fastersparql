@@ -82,7 +82,7 @@ public abstract class ResultsSerializer {
         this.contentType = contentType;
     }
 
-    protected abstract void init(Vars subset, ByteSink<?> dest);
+    protected abstract void init(Vars subset, ByteSink<?, ?> dest);
 
     public final SparqlResultFormat format() { return format; }
     public final String contentType() { return contentType; }
@@ -96,7 +96,7 @@ public abstract class ResultsSerializer {
      * @param ask whether to serialize an results for an ASK query
      * @param dest where the results header will be appended to
      */
-    public final void init(Vars vars, Vars subset, boolean ask, ByteSink<?> dest) {
+    public final void init(Vars vars, Vars subset, boolean ask, ByteSink<?, ?> dest) {
         int[] columns = this.columns;
         if (columns == null || columns.length != subset.size())
             this.columns = columns = new int[subset.size()];
@@ -115,13 +115,13 @@ public abstract class ResultsSerializer {
     }
 
     /** Equivalent to {@link #serialize(Batch, int, int, ByteSink)} spanning the whole batch */
-    public void serialize(Batch<?> batch, ByteSink<?> dest) {
+    public void serialize(Batch<?> batch, ByteSink<?, ?> dest) {
         serialize(batch, 0, batch == null ? 0 : batch.rows, dest);
     }
 
     /** Serialize rows {@code [begin,begin+nRows)} from {@code batch} to {@code dest}. */
-    public abstract void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?> dest);
+    public abstract void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest);
 
     /** Write to {@code dest} any required UTF-8 bytes to complete the serialization */
-    public abstract void serializeTrailer(ByteSink<?> dest);
+    public abstract void serializeTrailer(ByteSink<?, ?> dest);
 }

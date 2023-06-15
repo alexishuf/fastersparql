@@ -956,13 +956,13 @@ public final class Term extends Rope implements Expr {
      * becomes "a" and literals typed as XSD integer, decimal double and boolean are replaced by
      * their lexical forms (without quotes and datatype suffix).
      */
-    @Override public int toSparql(ByteSink<?> dest, PrefixAssigner assigner) {
+    @Override public int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner) {
         SegmentRope local = local();
         return toSparql(dest, assigner, shared(),
                  local.segment, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
-    public static int toSparql(ByteSink<?> dest, PrefixAssigner assigner, SegmentRope shared,
+    public static int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner, SegmentRope shared,
                                 MemorySegment local, long localOff, int localLen, boolean isLit) {
         if (shared == null || shared.len == 0) {
             dest.append(local, localOff, localLen);

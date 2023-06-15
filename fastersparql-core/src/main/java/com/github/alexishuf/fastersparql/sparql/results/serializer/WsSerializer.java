@@ -33,7 +33,7 @@ public class WsSerializer extends ResultsSerializer {
         (prefixAssigner = new WsPrefixAssigner()).reset();
     }
 
-    @Override protected void init(Vars subset, ByteSink<?> dest) {
+    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
         prefixAssigner.reset();
         for (int i = 0, n = subset.size(); i < n; i++) {
             if (i != 0) dest.append('\t');
@@ -42,7 +42,7 @@ public class WsSerializer extends ResultsSerializer {
         dest.append('\n');
     }
 
-    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?> dest) {
+    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest) {
         prefixAssigner.dest = dest;
         for (int end = begin+nRows; begin < end; ++begin) {
             if (columns.length == 0) {
@@ -66,12 +66,12 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     private static final byte[] END = "!end\n".getBytes(UTF_8);
-    @Override public void serializeTrailer(ByteSink<?> dest) {
+    @Override public void serializeTrailer(ByteSink<?, ?> dest) {
         dest.append(END);
     }
 
     private static final class WsPrefixAssigner extends PrefixAssigner {
-        private @MonotonicNonNull ByteSink<?> dest;
+        private @MonotonicNonNull ByteSink<?, ?> dest;
 
         public WsPrefixAssigner() {
             super(new RopeArrayMap());

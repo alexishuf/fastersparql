@@ -26,7 +26,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
-import io.netty.buffer.UnpooledByteBufAllocator;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
@@ -34,7 +34,6 @@ import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -128,14 +127,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     /* --- --- --- BIt implementations --- --- --- */
 
-    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> implements NettyWsClientHandler,
-            WsFrameSender<ByteBufSink> {
+    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B>
+            implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf> {
         private final Rope requestMessage;
         private final WsClientParserBIt<B> parser;
         private boolean gotFrames = false;
         private final SegmentRope bufferRope = new SegmentRope();
         protected @MonotonicNonNull ChannelRecycler recycler;
-        protected final ByteBufSink bbSink = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT);
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), queueMaxRows());
@@ -154,15 +152,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             request();
         }
 
-        @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            bbSink.release();
-            bbSink.alloc(UnpooledByteBufAllocator.DEFAULT);
-        }
-
         /* --- --- --- WsFrameSender methods --- --- --- */
 
-        @Override public void sendFrame(ByteBufSink content) {
+        @Override public void sendFrame(ByteBuf content) {
             if (isTerminated()) {
                 //noinspection RedundantCast
                 log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, (Object)error);
@@ -172,14 +164,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             final Channel ch = this.channel;
             if (ch == null)
                 throw new IllegalStateException("sendFrame() before attach()");
-            ch.writeAndFlush(new TextWebSocketFrame(content.take()));
+            ch.writeAndFlush(new TextWebSocketFrame(content));
         }
 
         @Override public ByteBufSink createSink() {
-            return bbSink.touch();
+            if (channel == null)
+                throw new IllegalStateException("createSink before attach()");
+            return new ByteBufSink(channel.alloc());
         }
-
-        @Override public void releaseSink(ByteBufSink sink) { sink.release(); }
 
         /* --- --- --- NettySPSCBIt methods --- --- --- */
 
@@ -197,7 +189,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             this.channel = ctx.channel();
-            bbSink.alloc(ctx);
             ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
         }
 

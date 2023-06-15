@@ -12,7 +12,6 @@ import java.util.List;
 
 public class RopeTypeHolder implements AutoCloseable {
     private final RopeType ropeType;
-    private final ByteBufSink nettySink = new ByteBufSink(PooledByteBufAllocator.DEFAULT);
     private final List<ByteBuf> byteBufs = new ArrayList<>();
 
     public RopeTypeHolder(RopeType ropeType) {
@@ -20,19 +19,18 @@ public class RopeTypeHolder implements AutoCloseable {
     }
 
     @Override public void close() {
-        nettySink.release();
         byteBufs.forEach(ByteBuf::release);
         byteBufs.clear();
     }
 
     @SuppressWarnings("unchecked")
-    public <B extends ByteSink<B>> B byteSink() {
+    public <B extends ByteSink<B, T>, T> B byteSink() {
         return switch (ropeType) {
             case BYTE  -> (B)new ByteRope();
-            case NETTY -> (B)nettySink.touch();
+            case NETTY -> (B)new ByteBufSink(PooledByteBufAllocator.DEFAULT);
         };
     }
-    public <B extends ByteSink<B>> SegmentRope takeRope(B sink) {
+    public <B extends ByteSink<B, T>, T> SegmentRope takeRope(B sink) {
         return switch (ropeType) {
             case BYTE  -> (ByteRope)sink;
             case NETTY -> {

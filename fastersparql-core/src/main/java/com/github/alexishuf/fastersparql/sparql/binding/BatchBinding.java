@@ -51,7 +51,7 @@ public final class BatchBinding<B extends Batch<B>> extends Binding {
         return batch != null && batch.rows != 0 && batch.termType(row, i) != null;
     }
 
-    @Override public int writeSparql(int i, ByteSink<?> dest, PrefixAssigner assigner) {
+    @Override public int writeSparql(int i, ByteSink<?, ?> dest, PrefixAssigner assigner) {
         return batch != null && batch.rows != 0
                 ? batch.writeSparql(dest, row, i, assigner) : 0;
     }

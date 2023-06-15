@@ -61,7 +61,7 @@ public abstract class Binding {
      * @param dest see {@link Term#toSparql(ByteSink, PrefixAssigner)}
      * @param prefixAssigner see {@link Term#toSparql(ByteSink, PrefixAssigner)}
      */
-    public int writeSparql(int i, ByteSink<?> dest, PrefixAssigner prefixAssigner) {
+    public int writeSparql(int i, ByteSink<?, ?> dest, PrefixAssigner prefixAssigner) {
         Term term = get(i);
         return term == null ? 0 : term.toSparql(dest, prefixAssigner);
     }

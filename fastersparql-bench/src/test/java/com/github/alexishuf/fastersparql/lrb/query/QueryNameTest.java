@@ -143,13 +143,12 @@ class QueryNameTest {
 //        return fix;
 //    }
 
-    private <B extends Batch<B>, S extends ByteSink<S>> ResultsParserBIt<B>
+    private <B extends Batch<B>, S extends ByteSink<S, T>, T> ResultsParserBIt<B>
     createParser(SparqlResultFormat format, BatchType<B> type, Vars vars) {
         if (format == WS) {
-            WsFrameSender<?> frameSender = new WsFrameSender<S>() {
-                @Override public void sendFrame(S content) {}
+            WsFrameSender<?, ?> frameSender = new WsFrameSender<S, T>() {
+                @Override public void sendFrame(T content) {}
                 @Override public S createSink() {return null;}
-                @Override public void releaseSink(S sink) {}
             };
             return new WsClientParserBIt<>(frameSender, type, vars, 1<<16);
         } else {

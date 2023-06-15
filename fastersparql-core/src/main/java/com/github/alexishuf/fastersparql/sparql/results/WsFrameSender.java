@@ -5,7 +5,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 /**
  * Object that {@link WsClientParserBIt} and {@link WsServerParserBIt} use to send WebSocket frames.
  */
-public interface WsFrameSender<T extends ByteSink<T>> {
+public interface WsFrameSender<B extends ByteSink<B, T>, T> {
     /**
      * Send the given content as a frame.
      *
@@ -21,16 +21,8 @@ public interface WsFrameSender<T extends ByteSink<T>> {
     void sendFrame(T content);
 
     /**
-     * Get a {@link ByteSink} that can be given to {@link #sendFrame(ByteSink)} after being
+     * Get a {@link ByteSink} that can be given to {@link #sendFrame(Object)} after being
      * filled with data.
      */
-    T createSink();
-
-    /**
-     * If {@link #createSink()} was called but there will be no {@link #sendFrame(ByteSink)}
-     * call, this method MUST be called to release resources associated with the created sink.
-     *
-     * @param sink A {@link ByteSink} created by {@link #createSink()}
-     */
-    void releaseSink(T sink);
+    B createSink();
 }

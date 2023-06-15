@@ -189,13 +189,13 @@ public abstract sealed class Plan implements SparqlQuery
      *
      * @param out where to write the SPARQL to.
      */
-    public final void groupGraphPattern(ByteSink<?> out, int indent, PrefixAssigner assigner) {
+    public final void groupGraphPattern(ByteSink<?, ?> out, int indent, PrefixAssigner assigner) {
         out.newline(indent++).append('{');
         groupGraphPatternInner(out, indent, assigner);
         out.newline(--indent).append('}');
     }
 
-    protected final void groupGraphPatternInnerOp(ByteSink<?> out, int indent, PrefixAssigner assigner) {
+    protected final void groupGraphPatternInnerOp(ByteSink<?, ?> out, int indent, PrefixAssigner assigner) {
         switch (type) {
             case JOIN,TRIPLE,VALUES -> groupGraphPatternInner(out, indent, assigner);
             default                 -> groupGraphPattern(out, indent, assigner);
@@ -206,7 +206,7 @@ public abstract sealed class Plan implements SparqlQuery
      * Equivalent to {@code groupGraphPattern(out, indent)} without the surrounding
      * {@code '{'} and {@code'}'}.
      */
-    public void groupGraphPatternInner(ByteSink<?> out, int indent, PrefixAssigner assigner) {
+    public void groupGraphPatternInner(ByteSink<?, ?> out, int indent, PrefixAssigner assigner) {
         switch (type) {
             case JOIN -> {
                 for (int i = 0, n = opCount(); i < n; i++)

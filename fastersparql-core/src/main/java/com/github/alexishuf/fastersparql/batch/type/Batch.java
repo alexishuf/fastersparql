@@ -335,7 +335,7 @@ public abstract class Batch<B extends Batch<B>> {
      *                       or on a datatype IRI and is likely to be shared.
      * @return the number of bytes written
      */
-    public int writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?, ?> dest, int row, int column, PrefixAssigner prefixAssigner) {
         Term term = get(row, column);
         if (term != null)
             return term.toSparql(dest, prefixAssigner);
@@ -348,7 +348,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param row see {@link #get(int, int)}
      * @param col see {@link #get(int, int)}
      */
-    public void writeNT(ByteSink<?> dest, int row, int col) {
+    public void writeNT(ByteSink<?, ?> dest, int row, int col) {
         TwoSegmentRope tmp = new TwoSegmentRope();
         if (getRopeView(row, col, tmp)) {
             dest.append(tmp.fst, tmp.fstOff, tmp.fstLen);
@@ -359,7 +359,7 @@ public abstract class Batch<B extends Batch<B>> {
     /**
      * Null-safe equivalent to {@code dest.append(get(row, col), begin, end)}.
      */
-    public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
+    public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {
         Term t = get(row, col);
         if (t != null) dest.append(t, begin, end);
     }

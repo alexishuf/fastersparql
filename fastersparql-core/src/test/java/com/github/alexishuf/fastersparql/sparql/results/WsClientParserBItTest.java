@@ -95,10 +95,9 @@ class WsClientParserBItTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(Results expected, String in) throws Exception {
-        WsFrameSender<ByteRope> frameSender = new WsFrameSender<>() {
+        WsFrameSender<ByteRope, ByteRope> frameSender = new WsFrameSender<>() {
             @Override public void sendFrame(ByteRope content) { }
             @Override public ByteRope createSink() { return new ByteRope(); }
-            @Override public void releaseSink(ByteRope sink) { }
         };
         ResultsParserBIt.Factory fac;
         if (in.contains("!active-binding") || in.contains("!bind-request")) {

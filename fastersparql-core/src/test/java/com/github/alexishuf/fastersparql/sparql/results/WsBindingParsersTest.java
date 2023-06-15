@@ -45,7 +45,7 @@ public class WsBindingParsersTest {
     private static final List<Throwable> threadErrors = synchronizedList(new ArrayList<>());
     private int byteOrBuf = 0;
 
-    private final class Mailbox implements WsFrameSender<ByteRope> {
+    private final class Mailbox implements WsFrameSender<ByteRope, ByteRope> {
         private final String name;
         private final BlockingQueue<SegmentRope> queue = new LinkedBlockingDeque<>();
 
@@ -53,15 +53,9 @@ public class WsBindingParsersTest {
             this.name = name;
         }
 
-        @Override public void sendFrame(ByteRope content) {
-            send(content);
-        }
+        @Override public void sendFrame(ByteRope content) { send(content); }
 
-        @Override public ByteRope createSink() {
-            return new ByteRope();
-        }
-
-        @Override public void releaseSink(ByteRope sink) { }
+        @Override public ByteRope createSink() { return new ByteRope(); }
 
         public void send(CharSequence frame) {
             SegmentRope rope;

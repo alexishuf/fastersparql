@@ -776,8 +776,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         /* --- --- --- WsFrameSender --- --- --- */
 
-        @Override public void        sendFrame(ByteBufSink content) { sendChunk(content.take()); }
-        @Override public ByteBufSink createSink()                   { return fsSink.touch(); }
-        @Override public void        releaseSink(ByteBufSink sink)  { sink.release(); }
+        @Override public void        sendFrame(ByteBuf content) { sendChunk(content); }
+        @Override public ByteBufSink createSink()               { return new ByteBufSink(ctx); }
     }
 }

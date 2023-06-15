@@ -37,7 +37,7 @@ public class RopeHasBench {
 
     @Setup(Level.Trial) public void setup() {
         rt = new RopeTypeHolder(ropeType);
-        ByteSink sink = rt.byteSink();
+        ByteSink sink = rt.byteSink().touch();
         int terms = 0;
         var batches = uniformCols(fromName(Batch.TERM, sizeName), Batch.TERM);
         for (TermBatch b : batches)

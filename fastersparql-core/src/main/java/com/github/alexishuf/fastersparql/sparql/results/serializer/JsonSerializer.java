@@ -29,7 +29,7 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] HDR_ASK = "]},\n \"boolean\":".getBytes(UTF_8);
     private static final byte[] HDR_SEL = "]},\n\"results\":{\"bindings\":[".getBytes(UTF_8);
 
-    @Override protected void init(Vars subset, ByteSink<?> dest) {
+    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
         firstRow = true;
         dest.append(HDR_BFR);
         for (int i = 0, n = subset.size(); i < n; i++) {
@@ -48,7 +48,7 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] COL_SEP = ",\n ".getBytes(UTF_8);
     private static final byte[] ROW_OPEN  = "\n{".getBytes(UTF_8);
     private static final byte[] ROW_SEP   = ",\n{".getBytes(UTF_8);
-    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?> dest) {
+    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest) {
         if (ask) {
             if (nRows > 0) empty = false;
             return;
@@ -96,7 +96,7 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] TRAILER_SEL = "\n]}}".getBytes(UTF_8);
     private static final byte[] TRAILER_ASK_TRUE  =  "true\n}".getBytes(UTF_8);
     private static final byte[] TRAILER_ASK_FALSE = "false\n}".getBytes(UTF_8);
-    @Override public void serializeTrailer(ByteSink<?> dest) {
+    @Override public void serializeTrailer(ByteSink<?, ?> dest) {
         if (ask) {
             dest.append(empty ? TRAILER_ASK_FALSE : TRAILER_ASK_TRUE);
         } else {

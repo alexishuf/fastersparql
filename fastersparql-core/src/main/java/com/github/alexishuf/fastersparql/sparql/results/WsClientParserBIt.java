@@ -64,7 +64,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      * @param frameSender object to be used when sending WebSocket frames
      * @param destination See {@link ResultsParserBIt#ResultsParserBIt(BatchType, CallbackBIt)}
      */
-    public WsClientParserBIt(WsFrameSender<?> frameSender, CallbackBIt<B> destination) {
+    public WsClientParserBIt(WsFrameSender<?,?> frameSender, CallbackBIt<B> destination) {
         super(frameSender, destination);
         usefulBindingsVars = Vars.EMPTY;
         sentBindings = null;
@@ -83,7 +83,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      * @param vars        See {@link ResultsParserBIt#ResultsParserBIt(BatchType, Vars, int)}
      * @param maxBatches  See {@link SPSCBIt#SPSCBIt(BatchType, Vars, int)}
      */
-    public WsClientParserBIt(WsFrameSender<?> frameSender, BatchType<B> batchType, Vars vars, int maxBatches) {
+    public WsClientParserBIt(WsFrameSender<?, ?> frameSender, BatchType<B> batchType, Vars vars, int maxBatches) {
         super(frameSender, batchType, vars, maxBatches);
         usefulBindingsVars = Vars.EMPTY;
         sentBindings = null;
@@ -108,7 +108,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      *                          dropped vars will still be visible in the output rows.
      @param maxItems          See {@link SPSCBIt#SPSCBIt(BatchType, Vars, int)}
      */
-    public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
+    public WsClientParserBIt(@NonNull WsFrameSender<?, ?> frameSender,
                              @NonNull Vars vars,
                              BindQuery<B> bindQuery,
                              @Nullable Vars usefulBindingVars, int maxItems) {
@@ -139,7 +139,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
      *                          {@link BindType#JOIN} and {@link BindType#LEFT_JOIN},
      *                          dropped vars will still be visible in the output rows.
      */
-    public WsClientParserBIt(@NonNull WsFrameSender<?> frameSender,
+    public WsClientParserBIt(@NonNull WsFrameSender<?, ?> frameSender,
                              @NonNull CallbackBIt<B> destination,
                              BindQuery<B> bindQuery,
                              @Nullable Vars usefulBindingVars) {
@@ -216,7 +216,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
         super.cleanup(cause);
         if (!serverSentTermination && !(cause instanceof FSServerException)) {
             try { //noinspection unchecked
-                frameSender.sendFrame(frameSender.createSink().append(CANCEL_LF));
+                frameSender.sendFrame(frameSender.createSink().touch().append(CANCEL_LF).take());
             } catch (Throwable t) {
                 log.info("Failed to send !cancel", t);
             }
@@ -289,7 +289,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
     @SuppressWarnings({"unchecked", "rawtypes"}) private void sendBindingsThread() {
         Thread.currentThread().setName("sendBindingsThread-"+id());
         var serializer = new WsSerializer();
-        ByteSink buffer = null;
+        ByteSink sink = frameSender.createSink();
         try {
             if (bindings == null)
                 throw noBindings("sendBindingsThread()");
@@ -299,10 +299,8 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             int allowed = 0; // bindings requested by the server
 
             // send a frame with var names
-            buffer = frameSender.createSink();
-            serializer.init(bindings.vars(), usefulBindingsVars, false, buffer);
-            frameSender.sendFrame(buffer);
-            buffer = null;
+            serializer.init(bindings.vars(), usefulBindingsVars, false, sink.touch());
+            frameSender.sendFrame(sink.take());
             for (B b = null; (b = bindings.nextBatch(b)) != null; ) {
                 sentBindings.copy(b);
                 for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
@@ -312,10 +310,8 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                     if (isClosed())
                         return;
                     allowed -= taken = Math.min(allowed, rows - r);
-                    buffer = frameSender.createSink();
-                    serializer.serialize(b, r, taken, buffer);
-                    frameSender.sendFrame(buffer);
-                    buffer = null;
+                    serializer.serialize(b, r, taken, sink.touch());
+                    frameSender.sendFrame(sink.take());
                 }
             }
         } catch (Throwable t) {
@@ -327,12 +323,10 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             if (sentBindings != null)
                 sentBindings.complete(null);
             if (!serverSentTermination) {
-                serializer.serializeTrailer(buffer = frameSender.createSink());
-                frameSender.sendFrame(buffer);
-                buffer = null;
+                serializer.serializeTrailer(sink.touch());
+                frameSender.sendFrame(sink.take());
             }
-            if (buffer != null)
-                frameSender.releaseSink(buffer);
+            sink.release();
         }
     }
 }

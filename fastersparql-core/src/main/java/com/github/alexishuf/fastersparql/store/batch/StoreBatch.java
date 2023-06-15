@@ -239,7 +239,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     @Override
-    public int writeSparql(ByteSink<?> dest, int row, int column, PrefixAssigner prefixAssigner) {
+    public int writeSparql(ByteSink<?, ?> dest, int row, int column, PrefixAssigner prefixAssigner) {
         TwoSegmentRope tmp = tmpRope(row, column);
         if (tmp == null || tmp.len == 0) return 0;
         SegmentRope sh;
@@ -263,14 +263,14 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         return Term.toSparql(dest, prefixAssigner, sh, local, localOff, localLen, isLit);
     }
 
-    @Override public void writeNT(ByteSink<?> dest, int row, int col) {
+    @Override public void writeNT(ByteSink<?, ?> dest, int row, int col) {
         TwoSegmentRope tmp = tmpRope(row, col);
         if (tmp == null || tmp.len == 0) return;
         dest.append(tmp.fst, tmp.fstOff, tmp.fstLen);
         dest.append(tmp.snd, tmp.sndOff, tmp.sndLen);
     }
 
-    @Override public void write(ByteSink<?> dest, int row, int col, int begin, int end) {
+    @Override public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {
         TwoSegmentRope tmp = tmpRope(row, col);
         if (end <= begin) return;
         if (begin < 0 || tmp == null || end > tmp.len) throw new IndexOutOfBoundsException();

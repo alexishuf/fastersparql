@@ -9,7 +9,7 @@ import java.lang.foreign.MemorySegment;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class OutputStreamSink implements ByteSink<OutputStreamSink> {
+public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStreamSink> {
     public OutputStream os;
     private int len = 0;
 
@@ -33,6 +33,8 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
         } catch (IOException e) { throw new RuntimeException(e); }
     }
 
+    @Override public OutputStreamSink take() { return this; }
+
     @Override public boolean isEmpty() { return len == 0; }
     @Override public int         len() { return len; }
 
@@ -40,9 +42,7 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink> {
         return write(arr, begin, len);
     }
 
-    @Override public @This OutputStreamSink append(byte c) {
-        return write(c);
-    }
+    @Override public @This OutputStreamSink append(byte c) { return write(c); }
 
     @Override public @This OutputStreamSink append(MemorySegment segment, long offset, int len) {
         byte[] u8 = segment.isNative() ? null : (byte[])segment.array().orElse(null);
