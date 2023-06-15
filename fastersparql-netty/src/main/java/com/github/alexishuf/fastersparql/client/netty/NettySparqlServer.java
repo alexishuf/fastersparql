@@ -41,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.PrintStream;
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
@@ -583,7 +584,17 @@ public class NettySparqlServer implements AutoCloseable {
         }
     }
 
-    private final class WsSparqlHandler extends QueryHandler<WebSocketFrame> implements WsFrameSender<ByteBufSink> {
+    private final class WsSparqlHandler extends QueryHandler<WebSocketFrame>
+            implements WsFrameSender<ByteBufSink, ByteBuf> {
+        private static final VarHandle QUEUED_BATCH_CHUNKS;
+        static {
+            try {
+                QUEUED_BATCH_CHUNKS = MethodHandles.lookup().findVarHandle(WsSparqlHandler.class, "plainQueuedBatchChunks", int.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+
         private static final byte[] QUERY = "!query".getBytes(UTF_8);
         private static final byte[] JOIN = "!join".getBytes(UTF_8);
         private static final byte[] LEFT_JOIN = "!left-join".getBytes(UTF_8);
@@ -596,7 +607,6 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
 
         private final SegmentRope wrapperRope = new SegmentRope();
-        private @MonotonicNonNull ByteBufSink fsSink;
         private final int maxBindings = wsServerBindings();
 
         private @Nullable WsServerParserBIt<CompressedBatch> bindingsParser;
@@ -604,7 +614,7 @@ public class NettySparqlServer implements AutoCloseable {
         private int requestBindingsAt;
         private int waitingVarsRound;
         private BindType bType = BindType.JOIN;
-        @SuppressWarnings("unused") private int plainSendBatchLock;
+        @SuppressWarnings("unused") private int plainQueuedBatchChunks;
         private long lastSentSeq = -1;
         private final TwoSegmentRope tmpView = new TwoSegmentRope();
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
@@ -643,6 +653,7 @@ public class NettySparqlServer implements AutoCloseable {
             if (bindQuery == null || b == null || b.rows == 0) {
                 sendChunk(bb);
             } else {
+                QUEUED_BATCH_CHUNKS.getAndAddRelease(this, 1);
                 if (!b.getRopeView(b.rows - 1, 0, tmpView))
                     throw new IllegalStateException("Missing binding sequence");
                 long seq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
@@ -653,19 +664,10 @@ public class NettySparqlServer implements AutoCloseable {
         private void sendBatch(long lastSeq, ByteBuf bb) {
             lastSentSeq = lastSeq;
             sendChunk(bb);
+            QUEUED_BATCH_CHUNKS.getAndAddRelease(this, -1);
         }
 
         /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
-
-        @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
-            fsSink = new ByteBufSink(ctx);
-            super.channelActive(ctx);
-        }
-
-        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-            fsSink.release();
-            super.channelInactive(ctx);
-        }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame msg) {
@@ -727,7 +729,9 @@ public class NettySparqlServer implements AutoCloseable {
                 bb.writeBytes(halfBindReq);
                 //noinspection DataFlowIssue bindQuery != null
                 long emptySeq = bindQuery.emptySeq;
-                if (emptySeq > lastSentSeq && bindQuery.nonEmptySeq == lastSentSeq) {
+                if (emptySeq > lastSentSeq
+                        && bindQuery.nonEmptySeq == lastSentSeq
+                        && (int)QUEUED_BATCH_CHUNKS.getAcquire(this) == 0) {
                     tmpSeq.len = BIND_EMPTY_STREAK.length;
                     tmpSeq.append(emptySeq).append('\n');
                     bb.ensureWritable(tmpSeq.len);
