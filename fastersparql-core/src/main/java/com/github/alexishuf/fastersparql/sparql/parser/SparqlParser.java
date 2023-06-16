@@ -123,11 +123,13 @@ public class SparqlParser {
     }
 
     private long pLong() {
-        int begin = pos;
-        Rope str = in.sub(begin, pos = in.skip(pos, end, DIGITS));
         try {
-            return Long.parseLong(str.toString());
-        } catch (NumberFormatException e) { throw  ex("integer", begin); }
+            long val = in.parseLong(pos);
+            pos = in.skip(pos+1, end, DIGITS);
+            return val;
+        } catch (NumberFormatException e) {
+            throw ex("integer", pos);
+        }
     }
 
     private byte skipWS() {
