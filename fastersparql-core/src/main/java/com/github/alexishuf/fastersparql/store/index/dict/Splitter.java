@@ -115,16 +115,16 @@ public class Splitter {
 
     private PlainRope wrap(SegmentRope wrapper, PlainRope str, int begin, int len) {
         if (str instanceof SegmentRope s) {
-            wrapper.wrapSegment(s.segment(), s.offset()+begin, len);
+            wrapper.wrapSegment(s.segment, s.utf8, s.offset()+begin, len);
             return wrapper;
         } else {
             TwoSegmentRope t = (TwoSegmentRope) str;
             int fstLen = t.fstLen;
             if (begin + len <= fstLen) {
-                wrapper.wrapSegment(t.fst, t.fstOff + begin, len);
+                wrapper.wrapSegment(t.fst, t.fstU8, t.fstOff + begin, len);
                 return wrapper;
             } else if (begin >= fstLen) {
-                wrapper.wrapSegment(t.snd, t.sndOff + begin - fstLen, len);
+                wrapper.wrapSegment(t.snd, t.sndU8, t.sndOff + begin - fstLen, len);
                 return wrapper;
             } else {
                 TwoSegmentRope tsw = wrapper == localView ? tsLocalView : tsSharedView;

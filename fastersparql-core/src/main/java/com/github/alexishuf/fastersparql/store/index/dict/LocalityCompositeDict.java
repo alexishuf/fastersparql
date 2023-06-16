@@ -221,6 +221,20 @@ public class LocalityCompositeDict extends Dict {
                                             : Splitter.decode(seg, off));
         }
 
+        public SegmentRope getLocal(long id) {
+            if (id < MIN_ID || id > nStrings) return null;
+            long off = readOffUnsafe(id-1);
+            int len;
+            if (embedSharedId) {
+                off &= OFF_MASK;
+                len = (int)((readOff(id)&OFF_MASK) - off);
+            } else {
+                len = (int)(readOff(id)-off);
+            }
+            tmp.slice(off, len);
+            return tmp;
+        }
+
         public boolean sharedSuffixed(long id)  {
             if (id < MIN_ID || id > nStrings) return false;
             long off = readOffUnsafe(id - 1);

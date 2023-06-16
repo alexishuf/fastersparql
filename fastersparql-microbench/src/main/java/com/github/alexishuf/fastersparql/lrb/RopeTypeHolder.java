@@ -30,7 +30,7 @@ public class RopeTypeHolder implements AutoCloseable {
             case NETTY -> (B)new ByteBufSink(PooledByteBufAllocator.DEFAULT);
         };
     }
-    public <B extends ByteSink<B, T>, T> SegmentRope takeRope(B sink) {
+    public SegmentRope takeRope(ByteSink<?,?> sink) {
         return switch (ropeType) {
             case BYTE  -> (ByteRope)sink;
             case NETTY -> {

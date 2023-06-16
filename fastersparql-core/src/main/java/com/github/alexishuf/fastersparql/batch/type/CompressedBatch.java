@@ -442,6 +442,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return true;
     }
 
+    @Override
+    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRope dest) {
+        int base = slBase(row, col), len = slices[base+SL_LEN]&LEN_MASK;
+        if (len == 0) return false;
+        dest.wrapSegment(localsSeg, locals, slices[base+SL_OFF], len);
+        return true;
+    }
+
     @Override public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
         if (row < 0 || row >= rows || col < 0 || col >= cols)

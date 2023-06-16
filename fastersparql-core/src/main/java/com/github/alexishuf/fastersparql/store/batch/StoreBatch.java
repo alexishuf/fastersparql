@@ -170,6 +170,20 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         return true;
     }
 
+    @Override
+    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRope dest) {
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        long sourcedId = arr[row * cols + col];
+        if (sourcedId == NOT_FOUND) return false;
+        var lookup = lookup(dictId(sourcedId));
+        long id = unsource(sourcedId);
+        SegmentRope tmp = lookup.getLocal(id);
+        if (tmp == null) return false;
+        dest.wrap(tmp);
+        return true;
+    }
+
     @Override public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();

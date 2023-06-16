@@ -241,8 +241,8 @@ class BatchTest {
     }
 
     static <B extends Batch<B>> void
-    checkTerm(String ctx, B batch, int r, int c, Term t, Term tmpTerm,
-              TwoSegmentRope expectedTSR, TwoSegmentRope tmpTSR, PrefixAssigner assigner) {
+    checkTerm(String ctx, B batch, int r, int c, Term t, Term tmpTerm, TwoSegmentRope expectedTSR,
+              TwoSegmentRope tmpTSR, SegmentRope tmpSR, PrefixAssigner assigner) {
         if (t == null) {
             expectedTSR = null;
         } else {
@@ -252,11 +252,17 @@ class BatchTest {
 
         assertEquals(t, batch.get(r, c), ctx);
         assertEquals(t != null, batch.getView(r, c, tmpTerm));
-        if (t != null) assertEquals(t, tmpTerm, ctx);
 
         assertEquals(expectedTSR, batch.getRope(r, c), ctx);
         assertEquals(expectedTSR != null, batch.getRopeView(r, c, tmpTSR), ctx);
-        if (t != null) assertEquals(expectedTSR, tmpTSR, ctx);
+
+        assertEquals(t != null, batch.localView(r, c, tmpSR));
+
+        if (t != null) {
+            assertEquals(t, tmpTerm, ctx);
+            assertEquals(expectedTSR, tmpTSR, ctx);
+            assertEquals(t.local(), tmpSR);
+        }
 
         assertEquals(t == null ? EMPTY : t.shared(), batch.shared(r, c), ctx);
         if (t == null) {
@@ -290,6 +296,7 @@ class BatchTest {
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
         Term tmpTerm = new Term();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
+        SegmentRope tmpSR = new SegmentRope();
         var assigner = new PrefixAssigner(new RopeArrayMap());
         assertEquals(expected.rows, batch.rows, outerCtx);
         assertEquals(expected.cols, batch.cols, outerCtx);
@@ -299,7 +306,7 @@ class BatchTest {
                 assertTrue(batch.equals(r, c, expected, r, c), ctx);
                 assertEquals(expected.hash(r, c), batch.hash(r, c), ctx);
                 checkTerm(ctx, batch, r, c, expected.get(r, c),
-                          tmpTerm, expectedTSR, tmpTSR, assigner);
+                          tmpTerm, expectedTSR, tmpTSR, tmpSR, assigner);
             }
             assertTrue(batch.equals(r, expected, r), "r="+r+", "+outerCtx);
             assertEquals(expected.hash(r), batch.hash(r), "r="+r+", "+outerCtx);
@@ -313,6 +320,7 @@ class BatchTest {
                                                          B batch, String outerCtx) {
         Term tmpTerm = new Term();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
+        SegmentRope tmpSR = new SegmentRope();
         PrefixAssigner assigner = new PrefixAssigner(new RopeArrayMap());
         for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -320,7 +328,7 @@ class BatchTest {
                 String ctx = "r=" + r + ", c=" + c+",t="+t+", "+outerCtx;
                 assertTrue(batch.equals(r, c, t), ctx);
 
-                checkTerm(ctx, batch, r, c, t, tmpTerm, expectedTSR, tmpTSR, assigner);
+                checkTerm(ctx, batch, r, c, t, tmpTerm, expectedTSR, tmpTSR, tmpSR, assigner);
             }
             assertTrue(batch.equals(r, size.terms[r]), "r="+r+", "+outerCtx);
         }

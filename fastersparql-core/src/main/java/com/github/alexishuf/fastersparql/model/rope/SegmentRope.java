@@ -125,17 +125,9 @@ public class SegmentRope extends PlainRope {
 
     public void wrap(SegmentRope other) {
         this.segment = other.segment;
-        this.utf8 = other.utf8;
-        this.offset = other.offset;
-        this.len = other.len;
-    }
-
-    public void wrap(SegmentRope other, int begin, int end) {
-        if (end > other.len || begin < 0) throw new IndexOutOfBoundsException();
-        this.segment = other.segment;
         this.utf8    = other.utf8;
-        this.offset  = other.offset+begin;
-        this.len     = end-begin;
+        this.offset  = other.offset;
+        this.len     = other.len;
     }
 
     public void slice(long offset, int len) {
@@ -143,11 +135,11 @@ public class SegmentRope extends PlainRope {
         this.len = len;
     }
 
-    public void wrapSegment(MemorySegment segment, long offset, int len) {
+    public void wrapSegment(MemorySegment segment, byte[] utf8, long offset, int len) {
         this.segment = segment;
-        this.utf8 = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
-        this.offset = offset;
-        this.len = len;
+        this.utf8    = utf8;
+        this.offset  = offset;
+        this.len     = len;
     }
 
     public void wrapBuffer(ByteBuffer buffer) {

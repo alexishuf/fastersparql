@@ -15,7 +15,6 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
@@ -616,7 +615,7 @@ public class NettySparqlServer implements AutoCloseable {
         private BindType bType = BindType.JOIN;
         @SuppressWarnings("unused") private int plainQueuedBatchChunks;
         private long lastSentSeq = -1;
-        private final TwoSegmentRope tmpView = new TwoSegmentRope();
+        private final SegmentRope tmpView = new SegmentRope();
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
 
         public WsSparqlHandler() {
@@ -654,7 +653,7 @@ public class NettySparqlServer implements AutoCloseable {
                 sendChunk(bb);
             } else {
                 QUEUED_BATCH_CHUNKS.getAndAddRelease(this, 1);
-                if (!b.getRopeView(b.rows - 1, 0, tmpView))
+                if (!b.localView(b.rows - 1, 0, tmpView))
                     throw new IllegalStateException("Missing binding sequence");
                 long seq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
                 ctx.executor().execute(() -> sendBatch(seq, bb));

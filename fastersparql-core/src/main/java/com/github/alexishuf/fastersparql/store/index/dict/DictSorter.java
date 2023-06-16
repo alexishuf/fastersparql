@@ -410,7 +410,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
                 ropes = Arrays.copyOf(ropes, ropes.length + (ropes.length>>1));
             var handle = ropes[nRopes];
             if (handle == null) ropes[nRopes] = handle = RopeHandlePool.segmentRope();
-            handle.wrapSegment(bytes, nBytes, len);
+            handle.wrapSegment(bytes, null, nBytes, len);
 
             //store UTF-8 bytes
             MemorySegment.copy(prefix.segment(), prefix.offset(), bytes, nBytes, prefixLen);

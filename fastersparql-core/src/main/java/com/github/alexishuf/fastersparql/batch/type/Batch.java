@@ -268,6 +268,27 @@ public abstract class Batch<B extends Batch<B>> {
         return true;
     }
 
+    /**
+     * Change {@code dest} so that it wraps the underlying storage for the local segment of the
+     * value at column {@code col} of row {@code row}in this batch.
+     *
+     * <p>If this batch is mutated, including appending rows, {@code dest} MUST be considered
+     * invalid as its contents may have changed or will change, likely to invalid garbage.</p>
+     *
+     * @param row the row of the term to access
+     * @param col the column containing the term of which the local segment is desired
+     * @param dest A {@link SegmentRope} that will wrap the underlying storage corresponding
+     *             to the local segment of the term at {@code (row, col)}.
+     * @return {@code true} iff there is a term at {@code (row, col)}, otherwise {@code false} is
+     *         returned and {@code dest} is unchanged.
+     */
+    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRope dest) {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.wrap(t.local());
+        return true;
+    }
+
     /** Null-safe equivalent to {@code get(row, col).shared()}. */
     public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         Term term = get(row, col);

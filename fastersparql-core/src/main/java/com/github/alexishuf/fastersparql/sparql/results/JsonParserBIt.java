@@ -207,7 +207,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                     p.type = null;
                     p.value.clear();
                     p.lang.clear();
-                    p.varName.wrap(r, b, e);
+                    p.varName.wrapSegment(r.segment, r.utf8, r.offset+b, e-b);
                     yield (p.column = p.vars.indexOf(p.varName)) >= 0 ? BINDING_VALUE : IGNORE;
                 }
                 case BINDING_VALUE -> {

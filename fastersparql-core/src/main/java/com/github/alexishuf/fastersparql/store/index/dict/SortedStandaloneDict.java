@@ -102,7 +102,7 @@ public final class SortedStandaloneDict extends Dict {
         public SegmentRope get(long id)  {
             if (id < MIN_ID || id > nStrings) return null;
             long off = readOffUnsafe(id - 1);
-            out.wrapSegment(seg, off, (int)(readOffUnsafe(id) - off));
+            out.wrapSegment(seg, null, off, (int)(readOffUnsafe(id) - off));
             return out;
         }
     }

@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import java.util.Objects;
@@ -20,8 +20,6 @@ public final class WsBindingSeq {
                                      + 8  /* 48 bits unsigned big endian in base64 */
                                      + 1; /*"*/
     private static final String BAD_LEN_MSG = "Value for ?"+VAR+" does not have length == "+ LIT_LEN_LONG;
-    private static final String NOT_LIT_MSG = "Value for ?"+VAR+" is not a plain literal";
-    private static final String NOT_BASE64 = "Value for ?"+VAR+" is not base64";
 
     private final byte[] tmp;
 
@@ -64,29 +62,23 @@ public final class WsBindingSeq {
         return term;
     }
 
-    public static long parse(PlainRope buf, int begin, int end) {
-        String msg = null;
-        if (buf.get(begin) != '"' || buf.get(end-1) != '"')
-            msg = NOT_LIT_MSG;
-        long v;
+    public static long parse(SegmentRope buf, int begin, int end) {
+        byte bits1 = BASE64_2_BITS[buf.get(begin+1)];
+        byte bits2 = BASE64_2_BITS[buf.get(begin+2)];
         if (end-begin == LIT_LEN_SHORT) {
-            v = (BASE64_2_BITS[buf.get(begin+1)] << 6) | BASE64_2_BITS[buf.get(begin+2)];
+            return (bits1 << 6) | bits2;
         } else if (end-begin == LIT_LEN_LONG) {
-            v =       ((long)BASE64_2_BITS[buf.get(begin+1)] << 42)
-                    | ((long)BASE64_2_BITS[buf.get(begin+2)] << 36)
-                    | ((long)BASE64_2_BITS[buf.get(begin+3)] << 30)
-                    | (      BASE64_2_BITS[buf.get(begin+4)] << 24)
-                    | (      BASE64_2_BITS[buf.get(begin+5)] << 18)
-                    | (      BASE64_2_BITS[buf.get(begin+6)] << 12)
-                    | (      BASE64_2_BITS[buf.get(begin+7)] <<  6)
-                    | (      BASE64_2_BITS[buf.get(begin+8)]      );
+            return  ((long) bits1 << 42)
+                  | ((long) bits2 << 36)
+                  | ((long)BASE64_2_BITS[buf.get(begin+3)] << 30)
+                  | (      BASE64_2_BITS[buf.get(begin+4)] << 24)
+                  | (      BASE64_2_BITS[buf.get(begin+5)] << 18)
+                  | (      BASE64_2_BITS[buf.get(begin+6)] << 12)
+                  | (      BASE64_2_BITS[buf.get(begin+7)] <<  6)
+                  | (      BASE64_2_BITS[buf.get(begin+8)]      );
         } else {
-            v = -1;
-            msg = BAD_LEN_MSG;
+            throw new InvalidSparqlResultsException(BAD_LEN_MSG);
         }
-        if (msg != null || v < 0)
-            throw new InvalidSparqlResultsException(msg == null ? NOT_BASE64 : msg);
-        return v;
     }
 }
 
