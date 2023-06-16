@@ -723,7 +723,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private void readBindings(WsServerParserBIt<CompressedBatch> bindingsParser) {
             bindingsParser.feedShared(wrapperRope);
-            if (bindingsParser.rowsEmitted() >= requestBindingsAt) {
+            if (bindingsParser.rowsParsed() >= requestBindingsAt) {
                 requestBindingsAt += maxBindings>>1;
                 var bb = ctx.alloc().buffer(32);
                 bb.writeBytes(halfBindReq);

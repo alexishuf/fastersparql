@@ -16,10 +16,10 @@ public class WsServerParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
         seqWriter = bindingSeqCol < 0 ? null : new WsBindingSeq();
     }
 
-   @Override protected void emitRow() {
+   @Override protected void commitRow() {
         if (seqWriter != null)
-            seqWriter.write(rowsEmitted, rowBatch, bindingSeqCol);
-        super.emitRow();
+            seqWriter.write(rowsParsed, batch, bindingSeqCol);
+        super.commitRow();
     }
 
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {

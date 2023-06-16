@@ -27,13 +27,13 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      *     <li>Consumers of BIt will be bottlenecked by RAM (i.e., they are not doing expensive
      *         processing on each {@link Batch} item</li>
      *     <li>The JVM will be using compressed pointers</li>
-     *     <li>The JVM overhead for an array (including the {@code length}) is 24 bytes</li>
+     *     <li>The JVM overhead for an array (including the {@code length}) is 16 bytes</li>
      * </ol>
      *
      * Between {@code TERM} and {@code COMPRESSED} {@code Term} has the smallest bytes/term ratio
      * of 4 bytes. Thus, we try to fill 2 cache lines with 1-column rows using a {@code TERM} batch.
      */
-    int PREFERRED_MIN_BATCH = (2*64-24)/4;
+    int PREFERRED_MIN_BATCH = (2*64-16)/4;
 
     /**
      * Preferred value for {@link BIt#maxBatch(int)}.

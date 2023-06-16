@@ -230,11 +230,14 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             };
         }
 
-        public SparqlState forArrayItem() {
+        public SparqlState forArrayItem(JsonParserBIt<?> p) {
             return switch (this) {
                 case ROOT -> ROOT;
                 case IGNORE, VARS -> IGNORE;
-                case BINDINGS -> BINDING_ROW;
+                case BINDINGS -> {
+                    p.beginRow();
+                    yield BINDING_ROW;
+                }
                 default -> throw ex(this, L_BRACKET, 0, 1);
             };
         }
@@ -245,7 +248,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                 case IGNORE, HEAD, RESULTS -> {}
                 case BINDING_VALUE -> {
                     final ByteRope v = p.value;
-                    Batch<?> rb = p.rowBatch;
+                    Batch<?> rb = p.batch;
                     int col = p.column;
                     switch (p.type) {
                         case null -> {
@@ -284,7 +287,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                         default -> throw new UnsupportedOperationException();
                     }
                 }
-                case BINDING_ROW -> p.emitRow();
+                case BINDING_ROW -> p.commitRow();
                 case VARS, BOOLEAN, BINDINGS, BINDING_VALUE_TYPE,
                         BINDING_VALUE_DATATYPE, BINDING_VALUE_LANG, BINDING_VALUE_VALUE
                         -> throw ex(this, L_BRACE, 0, 1);
@@ -309,7 +312,12 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         public void onBool(JsonParserBIt<?> p, boolean value) {
             var r = value ? TRUE : FALSE;
             switch (this) {
-                case BOOLEAN -> { if (value) p.emitRow(); }
+                case BOOLEAN -> {
+                    if (value) {
+                        if (!p.rowStarted) p.beginRow();
+                        p.commitRow();
+                    }
+                }
                 case IGNORE -> {}
                 case BINDING_VALUE_VALUE
                         -> p.value.clear().append('<').append(r, 0, r.len).append('>');
@@ -435,7 +443,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                         yield b + 1;
                     }
                     //parse item value:
-                    parser.push(spState.forArrayItem());
+                    parser.push(spState.forArrayItem(parser));
                     yield b;
                 }
             };

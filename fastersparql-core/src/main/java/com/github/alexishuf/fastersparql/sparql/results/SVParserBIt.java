@@ -61,7 +61,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
             if (partialLine != null && partialLine.len > 0) //
                 throw unclosedQuote();
         } else if (column > 0) {
-            emitRow();
+            commitRow();
         }
     }
 
@@ -137,7 +137,9 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     if (column   != lastCol) throw missingColumns();
                     column = 0;
                     ++line;
-                    emitRow();
+                    if (!rowStarted)
+                        beginRow();
+                    commitRow();
                 } else if (c != 0) {
                     throw badSep(c);
                 }
@@ -168,8 +170,10 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                 };
             }
             ++line;
-            if (positive)
-                emitRow();
+            if (positive) {
+                beginRow();
+                commitRow();
+            }
             return end;
         }
 
@@ -214,7 +218,9 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                         column = 0;
                         ++line;
                         begin += eol.len;
-                        emitRow();
+                        if (!rowStarted)
+                            beginRow();
+                        commitRow();
                     } else {
                         throw badSep(rope.get(begin+1));
                     }
@@ -316,8 +322,10 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                 default -> true;
             };
             ++line;
-            if (positive)
-                emitRow();
+            if (positive) {
+                beginRow();
+                commitRow();
+            }
             complete(null);
             return end;
         }
@@ -407,8 +415,11 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
 
     protected void setTerm() {
         int dest = inVar2outVar[column];
-        if (dest >= 0)
-            rowBatch.putTerm(dest, termParser);
+        if (dest >= 0) {
+            if (!rowStarted)
+                beginRow();
+            batch.putTerm(dest, termParser);
+        }
     }
 
     protected InvalidSparqlResultsException varAsValue(Term var) {

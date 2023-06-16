@@ -205,10 +205,12 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             bindQuery.nonEmptyBinding(seq);
             bindingNotified = true;
         }
+        if (!rowStarted)
+            beginRow();
         for (int col = 0; col < bindingCol2OutCol.length; col++) {
             int outCol = bindingCol2OutCol[col];
             if (outCol >= 0)
-                rowBatch.putTerm(outCol, sentBatch, sentBatchRow, col);
+                batch.putTerm(outCol, sentBatch, sentBatchRow, col);
         }
     }
 

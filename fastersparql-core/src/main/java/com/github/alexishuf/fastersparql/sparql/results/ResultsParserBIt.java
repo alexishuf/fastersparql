@@ -31,13 +31,15 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * @param <B> the row type
  */
 public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
+    private static final int INIT_BATCH_ROWS = BIt.PREFERRED_MIN_BATCH;
+    private static final int INIT_BATCH_BYTES = ((INIT_BATCH_ROWS*16-16)&~127);
     /** The {@link BatchType} for rows produced by this {@link BIt}. */
     public final BatchType<B> batchType;
 
-    protected B rowBatch;
-    protected long rowsEmitted;
-
+    protected B batch;
+    protected long rowsParsed;
     protected final @Nullable CallbackBIt<B> destination;
+    protected boolean rowStarted;
 
     /** Interface used via SPI to discover {@link ResultsParserBIt} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
@@ -107,17 +109,14 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         super(batchType, vars, maxItems);
         this.batchType = batchType;
         this.destination = null;
-        (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
-        //noinspection resource
-        preferred();
+        this.batch = batchType.create(INIT_BATCH_ROWS, vars.size(), INIT_BATCH_BYTES);
     }
 
     protected ResultsParserBIt(BatchType<B> batchType, CallbackBIt<B> destination) {
         super(batchType, destination.vars(), destination.maxReadyItems());
         this.batchType = batchType;
         this.destination = destination;
-        (this.rowBatch = batchType.createSingleton(vars.size())).beginPut();
-        destination.preferred();
+        this.batch = batchType.create(INIT_BATCH_ROWS, vars.size(), INIT_BATCH_BYTES);
     }
 
     /**
@@ -154,7 +153,13 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             else if (rope.len() == 0)
                 return; // no-op
             doFeedShared(rope);
+            if (batch.rows > 0) {
+                if (rowStarted) eager = true; // do not offer batch with incomplete row
+                else            emitBatch();
+            }
         } catch (Throwable t) {
+            if (batch != null && batch.rows > 0)
+                emitBatch();
             complete(t);
             throw t;
         }
@@ -174,21 +179,29 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         if (destination == null) {
             return super.offer(batch);
         } else {
-            if (metrics != null) metrics.batch(batch.rows);
+            onBatch(batch);
             return destination.offer(batch);
         }
     }
 
-    public long rowsEmitted() { return rowsEmitted; }
+    public long rowsParsed() { return rowsParsed; }
 
-    protected void emitRow() {
-        ++rowsEmitted;
-        rowBatch.commitPut();
-        if ((rowBatch = offer(rowBatch)) == null)
-            rowBatch = getBatch(null);
-        else
-            rowBatch.clear();
-        rowBatch.beginPut();
+    protected void commitRow() {
+        ++rowsParsed;
+        rowStarted = false;
+        batch.commitPut();
+        if (eager)
+            emitBatch();
+    }
+
+    protected final void beginRow() {
+        rowStarted = true;
+        batch.beginPut();
+    }
+
+    private void emitBatch() {
+        if ((batch = offer(batch)) == null) batch = getBatch(null);
+        else                                batch.clear();
     }
 
     /**
@@ -212,6 +225,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             error = new InvalidSparqlResultsException(error);
         }
         try {
+            if (first) {
+                assert error != null || !rowStarted : "normal completion with unfinished row";
+                if (batch.rows > 0)
+                    emitBatch();
+            }
             super.complete(error);
         } finally {
             if (destination != null && first)
