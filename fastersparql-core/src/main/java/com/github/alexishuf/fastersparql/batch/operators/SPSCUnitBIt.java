@@ -174,7 +174,6 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
         B b = ready;
         //journal.write("SPSCUnitBIt.nextBatch &b=", identityHashCode(b), "rows=", b == null ? 0 : b.rows, "[0][0]=", b == null ? null : b.get(0, 0));
         ready = null;
-        eager = false;
         onBatch(b);
         setQS(qs, 0, QS_READY|QS_PKD_PROD); // unpark()s producer if parked.
         return b;
@@ -228,6 +227,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
         } finally { // set ready, unlock and unpark consumer
             //journal.write("SPSCUnitBIt.offer: rls rows=", b.rows, "&offer=", bId, "[0][0]=", b.get(0, 0));
             setQS(qs, setFlags, QS_WRITING|QS_PKD_CONS);
+            if (eager) eager = false;
         }
         //journal.write("SPSCUnitBIt.offer: ret &recycled=", identityHashCode(recycled), "&b=", identityHashCode(b));
         if (recycled == null && (recycled = stealRecycled()) != null) recycled.clear(vars.size());
@@ -265,6 +265,7 @@ public final class SPSCUnitBIt<B extends Batch<B>> extends AbstractBIt<B> implem
             }
         } finally { // set ready, unlock and unpark consumer
             setQS(qs, setFlags, QS_WRITING|QS_PKD_CONS);
+            if (eager) eager = false;
         }
     }
 

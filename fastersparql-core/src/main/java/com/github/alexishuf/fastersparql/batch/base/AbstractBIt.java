@@ -184,6 +184,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         }
         var m = metrics;
         if (m != null) m.batch(b.rows);
+        eager = false;
     }
 
     /**

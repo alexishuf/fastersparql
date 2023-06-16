@@ -67,7 +67,6 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
                 BatchProcessor<B> p = processor;
                 while ((b = inner.nextBatch(b)) != null) {
                     if (p != null && ((b = p.processInPlace(b)) == null || b.rows == 0)) continue;
-                    eager = false;
                     onBatch(b);
                     return b;
                 }

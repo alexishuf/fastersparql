@@ -189,6 +189,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             }
         } finally {
             if (locked) LOCK.setRelease(this, 0);
+            if (eager) eager = false;
             unpark(delayedWake);
         }
         if (b == null && (b = stealRecycled()) != null) b.clear(vars.size());
@@ -238,6 +239,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             }
         } finally {
             if (locked)  LOCK.setRelease(this, 0);
+            if (eager) eager = false;
             unpark(delayedWake);
         }
     }
