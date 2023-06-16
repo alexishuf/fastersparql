@@ -181,7 +181,7 @@ public class SparqlParser {
         skipWS();
     }
 
-    private static final Rope BASE = new ByteRope(":BASE");
+    private static final ByteRope BASE = new ByteRope(":BASE");
 
     private void pPrologue() {
         PrefixMap prefixMap = exprParser.termParser.prefixMap;
@@ -189,12 +189,12 @@ public class SparqlParser {
             switch (skipWS()) {
                 case 'p', 'P' -> {
                     require(PREFIX_u8);
-                    prefixMap.add(pPNameNS(), pIri());
+                    prefixMap.addRef(pPNameNS(), pIri());
                     poll('.'); // tolerate TTL '.' that should not be here
                 }
                 case 'b', 'B' -> {
                     require(BASE_u8);
-                    prefixMap.add(BASE, pIri());
+                    prefixMap.addRef(BASE, pIri());
                     poll('.'); // tolerate TTL '.' that should not be here
                 }
                 default -> { return; }
@@ -202,11 +202,11 @@ public class SparqlParser {
         }
     }
 
-    private Rope pPNameNS() {
+    private ByteRope pPNameNS() {
         if (skipWS() == '\0')
             throw ex("PNAME_NS", pos);
         int begin = pos;
-        Rope name = in.sub(begin, pos = in.skip(pos, end, PN_PREFIX));
+        var name = new ByteRope(in.toArray(begin, pos = in.skip(pos, end, PN_PREFIX)));
         require(':');
         return name;
     }

@@ -88,19 +88,5 @@ public class WsSerializer extends ResultsSerializer {
             }
             return name;
         }
-
-
-        @Override public Rope nameFor(SegmentRope prefix, int begin, int end) {
-            Rope name = prefix2name.get(prefix, begin, end);
-            if (name == null) {
-                name = new ByteRope().append('p').append(prefix2name.size());
-                prefix = prefix.sub(begin, end);
-                prefix2name.put(prefix, name);
-                dest.ensureFreeCapacity(PREFIX_CMD.len+name.len()+ prefix.len()+3)
-                        .append(PREFIX_CMD).append(name).append(':')
-                        .append(prefix).append('>').append('\n');
-            }
-            return name;
-        }
     }
 }

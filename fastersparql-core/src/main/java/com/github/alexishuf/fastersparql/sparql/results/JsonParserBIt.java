@@ -26,6 +26,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
     private int column;
     private final ByteRope value = new ByteRope(), lang = new ByteRope();
     private final ByteRope dtSuffix = new ByteRope();
+    private final SegmentRope varName = new SegmentRope();
     private Term. @Nullable Type type;
 
     public static final class JsonFactory implements Factory {
@@ -98,22 +99,22 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
 
     /* --- --- --- exception builders --- --- --- */
 
-    private static InvalidSparqlResultsException ex(SparqlState state, Rope r, int b, int e) {
-        e = r.skip(b = r.skipWS(b, e), e, Rope.UNTIL_WS);
+    private static InvalidSparqlResultsException ex(SparqlState state, SegmentRope r, int b, int e) {
+        e = r.skip(b = r.skipWS(b, e), e, SegmentRope.UNTIL_WS);
         var msg = format("JSON parser at state %s expected %s but got %s",
                 state, state.expected(), b == e ? "End-Of-Input" : r.sub(b, e).toString());
         return new InvalidSparqlResultsException(msg);
     }
 
-    private static InvalidSparqlResultsException ex(JsonState state, Rope r, int b, int e) {
-        e = r.skip(b = r.skipWS(b, e), e, Rope.UNTIL_WS);
+    private static InvalidSparqlResultsException ex(JsonState state, SegmentRope r, int b, int e) {
+        e = r.skip(b = r.skipWS(b, e), e, SegmentRope.UNTIL_WS);
         var got = b == e ? "End-Of-Input" : r.sub(b, e).toString();
         var msg = format("Malformed JSON: expected %s but got %s",
                          state.name().toLowerCase(), got);
         return new InvalidSparqlResultsException(msg);
     }
 
-    private static InvalidSparqlResultsException badProperty(SparqlState state, Rope r, int b, int e) {
+    private static InvalidSparqlResultsException badProperty(SparqlState state, SegmentRope r, int b, int e) {
         var name = r.sub(b, e);
         var msg = format("Unexpected property %s at state %s, expected %s",
                          name, state, join("/", state.expectedPropertiesString()));
@@ -140,7 +141,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         jsonStack.push(JsonState.VALUE);
     }
 
-    private int suspend(Rope r, int b, int e) {
+    private int suspend(SegmentRope r, int b, int e) {
         if (b >= e) return e;
         partial = allocPartial == null ? allocPartial=new ByteRope(32+(e-b)) : allocPartial;
         if (r == partial)
@@ -186,7 +187,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             };
         }
 
-        public SparqlState forProperty(JsonParserBIt<?> p, Rope r, int b, int e) {
+        public SparqlState forProperty(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
             int l = e - b;
              SparqlState next = switch (this) {
                 case ROOT -> {
@@ -206,7 +207,8 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
                     p.type = null;
                     p.value.clear();
                     p.lang.clear();
-                    yield (p.column = p.vars.indexOf(r.sub(b, e))) >= 0 ? BINDING_VALUE : IGNORE;
+                    p.varName.wrap(r, b, e);
+                    yield (p.column = p.vars.indexOf(p.varName)) >= 0 ? BINDING_VALUE : IGNORE;
                 }
                 case BINDING_VALUE -> {
                     if   (l==5 && r.hasAnyCase(b, VALUE.u8()))    yield BINDING_VALUE_VALUE;
@@ -325,7 +327,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onNumber(JsonParserBIt<?> p, Rope r, int b, int e) {
+        public void onNumber(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
             switch (this) {
                 case BINDING_VALUE_VALUE -> p.value.clear().append('<').append(r, b, e).append('>');
                 case BOOLEAN -> {
@@ -340,7 +342,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onString(JsonParserBIt<?> p, Rope r, int b, int e) {
+        public void onString(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
             switch (this) {
                 case IGNORE -> {}
                 case BOOLEAN -> {
@@ -379,7 +381,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         OBJECT,
         ARRAY;
 
-        public int parse(JsonParserBIt<?> parser, Rope r, int b, int e) {
+        public int parse(JsonParserBIt<?> parser, SegmentRope r, int b, int e) {
             byte c = r.get(b);
             if (c == ',' && this != VALUE) {
                 if ((b = r.skipWS(b+1, e)) == e) return parser.suspend(r, b, e);

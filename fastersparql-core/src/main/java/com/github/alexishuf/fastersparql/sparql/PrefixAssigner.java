@@ -37,8 +37,4 @@ public class PrefixAssigner {
     public @Nullable Rope nameFor(SegmentRope prefix) {
         return prefix2name.get(prefix);
     }
-
-    public @Nullable Rope nameFor(SegmentRope prefix, int begin, int end) {
-        return prefix2name.get(prefix, begin, end);
-    }
 }

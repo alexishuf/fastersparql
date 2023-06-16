@@ -130,6 +130,14 @@ public class SegmentRope extends PlainRope {
         this.len = other.len;
     }
 
+    public void wrap(SegmentRope other, int begin, int end) {
+        if (end > other.len || begin < 0) throw new IndexOutOfBoundsException();
+        this.segment = other.segment;
+        this.utf8    = other.utf8;
+        this.offset  = other.offset+begin;
+        this.len     = end-begin;
+    }
+
     public void slice(long offset, int len) {
         this.offset = offset;
         this.len = len;
