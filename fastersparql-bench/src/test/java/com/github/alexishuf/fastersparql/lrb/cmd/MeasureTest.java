@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
@@ -19,10 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
@@ -50,13 +48,9 @@ class MeasureTest {
                 .allMatch(s -> new File(dataDir, s.filename(HDT_FILE)).isFile());
         hasAllStore = LrbSource.all().stream()
                 .allMatch(s -> new File(dataDir, s.filename(FS_STORE)).isDirectory());
-//        if (hasAllHDT || hasAllStore) {
-//            for (QueryName q : QueryName.values()) {
-//                CompressedBatch ex = q.expected(Batch.COMPRESSED);
-//                if (ex != null)
-//                    qry2rows.put(q, ex.rows);
-//            }
-//        }
+        log.info("Loading expected results, this will take ~30s (due to CompressedBatch.validate())...");
+        if (hasAllStore || hasAllHDT)
+            Arrays.stream(QueryName.values()).parallel().forEach(n -> n.expected(Batch.COMPRESSED));
     }
 
     @AfterAll static void afterAll() {

@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
+import java.util.*;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
@@ -52,7 +53,21 @@ public enum QueryName {
     B7,
     B8;
 
+    private static final List<Map<BatchType<?>, Batch<?>>> name2type2expected;
+    static  {
+        int n = values().length;
+        ArrayList<Map<BatchType<?>, Batch<?>>> list = new ArrayList<>(n);
+        for (int i = 0; i < n; i++)
+            list.add(Collections.synchronizedMap(new HashMap<>()));
+        name2type2expected = list;
+    }
+
     public <B extends Batch<B>> @Nullable B expected(BatchType<B> batchType) {
+        //noinspection unchecked
+        return (B) name2type2expected.get(this.ordinal())
+                .computeIfAbsent(batchType, this::loadExpected);
+    }
+    private <B extends Batch<B>> @Nullable B loadExpected(BatchType<B> batchType) {
         //read vars
         Vars vars = new Vars.Mutable(10);
         try (var is = getClass().getResourceAsStream("results/" + name() + ".tsv")) {

@@ -140,7 +140,7 @@ public class Measure implements Callable<Void>{
         } catch (Throwable t) {
             consumer.finish(t);
         }
-        return (int)((nanoTime()-start)/1_000_000);
+        return (int)((nanoTime()-start)/1_000_000L);
     }
 
     /* --- --- --- metrics collection --- --- --- */
