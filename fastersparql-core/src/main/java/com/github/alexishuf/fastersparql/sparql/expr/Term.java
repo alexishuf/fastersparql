@@ -959,13 +959,14 @@ public final class Term extends Rope implements Expr {
     @Override public int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner) {
         SegmentRope local = local();
         return toSparql(dest, assigner, shared(),
-                 local.segment, local.offset, local.len, (flags & IS_SUFFIX) != 0);
+                 local.segment, local.utf8, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
     public static int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner, SegmentRope shared,
-                                MemorySegment local, long localOff, int localLen, boolean isLit) {
+                               MemorySegment local, byte @Nullable [] localU8,
+                               long localOff, int localLen, boolean isLit) {
         if (shared == null || shared.len == 0) {
-            dest.append(local, localOff, localLen);
+            dest.append(local, localU8, localOff, localLen);
             return localLen;
         }
         int oldLen = dest.len();
@@ -977,14 +978,14 @@ public final class Term extends Rope implements Expr {
                     if (c == 'e' || c == 'E') { exp = true; break; }
                 }
                 if (exp) {
-                    dest.append(local, localOff+1, localLen-1);
+                    dest.append(local, localU8, localOff+1, localLen-1);
                     return localLen-1;
                 }
             } else if (shared == DT_integer || shared == DT_decimal || shared == DT_BOOLEAN) {
-                dest.append(local, localOff + 1, localLen - 1);
+                dest.append(local, localU8, localOff + 1, localLen - 1);
                 return localLen-1;
             }
-            dest.append(local, localOff, localLen); // write "\"LEXICAL_FORM"
+            dest.append(local, localU8, localOff, localLen); // write "\"LEXICAL_FORM"
             if (shared.get(1) == '^') {
                 SegmentRope prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
                 Rope name = prefix == null ? null : assigner.nameFor(prefix);
@@ -1012,13 +1013,13 @@ public final class Term extends Rope implements Expr {
                                   : local.get(JAVA_BYTE, localOff+localLen-1);
                     if (!Rope.contains(PN_LOCAL_LAST, last)) {
                         if (!new SegmentRope(local, localOff, localLen).isEscaped(localLen-1)) {
-                            dest.append(local, localOff, localLen - 1)
+                            dest.append(local, localU8, localOff, localLen - 1)
                                     .append('\\').append(last);
                             localLen = 0;
                         }
                     }
                 }
-                dest.append(local, localOff, localLen);
+                dest.append(local, localU8, localOff, localLen);
             }
         }
         return dest.len()-oldLen;

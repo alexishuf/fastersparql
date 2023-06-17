@@ -9,6 +9,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.concurrent.EventExecutor;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
@@ -136,32 +137,34 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         if (rope == null || len <= 0) {
             return this;
         } else if (rope instanceof SegmentRope sr) {
-            append(sr.segment, sr.offset+begin, len);
+            append(sr.segment, sr.utf8, sr.offset+begin, len);
         } else {
             MemorySegment fst, snd;
+            byte[] fstU8, sndU8;
             long fstOff, sndOff;
             int fstLen;
             if (rope instanceof TwoSegmentRope t) {
-                fst = t.fst; fstOff = t.fstOff; fstLen = t.fstLen;
-                snd = t.snd;
+                fst = t.fst; fstU8 = t.fstU8; fstOff = t.fstOff; fstLen = t.fstLen;
+                snd = t.snd; sndU8 = t.sndU8;
             } else if (rope instanceof Term t) {
-                SegmentRope fr = t.first();
-                fst = fr.segment; fstOff = fr.offset; fstLen = fr.len;
-                snd = t.second().segment;
+                SegmentRope fr = t.first(), sr = t.second();
+                fst = fr.segment; fstU8 = fr.utf8; fstOff = fr.offset; fstLen = fr.len;
+                snd = sr.segment; sndU8 = sr.utf8;
             } else {
                 throw new UnsupportedOperationException("Unsupported Rope type: "+rope.getClass());
             }
             fstOff += begin;
             sndOff = Math.max(0, begin-fstLen);
             fstLen = Math.max(0, Math.min(fstLen, end)-begin);
-            append(fst, fstOff, fstLen);
-            append(snd, sndOff, len-fstLen);
+            append(fst, fstU8, fstOff, fstLen);
+            append(snd, sndU8, sndOff, len-fstLen);
         }
         return this;
     }
 
-    @Override public @This ByteBufSink append(MemorySegment segment, long offset, int len) {
-        NettyRopeUtils.write(bb, segment, offset, len);
+    @Override public @This ByteBufSink append(MemorySegment segment, byte @Nullable [] array,
+                                              long offset, int len) {
+        NettyRopeUtils.write(bb, segment, array, offset, len);
         return this;
     }
 

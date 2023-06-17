@@ -372,8 +372,8 @@ public abstract class Batch<B extends Batch<B>> {
     public void writeNT(ByteSink<?, ?> dest, int row, int col) {
         TwoSegmentRope tmp = new TwoSegmentRope();
         if (getRopeView(row, col, tmp)) {
-            dest.append(tmp.fst, tmp.fstOff, tmp.fstLen);
-            dest.append(tmp.snd, tmp.sndOff, tmp.sndLen);
+            dest.append(tmp.fst, tmp.fstU8, tmp.fstOff, tmp.fstLen);
+            dest.append(tmp.snd, tmp.sndU8, tmp.sndOff, tmp.sndLen);
         }
     }
 
@@ -632,7 +632,8 @@ public abstract class Batch<B extends Batch<B>> {
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
-        ByteRope localRope = new ByteRope(localLen).append(local, localOff, localLen);
+        var localRope = new ByteRope(localLen);
+        localRope.append(local, (byte[]) local.array().orElse(null), localOff, localLen);
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }

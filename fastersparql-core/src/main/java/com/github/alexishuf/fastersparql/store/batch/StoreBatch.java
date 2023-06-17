@@ -258,6 +258,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         if (tmp == null || tmp.len == 0) return 0;
         SegmentRope sh;
         MemorySegment local;
+        byte[] localU8;
         long localOff;
         int localLen;
         boolean isLit = tmp.get(0) == '"';
@@ -266,22 +267,24 @@ public class StoreBatch extends IdBatch<StoreBatch> {
             if (sh.len >= MIN_INTERNED_LEN)
                 sh = SHARED_ROPES.internDatatype(sh, 0, sh.len);
             local = tmp.fst;
+            localU8 = tmp.fstU8;
             localOff = tmp.fstOff;
             localLen = tmp.fstLen;
         } else {
             sh = tmp.fstLen == 0 ? EMPTY : new SegmentRope(tmp.fst, tmp.fstOff, tmp.fstLen);
             local = tmp.snd;
+            localU8 = tmp.sndU8;
             localOff = tmp.sndOff;
             localLen = tmp.sndLen;
         }
-        return Term.toSparql(dest, prefixAssigner, sh, local, localOff, localLen, isLit);
+        return Term.toSparql(dest, prefixAssigner, sh, local, localU8, localOff, localLen, isLit);
     }
 
     @Override public void writeNT(ByteSink<?, ?> dest, int row, int col) {
         TwoSegmentRope tmp = tmpRope(row, col);
         if (tmp == null || tmp.len == 0) return;
-        dest.append(tmp.fst, tmp.fstOff, tmp.fstLen);
-        dest.append(tmp.snd, tmp.sndOff, tmp.sndLen);
+        dest.append(tmp.fst, tmp.fstU8, tmp.fstOff, tmp.fstLen);
+        dest.append(tmp.snd, tmp.sndU8, tmp.sndOff, tmp.sndLen);
     }
 
     @Override public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {

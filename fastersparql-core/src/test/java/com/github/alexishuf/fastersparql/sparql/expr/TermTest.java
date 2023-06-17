@@ -596,7 +596,7 @@ class TermTest {
                 ByteRope actual = new ByteRope();
                 byte[] u8 = (padLeft + local + padRight).getBytes(UTF_8);
                 MemorySegment seg = MemorySegment.ofArray(u8);
-                Term.toSparql(actual, assigner, sh, seg, off, len,
+                Term.toSparql(actual, assigner, sh, seg, u8, off, len,
                               sh.len > 0 && sh.get(0) == '"');
                 assertEquals(expected, actual.toString(), ctx);
             }

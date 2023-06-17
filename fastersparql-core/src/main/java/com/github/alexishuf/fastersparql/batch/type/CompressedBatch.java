@@ -562,8 +562,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         boolean suffix = len < 0;
         len &= LEN_MASK;
         var sh = shared[row*cols + col];
-        if (len != 0 || sh != null)
-            return Term.toSparql(dest, prefixAssigner, sh, localsSeg, slices[base+SL_OFF], len, suffix);
+        if (len != 0 || sh != null) {
+            return Term.toSparql(dest, prefixAssigner, sh, localsSeg, locals,
+                                 slices[base+SL_OFF], len, suffix);
+        }
         return 0;
     }
 
@@ -583,13 +585,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {
         int base = slBase(row, col);
         MemorySegment fst = localsSeg, snd = EMPTY.segment;
+        byte[] fstU8 = locals, sndU8 = fstU8;
         long fstOff = slices[base+SL_OFF], sndOff = 0;
         int fstLen  = slices[base+SL_LEN], sndLen = 0;
         var sh = shared[row*cols + col];
         if (sh != null) {
-            if (fstLen < 0) { snd = sh.segment; sndOff = sh.offset; sndLen = sh.len; }
-            else            { snd = fst;        sndOff = fstOff;    sndLen = fstLen&LEN_MASK;
-                              fst = sh.segment; fstOff = sh.offset; fstLen = sh.len; }
+            if (fstLen < 0) { snd = sh.segment; sndU8 = sh.utf8; sndOff = sh.offset; sndLen = sh.len; }
+            else            { snd = fst;                         sndOff = fstOff;    sndLen = fstLen&LEN_MASK;
+                              fst = sh.segment; fstU8 = sh.utf8; fstOff = sh.offset; fstLen = sh.len; }
         }
         fstLen &= LEN_MASK;
         if (begin < 0 || end > (fstLen+sndLen))
@@ -597,10 +600,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (fstLen + sndLen == 0) return;
 
         if (begin < fstLen)
-            dest.append(fst, fstOff+begin, Math.min(fstLen, end)-begin);
+            dest.append(fst, fstU8, fstOff+begin, Math.min(fstLen, end)-begin);
         if (end > fstLen) {
             begin = Math.max(0, begin-fstLen);
-            dest.append(snd, sndOff+begin, Math.max(0, (end-fstLen)-begin));
+            dest.append(snd, sndU8, sndOff+begin, Math.max(0, (end-fstLen)-begin));
         }
     }
 

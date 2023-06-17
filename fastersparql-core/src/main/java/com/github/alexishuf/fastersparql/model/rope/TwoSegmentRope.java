@@ -129,6 +129,27 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
         checkRange(begin, end);
+        if (U == null)
+            return copySafe(begin, end, dest, offset);
+        if (offset+(end-begin) > dest.length)
+            throw new IndexOutOfBoundsException("Copying [begin, end) overflows dest at offset");
+        offset += U8_BASE;
+        if (begin < fstLen) {
+            int n = Math.min(end, fstLen)-begin;
+            U.copyMemory(fstU8, (fstU8 == null ? 0 : U8_BASE)+fst.address()+fstOff+begin,
+                         dest, offset, n);
+            offset += n;
+        }
+        begin = Math.max(0, begin-fstLen);
+        int n = (end - fstLen) - begin;
+        if (n > 0) {
+            U.copyMemory(sndU8, (sndU8==null ? 0 : U8_BASE)+snd.address()+sndOff+begin,
+                         dest, offset, n);
+        }
+        return dest;
+    }
+
+    private byte[] copySafe(int begin, int end, byte[] dest, int offset) {
         if (begin < fstLen) {
             int n = Math.min(end, fstLen)-begin;
             MemorySegment.copy(fst, JAVA_BYTE, fstOff+begin, dest, offset, n);

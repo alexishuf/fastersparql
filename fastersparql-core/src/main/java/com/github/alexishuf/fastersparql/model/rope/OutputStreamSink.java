@@ -44,16 +44,18 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
 
     @Override public @This OutputStreamSink append(byte c) { return write(c); }
 
-    @Override public @This OutputStreamSink append(MemorySegment segment, long offset, int len) {
-        byte[] u8 = segment.isNative() ? null : (byte[])segment.array().orElse(null);
+    @Override public @This OutputStreamSink append(MemorySegment segment, byte[] base,
+                                                   long offset, int len) {
+        if (base == null && !segment.isNative())
+            base = (byte[]) segment.array().orElse(null);
         int u8Off;
-        if (u8 != null) {
-            u8Off = (int) (segment.address()+offset);
+        if (base == null) {
+            base = new byte[len];
+            MemorySegment.copy(segment, JAVA_BYTE, offset, base, u8Off = 0, len);
         } else {
-            u8 = new byte[len];
-            MemorySegment.copy(segment, JAVA_BYTE, offset, u8, u8Off = 0, len);
+            u8Off = (int) (segment.address()+offset);
         }
-        return write(u8, u8Off, len);
+        return write(base, u8Off, len);
     }
 
     @Override public @This OutputStreamSink append(Rope rope, int begin, int end) {

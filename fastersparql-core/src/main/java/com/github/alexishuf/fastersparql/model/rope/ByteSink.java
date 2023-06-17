@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
@@ -36,7 +37,7 @@ public interface ByteSink<S extends ByteSink<S, T>, T>  {
     boolean isEmpty();
     int len();
 
-    @This S append(MemorySegment segment, long offset, int len);
+    @This S append(MemorySegment segment, byte @Nullable [] utf8, long offset, int len);
     @This S append(byte[] arr, int begin, int len);
     default @This S append(byte[] arr) { return append(arr, 0, arr.length); }
     default @This S append(char c) {

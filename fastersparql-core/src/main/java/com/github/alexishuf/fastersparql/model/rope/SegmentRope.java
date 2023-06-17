@@ -27,7 +27,7 @@ public class SegmentRope extends PlainRope {
     private static final int B_LEN = B_SP.length();
     public static final boolean HAS_UNSAFE;
     static final Unsafe U;
-    private static final int U8_BASE;
+    protected static final int U8_BASE;
 
     static {
         Unsafe u = null;
@@ -167,6 +167,16 @@ public class SegmentRope extends PlainRope {
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
         int rLen = rangeLen(begin, end);
+        if (U == null)
+            return copySafe(begin, rLen, dest, offset);
+        if (offset+rLen > dest.length)
+            throw new IndexOutOfBoundsException("Copying [begin, end) to dest at offset overflows");
+        U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : U8_BASE),
+                     dest, U8_BASE+offset, rLen);
+        return dest;
+    }
+
+    private byte[] copySafe(int begin, int rLen, byte[] dest, int offset) {
         MemorySegment.copy(segment, JAVA_BYTE, this.offset + begin, dest,
                 offset, rLen);
         return dest;

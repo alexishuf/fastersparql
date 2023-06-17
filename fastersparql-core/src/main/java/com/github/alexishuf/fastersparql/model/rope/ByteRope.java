@@ -4,6 +4,7 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.*;
@@ -224,9 +225,18 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
         return this;
     }
 
-    @Override public @This ByteRope append(MemorySegment segment, long offset, int len) {
+    @Override public @This ByteRope append(MemorySegment segment, byte @Nullable [] array,
+                                           long offset, int len) {
         int out = postIncLen(len);
-        MemorySegment.copy(segment,  offset, this.segment, out, len);
+        if (U != null) {
+            if (offset + len > segment.byteSize())
+                throw new IndexOutOfBoundsException("offset:len ranges violates [0, segment.byteSize()] bounds");
+            if (array == null && !segment.isNative())
+                throw new IllegalArgumentException("byte[] not given for heap segment");
+            U.copyMemory(array, segment.address() + offset + (array == null ? 0 : U8_BASE), this.utf8, U8_BASE + out, len);
+        } else {
+            MemorySegment.copy(segment, offset, this.segment, out, len);
+        }
         return this;
     }
 
