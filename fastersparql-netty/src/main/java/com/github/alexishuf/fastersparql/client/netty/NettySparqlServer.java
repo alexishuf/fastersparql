@@ -45,7 +45,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -334,7 +333,7 @@ public class NettySparqlServer implements AutoCloseable {
             protected final class EndAction extends NettyResultsSender.Action {
                 private final M msg;
                 public EndAction(M msg) {
-                    super("END", false);
+                    super("END");
                     this.msg = msg;
                 }
                 @Override public void run(NettyResultsSender<?> sender) { //runs on event loop

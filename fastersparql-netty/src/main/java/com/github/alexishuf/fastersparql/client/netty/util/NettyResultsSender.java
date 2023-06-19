@@ -10,6 +10,8 @@ import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -21,6 +23,10 @@ import java.util.concurrent.locks.LockSupport;
  */
 public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, ByteBuf>
                                             implements Runnable {
+    private static final Logger log = LoggerFactory.getLogger(NettyResultsSender.class);
+    private static final byte TOUCH_DISABLED = 0x00;
+    private static final byte TOUCH_AUTO     = 0x01;
+    private static final byte TOUCH_PARKED   = 0x02;
     private static final VarHandle LOCK;
     static {
         try {
@@ -33,10 +39,11 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     private final EventExecutor executor;
     private final ChannelHandlerContext ctx;
     protected Thread owner;
-    protected @Nullable Object result;
+    protected @Nullable Throwable error;
     private final Object[] actions = new Object[(128-16)>>2];
     private byte actionsHead = 0, actionsSize = 0;
-    protected boolean active, autoTouch = true;
+    private byte touchState;
+    protected boolean active;
     @SuppressWarnings("unused") private int plainLock;
 
     public static class NettyExecutionException extends RuntimeException {
@@ -47,38 +54,33 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     public abstract static class Action {
         private final String name;
-        private final boolean isSync;
-        public static final Action TOUCH = new TouchAction();
         public static final Action RELEASE = new ReleaseAction();
 
-        public Action(String name, boolean isSync) {
-            this.name = name;
-            this.isSync = isSync;
-        }
+        public Action(String name) { this.name = name; }
 
         public abstract void run(NettyResultsSender<?> sender);
 
         @Override public String toString() { return name; }
     }
 
-    private static class TouchAction extends Action {
-        public TouchAction() {super("TOUCH", true);}
-        @Override public void run(NettyResultsSender<?> sender) {sender.sink.touch();}
-    }
-
     private static class ReleaseAction extends Action {
-        public ReleaseAction() {super("RELEASE", false);}
-        @Override public void run(NettyResultsSender<?> sender) {sender.sink.release();}
+        public ReleaseAction() {super("RELEASE");}
+        @Override public void run(NettyResultsSender<?> sender) {
+            sender.touchState = TOUCH_DISABLED;
+            sender.sink.release();
+        }
     }
 
     public NettyResultsSender(ResultsSerializer serializer, ChannelHandlerContext ctx) {
         super(serializer, new ByteBufSink(ctx.alloc()));
         this.executor = (this.ctx = ctx).executor();
-        owner = Thread.currentThread();
+        this.touchState = TOUCH_AUTO;
+        this.owner = Thread.currentThread();
     }
 
     @Override public void close() {
         try {
+            touchState = TOUCH_DISABLED;
             execute(Action.RELEASE);
         } catch (RejectedExecutionException e) {
             sink.release();
@@ -86,7 +88,6 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-        autoTouch = true;
         if (sink.needsTouch()) touch();
         try {
             serializer.init(vars, subset, isAsk, sink);
@@ -119,7 +120,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override public void sendTrailer() {
         if (sink.needsTouch()) touch();
         try {
-            autoTouch = false;
+            touchState = TOUCH_DISABLED;
             serializer.serializeTrailer(sink);
             execute(wrapLast(sink.take()));
         } catch (Throwable t) {
@@ -139,7 +140,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     protected void execute(Object action) {
-        boolean spawn, sync = action instanceof Action a && a.isSync;
+        boolean spawn;
         lock();
         try {
             if (actionsSize >= actions.length) waitCapacity();
@@ -150,7 +151,6 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 active = true;
         } finally { unlock(); }
         if (spawn) executor.execute(this);
-        if (sync) sync();
     }
 
     private void waitCapacity() {
@@ -165,30 +165,29 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         boolean spawn;
         lock();
         try {
-            if (actionsSize == actions.length) waitCapacity();
-            ++actionsSize;
-            actionsHead = (byte) ((actionsHead == 0 ? actions.length : actionsHead)-1);
-            actions[actionsHead] = Action.TOUCH;
+            if (!sink.needsTouch()) return;
+            touchState |= TOUCH_PARKED;
+            error = null;
             spawn = !active;
             if (spawn)
                 active = true;
         } finally { unlock(); }
         if (spawn)
             executor.execute(this);
-        sync();
-    }
 
-    private void sync() {
-        Object result;
+        Throwable error;
         while (true) {
             lock();
             try {
-                if ((result = this.result) != null) break;
+                if ((error = this.error) != null || !sink.needsTouch()) {
+                    this.error = null;
+                    touchState &= ~TOUCH_PARKED;
+                    break;
+                }
             } finally { unlock(); }
         }
-        this.result = null;
-        if (result instanceof Throwable t)
-            throw new NettyExecutionException(t);
+        if (error != null)
+            throw new NettyExecutionException(error);
     }
 
     /**
@@ -210,12 +209,28 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected M wrapLast(ByteBuf bb) { return wrap(bb); }
 
     protected void beforeSend() { }
-    protected void onError(Throwable t) { }
+    protected void onError(Throwable t) {
+        log.error("{}.run(): failed to run action", this, t);
+    }
+
+    private void doTouch() {
+        try {
+            sink.touch();
+        } catch (Throwable t) {
+            error = t;
+            onError(t);
+        } finally {
+            if ((touchState & TOUCH_PARKED) != 0)
+                LockSupport.unpark(owner);
+        }
+    }
 
     @Override public void run() {
         boolean exhausted = false, flush = false;
         Object action;
         for (int i = 0; i < 8; i++) {
+            if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                doTouch();
             lock();
             try {
                 exhausted = actionsSize == 0;
@@ -226,29 +241,29 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 --actionsSize;
                 action = actions[actionsHead];
                 actionsHead = (byte) ((actionsHead + 1) % actions.length);
-            } finally { unlock(); }
-            boolean sync = action instanceof Action a && a.isSync;
+            } catch (Throwable t) {
+                error = t;
+                onError(t);
+                continue;
+            } finally {
+                unlock();
+                if (actionsSize == actions.length-1)
+                    LockSupport.unpark(owner);
+            }
+            if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                doTouch();
             try {
                 if (action instanceof Action a) {
                     a.run(this);
                 } else if (action instanceof Throwable err) {
                     throw err;
                 } else {
-                    if (autoTouch && sink.needsTouch())
-                        sink.touch();
-                    ctx.write(action);
                     beforeSend();
+                    ctx.write(action);
                     flush = true;
                 }
-                if (sync)
-                    result = action;
             } catch (Throwable t) {
-                if (sync)
-                    result = t;
                 onError(t);
-            } finally {
-                if (sync || actionsSize == actions.length-1)
-                    LockSupport.unpark(owner);
             }
         }
         if (flush)
