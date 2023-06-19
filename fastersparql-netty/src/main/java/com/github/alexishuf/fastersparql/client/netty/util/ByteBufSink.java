@@ -7,52 +7,21 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
-import java.util.concurrent.locks.LockSupport;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     private ByteBufAllocator alloc;
     private ByteBuf bb;
-    private volatile ByteBuf asyncBB;
-    private volatile Thread consumer;
-    private EventExecutor executor;
-    private Runnable allocTask;
-    private boolean spawnedAllocTask = false;
     private int sizeHint = 256;
 
-    public ByteBufSink(ChannelHandlerContext   ctx) { alloc(ctx); }
     public ByteBufSink(ByteBufAllocator      alloc) { this.alloc = alloc; }
 
-    public void alloc(ChannelHandlerContext ctx) {
-        this.alloc = ctx.alloc();
-        this.executor = ctx.executor();
-        this.allocTask = this::doAlloc;
-        consumer = Thread.currentThread();
-        spawnAllocTask();
-    }
-
-    public void alloc(ByteBufAllocator alloc) {
-        this.alloc = alloc;
-    }
-
-    private void doAlloc() {
-        asyncBB = this.alloc.buffer(sizeHint);
-        LockSupport.unpark(consumer);
-    }
-
-    private void spawnAllocTask() {
-        if (!spawnedAllocTask && executor != null) {
-            spawnedAllocTask = true;
-            executor.execute(allocTask);
-        }
-    }
+    public void alloc(ByteBufAllocator alloc) { this.alloc = alloc; }
 
     @Override public ByteBuf take() {
         ByteBuf bb = this.bb;
@@ -64,22 +33,11 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         return bb;
     }
 
+    @Override public boolean needsTouch() { return bb == null; }
+
     @Override public ByteBufSink touch() {
-        if (bb == null) {
-            Thread consumer;
-            if (executor == null || executor.inEventLoop(consumer = Thread.currentThread())) {
-                bb = alloc.buffer(sizeHint);
-            } else {
-                if (this.consumer != consumer)
-                    this.consumer = consumer;
-                spawnAllocTask(); // spawn task in case of previous release()
-                while ((bb = asyncBB) == null)
-                    LockSupport.park(executor);
-                asyncBB = null;
-                spawnedAllocTask = false;
-                spawnAllocTask(); // spawn task to satisfy next touch() call
-            }
-        }
+        if (bb == null)
+            bb = alloc.buffer(sizeHint);
         return this;
     }
 
@@ -88,19 +46,6 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         this.bb = null;
         if (bb != null)
             bb.release();
-        if (spawnedAllocTask) {
-            if (executor.inEventLoop()) {
-                bb = asyncBB;
-            } else {
-                while ((bb = asyncBB) == null && spawnedAllocTask && !executor.isTerminated())
-                    LockSupport.park(executor);
-            }
-            if (bb != null) {
-                bb.release();
-                asyncBB = null;
-                spawnedAllocTask = false;
-            }
-        }
     }
 
     @Override public boolean isEmpty() {

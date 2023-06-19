@@ -11,10 +11,8 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
-import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -288,11 +286,12 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
 
     /* --- --- --- bindings upload virtual thread --- --- --- */
 
-    @SuppressWarnings({"unchecked", "rawtypes"}) private void sendBindingsThread() {
+    private void sendBindingsThread() {
         Thread.currentThread().setName("sendBindingsThread-"+id());
-        var serializer = new WsSerializer();
-        ByteSink sink = frameSender.createSink();
+        ResultsSender<?,?> sender = null;
+        boolean sendEnd = true;
         try {
+            sender = frameSender.createSender();
             if (bindings == null)
                 throw noBindings("sendBindingsThread()");
             assert sentBindings != null;
@@ -300,9 +299,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
             bindings.preferred().tempEager();
             int allowed = 0; // bindings requested by the server
 
-            // send a frame with var names
-            serializer.init(bindings.vars(), usefulBindingsVars, false, sink.touch());
-            frameSender.sendFrame(sink.take());
+            sender.sendInit(bindings.vars(), usefulBindingsVars, false);
             for (B b = null; (b = bindings.nextBatch(b)) != null; ) {
                 sentBindings.copy(b);
                 for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
@@ -312,23 +309,28 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                     if (isClosed())
                         return;
                     allowed -= taken = Math.min(allowed, rows - r);
-                    serializer.serialize(b, r, taken, sink.touch());
-                    frameSender.sendFrame(sink.take());
+                    sender.sendSerialized(b, r, taken);
                 }
             }
         } catch (Throwable t) {
-            if (!(t instanceof BItReadClosedException)) {
+            if (t instanceof BItReadClosedException) {
+                if (!serverSentTermination && sender != null)
+                    sender.sendCancel();
+            } else {
+                if (!serverSentTermination && sender != null)
+                    sender.sendError(t);
                 log.warn("sendBindingsThread() dying ", t);
                 close();
             }
+            sendEnd = false;
         } finally {
             if (sentBindings != null)
                 sentBindings.complete(null);
-            if (!serverSentTermination) {
-                serializer.serializeTrailer(sink.touch());
-                frameSender.sendFrame(sink.take());
+            if (sender != null) {
+                if (sendEnd && !serverSentTermination)
+                    sender.sendTrailer();
+                sender.close();
             }
-            sink.release();
         }
     }
 }

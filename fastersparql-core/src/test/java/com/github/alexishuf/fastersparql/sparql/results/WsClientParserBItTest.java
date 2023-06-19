@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -98,6 +99,16 @@ class WsClientParserBItTest extends ResultsParserTest {
         WsFrameSender<ByteRope, ByteRope> frameSender = new WsFrameSender<>() {
             @Override public void sendFrame(ByteRope content) { }
             @Override public ByteRope createSink() { return new ByteRope(); }
+            @Override public ResultsSender<ByteRope, ByteRope> createSender() {
+                return new ResultsSender<>(new WsSerializer(), new ByteRope()) {
+                    @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
+                    @Override public void sendSerialized(Batch<?> batch) {}
+                    @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
+                    @Override public void sendTrailer() {}
+                    @Override public void sendCancel() {}
+                    @Override public void sendError(Throwable cause) {}
+                };
+            }
         };
         ResultsParserBIt.Factory fac;
         if (in.contains("!active-binding") || in.contains("!bind-request")) {

@@ -12,9 +12,11 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -107,6 +109,17 @@ public class ResultsParserBench {
             implements WsFrameSender<S, T>{
         @Override public void sendFrame(T content) {}
         @Override public S createSink() {return null;}
+
+        @Override public ResultsSender<S, T> createSender() {
+            return new ResultsSender<>(new WsSerializer(), null) {
+                @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
+                @Override public void sendSerialized(Batch<?> batch) {}
+                @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
+                @Override public void sendTrailer() {}
+                @Override public void sendError(Throwable cause) {}
+                @Override public void sendCancel() {}
+            };
+        }
     }
 
     @SuppressWarnings("unchecked") private <B extends Batch<B>>void drain() {

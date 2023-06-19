@@ -2,10 +2,12 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -18,6 +20,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsServerParserBIt;
@@ -25,6 +28,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -40,13 +44,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.PrintStream;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -59,7 +61,6 @@ import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FOR
 import static io.netty.handler.codec.http.HttpHeaderValues.CHUNKED;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.util.AsciiString.indexOfIgnoreCaseAscii;
-import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
@@ -157,15 +158,6 @@ public class NettySparqlServer implements AutoCloseable {
     }
 
     private abstract class QueryHandler<T> extends SimpleChannelInboundHandler<T> {
-        private static final VarHandle ROUND, DRAINER_WRITING;
-        static {
-            try {
-                ROUND = lookup().findVarHandle(QueryHandler.class, "plainRound", int.class);
-                DRAINER_WRITING = lookup().findVarHandle(QueryHandler.class, "plainDrainerWriting", int.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
         protected @MonotonicNonNull ChannelHandlerContext ctx;
         protected @Nullable Plan query;
         protected final SparqlParser sparqlParser = new SparqlParser();
@@ -173,8 +165,7 @@ public class NettySparqlServer implements AutoCloseable {
         protected @Nullable VolatileBindQuery bindQuery;
         protected Vars serializeVars = Vars.EMPTY;
         @MonotonicNonNull protected ResultsSerializer serializer;
-        @SuppressWarnings({"FieldMayBeFinal", "unused"}) // access through ROUND/DRAINER_WRITING
-        private int plainRound = -1, plainDrainerWriting;
+        protected int round = -1;
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
             if (this.ctx == ctx) return;
@@ -190,7 +181,14 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            endRound(0, INTERNAL_SERVER_ERROR, cause.getMessage(), cause);
+            endRound(INTERNAL_SERVER_ERROR, cause.getMessage(), cause);
+        }
+
+        @Override public String toString() {
+            String simpleName = getClass().getSimpleName();
+            if (ctx == null)
+                return "Unregistered "+simpleName;
+            return simpleName+ctx.channel()+'('+sparqlClient.endpoint().uri()+')';
         }
 
         /**
@@ -212,7 +210,7 @@ public class NettySparqlServer implements AutoCloseable {
                                           boolean cancelled);
 
         /**
-         * This method will be called once per round, {@link #endRound(int, HttpResponseStatus, CharSequence, Throwable)}
+         * This method will be called once per round, {@link #endRound(HttpResponseStatus, CharSequence, Throwable)}
          * effectively ends the round. This method will be called even on successful round
          * completions (when {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
          * is not called).
@@ -236,47 +234,16 @@ public class NettySparqlServer implements AutoCloseable {
         }
 
         protected int beginRound() {
-            int round;
-            boolean blocked = false;
-            try {
-                // it may be that a endRound() from drainerThread() is ongoing. Before we start
-                // a new round we must wait until endRound(), onFailure() and cleanup() finish
-                // these methods do not block but are not trivial, thus we yield() instead of
-                // onSpinWait()
-                while (true) {
-                    round = (int) ROUND.getOpaque(this);
-                    if (round == 0) {
-                        blocked = true;
-                        LockSupport.setCurrentBlocker(this);
-                        Thread.yield();
-                    } else if (round < 0) {
-                        int ex = round;
-                        if (ROUND.compareAndSet(this, ex, round = -round + 1))
-                            break;
-                    } else {
-                        throw new IllegalStateException("Starting new round before last one completed");
-                    }
-                }
-            } finally {
-                if (blocked) LockSupport.setCurrentBlocker(null);
-            }
-
-            return round;
+            if (round > 0)
+                throw new IllegalStateException("Starting new round before last one completed");
+            return round = -round+1;
         }
-
-        protected boolean atRound(int round) { return (int)ROUND.getOpaque(this) == round; }
 
         /**
          * Ends current query processing round, closing the {@link BIt}, its associated
          * drainer thread and sending a response to the client.
          *
          * @param status forwarded to {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
-         * @param round The round to end, returned by {@link #beginRound()}. If zero,
-         *              will use the current round. Only threads running at the Netty event loop
-         *              should pass zero to this argument. Other background threads must pass the
-         *              round number they got (indirectly) from {@link #beginRound()} since
-         *              they may race with other {@link #beginRound()} calls and end the
-         *              round after the one they intended.
          * @param errorMsg An error message forwarded to {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
          *                 if this is {@code null} but {@code cause} is not,
          *                 {@code cause.getMessage()} will be used
@@ -285,25 +252,17 @@ public class NettySparqlServer implements AutoCloseable {
          * @return {@code true} if the current round was still {@code round} and it was completed
          *         by this call
          */
-        protected final boolean endRound(int round, HttpResponseStatus status,
+        protected final boolean endRound(HttpResponseStatus status,
                                          @Nullable CharSequence errorMsg,
                                          @Nullable Throwable cause) {
-            if (round == 0)
-                round = (int) ROUND.getOpaque(this);
-            if (round <= 0 || !ROUND.compareAndSet(this, round, 0))
+            assert ctx == null || ctx.executor().inEventLoop();
+            int round = this.round;
+            if (round <= 0)
                 return false; // already ended
             try {
-                // wait until drainer finishes queueing its HttpObject
-                // since we already changed ROUND, we are unlikely to spin here for long
-                while ((int)DRAINER_WRITING.getAcquire(this) == 1) Thread.onSpinWait();
-                // from this point onwards drainerThread() will not send any more messages
-                boolean cancelled;
-                if (cause instanceof FSCancelledException e)
-                    cancelled = e.endpoint() == sparqlClient.endpoint();
-                else if (cause instanceof BItReadClosedException e)
-                    cancelled = e.it() == this.it;
-                else
-                    cancelled = false;
+                boolean cancelled = (cause instanceof FSCancelledException ce
+                                        && ce.endpoint() == sparqlClient.endpoint())
+                                 || (cause instanceof BItReadClosedException re && re.it() == it);
                 ByteRope msg;
                 if (cause == null && errorMsg == null) {
                     msg = null;
@@ -312,8 +271,10 @@ public class NettySparqlServer implements AutoCloseable {
                     if      (errorMsg != null) msg.append(errorMsg);
                     else                       msg.append("Could not complete query: ")
                                                   .append(cause.getMessage());
-                    if (query != null)
+                    if (query != null) {
                         msg.append("\nQuery:\n").indented(2, query.sparql());
+                        if (msg.get(msg.len-1) != '\n') msg.append('\n');
+                    }
                     if (cause != null) {
                         try (var w = new PrintStream(msg.asOutputStream(), true, UTF_8)) {
                             cause.printStackTrace(w);
@@ -325,12 +286,12 @@ public class NettySparqlServer implements AutoCloseable {
                 cleanup();
                 return true; // this call ended round
             } finally {
-                ROUND.setRelease(this, -round);
+                this.round = -round;
             }
         }
 
         protected boolean fail(CharSequence errorMessage) {
-            endRound(0, INTERNAL_SERVER_ERROR, errorMessage, null);
+            endRound(INTERNAL_SERVER_ERROR, errorMessage, null);
             return true;
         }
 
@@ -339,7 +300,7 @@ public class NettySparqlServer implements AutoCloseable {
                 query = sparqlParser.parse(sparql, 0);
                 return true;
             } catch (Throwable e) {
-                endRound(0, BAD_REQUEST, "Bad query syntax", e);
+                endRound(BAD_REQUEST, "Bad query syntax", e);
             }
             return false;
         }
@@ -357,47 +318,94 @@ public class NettySparqlServer implements AutoCloseable {
                 serializeVars = it.vars();
                 return true;
             } catch (Throwable t) {
-                endRound(0, INTERNAL_SERVER_ERROR, "Could not dispatch query", t);
+                endRound(INTERNAL_SERVER_ERROR, "Could not dispatch query", t);
             }
             return false;
         }
 
+        private static final class RoundEndedException extends RuntimeException {
+            public static final RoundEndedException INSTANCE = new RoundEndedException();
+        }
 
-        protected abstract void sendChunk(ByteBuf bb);
-        protected void sendLastChunk(ByteBuf bb) { sendChunk(bb); }
-        protected void sendBatch(CompressedBatch b, ByteBuf bb) { sendChunk(bb); }
+        protected abstract class SerializeTask<M> extends NettyResultsSender<M> {
+            protected final int drainerRound;
+            private boolean ended;
+
+            protected final class EndAction extends NettyResultsSender.Action {
+                private final M msg;
+                public EndAction(M msg) {
+                    super("END", false);
+                    this.msg = msg;
+                }
+                @Override public void run(NettyResultsSender<?> sender) { //runs on event loop
+                    if (ended) return;
+                    ended = true;
+                    endRound(OK, null, null);
+                    ctx.writeAndFlush(msg);
+                }
+            }
+
+            public SerializeTask(int round) {
+                super(QueryHandler.this.serializer, ctx);
+                this.drainerRound = round;
+            }
+
+            @Override protected void beforeSend() { // runs on event loop
+                if (drainerRound != round)
+                    throw RoundEndedException.INSTANCE;
+            }
+
+            @Override protected void onError(Throwable t) { // runs on event loop
+                if (ended || t == RoundEndedException.INSTANCE)
+                    return;
+                ended = true;
+                endRound(INTERNAL_SERVER_ERROR, null, t);
+            }
+
+            @Override public void sendTrailer() { // runs on drainerThread
+                if (sink.needsTouch()) touch();
+                try {
+                    serializer.serializeTrailer(sink);
+                    execute(new EndAction(wrapLast(sink.take())));
+                } catch (Throwable t) {
+                    execute(t);
+                }
+            }
+
+            @Override public String toString() {
+                return "SerializeTask{round="+round+", handler="+QueryHandler.this+'}';
+            }
+        }
+
+        protected abstract SerializeTask<?> createSerializeTask(int round);
 
         protected void drainerThread(int round) {
-            Thread.currentThread().setName("drainer-"+ctx.channel());
-            var it  = this.it;
-            var query = this.query;
-            if (query == null || it == null) {
-                fail("null query or it");
-                return;
-            }
-            var sink = new ByteBufSink(ctx);
-            try {
-                serializer.init(it.vars(), serializeVars, query.isAsk(), sink.touch());
-                for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                    serializer.serialize(b, sink.touch());
-                    ByteBuf bb = sink.take();
-                    DRAINER_WRITING.setRelease(this, 1);
-                    try {
-                        if ((int) ROUND.getAcquire(this) != round) {
-                            bb.release();
-                            return;
-                        }
-                        sendBatch(b, bb);
-                    } finally { DRAINER_WRITING.setRelease(this, 0); }
+            SerializeTask<?> task = null;
+            try (var it = this.it) {
+                task = createSerializeTask(round);
+                Thread.currentThread().setName("drainer-" + ctx.channel());
+                if (query == null || it == null) {
+                    fail("null query or it");
+                    return;
                 }
-                serializer.serializeTrailer(sink.touch());
-                if (endRound(round, OK, null, null))
-                    sendLastChunk(sink.take());
+                task.sendInit(it.vars(), serializeVars, query.isAsk());
+                for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
+                    task.sendSerialized(b);
+                }
+                task.sendTrailer();
+            } catch (NettyResultsSender.NettyExecutionException e) {
+                log.debug("Drainer thread exiting", e);
             } catch (Throwable t) {
-                endRound(round, INTERNAL_SERVER_ERROR, null, t);
-                throw t;
+                if (task != null) {
+                    log.info("Drainer thread exiting due to {}", t.toString());
+                    task.sendError(t);
+                } else {
+                    log.error("Error creating SerializeTask, racing to end round", t);
+                    endRound(INTERNAL_SERVER_ERROR, null, t);
+                }
             } finally {
-                sink.release();
+                if (task != null)
+                    task.close();
             }
         }
     }
@@ -411,12 +419,22 @@ public class NettySparqlServer implements AutoCloseable {
 
         /* --- --- --- QueryHandler methods --- --- --- */
 
-        @Override protected void sendChunk(ByteBuf bb) {
-            ctx.writeAndFlush(new DefaultHttpContent(bb));
+        private final class SparqlSerializeTask extends SerializeTask<HttpContent> {
+            public SparqlSerializeTask(int drainerRound) {super(drainerRound);}
+            @Override protected HttpContent wrap(ByteBuf bb) {
+                return new DefaultHttpContent(bb);
+            }
+            @Override protected HttpContent wrapLast(ByteBuf bb) {
+                return new DefaultLastHttpContent(bb);
+            }
+            @Override public void sendCancel() {
+                sendError(new FSCancelledException(sparqlClient.endpoint()));
+            }
         }
 
-        @Override protected void sendLastChunk(ByteBuf bb) {
-            ctx.writeAndFlush(new DefaultLastHttpContent(bb));
+        @Override
+        protected SerializeTask<?> createSerializeTask(int round) {
+            return new SparqlSerializeTask(round);
         }
 
         @Override protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
@@ -444,14 +462,14 @@ public class NettySparqlServer implements AutoCloseable {
             responseStarted = false;
             int r = beginRound();
             if (!req.decoderResult().isSuccess()) {
-                endRound(r, BAD_REQUEST, "Could not decode HTTP request", null);
+                endRound(BAD_REQUEST, "Could not decode HTTP request", null);
             } else if (!req.uri().startsWith(SP_PATH)) {
-                endRound(r, NOT_FOUND, "Path not found, HTTP sparql endpoint is at SP_PATH", null);
+                endRound(NOT_FOUND, "Path not found, HTTP sparql endpoint is at SP_PATH", null);
             } else if (badMethod(req.method())) {
-                endRound(r, METHOD_NOT_ALLOWED, "Only GET and POST are allowed", null);
+                endRound(METHOD_NOT_ALLOWED, "Only GET and POST are allowed", null);
             } else if (chooseSerializer(req)) {
                 if (req.method().equals(HttpMethod.HEAD)) {
-                    handleHead(r, req);
+                    handleHead(req);
                 } else if (req.method().equals(HttpMethod.GET)) {
                     handleGet(r, req);
                 } else if (req.method().equals(HttpMethod.POST)) {
@@ -469,25 +487,26 @@ public class NettySparqlServer implements AutoCloseable {
                     r.retain(); // both fireChannelRead() and our caller will release
                 ctx.fireChannelRead(request);
             } else {
-                endRound(beginRound(), BAD_REQUEST, "Only possible upgrade is websocket", null);
+                beginRound();
+                endRound(BAD_REQUEST, "Only possible upgrade is websocket", null);
             }
             return true; // "handled" the request
         }
 
-        private void handleHead(int round, HttpRequest req) {
+        private void handleHead(HttpRequest req) {
             var resp = new DefaultFullHttpResponse(req.protocolVersion(), OK);
             resp.headers().set(CONTENT_TYPE, serializer.contentType())
                           .set(CONTENT_LENGTH, 0)
                           .set(ALLOW, "GET, POST, HEAD");
             ctx.writeAndFlush(resp);
-            endRound(round, OK, null, null);
+            endRound(OK, null, null);
         }
 
         private void handleGet(int round, HttpRequest req) {
             String uri = req.uri();
             var m = QUERY_RX.matcher(uri);
             if (!m.find()) {
-                endRound(0, BAD_REQUEST, "Missing query parameter in GET", null);
+                endRound(BAD_REQUEST, "Missing query parameter in GET", null);
                 return;
             }
             handleQuery(round, unescapeToRope(m.group(1)));
@@ -502,13 +521,13 @@ public class NettySparqlServer implements AutoCloseable {
                     begin = r.skipUntil(begin, len, '&')+1;
                 begin += QUERY_EQ.length;
                 if (begin >= len)
-                    endRound(0, BAD_REQUEST, "No query in form",  null);
+                    endRound(BAD_REQUEST, "No query in form",  null);
                 else
                     handleQuery(round, unescape(r, begin, r.skipUntil(begin, r.len, '&')));
             } else if (indexOfIgnoreCaseAscii(ct, APPLICATION_SPARQL_QUERY, 0) == 0) {
                 handleQuery(round, new ByteRope(r));
             } else {
-                endRound(0, UNSUPPORTED_MEDIA_TYPE, "Expected Content-Type to be application/x-www-form-urlencoded or application/sparql-query, got "+ct, null);
+                endRound(UNSUPPORTED_MEDIA_TYPE, "Expected Content-Type to be application/x-www-form-urlencoded or application/sparql-query, got "+ct, null);
             }
         }
 
@@ -538,11 +557,11 @@ public class NettySparqlServer implements AutoCloseable {
                 fail("null query or it");
                 return;
             }
-            var sink = new ByteBufSink(ctx).touch();
+            var sink = new ByteBufSink(ctx.alloc()).touch();
             try {
                 serializer.init(it.vars(), it.vars(), query.isAsk(), sink);
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                    if (!atRound(round)) return;
+                    if (this.round != round) return;
                     serializer.serialize(b, sink);
                 }
                 serializer.serializeTrailer(sink);
@@ -550,12 +569,12 @@ public class NettySparqlServer implements AutoCloseable {
                 var res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_0, OK, bb);
                 res.headers().set(CONTENT_TYPE, serializer.contentType())
                              .set(CONTENT_LENGTH, bb.readableBytes());
-                if (endRound(round, OK, null, null))
+                if (endRound(OK, null, null))
                     ctx.writeAndFlush(res);
                 else
                     res.release();
             } catch (Throwable t) {
-                endRound(round, INTERNAL_SERVER_ERROR, null, t);
+                endRound(INTERNAL_SERVER_ERROR, null, t);
                 throw t;
             } finally {
                 sink.release();
@@ -578,22 +597,13 @@ public class NettySparqlServer implements AutoCloseable {
                 log.error("Failed to select and create serializer for accept string {}",
                           req.headers().getAllAsString(ACCEPT), t);
             }
-            endRound(0, NOT_ACCEPTABLE, noSerializerError, null);
+            endRound(NOT_ACCEPTABLE, noSerializerError, null);
             return false;
         }
     }
 
     private final class WsSparqlHandler extends QueryHandler<WebSocketFrame>
             implements WsFrameSender<ByteBufSink, ByteBuf> {
-        private static final VarHandle QUEUED_BATCH_CHUNKS;
-        static {
-            try {
-                QUEUED_BATCH_CHUNKS = MethodHandles.lookup().findVarHandle(WsSparqlHandler.class, "plainQueuedBatchChunks", int.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
-
         private static final byte[] QUERY = "!query".getBytes(UTF_8);
         private static final byte[] JOIN = "!join".getBytes(UTF_8);
         private static final byte[] LEFT_JOIN = "!left-join".getBytes(UTF_8);
@@ -604,6 +614,7 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] ERROR = "!error ".getBytes(UTF_8);
         private static final byte[] CANCELLED = "!cancelled ".getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
+        private static final ByteBuf CANCELLED_BB = Unpooled.copiedBuffer("!cancelled unknown reason\n", UTF_8);
 
         private final SegmentRope wrapperRope = new SegmentRope();
         private final int maxBindings = wsServerBindings();
@@ -613,8 +624,7 @@ public class NettySparqlServer implements AutoCloseable {
         private int requestBindingsAt;
         private int waitingVarsRound;
         private BindType bType = BindType.JOIN;
-        @SuppressWarnings("unused") private int plainQueuedBatchChunks;
-        private long lastSentSeq = -1;
+        private WsSerializeTask serializeTask;
         private final SegmentRope tmpView = new SegmentRope();
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
 
@@ -644,26 +654,43 @@ public class NettySparqlServer implements AutoCloseable {
             } finally { this.bindingsParser = null; }
         }
 
-        @Override protected void sendChunk(ByteBuf bb) {
-            ctx.writeAndFlush(new TextWebSocketFrame(bb));
-        }
+        private final class WsSerializeTask extends SerializeTask<TextWebSocketFrame> {
+            private volatile long lastSentSeq = -1;
 
-        @Override protected void sendBatch(CompressedBatch b, ByteBuf bb) {
-            if (bindQuery == null || b == null || b.rows == 0) {
-                sendChunk(bb);
-            } else {
-                QUEUED_BATCH_CHUNKS.getAndAddRelease(this, 1);
-                if (!b.localView(b.rows - 1, 0, tmpView))
-                    throw new IllegalStateException("Missing binding sequence");
-                long seq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
-                ctx.executor().execute(() -> sendBatch(seq, bb));
+            public WsSerializeTask(int drainerRound) {
+                super(drainerRound);
+                if (drainerRound == round)
+                    serializeTask = this;
             }
+
+            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
+                return new TextWebSocketFrame(bb);
+            }
+
+            boolean canSendEmptyStreak() { // runs on event loop
+                lock(); // required due to race on this.active
+                try {
+                    if (active || bindQuery == null) return false;
+                    long lastSent = lastSentSeq;
+                    return lastSent == bindQuery.nonEmptySeq && bindQuery.emptySeq > lastSent;
+                } finally { unlock(); }
+            }
+
+            @Override public void sendSerialized(Batch<?> batch) { //runs on drainerThread
+                super.sendSerialized(batch);
+                if (bindQuery == null || batch.rows == 0)
+                    return;
+                if (!batch.localView(batch.rows - 1, 0, tmpView))
+                    throw new IllegalStateException("Missing binding sequence");
+                lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+            }
+
+            @Override public void sendCancel() { execute(CANCELLED_BB); }
         }
 
-        private void sendBatch(long lastSeq, ByteBuf bb) {
-            lastSentSeq = lastSeq;
-            sendChunk(bb);
-            QUEUED_BATCH_CHUNKS.getAndAddRelease(this, -1);
+        @Override
+        protected SerializeTask<?> createSerializeTask(int round) {
+            return new WsSerializeTask(round);
         }
 
         /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
@@ -674,7 +701,7 @@ public class NettySparqlServer implements AutoCloseable {
             byte f = wrapperRope.len < 2 ? 0 : wrapperRope.get(1);
             try {
                 if (f == 'c' && wrapperRope.has(0, CANCEL)) {
-                    endRound(0, INTERNAL_SERVER_ERROR, null, wsCancelledEx);
+                    endRound(INTERNAL_SERVER_ERROR, null, wsCancelledEx);
                 } else if (waitingVarsRound > 0) {
                     readVarsFrame();
                 } else if (bindingsParser != null) {
@@ -713,8 +740,9 @@ public class NettySparqlServer implements AutoCloseable {
                         ctx.writeAndFlush(new TextWebSocketFrame(
                                 ctx.alloc().buffer().writeBytes(fullBindReq)));
                     } else {
-                        if (dispatchQuery(null, BindType.JOIN))
+                        if (dispatchQuery(null, BindType.JOIN)) {
                             Thread.startVirtualThread(() -> drainerThread(round));
+                        }
                     }
                 }
             }
@@ -728,9 +756,7 @@ public class NettySparqlServer implements AutoCloseable {
                 bb.writeBytes(halfBindReq);
                 //noinspection DataFlowIssue bindQuery != null
                 long emptySeq = bindQuery.emptySeq;
-                if (emptySeq > lastSentSeq
-                        && bindQuery.nonEmptySeq == lastSentSeq
-                        && (int)QUEUED_BATCH_CHUNKS.getAcquire(this) == 0) {
+                if (serializeTask != null && serializeTask.canSendEmptyStreak()) {
                     tmpSeq.len = BIND_EMPTY_STREAK.length;
                     tmpSeq.append(emptySeq).append('\n');
                     bb.ensureWritable(tmpSeq.len);
@@ -779,7 +805,14 @@ public class NettySparqlServer implements AutoCloseable {
 
         /* --- --- --- WsFrameSender --- --- --- */
 
-        @Override public void        sendFrame(ByteBuf content) { sendChunk(content); }
-        @Override public ByteBufSink createSink()               { return new ByteBufSink(ctx); }
+        @Override public void sendFrame(ByteBuf content) {
+            ctx.writeAndFlush(new TextWebSocketFrame(content));
+        }
+        @Override public ByteBufSink createSink() {
+            return new ByteBufSink(ctx.alloc());
+        }
+        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
+            return new WsSerializeTask(round);
+        }
     }
 }

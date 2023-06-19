@@ -28,6 +28,11 @@ public interface ByteSink<S extends ByteSink<S, T>, T>  {
     default void release() {}
 
     /**
+     * Whether {@link #touch()} must be called before bytes are appended to {@code this}.
+     */
+    default boolean needsTouch() { return false; }
+
+    /**
      * Ensures that this sink has backing storage to where the writing methods can write to.
      *
      * @return {@code this}

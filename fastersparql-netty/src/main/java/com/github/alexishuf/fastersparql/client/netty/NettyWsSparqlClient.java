@@ -9,10 +9,7 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
-import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
-import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
+import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -24,9 +21,12 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
@@ -171,6 +171,29 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (channel == null)
                 throw new IllegalStateException("createSink before attach()");
             return new ByteBufSink(channel.alloc());
+        }
+
+        private final class BindingSerializerTask extends NettyResultsSender<TextWebSocketFrame> {
+            private static final ByteBuf CANCEL_BB = Unpooled.copiedBuffer("!cancel unknown reason\n", UTF_8);
+            public BindingSerializerTask(ChannelHandlerContext ctx) {
+                super(new WsSerializer(), ctx);
+            }
+            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
+                return new TextWebSocketFrame(bb);
+            }
+            @Override protected void onError(Throwable t) { complete(t); }
+
+            @Override public void sendError(Throwable t) {
+                execute(Unpooled.copiedBuffer("!error "+t.toString().replace("\n", "\\n")+"\n", UTF_8));
+            }
+
+            @Override public void sendCancel() {execute(CANCEL_BB);}
+        }
+
+        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
+            if (channel == null)
+                throw new IllegalStateException("createSender before attach()");
+            return new BindingSerializerTask(channel.pipeline().lastContext());
         }
 
         /* --- --- --- NettySPSCBIt methods --- --- --- */

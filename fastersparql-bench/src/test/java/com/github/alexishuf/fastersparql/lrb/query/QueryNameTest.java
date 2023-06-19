@@ -9,9 +9,11 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -149,6 +151,24 @@ class QueryNameTest {
             WsFrameSender<?, ?> frameSender = new WsFrameSender<S, T>() {
                 @Override public void sendFrame(T content) {}
                 @Override public S createSink() {return null;}
+                @Override public ResultsSender<S, T> createSender() {
+                    return new ResultsSender<>(new WsSerializer(), createSink()) {
+                        @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
+                            serializer.init(vars, subset, isAsk, new ByteRope());
+                        }
+                        @Override public void sendSerialized(Batch<?> batch) {
+                            serializer.serialize(batch, new ByteRope());
+                        }
+                        @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
+                            serializer.serialize(batch, from, nRows, new ByteRope());
+                        }
+                        @Override public void sendTrailer() {
+                            serializer.serializeTrailer(new ByteRope());
+                        }
+                        @Override public void sendError(Throwable cause) {}
+                        @Override public void sendCancel() {}
+                    };
+                }
             };
             return new WsClientParserBIt<>(frameSender, type, vars, 1<<16);
         } else {

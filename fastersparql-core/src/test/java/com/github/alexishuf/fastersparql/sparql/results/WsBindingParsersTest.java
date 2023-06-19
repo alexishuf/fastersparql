@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -56,6 +57,38 @@ public class WsBindingParsersTest {
         @Override public void sendFrame(ByteRope content) { send(content); }
 
         @Override public ByteRope createSink() { return new ByteRope(); }
+
+        @Override public ResultsSender<ByteRope, ByteRope> createSender() {
+            return new ResultsSender<>(new WsSerializer(), new ByteRope()) {
+                @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
+                    serializer.init(vars, subset, isAsk, sink.touch());
+                    sendFrame(sink.take());
+                }
+
+                @Override public void sendSerialized(Batch<?> batch) {
+                    serializer.serialize(batch, sink.touch());
+                    sendFrame(sink.take());
+                }
+
+                @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
+                    serializer.serialize(batch, from, nRows, sink.touch());
+                    sendFrame(sink.take());
+                }
+
+                @Override public void sendTrailer() {
+                    serializer.serializeTrailer(sink.touch());
+                    sendFrame(sink.take());
+                }
+
+                @Override public void sendCancel() {
+                    sendFrame(new ByteRope("!cancel\n"));
+                }
+
+                @Override public void sendError(Throwable cause) {
+                    sendFrame(new ByteRope("!error "+cause.toString().replace("\n", "\\n")+"\n"));
+                }
+            };
+        }
 
         public void send(CharSequence frame) {
             SegmentRope rope;
