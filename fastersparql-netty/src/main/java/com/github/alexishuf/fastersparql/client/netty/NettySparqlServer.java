@@ -83,6 +83,7 @@ public class NettySparqlServer implements AutoCloseable {
                                                               .map(MediaType::toString)
                                                               .collect(Collectors.joining(", "));
     private final FSCancelledException wsCancelledEx;
+    private int serializeSizeHint = WsSerializer.DEF_BUFFER_HINT;
 
     public NettySparqlServer(SparqlClient sparqlClient, String host, int port) {
         this.sparqlClient = sparqlClient;
@@ -346,6 +347,7 @@ public class NettySparqlServer implements AutoCloseable {
 
             public SerializeTask(int round) {
                 super(QueryHandler.this.serializer, ctx);
+                sink.sizeHint(serializeSizeHint);
                 this.drainerRound = round;
             }
 
@@ -363,6 +365,7 @@ public class NettySparqlServer implements AutoCloseable {
 
             @Override public void sendTrailer() { // runs on drainerThread
                 if (sink.needsTouch()) touch();
+                serializeSizeHint = ByteBufSink.adjustSizeHint(serializeSizeHint, sink.sizeHint());
                 try {
                     serializer.serializeTrailer(sink);
                     execute(new EndAction(wrapLast(sink.take())));
@@ -628,7 +631,7 @@ public class NettySparqlServer implements AutoCloseable {
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
 
         public WsSparqlHandler() {
-            serializer = new WsSerializer();
+            serializer = WsSerializer.create(serializeSizeHint);
         }
 
         /* --- --- --- QueryHandler methods --- --- --- */
@@ -693,6 +696,11 @@ public class NettySparqlServer implements AutoCloseable {
         }
 
         /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
+
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) {
+            ((WsSerializer)serializer).recycle();
+            serializer = null;
+        }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame msg) {

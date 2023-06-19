@@ -59,7 +59,7 @@ public class WsBindingParsersTest {
         @Override public ByteRope createSink() { return new ByteRope(); }
 
         @Override public ResultsSender<ByteRope, ByteRope> createSender() {
-            return new ResultsSender<>(new WsSerializer(), new ByteRope()) {
+            return new ResultsSender<>(WsSerializer.create(), new ByteRope()) {
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                     serializer.init(vars, subset, isAsk, sink.touch());
                     sendFrame(sink.take());
@@ -172,7 +172,7 @@ public class WsBindingParsersTest {
                                  .orElse(ex.vars().minus(ex.bindingsVars()));
 
         ByteRope buffer = clientMBox.createSink();
-        var serializer = new WsSerializer();
+        var serializer = WsSerializer.create();
         serializer.init(serverVars, serverVars, false, buffer);
         int requested = ex.bindingsList().size() < 4 ? 23 : 2;
         int activeBinding = 0;

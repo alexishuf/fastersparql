@@ -152,7 +152,7 @@ class QueryNameTest {
                 @Override public void sendFrame(T content) {}
                 @Override public S createSink() {return null;}
                 @Override public ResultsSender<S, T> createSender() {
-                    return new ResultsSender<>(new WsSerializer(), createSink()) {
+                    return new ResultsSender<>(WsSerializer.create(), createSink()) {
                         @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                             serializer.init(vars, subset, isAsk, new ByteRope());
                         }

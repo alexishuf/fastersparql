@@ -95,7 +95,7 @@ class WsSerializerTest {
     @ParameterizedTest @MethodSource
     <B extends Batch<B>> void testSerialize(Results in, String expected,
                                             BatchType<B> batchType) {
-        var serializer = new WsSerializer();
+        var serializer = WsSerializer.create();
         var buffer = new ByteRope();
         serializer.init(in.vars(), in.vars(), false, buffer);
         var b = Batch.TERM.createSingleton(in.vars().size());

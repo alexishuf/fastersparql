@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.Map;
@@ -16,21 +17,44 @@ import java.util.Map;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class WsSerializer extends ResultsSerializer {
+    public static final int DEF_BUFFER_HINT = 2048;
     private static final ByteRope PREFIX_CMD = new ByteRope("!prefix ");
+    private static final LIFOPool<WsSerializer> POOL
+            = new LIFOPool<>(WsSerializer.class, 4);
 
-    private final ByteRope rowsBuffer = new ByteRope(128);
+    private final ByteRope rowsBuffer;
     private final WsPrefixAssigner prefixAssigner;
 
-    public static  class WsFactory implements Factory {
+    public static class WsFactory implements Factory {
         @Override public ResultsSerializer create(Map<String, String> params) {
-            return new WsSerializer();
+            return WsSerializer.create(DEF_BUFFER_HINT);
         }
         @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
     }
 
-    public WsSerializer() {
+    public static WsSerializer create() { return create(DEF_BUFFER_HINT); }
+
+    public static WsSerializer create(int bufferHint) {
+        var s = POOL.get();
+        if (s == null)
+            s = new WsSerializer(bufferHint);
+        return s;
+    }
+
+    protected WsSerializer(int bufferHint) {
         super(SparqlResultFormat.WS, SparqlResultFormat.WS.contentType());
         (prefixAssigner = new WsPrefixAssigner()).reset();
+        rowsBuffer = new ByteRope(bufferHint);
+    }
+
+    public void recycle() {
+        columns = null;
+        vars = Vars.EMPTY;
+        ask = false;
+        empty = true;
+        rowsBuffer.clear();
+        prefixAssigner.reset();
+        POOL.offer(this);
     }
 
     @Override protected void init(Vars subset, ByteSink<?, ?> dest) {

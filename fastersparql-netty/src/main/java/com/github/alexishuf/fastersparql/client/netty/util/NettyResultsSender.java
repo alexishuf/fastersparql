@@ -66,8 +66,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     private static class ReleaseAction extends Action {
         public ReleaseAction() {super("RELEASE");}
         @Override public void run(NettyResultsSender<?> sender) {
-            sender.touchState = TOUCH_DISABLED;
-            sender.sink.release();
+            sender.onRelease();
         }
     }
 
@@ -211,6 +210,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void beforeSend() { }
     protected void onError(Throwable t) {
         log.error("{}.run(): failed to run action", this, t);
+    }
+    protected void onRelease() {
+        touchState = TOUCH_DISABLED;
+        sink.release();
     }
 
     private void doTouch() {

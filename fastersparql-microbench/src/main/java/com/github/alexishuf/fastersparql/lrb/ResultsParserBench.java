@@ -111,7 +111,7 @@ public class ResultsParserBench {
         @Override public S createSink() {return null;}
 
         @Override public ResultsSender<S, T> createSender() {
-            return new ResultsSender<>(new WsSerializer(), null) {
+            return new ResultsSender<>(WsSerializer.create(), null) {
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                 @Override public void sendSerialized(Batch<?> batch) {}
                 @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}

@@ -100,7 +100,7 @@ class WsClientParserBItTest extends ResultsParserTest {
             @Override public void sendFrame(ByteRope content) { }
             @Override public ByteRope createSink() { return new ByteRope(); }
             @Override public ResultsSender<ByteRope, ByteRope> createSender() {
-                return new ResultsSender<>(new WsSerializer(), new ByteRope()) {
+                return new ResultsSender<>(WsSerializer.create(), new ByteRope()) {
                     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                     @Override public void sendSerialized(Batch<?> batch) {}
                     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}

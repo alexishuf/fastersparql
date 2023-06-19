@@ -25,9 +25,9 @@ public final class LIFOPool<T> {
     @SuppressWarnings({"unused"}) // lock is accessed through LOCK
     private int lock, size;
 
-    /** Creates a {@link LIFOPool} with capacity of {@code availableProcessors()*batches}. */
-    public static <T> LIFOPool<T> perProcessor(Class<T> cls, int batches) {
-        int capacity = Math.max(8, getRuntime().availableProcessors()*batches);
+    /** Creates a {@link LIFOPool} with capacity of {@code availableProcessors()*items}. */
+    public static <T> LIFOPool<T> perProcessor(Class<T> cls, int items) {
+        int capacity = Math.max(8, getRuntime().availableProcessors()*items);
         return new LIFOPool<>(cls, capacity);
     }
     public LIFOPool(Class<T> cls, int capacity) {

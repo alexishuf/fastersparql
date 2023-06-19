@@ -9,7 +9,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.Map;
 
@@ -18,7 +17,7 @@ public abstract class ResultsSerializer {
     protected final SparqlResultFormat format;
     protected final String contentType;
     protected boolean ask = false, empty = true;
-    protected @MonotonicNonNull Vars vars;
+    protected Vars vars = Vars.EMPTY;
 
     public interface Factory extends NamedService<SparqlResultFormat> {
         ResultsSerializer create(Map<String, String> params);

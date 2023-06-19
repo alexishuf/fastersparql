@@ -42,12 +42,14 @@ import java.util.List;
 import java.util.Map;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
+import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
 import static com.github.alexishuf.fastersparql.model.BindType.MINUS;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(NettyWsSparqlClient.class);
     private final NettyWsClient netty;
+    private static int bindingsSerializerSizeHint = WsSerializer.DEF_BUFFER_HINT;
 
     private static SparqlEndpoint restrictConfig(SparqlEndpoint endpoint) {
         SparqlConfiguration request = endpoint.configuration();
@@ -176,15 +178,28 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final class BindingSerializerTask extends NettyResultsSender<TextWebSocketFrame> {
             private static final ByteBuf CANCEL_BB = Unpooled.copiedBuffer("!cancel unknown reason\n", UTF_8);
             public BindingSerializerTask(ChannelHandlerContext ctx) {
-                super(new WsSerializer(), ctx);
+                super(WsSerializer.create(bindingsSerializerSizeHint), ctx);
+                sink.sizeHint(bindingsSerializerSizeHint);
             }
+
             @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
                 return new TextWebSocketFrame(bb);
             }
             @Override protected void onError(Throwable t) { complete(t); }
 
+            @Override protected void onRelease() {
+                super.onRelease();
+                ((WsSerializer)serializer).recycle();
+            }
+
             @Override public void sendError(Throwable t) {
                 execute(Unpooled.copiedBuffer("!error "+t.toString().replace("\n", "\\n")+"\n", UTF_8));
+            }
+
+            @Override public void sendTrailer() {
+                bindingsSerializerSizeHint = adjustSizeHint(bindingsSerializerSizeHint,
+                                                            sink.sizeHint());
+                super.sendTrailer();
             }
 
             @Override public void sendCancel() {execute(CANCEL_BB);}
