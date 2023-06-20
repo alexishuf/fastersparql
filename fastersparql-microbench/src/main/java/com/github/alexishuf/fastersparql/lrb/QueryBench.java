@@ -223,23 +223,19 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
-        coolDown();
+        System.gc();
+        IOUtils.fsync(50_000);
+        Async.uninterruptibleSleep(100);
+        System.gc();
+        Async.uninterruptibleSleep(100);
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
         fedHandle.close();
-        coolDown();
     }
 
     @TearDown(Level.Trial) public void tearDown() {
         FS.shutdown();
-        coolDown();
-    }
-
-    private static void coolDown() {
-        System.gc();
-        IOUtils.fsync(50_000);
-        Async.uninterruptibleSleep(50);
     }
 
     private int checkResult(int r) {
