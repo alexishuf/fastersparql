@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
@@ -105,7 +106,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private final FullHttpRequest request;
         private @Nullable Charset decodeCharset;
         private @MonotonicNonNull ResultsParserBIt<B> parser;
-        private final SegmentRope bufferRope = new SegmentRope();
+        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), FSProperties.queueMaxRows());
@@ -125,6 +126,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override protected void cleanup(@Nullable Throwable cause) {
             super.cleanup(cause);
             request.release();
+            bbRopeView.recycle();
         }
 
         private void connected(Channel ch, NettyHandler handler) {
@@ -154,9 +156,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         /** Called for every {@link HttpContent}, which includes a {@link FullHttpResponse} */
         public void readContent(HttpContent httpContent) {
-            var r = bufferRope;
+            SegmentRope r;
             if (decodeCharset == null)
-                bufferRope.wrapBuffer(httpContent.content().nioBuffer());
+                r = bbRopeView.wrapAsSingle(httpContent.content());
             else
                 r = new ByteRope(httpContent.content().toString(decodeCharset));
             parser.feedShared(r);

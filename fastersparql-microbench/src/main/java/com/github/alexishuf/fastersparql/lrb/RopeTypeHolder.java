@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb;
 
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
@@ -13,6 +14,7 @@ import java.util.List;
 public class RopeTypeHolder implements AutoCloseable {
     private final RopeType ropeType;
     private final List<ByteBuf> byteBufs = new ArrayList<>();
+    private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
 
     public RopeTypeHolder(RopeType ropeType) {
         this.ropeType = ropeType;
@@ -34,9 +36,11 @@ public class RopeTypeHolder implements AutoCloseable {
         return switch (ropeType) {
             case BYTE  -> (ByteRope)sink;
             case NETTY -> {
-                ByteBuf bb = ((ByteBufSink) sink).take();
+                var bb = ((ByteBufSink) sink).take();
                 byteBufs.add(bb);
-                yield new SegmentRope(bb.nioBuffer());
+                var r = new SegmentRope();
+                r.wrap(bbRopeView.wrapAsSingle(bb));
+                yield r;
             }
         };
     }

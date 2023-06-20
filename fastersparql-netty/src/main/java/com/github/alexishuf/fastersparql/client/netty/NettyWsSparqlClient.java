@@ -19,7 +19,6 @@ import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfigurat
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
@@ -34,6 +33,7 @@ import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,7 +134,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final Rope requestMessage;
         private final WsClientParserBIt<B> parser;
         private boolean gotFrames = false;
-        private final SegmentRope bufferRope = new SegmentRope();
+        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
         protected @MonotonicNonNull ChannelRecycler recycler;
 
         public WsBIt(BatchType<B> batchType, SparqlQuery query) {
@@ -152,6 +152,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.parser = new WsClientParserBIt<>(this, this,
                                                   bindQuery, usefulBindingVars);
             request();
+        }
+
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            super.cleanup(cause);
+            bbRopeView.recycle();
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
@@ -247,8 +252,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void frame(WebSocketFrame frame) {
             gotFrames = true;
             if (frame instanceof TextWebSocketFrame t) {
-                bufferRope.wrapBuffer(t.content().nioBuffer());
-                parser.feedShared(bufferRope);
+                parser.feedShared(bbRopeView.wrapAsSingle(t.content()));
             } else if (!isTerminated() && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();
                 complete(new FSServerException("Unexpected "+suffix));

@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
@@ -16,6 +17,7 @@ import com.github.alexishuf.fastersparql.model.ContentNegotiator;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -163,6 +165,7 @@ public class NettySparqlServer implements AutoCloseable {
         protected final SparqlParser sparqlParser = new SparqlParser();
         protected BIt<CompressedBatch> it;
         protected @Nullable VolatileBindQuery bindQuery;
+        protected final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
         protected Vars serializeVars = Vars.EMPTY;
         @MonotonicNonNull protected ResultsSerializer serializer;
         protected int round = -1;
@@ -177,6 +180,10 @@ public class NettySparqlServer implements AutoCloseable {
             super.channelInactive(ctx);
             if (it != null)
                 fail(ctx.channel() + " closed before query completed");
+        }
+
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) {
+            bbRopeView.recycle();
         }
 
         @Override
@@ -516,18 +523,18 @@ public class NettySparqlServer implements AutoCloseable {
 
         private void handlePost(int round, FullHttpRequest req) {
             String ct = req.headers().get(CONTENT_TYPE);
-            var r = new SegmentRope(req.content().nioBuffer());
+            PlainRope body = bbRopeView.wrap(req.content());
             if (indexOfIgnoreCaseAscii(ct, APPLICATION_X_WWW_FORM_URLENCODED, 0) == 0) {
-                int begin = 0, len = r.len;
-                while (begin < len && !r.hasAnyCase(begin, QUERY_EQ))
-                    begin = r.skipUntil(begin, len, '&')+1;
+                int begin = 0, len = body.len;
+                while (begin < len && !body.hasAnyCase(begin, QUERY_EQ))
+                    begin = body.skipUntil(begin, len, '&')+1;
                 begin += QUERY_EQ.length;
                 if (begin >= len)
                     endRound(BAD_REQUEST, "No query in form",  null);
                 else
-                    handleQuery(round, unescape(r, begin, r.skipUntil(begin, r.len, '&')));
+                    handleQuery(round, unescape(body, begin, body.skipUntil(begin, body.len, '&')));
             } else if (indexOfIgnoreCaseAscii(ct, APPLICATION_SPARQL_QUERY, 0) == 0) {
-                handleQuery(round, new ByteRope(r));
+                handleQuery(round, new ByteRope(body));
             } else {
                 endRound(UNSUPPORTED_MEDIA_TYPE, "Expected Content-Type to be application/x-www-form-urlencoded or application/sparql-query, got "+ct, null);
             }
@@ -618,7 +625,6 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
         private static final ByteBuf CANCELLED_BB = Unpooled.copiedBuffer("!cancelled unknown reason\n", UTF_8);
 
-        private final SegmentRope wrapperRope = new SegmentRope();
         private final int maxBindings = wsServerBindings();
 
         private @Nullable WsServerParserBIt<CompressedBatch> bindingsParser;
@@ -698,30 +704,27 @@ public class NettySparqlServer implements AutoCloseable {
         /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) {
+            super.channelUnregistered(ctx);
             ((WsSerializer)serializer).recycle();
             serializer = null;
         }
 
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame msg) {
-            wrapperRope.wrapBuffer(msg.content().nioBuffer());
-            byte f = wrapperRope.len < 2 ? 0 : wrapperRope.get(1);
-            try {
-                if (f == 'c' && wrapperRope.has(0, CANCEL)) {
-                    endRound(INTERNAL_SERVER_ERROR, null, wsCancelledEx);
-                } else if (waitingVarsRound > 0) {
-                    readVarsFrame();
-                } else if (bindingsParser != null) {
-                    readBindings(bindingsParser);
-                } else {
-                    handleQueryCommand(ctx, f);
-                }
-            } finally {
-                wrapperRope.wrapEmptyBuffer();
+        protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) {
+            SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
+            byte f = msg.len < 2 ? 0 : msg.get(1);
+            if (f == 'c' && msg.has(0, CANCEL)) {
+                endRound(INTERNAL_SERVER_ERROR, null, wsCancelledEx);
+            } else if (waitingVarsRound > 0) {
+                readVarsFrame(msg);
+            } else if (bindingsParser != null) {
+                readBindings(bindingsParser, msg);
+            } else {
+                handleQueryCommand(ctx, msg, f);
             }
         }
 
-        private void handleQueryCommand(ChannelHandlerContext ctx, byte f) {
+        private void handleQueryCommand(ChannelHandlerContext ctx, SegmentRope msg, byte f) {
             byte[] ex = null;
             int round = beginRound();
             waitingVarsRound = round;
@@ -733,10 +736,10 @@ public class NettySparqlServer implements AutoCloseable {
                 case 'n' -> { bType = BindType.NOT_EXISTS; ex = NOT_EXISTS; }
                 case 'm' -> { bType = BindType.MINUS;      ex = MINUS; }
             }
-            if (ex == null || !wrapperRope.has(0, ex)) {
-                fail(new ByteRope().append("Unexpected frame: ").appendEscapingLF(wrapperRope));
+            if (ex == null || !msg.has(0, ex)) {
+                fail(new ByteRope().append("Unexpected frame: ").appendEscapingLF(msg));
             } else {
-                var sparql = new ByteRope(wrapperRope.toArray(ex.length, wrapperRope.len));
+                var sparql = new ByteRope(msg.toArray(ex.length, msg.len));
                 if (parseQuery(sparql)) {
                     if (waitingVarsRound > 0) {
                         requestBindingsAt = maxBindings >> 1;
@@ -755,8 +758,9 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
 
-        private void readBindings(WsServerParserBIt<CompressedBatch> bindingsParser) {
-            bindingsParser.feedShared(wrapperRope);
+        private void readBindings(WsServerParserBIt<CompressedBatch> bindingsParser,
+                                  SegmentRope msg) {
+            bindingsParser.feedShared(msg);
             if (bindingsParser.rowsParsed() >= requestBindingsAt) {
                 requestBindingsAt += maxBindings>>1;
                 var bb = ctx.alloc().buffer(32);
@@ -773,9 +777,9 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
 
-        private void readVarsFrame() {
+        private void readVarsFrame(SegmentRope msg) {
             if (query == null && fail("null query")) return;
-            int len = wrapperRope.len, eol = wrapperRope.skipUntil(0, len, '\n');
+            int len = msg.len, eol = msg.skipUntil(0, len, '\n');
             if (eol == len && fail("No LF (\\n) in vars after !bind frame"))
                 return;
 
@@ -784,11 +788,11 @@ public class NettySparqlServer implements AutoCloseable {
             var bindingsVars = new Vars.Mutable(10);
             bindingsVars.add(WsBindingSeq.VAR);
             for (int i = 0, j; i < eol; i = j+1) {
-                byte c = wrapperRope.get(i);
+                byte c = msg.get(i);
                 if (c != '?' && c != '$' && fail("Missing ?/$ in var name"))
                     return;
-                j = wrapperRope.skipUntil(i, len, '\t',  '\n');
-                bindingsVars.add(new ByteRope(j-i-1).append(wrapperRope, i+1, j));
+                j = msg.skipUntil(i, len, '\t',  '\n');
+                bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
             }
             bindingsParser = new WsServerParserBIt<>(this, COMPRESSED, bindingsVars,
                                                      wsServerBindings());
@@ -806,7 +810,7 @@ public class NettySparqlServer implements AutoCloseable {
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
                 Thread.startVirtualThread(() -> drainerThread(round));
-                readBindings(bindingsParser);
+                readBindings(bindingsParser, msg);
             }
         }
 
