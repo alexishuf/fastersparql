@@ -39,6 +39,7 @@ import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,22 +74,24 @@ public class StoreSparqlClient extends AbstractSparqlClient
             throw new ExceptionInInitializerError(e);
         }
     }
+    private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
+            (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
+    private static final LIFOPool<SegmentRope[]> PREFIXES_POOL
+            = new LIFOPool<>(SegmentRope[].class, 16);
 
     private final LocalityCompositeDict dict;
     private final int dictId;
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
     @SuppressWarnings("unused") private int plainRefs;
-    private final int prefixesMask;
     private final SegmentRope[] prefixes;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public StoreSparqlClient(SparqlEndpoint ep) {
         super(ep);
-        int prefixesCap = (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */);
-        this.prefixesMask = -1 >>> Integer.numberOfLeadingZeros(prefixesCap);
-        this.prefixes = new SegmentRope[prefixesMask+1];
+        SegmentRope[] prefixes = PREFIXES_POOL.get();
+        this.prefixes = prefixes == null ? new SegmentRope[PREFIXES_MASK+1] : prefixes;
         this.bindingAwareProtocol = true;
         Path dir = endpoint.asFile().toPath();
         boolean validate = FSProperties.storeClientValidate();
@@ -177,6 +180,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             spo.close();
             pso.close();
             ops.close();
+            PREFIXES_POOL.offer(prefixes);
         } else if (refs < 0) {
             log.error("This or a previous releaseRef() was mismatched for {}",
                        this, new IllegalStateException());
@@ -944,7 +948,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
                 case '<' -> {
                     if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
-                    int slot = (int)(t.fstOff & prefixesMask);
+                    int slot = (int)(t.fstOff & PREFIXES_MASK);
                     var cached = prefixes[slot];
                     if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
                         prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
