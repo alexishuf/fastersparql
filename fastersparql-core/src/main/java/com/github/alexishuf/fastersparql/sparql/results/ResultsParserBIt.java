@@ -232,7 +232,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         try {
             if (first) {
                 assert error != null || !rowStarted : "normal completion with unfinished row";
-                if (batch.rows > 0)
+                if (batch != null && batch.rows > 0)
                     emitBatch();
             }
             super.complete(error);
@@ -240,5 +240,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             if (destination != null && first)
                 destination.complete(error);
         }
+    }
+
+    @Override public void close() {
+        if (batch != null && batch.rows > 0)
+            emitBatch();
+        super.close();
     }
 }
