@@ -96,7 +96,7 @@ public class MeasureOptions {
         } while ((Timestamp.nanoTime()-start) < 250_000_000);
 
         double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
-        log.info("cooldown(): {}% free memory", String.format("%.2f", freeAfter-freeBefore));
+        log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*freeAfter-freeBefore));
     }
 
     public void       cooldown() { cooldown(cooldownMs); }
