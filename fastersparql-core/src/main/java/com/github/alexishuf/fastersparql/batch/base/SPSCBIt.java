@@ -131,10 +131,15 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
-        if (READY.getOpaque(this) == null && filling != null) {
-            if   (filling.rows > 0) READY.setRelease(this, filling);
-            else                    batchType.recycle(filling);
-            filling = null;
+        if (filling != null) {
+            if (READY.getOpaque(this) == null) {
+                if (filling.rows > 0) READY.setRelease(this, filling);
+                else batchType.recycle(filling);
+                filling = null;
+            } else if (filling.rows == 0) {
+                batchType.recycle(filling);
+                filling = null;
+            }
         }
         super.cleanup(cause);
     }
@@ -297,12 +302,22 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             unpark(producer);
         }
 
-        if (b == null) {  // terminal batch
-            checkError(); // throw if failed
-            return null;
-        }
+        if (b == null)   // terminal batch
+            return onTerminal(); // throw if failed
         onBatch(b); // guides getBatch() allocations
         //dbg.write("nextBatch RET &b=", System.identityHashCode(b), "rows=", b.rows);
         return b;
+    }
+
+    private @Nullable B onTerminal() {
+        lock();
+        try {
+            if (filling != null) {
+                batchType.recycle(filling);
+                filling = null;
+            }
+        } finally { LOCK.setRelease(this, 0); }
+        checkError();
+        return null;
     }
 }

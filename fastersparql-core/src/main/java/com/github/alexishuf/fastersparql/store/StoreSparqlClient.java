@@ -816,6 +816,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
+                lb = batchType.recycle(lb);
+                rb = batchType.recycle(rb);
+                fb = batchType.recycle(fb);
                 super.cleanup(cause);
             } finally { releaseRef(); }
         }
@@ -912,8 +915,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (b.rows == 0) b = handleEmptyBatch(b);
                 else             onBatch(b);
             } catch (Throwable t) {
-                lb = null; // signal exhaustion
                 onTermination(t);
+                lb = null; // signal exhaustion
                 throw t;
             }
             return b;

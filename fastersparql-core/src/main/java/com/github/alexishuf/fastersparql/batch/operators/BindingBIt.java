@@ -40,6 +40,8 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         super.cleanup(cause);
         lb = batchType.recycle(lb);
         rb = batchType.recycle(rb);
+        inner.close();
+        merger.release();
         if (cause != null)
             bindQuery.bindings.close();
     }
@@ -96,6 +98,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             if (b.rows == 0) b = handleEmptyBatch(b);
             else             onBatch(b);
         } catch (Throwable t) {
+            batchType.recycle(lb);
             lb = null; // signal exhaustion
             onTermination(t);
             throw t;

@@ -19,6 +19,7 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
     @Override public @Nullable B nextBatch(@Nullable B out) {
         S in = delegate.nextBatch(lastIn);
         if (in == null) {
+            batchType.recycle(out);
             batchType.recycle(stealRecycled());
             return null;
         }

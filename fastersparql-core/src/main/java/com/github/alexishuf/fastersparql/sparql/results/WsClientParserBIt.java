@@ -238,6 +238,7 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                     handleBindEmptyUntil(bindingSeq+(sentBatch.rows-sentBatchRow));
                 }
             }
+            sentBatch = bindings.batchType().recycle(sentBatch);
         }
         if (metrics != null) metrics.completeAndDeliver(cause, isClosedFor(cause, this));
     }
@@ -306,8 +307,10 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
                     while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
                         LockSupport.park(this);
                     if (allowed < 0) allowed = MAX_VALUE;
-                    if (isClosed())
+                    if (isClosed()) {
+                        batchType.recycle(b);
                         return;
+                    }
                     allowed -= taken = Math.min(allowed, rows - r);
                     sender.sendSerialized(b, r, taken);
                 }

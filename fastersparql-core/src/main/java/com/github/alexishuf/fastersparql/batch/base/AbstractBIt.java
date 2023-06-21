@@ -343,10 +343,13 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     @Override public void close() {
-        if (closed) return;
-        closed = true;
-        if ((int)TERMINATED.getOpaque(this) == 0) // close() before onExhausted()
-            onTermination(new BItClosedAtException(this));
+        if (closed) {
+            batchType.recycle(stealRecycled());
+        } else {
+            closed = true;
+            if ((int) TERMINATED.getOpaque(this) == 0) // close() before onExhausted()
+                onTermination(new BItClosedAtException(this));
+        }
     }
 
     protected String toStringNoArgs() {

@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.fed.selectors;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
@@ -185,9 +186,15 @@ public class AskSelector extends Selector {
         // canon == {s, p, o}
 
         // not in cache, issue a query using the given tp
-        try (BIt<?> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
-            boolean has = it.nextBatch(null) != null;
-            (has ? positive : negative).add(canonBatch, 0);
+        try (BIt<CompressedBatch> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
+            var batch = it.nextBatch(null);
+            boolean has = batch != null;
+            if (has) {
+                COMPRESSED.recycle(batch);
+                positive.add(canonBatch, 0);
+            } else {
+                negative.add(canonBatch, 0);
+            }
             if (has && (vars&2) == 0) { // if positive and ground predicate, store generalized
                 if (s != X) {
                     canon[0] = X;

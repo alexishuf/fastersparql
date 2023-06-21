@@ -119,6 +119,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         this.batch = batchType.create(INIT_BATCH_ROWS, vars.size(), INIT_BATCH_BYTES);
     }
 
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        batch = batchType.recycle(batch);
+    }
+
     /**
      * Parse the results data in bytes {@code begin} (inclusive) to {@code end} non-inclusive in
      * {@code rope} and emit {@link Batch}es of rows, if possible.
@@ -153,7 +158,7 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             else if (rope.len() == 0)
                 return; // no-op
             doFeedShared(rope);
-            if (batch.rows > 0) {
+            if (batch != null && batch.rows > 0) {
                 if (rowStarted) eager = true; // do not offer batch with incomplete row
                 else            emitBatch();
             }

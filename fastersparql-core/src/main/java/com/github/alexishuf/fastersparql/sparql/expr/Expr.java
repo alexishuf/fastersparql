@@ -84,7 +84,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         @Override public Term eval(Binding binding) {
             try (var it = filter.bound(binding).execute(COMPRESSED).eager()) {
-                return (it.nextBatch(null) != null) ^ negate ? TRUE : FALSE;
+                var batch = it.nextBatch(null);
+                COMPRESSED.recycle(batch);
+                return (batch != null) ^ negate ? TRUE : FALSE;
             }
         }
 
