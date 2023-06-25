@@ -9,13 +9,12 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentScope;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.foreign.ValueLayout.*;
 import static java.nio.ByteOrder.BIG_ENDIAN;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
@@ -37,22 +36,6 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
     public static final OfLong  LE_LONG  = IS_BE ?  JAVA_LONG.withOrder(LITTLE_ENDIAN) : JAVA_LONG;
     public static final OfInt   LE_INT   = IS_BE ?   JAVA_INT.withOrder(LITTLE_ENDIAN) : JAVA_INT;
     public static final OfShort LE_SHORT = IS_BE ? JAVA_SHORT.withOrder(LITTLE_ENDIAN) : JAVA_SHORT;
-    protected static final @Nullable Unsafe UNSAFE;
-
-    static {
-        Unsafe u = null;
-        try {
-            Field field = Unsafe.class.getDeclaredField("theUnsafe");
-            field.setAccessible(true);
-            u = (Unsafe) field.get(null);
-        } catch (Throwable ignored) {
-            try {
-                Constructor<Unsafe> c = Unsafe.class.getDeclaredConstructor();
-                u = c.newInstance();
-            } catch (Throwable ignored1) {}
-        }
-        UNSAFE = u;
-    }
 
     protected final FileChannel ch;
     protected final MemorySegment seg;
@@ -162,16 +145,16 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
      *                                  as determined during construction of {@code this}.
      */
     protected long readOff(long index) {
-        if (UNSAFE == null || IS_BE)
+        if (U == null || IS_BE)
             return readFallbackOff(index);
         if (index <  0 | index >= offsCount)
             throw new IndexOutOfBoundsException();
         long addr = offBase + (index << offShift);
         return switch (offShift) {
-            case 0  -> UNSAFE.getByte(addr)  & BYTE_MASK;
-            case 1  -> UNSAFE.getShort(addr) & SHORT_MASK;
-            case 2  -> UNSAFE.getInt(addr)   & INT_MASK;
-            case 3  -> UNSAFE.getLong(addr);
+            case 0  -> U.getByte(addr)  & BYTE_MASK;
+            case 1  -> U.getShort(addr) & SHORT_MASK;
+            case 2  -> U.getInt(addr)   & INT_MASK;
+            case 3  -> U.getLong(addr);
             default -> throw unreachable;
         };
     }
@@ -190,10 +173,10 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
      *         the offsets list.
      */
     protected long readOffUnsafe(long index) {
-        if (UNSAFE == null || IS_BE)
+        if (U == null || IS_BE)
             return readFallbackOff(index);
         long addr = offBase + (index << offShift);
-        return offShift == 3 ? UNSAFE.getLong(addr) : UNSAFE.getInt(addr) & INT_MASK;
+        return offShift == 3 ? U.getLong(addr) : U.getInt(addr) & INT_MASK;
     }
 
     /**
@@ -206,24 +189,24 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
      *                                   {@code size} is the mapped file size in bytes.
      */
     protected long readValue(long offset) {
-        if (UNSAFE == null || IS_BE)
+        if (U == null || IS_BE)
             return readFallbackValue(offset);
         long addr = valBase + offset;
         if (offset < 0 || addr >= valEnd) throw new IndexOutOfBoundsException();
         return switch (valShift) {
-            case 0 -> UNSAFE.getByte(addr) & BYTE_MASK;
-            case 1 -> UNSAFE.getShort(addr) & SHORT_MASK;
-            case 2 -> UNSAFE.getInt(addr) & INT_MASK;
-            case 3 -> UNSAFE.getLong(addr);
+            case 0 -> U.getByte(addr) & BYTE_MASK;
+            case 1 -> U.getShort(addr) & SHORT_MASK;
+            case 2 -> U.getInt(addr) & INT_MASK;
+            case 3 -> U.getLong(addr);
             default -> throw unreachable;
         };
     }
 
     protected long readValueUnsafe(long offset) {
-        if (UNSAFE == null || IS_BE)
+        if (U == null || IS_BE)
             return readFallbackValue(offset);
         long addr = valBase + offset;
-        return valShift == 3 ? UNSAFE.getLong(addr) : UNSAFE.getInt(addr) & INT_MASK;
+        return valShift == 3 ? U.getLong(addr) : U.getInt(addr) & INT_MASK;
     }
 
     private long readFallbackOff(long index) {

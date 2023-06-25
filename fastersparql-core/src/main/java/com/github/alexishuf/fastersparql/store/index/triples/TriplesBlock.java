@@ -1,10 +1,9 @@
 package com.github.alexishuf.fastersparql.store.index.triples;
 
 import com.github.alexishuf.fastersparql.store.index.Sorter;
-import jdk.incubator.vector.LongVector;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorShuffle;
-import jdk.incubator.vector.VectorSpecies;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +14,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.L_SP;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
@@ -23,8 +23,7 @@ import static jdk.incubator.vector.LongVector.fromMemorySegment;
 
 public class TriplesBlock implements Sorter.BlockJob<TriplesBlock> {
     private static final Logger log = LoggerFactory.getLogger(TriplesBlock.class);
-    private static final VectorSpecies<Long> L_SP = LongVector.SPECIES_PREFERRED;
-    private static final boolean VEC_SHUFFLE = L_SP.length() == 4;
+    private static final boolean VEC_SHUFFLE = LowLevelHelper.ENABLE_VEC && L_SP.length() == 4;
 
     final MemorySegment seg;
     private final Path path;

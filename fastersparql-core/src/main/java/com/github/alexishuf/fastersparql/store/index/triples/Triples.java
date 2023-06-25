@@ -1,9 +1,8 @@
 package com.github.alexishuf.fastersparql.store.index.triples;
 
 import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
-import jdk.incubator.vector.IntVector;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import jdk.incubator.vector.VectorMask;
-import jdk.incubator.vector.VectorSpecies;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
@@ -11,6 +10,8 @@ import java.lang.foreign.SegmentScope;
 import java.nio.file.Path;
 import java.util.Iterator;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.I_LEN;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.I_SP;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static jdk.incubator.vector.IntVector.fromMemorySegment;
@@ -25,9 +26,6 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public static final int KEYS_AND_FLAGS_OFF = 0;
     public static final int      FIRST_KEY_OFF = 8;
     public static final int           OFFS_OFF = 16;
-
-    private static final VectorSpecies<Integer> I_SP = IntVector.SPECIES_PREFERRED;
-    private static final int I_LEN = I_SP.length();
 
     /** Base-1 id of the first key in this index.*/
     private final long firstKey;
@@ -474,7 +472,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
             if (address == end)
                 return false;
             long i = address, ve = i;
-            if (end-i >= I_LEN) {
+            if (LowLevelHelper.ENABLE_VEC && end-i >= I_LEN) {
                 var expected = zero(I_SP).blend(valueId, VectorMask.fromArray(I_SP, ODD, 0));
                 for (ve = i+(I_SP.loopBound((end-i)>>2)<<2); i < ve ; i += (long)I_LEN <<2) {
                     var eq = fromMemorySegment(I_SP, seg, i, LITTLE_ENDIAN).eq(expected);

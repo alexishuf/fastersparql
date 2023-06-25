@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 
 import java.lang.foreign.MemorySegment;
 
@@ -139,21 +140,21 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
         checkRange(begin, end);
-        if (U == null)
+        if (LowLevelHelper.U == null)
             return copySafe(begin, end, dest, offset);
         if (offset+(end-begin) > dest.length)
             throw new IndexOutOfBoundsException("Copying [begin, end) overflows dest at offset");
-        offset += U8_BASE;
+        offset += LowLevelHelper.U8_BASE;
         if (begin < fstLen) {
             int n = Math.min(end, fstLen)-begin;
-            U.copyMemory(fstU8, (fstU8 == null ? 0 : U8_BASE)+fst.address()+fstOff+begin,
+            LowLevelHelper.U.copyMemory(fstU8, (fstU8 == null ? 0 : LowLevelHelper.U8_BASE)+fst.address()+fstOff+begin,
                          dest, offset, n);
             offset += n;
         }
         begin = Math.max(0, begin-fstLen);
         int n = (end - fstLen) - begin;
         if (n > 0) {
-            U.copyMemory(sndU8, (sndU8==null ? 0 : U8_BASE)+snd.address()+sndOff+begin,
+            LowLevelHelper.U.copyMemory(sndU8, (sndU8==null ? 0 : LowLevelHelper.U8_BASE)+snd.address()+sndOff+begin,
                          dest, offset, n);
         }
         return dest;
@@ -261,7 +262,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int skip(int begin, int end, int[] alphabet) {
-        if (U == null)
+        if (LowLevelHelper.U == null)
             return skipSafe(begin, end, alphabet);
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
@@ -269,7 +270,7 @@ public class TwoSegmentRope extends PlainRope {
             byte[] fstU8 = this.fstU8;
             long off = fstOff+fst.address();
             if (fstU8 != null)
-                off += U8_BASE;
+                off += LowLevelHelper.U8_BASE;
             i = (int)(SegmentRope.skipUnsafe(fstU8, off+begin, off+e, alphabet)-off);
             if (i < e) return i;
         }
@@ -278,14 +279,14 @@ public class TwoSegmentRope extends PlainRope {
             long off = sndOff+snd.address();
             byte[] sndU8 = this.sndU8;
             if (sndU8 != null)
-                off += U8_BASE;
+                off += LowLevelHelper.U8_BASE;
             return fstLen + (int)(SegmentRope.skipUnsafe(sndU8, off+i, off+e, alphabet)-off);
         }
         return end;
     }
 
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
-        if (!SegmentRope.HAS_UNSAFE)
+        if (!LowLevelHelper.HAS_UNSAFE)
             return hasNoUnsafe(pos, rope, begin, end);
         int rLen = end - begin;
         if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
@@ -379,7 +380,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(SegmentRope o) {
-        if (HAS_UNSAFE) {
+        if (LowLevelHelper.HAS_UNSAFE) {
             return -compare1_2(o.utf8, o.segment.address()+o.offset, o.len,
                                fstU8, fst.address()+fstOff, fstLen,
                                sndU8, snd.address()+sndOff, sndLen);
@@ -390,7 +391,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(TwoSegmentRope o) {
-        if (HAS_UNSAFE) {
+        if (LowLevelHelper.HAS_UNSAFE) {
             return compare2_2(fstU8, fst.address()+fstOff, fstLen,
                               sndU8, snd.address()+sndOff, sndLen,
                               o.fstU8, o.fst.address()+o.fstOff, o.fstLen,
@@ -403,7 +404,7 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
-        if (HAS_UNSAFE) {
+        if (LowLevelHelper.HAS_UNSAFE) {
             return -compare1_2(o.utf8, o.segment.address()+o.offset + begin, end - begin,
                                fstU8, fst.address()+fstOff, fstLen,
                                sndU8, snd.address()+sndOff, sndLen);
@@ -414,7 +415,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
-        if (!HAS_UNSAFE)
+        if (!LowLevelHelper.HAS_UNSAFE)
             return compareToNoUnsafe(o, begin, end);
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)

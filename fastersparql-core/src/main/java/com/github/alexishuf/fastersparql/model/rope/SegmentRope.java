@@ -2,20 +2,18 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
-import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import sun.misc.Unsafe;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
@@ -25,28 +23,6 @@ import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
 public class SegmentRope extends PlainRope {
     private static final int POOL_COL = AffinityShallowPool.reserveColumn();
-    private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
-    private static final int B_LEN = B_SP.length();
-    public static final boolean HAS_UNSAFE;
-    static final Unsafe U;
-    protected static final int U8_BASE;
-
-    static {
-        Unsafe u = null;
-        try {
-            Field field = Unsafe.class.getDeclaredField("theUnsafe");
-            field.setAccessible(true);
-            u = (Unsafe) field.get(null);
-        } catch (Throwable ignored) {
-            try {
-                Constructor<Unsafe> c = Unsafe.class.getDeclaredConstructor();
-                u = c.newInstance();
-            } catch (Throwable ignored1) {}
-        }
-        U = u;
-        HAS_UNSAFE = u != null;
-        U8_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
-    }
 
     public long offset;
     public byte @Nullable [] utf8;
@@ -177,7 +153,7 @@ public class SegmentRope extends PlainRope {
         if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
         if (U == null)
             return segment.get(JAVA_BYTE, offset+i);
-        return U.getByte(utf8, segment.address()+offset+i+(utf8 == null ? 0 : U8_BASE));
+        return U.getByte(utf8, segment.address()+offset+i+(utf8 == null ? 0 : LowLevelHelper.U8_BASE));
     }
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
@@ -186,8 +162,8 @@ public class SegmentRope extends PlainRope {
             return copySafe(begin, rLen, dest, offset);
         if (offset+rLen > dest.length)
             throw new IndexOutOfBoundsException("Copying [begin, end) to dest at offset overflows");
-        U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : U8_BASE),
-                     dest, U8_BASE+offset, rLen);
+        U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : LowLevelHelper.U8_BASE),
+                     dest, LowLevelHelper.U8_BASE+offset, rLen);
         return dest;
     }
 
@@ -212,11 +188,11 @@ public class SegmentRope extends PlainRope {
 
     static long safeSkipUntil(MemorySegment segment, long i, long e, char c0) {
         int rLen = (int)(e-i);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
-                int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
-                if (lane < B_LEN) return (int) (i + lane);
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            for (long ve = i + LowLevelHelper.B_SP.loopBound(rLen); i < ve; i += LowLevelHelper.B_LEN) {
+                int lane = fromMemorySegment(LowLevelHelper.B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
+                if (lane < LowLevelHelper.B_LEN) return (int) (i + lane);
             }
         }
         while (i < e && segment.get(JAVA_BYTE, i) != c0) ++i;
@@ -226,14 +202,14 @@ public class SegmentRope extends PlainRope {
         if (U == null)
             return safeSkipUntil(segment, i, e, c0);
         int rLen = (int)(e-i);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
-                int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
-                if (lane < B_LEN) return (int) (i + lane);
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            for (long ve = i + LowLevelHelper.B_SP.loopBound(rLen); i < ve; i += LowLevelHelper.B_LEN) {
+                int lane = fromMemorySegment(LowLevelHelper.B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
+                if (lane < LowLevelHelper.B_LEN) return (int) (i + lane);
             }
         }
-        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
+        long address = segment.address() + (utf8 == null ? 0 : LowLevelHelper.U8_BASE);
         i += address;
         e += address;
         while (i < e && U.getByte(utf8, i) != c0) ++i;
@@ -248,13 +224,13 @@ public class SegmentRope extends PlainRope {
 
     static long safeSkipUntil(MemorySegment segment, long i, long e, char c0, char c1) {
         int rLen = (int)(e-i);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            Vector<Byte> c1Vec = B_SP.broadcast(c1);
-            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
-                ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            Vector<Byte> c1Vec = LowLevelHelper.B_SP.broadcast(c1);
+            for (long ve = i + LowLevelHelper.B_SP.loopBound(rLen); i < ve; i += LowLevelHelper.B_LEN) {
+                ByteVector vec = fromMemorySegment(LowLevelHelper.B_SP, segment, i, LITTLE_ENDIAN);
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue();
-                if (lane < B_LEN) return i + lane;
+                if (lane < LowLevelHelper.B_LEN) return i + lane;
             }
         }
         for (byte c; i < e && (c=segment.get(JAVA_BYTE, i)) != c0 && c != c1;) ++i;
@@ -264,19 +240,19 @@ public class SegmentRope extends PlainRope {
         if (U == null)
             return safeSkipUntil(segment, i, e, c0, c1);
         int rLen = (int)(e-i);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            Vector<Byte> c1Vec = B_SP.broadcast(c1);
-            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
-                ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            Vector<Byte> c1Vec = LowLevelHelper.B_SP.broadcast(c1);
+            for (long ve = i + LowLevelHelper.B_SP.loopBound(rLen); i < ve; i += LowLevelHelper.B_LEN) {
+                ByteVector vec = fromMemorySegment(LowLevelHelper.B_SP, segment, i, LITTLE_ENDIAN);
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue();
-                if (lane < B_LEN) return i + lane;
+                if (lane < LowLevelHelper.B_LEN) return i + lane;
             }
         }
-        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
+        long address = segment.address() + (utf8 == null ? 0 : LowLevelHelper.U8_BASE);
         i += address;
         e += address;
-        for (byte c; i < e && (c=U.getByte(utf8, i)) != c0 && c != c1;) ++i;
+        for (byte c; i < e && (c= U.getByte(utf8, i)) != c0 && c != c1;) ++i;
         return i-address;
     }
 
@@ -287,13 +263,13 @@ public class SegmentRope extends PlainRope {
 
     static long skipUntilLast(MemorySegment segment, long begin, long end, char c0) {
         int rLen = (int)(end-begin);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            while ((end -= B_LEN) >= begin) {
-                int lane = fromMemorySegment(B_SP, segment, end, LITTLE_ENDIAN).eq(c0Vec).lastTrue();
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            while ((end -= LowLevelHelper.B_LEN) >= begin) {
+                int lane = fromMemorySegment(LowLevelHelper.B_SP, segment, end, LITTLE_ENDIAN).eq(c0Vec).lastTrue();
                 if (lane >= 0) return end + lane;
             }
-            end += B_LEN; // the while above always overdraws from i
+            end += LowLevelHelper.B_LEN; // the while above always overdraws from i
         }
         for (end -= 1; end >= begin; --end) {
             if (segment.get(JAVA_BYTE, end) == c0) return end;
@@ -308,15 +284,15 @@ public class SegmentRope extends PlainRope {
 
     static long skipUntilLast(MemorySegment segment, long begin, long end, char c0, char c1) {
         int rLen = (int)(end-begin);
-        if (rLen >= B_LEN) {
-            Vector<Byte> c0Vec = B_SP.broadcast(c0);
-            Vector<Byte> c1Vec = B_SP.broadcast(c1);
-            while ((end -= B_LEN) >= begin) {
-                ByteVector vec = fromMemorySegment(B_SP, segment, end, LITTLE_ENDIAN);
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
+            Vector<Byte> c1Vec = LowLevelHelper.B_SP.broadcast(c1);
+            while ((end -= LowLevelHelper.B_LEN) >= begin) {
+                ByteVector vec = fromMemorySegment(LowLevelHelper.B_SP, segment, end, LITTLE_ENDIAN);
                 int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).lastTrue();
                 if (lane >= 0) return end  + lane;
             }
-            end += B_LEN; // the while above always overdraws from end
+            end += LowLevelHelper.B_LEN; // the while above always overdraws from end
         }
         end -= 1;
         for (byte c; end >= begin; --end) {
@@ -345,10 +321,10 @@ public class SegmentRope extends PlainRope {
         var segment = this.segment;
         int rLen = rangeLen(begin, end);
         long i = begin + offset;
-        if (rLen >= B_LEN) {
-            Vector<Byte> cVec = B_SP.broadcast(c);
-            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
-                long found = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(cVec).toLong();
+        if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
+            Vector<Byte> cVec = LowLevelHelper.B_SP.broadcast(c);
+            for (long ve = i + LowLevelHelper.B_SP.loopBound(rLen); i < ve; i += LowLevelHelper.B_LEN) {
+                long found = fromMemorySegment(LowLevelHelper.B_SP, segment, i, LITTLE_ENDIAN).eq(cVec).toLong();
                 for (int lane = 0; (lane+=numberOfTrailingZeros(found>>>lane)) < 64; ++lane)
                     if (!isEscapedPhys(begin, i+lane)) return (int) (i - offset) + lane;
             }
@@ -398,7 +374,7 @@ public class SegmentRope extends PlainRope {
             offset += segment.address();
             byte[] u8 = utf8;
             if (u8 != null)
-                offset += U8_BASE;
+                offset += LowLevelHelper.U8_BASE;
             i = skipUnsafe(u8, begin+offset, end+offset, alphabet);
         }
         return (int)(i-offset);
@@ -432,10 +408,10 @@ public class SegmentRope extends PlainRope {
 //            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
         // else: manually compare due to JDK-8306866
 
-        if (rLen > B_LEN) {
-            for (long ve = pos+B_SP.loopBound(rLen); pos < ve; pos += B_LEN, begin += B_LEN) {
-                ByteVector l = fromMemorySegment(B_SP,  left, pos,   LITTLE_ENDIAN);
-                ByteVector r = fromMemorySegment(B_SP, right, begin, LITTLE_ENDIAN);
+        if (LowLevelHelper.ENABLE_VEC && rLen > LowLevelHelper.B_LEN) {
+            for (long ve = pos+ LowLevelHelper.B_SP.loopBound(rLen); pos < ve; pos += LowLevelHelper.B_LEN, begin += LowLevelHelper.B_LEN) {
+                ByteVector l = fromMemorySegment(LowLevelHelper.B_SP,  left, pos,   LITTLE_ENDIAN);
+                ByteVector r = fromMemorySegment(LowLevelHelper.B_SP, right, begin, LITTLE_ENDIAN);
                 if (!l.eq(r).allTrue()) return false;
             }
             rLen = (int)(end-begin);
@@ -448,8 +424,8 @@ public class SegmentRope extends PlainRope {
         } else {
             Object lBase =  left.isNative() ? null :  left.array().orElse(null);
             Object rBase = right.isNative() ? null : right.array().orElse(null);
-            pos += left.address() + (lBase == null ? 0 : U8_BASE);
-            begin += right.address() + (rBase == null ? 0 : U8_BASE);
+            pos += left.address() + (lBase == null ? 0 : LowLevelHelper.U8_BASE);
+            begin += right.address() + (rBase == null ? 0 : LowLevelHelper.U8_BASE);
             end = begin + rLen;
             for (; begin < end && U.getByte(lBase, pos) == U.getByte(rBase, begin); ++begin)
                 ++pos;
@@ -561,7 +537,7 @@ public class SegmentRope extends PlainRope {
         MemorySegment s = this.segment;
         if (U != null) {
             byte[] base = utf8; //(byte[]) s.array().orElse(null);
-            physBegin += s.address() + (base == null ? 0 : U8_BASE);
+            physBegin += s.address() + (base == null ? 0 : LowLevelHelper.U8_BASE);
             while (bit < bits)
                 h |= (U.getByte(base, physBegin++)&1) << bit++;
         } else {
@@ -588,9 +564,9 @@ public class SegmentRope extends PlainRope {
     }
 
     public static int hashCode(int h, byte[] base, long offset, int len) {
-        if (base != null) offset += U8_BASE;
+        if (base != null) offset += LowLevelHelper.U8_BASE;
         for (int i = 0; i < len; i++)
-            h = FNV_PRIME * (h ^ (0xff&U.getByte(base, offset+i)));
+            h = FNV_PRIME * (h ^ (0xff& U.getByte(base, offset+i)));
         return h;
     }
 
@@ -777,9 +753,9 @@ public class SegmentRope extends PlainRope {
         if (lOff == rOff && lBase == rBase && lLen == rLen)
             return 0;
         if (lBase != null)
-            lOff += U8_BASE;
+            lOff += LowLevelHelper.U8_BASE;
         if (rBase != null)
-            rOff += U8_BASE;
+            rOff += LowLevelHelper.U8_BASE;
         long lEnd = lOff + Math.min(lLen, rLen);
         int diff = (int)((lOff|rOff)&7);
         if (diff == 0) {
@@ -833,18 +809,26 @@ public class SegmentRope extends PlainRope {
 
 
     public final int compareTo(SegmentRope o) {
+        if (U == null)
+            return compare1_1(segment, offset, len, o.segment, o.offset, o.len);
         return compare1_1(utf8, segment.address()+offset, len,
                           o.utf8, o.segment.address()+o.offset, o.len);
     }
 
     public final int compareTo(TwoSegmentRope o) {
-        return compare1_2(segment, offset, len,
-                          o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
+        if (U == null)
+            return compare1_2(segment, offset, len,
+                              o.fst, o.fstOff, o.fstLen, o.snd, o.sndOff, o.sndLen);
+        return compare1_2(  utf8, segment.address()+offset, len,
+                          o.fstU8, o.fst.address()+o.fstOff, o.fstLen,
+                          o.sndU8, o.snd.address()+o.sndOff, o.sndLen);
     }
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
-        return compare1_1(utf8, segment.address()+offset, len,
-                o.utf8, o.segment.address()+o.offset+begin, end-begin);
+        if (U == null)
+            return compare1_1(segment, offset, len, o.segment, o.offset+begin, end-begin);
+        return compare1_1(  utf8,   segment.address() +  offset,       len,
+                          o.utf8, o.segment.address() +o.offset+begin, end-begin);
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {

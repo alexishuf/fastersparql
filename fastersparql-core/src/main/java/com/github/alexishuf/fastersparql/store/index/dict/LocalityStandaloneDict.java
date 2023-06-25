@@ -10,6 +10,7 @@ import java.nio.file.Path;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 
 public class LocalityStandaloneDict extends Dict {
     final long emptyId;
@@ -62,7 +63,7 @@ public class LocalityStandaloneDict extends Dict {
 
         @Override public long find(PlainRope rope) {
             if (rope.len == 0) return emptyId;
-            if (UNSAFE == null) return coldFind(rope);
+            if (U == null) return coldFind(rope);
             long id = 1;
             if (rope instanceof SegmentRope s) {
                 byte[] rBase = s.utf8;
@@ -108,7 +109,7 @@ public class LocalityStandaloneDict extends Dict {
         @Override public long find(Term term) {
             if (term == null)
                 return NOT_FOUND;
-            if (UNSAFE != null) {
+            if (U != null) {
                 long id = 1;
                 SegmentRope termFst = term.first(), termSnd = term.second();
                 long termFstOff = termFst.segment.address() + termFst.offset;

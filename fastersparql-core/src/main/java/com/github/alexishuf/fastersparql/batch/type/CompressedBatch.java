@@ -6,9 +6,9 @@ import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
-import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -38,10 +38,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
 
-    private static final VectorSpecies<Integer> I_SP = IntVector.SPECIES_PREFERRED;
-    private static final int I_SP_LEN = I_SP.length();
-    private static final int PUT_SLACK = I_SP_LEN;
-    private static final int I_SP_MASK = I_SP_LEN-1;
+    private static final int PUT_SLACK = LowLevelHelper.I_LEN;
+    private static final int I_SP_MASK = LowLevelHelper.I_LEN -1;
 
     public static boolean DISABLE_VALIDATE = false;
 
@@ -192,8 +190,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     /** Align ints to {@code I_SP_LEN}. */
     private static int slCeil(int ints) {
-        if (ints == 0) return I_SP_LEN; // never return 0
-        return ints + ((I_SP_LEN-ints)&I_SP_MASK); // align size to I_SP_LEN
+        if (ints == 0) return LowLevelHelper.I_LEN; // never return 0
+        return ints + ((LowLevelHelper.I_LEN -ints)&I_SP_MASK); // align size to I_SP_LEN
     }
 
     /**
@@ -271,7 +269,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
 
     public void recycle() {
-        clear();
+        rows            = 0;
+        offerNextLocals = -1;
+        offerLastCol    = -1;
         slices = INT.offer(slices, slices.length);
         locals = BYTE.offer(locals, locals.length);
         if (locals == null)
@@ -347,7 +347,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
-        if (!HAS_UNSAFE)
+        if (!LowLevelHelper.HAS_UNSAFE)
             return equalsNoUnsafe(row, other, oRow);
         if (row < 0 || row >= rows)
             throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
@@ -766,24 +766,23 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public void clear() {
-        rows            = 0;
+        rows            =  0;
         offerNextLocals = -1;
         offerLastCol    = -1;
-        slices[SL_OFF]  = 0;
-        slices[SL_LEN]  = 0;
+        if (slices == null)
+            slices = intsAtLeast(slRowInts);
+        if (shared == null)
+            shared = segmentRopesAtLeast(cols);
     }
 
     @Override public void clear(int newColumns) {
-        clear();
-        cols            = newColumns;
-        slRowInts       = (newColumns+1) << 1;
-        int required = slCeil(newColumns<<2);
-        if (slices.length < required) {
-            slices = intsAtLeast(required);
-        } else { // set off, len to make bytesUsed() return 0
-            slices[slRowInts-2+SL_OFF] = 0;
-            slices[slRowInts-2+SL_LEN] = 0;
-        }
+        rows            =  0;
+        offerNextLocals = -1;
+        offerLastCol    = -1;
+        cols      = newColumns;
+        slRowInts = (newColumns+1) << 1;
+        slices    = intsAtLeast(slRowInts, slices);
+        shared    = segmentRopesAtLeast(newColumns, shared);
     }
 
     @Override public boolean beginOffer() {
@@ -939,7 +938,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
 
     /** Mask true for SL_OFF and false for SL_LEN */
-    private static final VectorMask<Integer> PUT_MASK = fromLong(I_SP, 0x5555555555555555L);
+    private static final VectorMask<Integer> PUT_MASK = fromLong(LowLevelHelper.I_SP, 0x5555555555555555L);
     static {
         if (SL_OFF != 0) throw new AssertionError("PUT_MASK misaligned with SL_OFF");
     }
@@ -965,10 +964,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         //vectorized copy of slices, adding lDst to each SL_OFF in slices
         int[] sl = this.slices, osl = o.slices;
         int src = 0;
-        if (slLen >= I_SP_LEN) {
-            IntVector delta = IntVector.zero(I_SP).blend(lDst, PUT_MASK);
-            for (; src < slLen && src+I_SP_LEN < osl.length; src += I_SP_LEN, dst += I_SP_LEN)
-                fromArray(I_SP, osl, src).add(delta).intoArray(sl, dst);
+        if (LowLevelHelper.ENABLE_VEC && slLen >= LowLevelHelper.I_LEN) {
+            IntVector delta = IntVector.zero(LowLevelHelper.I_SP).blend(lDst, PUT_MASK);
+            for (; src < slLen && src+ LowLevelHelper.I_LEN < osl.length; src += LowLevelHelper.I_LEN, dst += LowLevelHelper.I_LEN)
+                fromArray(LowLevelHelper.I_SP, osl, src).add(delta).intoArray(sl, dst);
         }
         // copy/offset leftovers. arraycopy()+for is faster than a fused copy/offset loop
         if ((slLen -= src) > 0) {

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 
 public final class SortedStandaloneDict extends Dict {
     final long emptyId;
@@ -35,7 +36,7 @@ public final class SortedStandaloneDict extends Dict {
         public long find(PlainRope rope) {
             if (rope.len == 0)
                 return emptyId;
-            if (UNSAFE == null || !(rope instanceof SegmentRope s))
+            if (U == null || !(rope instanceof SegmentRope s))
                 return safeFind(rope);
             long lo = 0, hi = nStrings-1;
             byte[] rBase = s.utf8;
@@ -70,7 +71,7 @@ public final class SortedStandaloneDict extends Dict {
         @Override public long find(Term term) {
             if (term == null)
                 return NOT_FOUND;
-            if (UNSAFE == null)
+            if (U == null)
                 return safeFind(term);
             long lo = 0, hi = nStrings-1;
             SegmentRope termFst = term.first(), termSnd = term.second();

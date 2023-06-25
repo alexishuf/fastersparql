@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX_CHAR;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public final class SortedCompositeDict extends Dict {
@@ -118,7 +119,7 @@ public final class SortedCompositeDict extends Dict {
 
         private long find(SegmentRope b64, PlainRope local) {
             long lo = 0, hi = nStrings-1;
-            if (UNSAFE != null && local instanceof SegmentRope s) {
+            if (U != null && local instanceof SegmentRope s) {
                 byte[] lBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
                 long lOff = s.segment.address() + s.offset;
                 int lLen = local.len;

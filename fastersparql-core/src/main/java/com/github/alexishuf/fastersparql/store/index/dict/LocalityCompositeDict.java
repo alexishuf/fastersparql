@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -128,7 +129,7 @@ public class LocalityCompositeDict extends Dict {
         }
 
         private long find(int flShId, PlainRope local) {
-            if (UNSAFE == null)
+            if (U == null)
                 return coldFind(flShId, local);
             long id = 1;
             if (local instanceof SegmentRope s) {

@@ -1,10 +1,9 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
-import jdk.incubator.vector.VectorSpecies;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -18,6 +17,8 @@ import java.nio.charset.CodingErrorAction;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.B_LEN;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.B_SP;
 import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -27,8 +28,6 @@ import static jdk.incubator.vector.ByteVector.fromArray;
 @SuppressWarnings("UnusedReturnValue")
 public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, ByteRope> {
     private static final int POOL_COL = AffinityShallowPool.reserveColumn();
-    private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
-    private static final int B_LEN = B_SP.length();
     private static final int READLINE_CHUNK = 128;
 
     static final byte[] EMPTY_UTF8 = new byte[0];
@@ -163,12 +162,14 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
 
     public @This ByteRope replace(char c, char r) {
         if (offset != 0 || this == EMPTY) raiseImmutable();
-        int i = 0;
-        Vector<Byte> cVec = B_SP.broadcast(c);
         byte[] utf8 = u8();
-        for (int j, e = B_SP.loopBound(len); i < e; i += B_SP.length()) {
-            for (var vec = fromArray(B_SP, utf8, i); (j = vec.eq(cVec).firstTrue()) != B_LEN; )
-                vec = vec.withLane(j, utf8[i+j] = (byte) r);
+        int i = 0;
+        if (LowLevelHelper.ENABLE_VEC && len > B_LEN) {
+            Vector<Byte> cVec = B_SP.broadcast(c);
+            for (int j, e = B_SP.loopBound(len); i < e; i += B_SP.length()) {
+                for (var vec = fromArray(B_SP, utf8, i); (j = vec.eq(cVec).firstTrue()) != B_LEN; )
+                    vec = vec.withLane(j, utf8[i + j] = (byte) r);
+            }
         }
         for (int e = len; i < e; ++i)
             if (utf8[i] == c) utf8[i] = (byte) r;
@@ -262,12 +263,12 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     @Override public @This ByteRope append(MemorySegment segment, byte @Nullable [] array,
                                            long offset, int len) {
         int out = postIncLen(len);
-        if (U != null) {
+        if (LowLevelHelper.U != null) {
             if (offset + len > segment.byteSize())
                 throw new IndexOutOfBoundsException("offset:len ranges violates [0, segment.byteSize()] bounds");
             if (array == null && !segment.isNative())
                 throw new IllegalArgumentException("byte[] not given for heap segment");
-            U.copyMemory(array, segment.address() + offset + (array == null ? 0 : U8_BASE), this.utf8, U8_BASE + out, len);
+            LowLevelHelper.U.copyMemory(array, segment.address() + offset + (array == null ? 0 : LowLevelHelper.U8_BASE), this.utf8, LowLevelHelper.U8_BASE + out, len);
         } else {
             MemorySegment.copy(segment, offset, this.segment, out, len);
         }

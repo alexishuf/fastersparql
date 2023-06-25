@@ -20,7 +20,7 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.HAS_UNSAFE;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
