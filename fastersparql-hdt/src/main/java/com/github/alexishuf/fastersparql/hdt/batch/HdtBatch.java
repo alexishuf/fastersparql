@@ -2,11 +2,14 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
-import com.github.alexishuf.fastersparql.model.rope.RopeSupport;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
+
+import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static java.util.Arrays.copyOf;
@@ -36,7 +39,7 @@ public class HdtBatch extends IdBatch<HdtBatch> {
             if (u8 == null) { // manual hashing as HDT strings use FNV hashes
                 for (int i = 0; i < len; i++) hash = 31 * hash + cs.charAt(i);
             } else {
-                hash = RopeSupport.hash(u8, 0, len);
+                hash = SegmentRope.hashCode(Rope.FNV_BASIS, u8, 0, len);
             }
             if (hashes.length < idx)
                 hashes = copyOf(hashes, arr.length);
@@ -65,7 +68,7 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         byte[] u8 = IdAccess.peekU8(str);
         byte[] oU8 = IdAccess.peekU8(oStr);
         if (u8 != null && oU8 != null)
-            return RopeSupport.rangesEqual(u8, 0, oU8, 0, len);
+            return Arrays.mismatch(u8, 0, len, oU8, 0, len) == 0;
         // this line should not be reached: fallback to slow but always correct comparison
         return CharSequence.compare(str, oStr) == 0;
     }

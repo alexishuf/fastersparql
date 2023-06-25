@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.RopeDict;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.openjdk.jmh.annotations.*;
@@ -16,7 +15,7 @@ import static com.github.alexishuf.fastersparql.lrb.Workloads.fromName;
 import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 
-@SuppressWarnings({"unchecked", "rawtypes"})
+@SuppressWarnings({"rawtypes"})
 @State(Scope.Thread)
 @Threads(1)
 @Fork(value = 1, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
@@ -67,22 +66,22 @@ public class RopeDictBench {
         ropes = null;
     }
 
-    @Benchmark public long dictInternAll() {
-        long acc = 0;
-        for (int rep = 0; rep < startsArray.length; rep++) {
-            int[] starts = startsArray[rep];
-            var rope = ropes[rep];
-            for (int i = 0, last = starts.length-1; i < last; i++) {
-                int begin = starts[i], end = starts[i+1];
-                acc ^= switch (begin < end ? rope.get(begin) : 0) {
-                    case '<' -> RopeDict.internIri(rope, begin, end);
-                    case '"' -> RopeDict.internLit(rope, begin, end);
-                    default -> 0;
-                };
-            }
-        }
-        return acc;
-    }
+//    @Benchmark public long dictInternAll() {
+//        long acc = 0;
+//        for (int rep = 0; rep < startsArray.length; rep++) {
+//            int[] starts = startsArray[rep];
+//            var rope = ropes[rep];
+//            for (int i = 0, last = starts.length-1; i < last; i++) {
+//                int begin = starts[i], end = starts[i+1];
+//                acc ^= switch (begin < end ? rope.get(begin) : 0) {
+//                    case '<' -> RopeDict.internIri(rope, begin, end);
+//                    case '"' -> RopeDict.internLit(rope, begin, end);
+//                    default -> 0;
+//                };
+//            }
+//        }
+//        return acc;
+//    }
 
     @Benchmark public long internAll() {
         long acc = 0;

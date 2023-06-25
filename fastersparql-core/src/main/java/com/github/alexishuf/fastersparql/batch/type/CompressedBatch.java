@@ -18,7 +18,6 @@ import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static com.github.alexishuf.fastersparql.model.rope.Rope.UNTIL_DQ;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
@@ -508,7 +507,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
         int off = slices[slBase + SL_OFF];
         if (localLen == 0 || locals[off] != '"') return 0; // not a literal
-        return RopeSupport.reverseSkip(locals, off, off+localLen, UNTIL_DQ)-off;
+        var tmp = pooledWrap(localsSeg, locals, off, localLen);
+        int lexEnd = tmp.reverseSkipUntil(0, localLen, '"');
+        tmp.recycle();
+        return lexEnd;
     }
 
     @Override public int localLen(@NonNegative int row, @NonNegative int col) {
@@ -578,7 +580,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int off = slices[slBase+SL_OFF], end = off+len;
         if (locals[off] != '"')
             return null; // not a literal
-        int i = RopeSupport.reverseSkip(locals, off, end, UNTIL_DQ);
+        SegmentRope tmp = pooledWrap(localsSeg, locals, 0, locals.length);
+        int i = tmp.reverseSkipUntil(off, end, '"');
+        tmp.recycle();
         if      (i+1 == end)
             return Term.XSD_STRING;
         else if (locals[i+1] == '@')

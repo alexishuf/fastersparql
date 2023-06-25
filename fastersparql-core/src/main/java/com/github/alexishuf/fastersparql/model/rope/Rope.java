@@ -661,11 +661,12 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         if (skip(0, len, until) == len)
             return this;
         byte[] u8 = toArray(0, len);
-        for (int b = 0; b < u8.length; ++b) {
-            if ((b = RopeSupport.skip(u8, b, len, until)) != len)
+        ByteRope br = new ByteRope(u8);
+        for (int b = 0, end = br.len; b < end; ++b) {
+            if ((b = br.skip(b, len, until)) != len)
                 u8[b] += offset;
         }
-        return new ByteRope(u8);
+        return br;
     }
 
     /**
