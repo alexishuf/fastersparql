@@ -33,6 +33,13 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
      */
     public abstract void clear(int cols);
 
+
+    /**
+     * Recycles all internal components of this object. This should be used when recycling
+     * the {@link Dedup} itself is not possible (e.g., a full pool).
+     */
+    public abstract void recycleInternals();
+
     public final BatchType<B> batchType() { return bt; }
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")

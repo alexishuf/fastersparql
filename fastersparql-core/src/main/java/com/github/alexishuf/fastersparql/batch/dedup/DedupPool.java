@@ -3,75 +3,78 @@ package com.github.alexishuf.fastersparql.batch.dedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 @SuppressWarnings("UnusedReturnValue")
 public final class DedupPool<B extends Batch<B>> {
     private final BatchType<B> batchType;
-    private final LIFOPool<Dedup<B>>[] pools;
+    private final LIFOPool<WeakCrossSourceDedup<B>> weakCross;
+    private final LIFOPool<WeakDedup<B>> weak;
+    private final LIFOPool<StrongDedup<B>> reduced;
+    private final LIFOPool<StrongDedup<B>> distinct;
 
-    private static final int WEAK_CROSS = 0;
-    private static final int WEAK = 1;
-    private static final int REDUCED          = 2;
-    private static final int DISTINCT         = 3;
-
-    public DedupPool(BatchType<B> batchType) {
+    @SuppressWarnings("unchecked") public DedupPool(BatchType<B> batchType) {
         this.batchType = batchType;
-        //noinspection unchecked
-        this.pools = new LIFOPool[] {
-            LIFOPool.perProcessor(WeakCrossSourceDedup.class, 4), // WEAK_CROSS
-            LIFOPool.perProcessor(WeakDedup.class, 8),            // WEAK
-            LIFOPool.perProcessor(StrongDedup.class, 1),          // REDUCED
-            LIFOPool.perProcessor(StrongDedup.class, 1),          // DISTINCT
-        };
+        int threads = Runtime.getRuntime().availableProcessors();
+        this.weakCross = (LIFOPool<WeakCrossSourceDedup<B>>)(Object)
+                new LIFOPool<>(WeakCrossSourceDedup.class, 8*threads);
+        this.weak = (LIFOPool<WeakDedup<B>>)(Object)
+                new LIFOPool<>(WeakDedup.class, 8*threads);
+        this.reduced = (LIFOPool<StrongDedup<B>>)(Object)
+                new LIFOPool<>(StrongDedup.class, 2*threads);
+        this.distinct = (LIFOPool<StrongDedup<B>>)(Object)
+                new LIFOPool<>(StrongDedup.class, 2*threads);
     }
 
     /* --- --- --- get methods --- --- --- */
 
     public WeakCrossSourceDedup<B> getWeakCross(int capacity, int cols) {
-        WeakCrossSourceDedup<B> d = (WeakCrossSourceDedup<B>)pools[WEAK_CROSS].get();
-        if (d == null || d.capacity() < capacity)
+        var d = weakCross.get();
+        if (d == null)
             return new WeakCrossSourceDedup<>(batchType, capacity, cols);
         d.clear(cols);
         return d;
     }
 
     public WeakDedup<B> getWeak(int capacity, int cols) {
-        WeakDedup<B> d = (WeakDedup<B>) pools[WEAK].get();
-        if (d == null || d.capacity() < capacity)
+        var d = weak.get();
+        if (d == null)
             return new WeakDedup<>(batchType, capacity, cols);
         d.clear(cols);
         return d;
     }
 
-    private StrongDedup<B> getStrong(int type, int weakenAt, int cols) {
-        StrongDedup<B> d = (StrongDedup<B>) pools[type].get();
-        if (d == null || d.weakenAt() < weakenAt)
+    public StrongDedup<B> getReduced(int weakenAt, int cols) {
+        var d = reduced.get();
+        if (d == null)
             return StrongDedup.strongUntil(batchType, weakenAt, cols);
         d.clear(cols);
         return d;
     }
 
-    public StrongDedup<B> getReduced(int weakenAt, int cols) {
-        return getStrong(REDUCED, weakenAt, cols);
-    }
-
     public StrongDedup<B> getDistinct(int weakenAt, int cols) {
-        return getStrong(DISTINCT, weakenAt, cols);
+        var d = distinct.get();
+        if (d == null)
+            return StrongDedup.strongUntil(batchType, weakenAt, cols);
+        d.clear(cols);
+        return d;
     }
 
     /* --- --- --- offer methods --- --- --- */
 
-    public @Nullable WeakCrossSourceDedup<B> offerWeakCross(WeakCrossSourceDedup<B> d) {
-        return (WeakCrossSourceDedup<B>)pools[WEAK_CROSS].offer(d);
+    public void recycleWeakCross(WeakCrossSourceDedup<B> d) {
+        if (weakCross.offer(d) != null)
+            d.recycleInternals();
     }
-    public @Nullable WeakDedup<B> offerWeak(WeakDedup<B> d) {
-        return (WeakDedup<B>)pools[WEAK].offer(d);
+    public void recycleWeak(WeakDedup<B> d) {
+        if (weak.offer(d) != null)
+            d.recycleInternals();
     }
-    public @Nullable StrongDedup<B> offerReduced(StrongDedup<B> d) {
-        return (StrongDedup<B>)pools[REDUCED].offer(d);
+    public void recycleReduced(StrongDedup<B> d) {
+        if (reduced.offer(d) != null)
+            d.recycleInternals();
     }
-    public @Nullable StrongDedup<B> offerDistinct(StrongDedup<B> d) {
-        return (StrongDedup<B>)pools[DISTINCT].offer(d);
+    public void recycleDistinct(StrongDedup<B> d) {
+        if (distinct.offer(d) != null)
+            d.recycleInternals();
     }
 }

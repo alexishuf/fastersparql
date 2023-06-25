@@ -392,7 +392,8 @@ public class NettySparqlServer implements AutoCloseable {
             SerializeTask<?> task = null;
             try (var it = this.it) {
                 task = createSerializeTask(round);
-                Thread.currentThread().setName("drainer-" + ctx.channel());
+                //Thread.currentThread().setName("drainer-" + ctx.channel());
+                Thread.currentThread().setName("drainer");
                 if (query == null || it == null) {
                     fail("null query or it");
                     return;

@@ -28,9 +28,9 @@ public final class DedupConcatBIt<B extends Batch<B>> extends ConcatBIt<B> {
         super.cleanup(cause);
         DedupPool<B> pool = batchType.dedupPool;
         if (dedup instanceof WeakCrossSourceDedup<B> cd)
-            pool.offerWeakCross(cd);
+            pool.recycleWeakCross(cd);
         else if (dedup instanceof WeakDedup<B> wd)
-            pool.offerWeak(wd);
+            pool.recycleWeak(wd);
     }
 
     @Override protected @Nullable BatchProcessor<B> createProcessor(BIt<B> source, int sourceIdx) {

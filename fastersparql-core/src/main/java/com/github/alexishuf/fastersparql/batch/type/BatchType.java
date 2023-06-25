@@ -4,19 +4,18 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchType<B extends Batch<B>> {
     public final Class<B> batchClass;
-    protected final LevelPool<B> pool;
     public final DedupPool<B> dedupPool;
+    private final String name;
 
-    public BatchType(Class<B> batchClass, LevelPool<B> pool) {
+    public BatchType(Class<B> batchClass) {
         this.batchClass = batchClass;
-        this.pool = pool;
         this.dedupPool = new DedupPool<>(this);
+        this.name = getClass().getSimpleName().replaceAll("Type$", "");
     }
 
     /** Get the {@link Class} object of {@code B}. */
@@ -87,10 +86,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @return {@code batch} is the caller retains ownership, {@code null} if
      *         batch ownership was taken by this call.
      */
-    public @Nullable B recycle(@Nullable B batch) {
-        if (batch == null) return null;
-        return pool.offer(batch, batch.rowsCapacity());
-    }
+    public abstract @Nullable B recycle(@Nullable B batch);
 
     /**
      * Create a {@link RowBucket} able to hold {@code rowsCapacity} rows.
@@ -158,4 +154,12 @@ public abstract class BatchType<B extends Batch<B>> {
     public final BatchFilter<B> filter(Vars vars, RowFilter<B> filter) {
         return filter(vars, filter, null);
     }
+
+    @Override public String toString() { return name; }
+
+    @Override public boolean equals(Object o) {
+        return o instanceof BatchType<?> && o.getClass().equals(getClass());
+    }
+
+    @Override public int hashCode() { return getClass().hashCode(); }
 }

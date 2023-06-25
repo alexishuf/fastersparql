@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
-import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 import java.util.Map;
@@ -19,8 +19,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class WsSerializer extends ResultsSerializer {
     public static final int DEF_BUFFER_HINT = 2048;
     private static final ByteRope PREFIX_CMD = new ByteRope("!prefix ");
-    private static final LIFOPool<WsSerializer> POOL
-            = new LIFOPool<>(WsSerializer.class, 4);
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
 
     private final ByteRope rowsBuffer;
     private final WsPrefixAssigner prefixAssigner;
@@ -35,10 +34,8 @@ public class WsSerializer extends ResultsSerializer {
     public static WsSerializer create() { return create(DEF_BUFFER_HINT); }
 
     public static WsSerializer create(int bufferHint) {
-        var s = POOL.get();
-        if (s == null)
-            s = new WsSerializer(bufferHint);
-        return s;
+        var s = (WsSerializer)AffinityShallowPool.get(POOL_COL);
+        return s == null ? new WsSerializer(bufferHint) : s;
     }
 
     protected WsSerializer(int bufferHint) {
@@ -52,9 +49,9 @@ public class WsSerializer extends ResultsSerializer {
         vars = Vars.EMPTY;
         ask = false;
         empty = true;
-        rowsBuffer.clear();
         prefixAssigner.reset();
-        POOL.offer(this);
+        if (AffinityShallowPool.offer(POOL_COL, this) != null)  // rejected
+            rowsBuffer.recycleUtf8(); // at least try to recycle our byte[] buffer
     }
 
     @Override protected void init(Vars subset, ByteSink<?, ?> dest) {

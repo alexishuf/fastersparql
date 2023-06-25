@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
@@ -119,6 +120,16 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     public byte[] fitBytes() {
         byte[] utf8 = u8();
         return utf8.length == len ? utf8 : copyOf(utf8, len);
+    }
+
+    public void recycleUtf8() {
+        byte[] utf8 = this.utf8;
+        if (offset != 0 || this == EMPTY || utf8 == null) raiseImmutable();
+        len = 0;
+        if (ArrayPool.BYTE.offer(utf8, utf8.length) == null) {
+            this.utf8 = EMPTY_UTF8;
+            segment = EMPTY_SEGMENT;
+        }
     }
 
     public @This ByteRope clear() {

@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowBucket;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 
 import java.util.Arrays;
 import java.util.concurrent.locks.Lock;
@@ -11,9 +12,9 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     private final RowBucket<B> table;
-    private final int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
-    private final byte[] bucketInsertion; // values are 0 <= bucketInsertion[i] < 8
-    private final int bucketMask;
+    private int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
+    private byte[] bucketInsertion; // values are 0 <= bucketInsertion[i] < 8
+    private final int bucketMask, buckets, capacity;
     private final Lock lock = new ReentrantLock();
 
     public WeakCrossSourceDedup(BatchType<B> batchType, int capacity, int cols) {
@@ -22,7 +23,8 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
             throw new IllegalArgumentException();
         // round capacity up to the nearest power-of-2
         capacity = 1 + (-1 >>> Integer.numberOfLeadingZeros(Math.max(8, capacity)-1));
-        int buckets = capacity >> 3;
+        this.capacity = capacity;
+        this.buckets = capacity >> 3;
         this.bucketMask = buckets-1;
         this.bucketInsertion = new byte[buckets]; // each bucket has 8 items
         this.hashesAndSources = new int[capacity<<1];
@@ -30,9 +32,17 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public void clear(int cols) {
+        hashesAndSources = ArrayPool.intsAtLeast(capacity<<1, hashesAndSources);
+        bucketInsertion = ArrayPool.bytesAtLeast(buckets, bucketInsertion);
         Arrays.fill(hashesAndSources, 0);
         Arrays.fill(bucketInsertion, (byte) 0);
         table.clear(table.capacity(), cols);
+    }
+
+    @Override public void recycleInternals() {
+        hashesAndSources = ArrayPool.INT.offer(hashesAndSources, hashesAndSources.length);
+        bucketInsertion = ArrayPool.BYTE.offer(bucketInsertion, bucketInsertion.length);
+        table.recycleInternals();
     }
 
     @Override public int capacity() { return table.capacity(); }

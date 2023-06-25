@@ -140,7 +140,7 @@ public class QueryBench {
     }
 
     private static final class TermLenCounter extends BatchConsumer {
-        private final Term tmp = new Term();
+        private final Term tmp = Term.pooledMutable();
         private int acc;
 
         public TermLenCounter(BatchType<?> batchType) {super(batchType);}

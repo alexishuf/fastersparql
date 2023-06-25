@@ -1,47 +1,38 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import com.github.alexishuf.fastersparql.FS;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
-import java.util.Arrays;
 
 import static java.lang.Runtime.getRuntime;
+import static java.lang.String.format;
+import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public final class LIFOPool<T> {
-    private static final VarHandle LOCK;
-
+    private static final int LOCKED = Integer.MIN_VALUE;
+    private static final VarHandle S;
     static {
         try {
-            LOCK = lookup().findVarHandle(LIFOPool.class, "lock", int.class);
+            S = lookup().findVarHandle(LIFOPool.class, "plainSize", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
+    private final Class<T> cls;
     private final T[] recycled;
     @SuppressWarnings({"unused"}) // lock is accessed through LOCK
-    private int lock, size;
+    private int plainSize;
 
-    /** Creates a {@link LIFOPool} with capacity of {@code availableProcessors()*items}. */
-    public static <T> LIFOPool<T> perProcessor(Class<T> cls, int items) {
-        int capacity = Math.max(8, getRuntime().availableProcessors()*items);
-        return new LIFOPool<>(cls, capacity);
-    }
     public LIFOPool(Class<T> cls, int capacity) {
         //noinspection unchecked
         recycled = (T[]) Array.newInstance(cls, capacity);
-        FS.addShutdownHook(this::purge);
+        this.cls = cls;
     }
 
-    public void purge() {
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
-        try {
-            Arrays.fill(recycled, null);
-        } finally { LOCK.setRelease(this, 0); }
-    }
+    public Class<T> itemClass() { return cls; }
 
     /**
      * Possibly get a {@code T} previously given to {@link LIFOPool#offer(Object)}.
@@ -56,14 +47,15 @@ public final class LIFOPool<T> {
      * @return a {@code T} previously {@code offer()}ed and not yet {@code get()}ed.
      */
     public @Nullable T get() {
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
+        int size;
+        while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
             if (size == 0) return null;
             T o = recycled[--size];
             recycled[size] = null;
             return o;
         } finally {
-            LOCK.setRelease(this, 0);
+            S.setRelease(this, size);
         }
     }
 
@@ -78,7 +70,8 @@ public final class LIFOPool<T> {
      */
     public @Nullable T offer(@Nullable T o) {
         if (o == null) return null;
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
+        int size;
+        while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
             if (size == recycled.length)
                 return o;
@@ -90,7 +83,12 @@ public final class LIFOPool<T> {
             recycled[size++] = o;
             return null;
         } finally {
-            LOCK.setRelease(this, 0);
+            S.setRelease(this, size);
         }
+    }
+
+    @Override public String toString() {
+        return format("LIFOPool@%x{cap=%d, cls=%s}",
+                      identityHashCode(this), recycled.length, cls.getSimpleName());
     }
 }

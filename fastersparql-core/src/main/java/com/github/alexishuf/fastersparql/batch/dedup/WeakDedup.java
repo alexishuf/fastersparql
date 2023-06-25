@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowBucket;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 
 import java.util.Arrays;
 
@@ -14,9 +15,9 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     /** Rows in the set. This works as a list of buckets of size 1. */
     private final RowBucket<B> rows;
     /** Value such that {@code hash & mask} yields the bucket index for a given hash value */
-    private final int mask;
+    private final int mask, bitsetWords;
     /** If bit {@code hash(r) & bitsetMask} is set, r MAY be present, else it certainly is not. */
-    private final int[] bitset;
+    private int[] bitset;
     /** {@code hash & bitsetMask} yields a <strong>bit</strong> index in {@code bitset} */
     private final int bitsetMask;
 
@@ -28,13 +29,19 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         rows = batchType.createBucket(capacity+1, cols);
         // since we do not store hashes, we can use the (capacity/2)*32 bits to create a bitset
         // such bitset allows faster non-membership detection than calling rt.equalsSameVars()
-        bitset = new int[capacity>>1];
+        bitset = new int[bitsetWords = capacity>>1];
         bitsetMask = (capacity<<4)-1;
     }
 
     @Override public void clear(int cols) {
+        bitset = ArrayPool.intsAtLeast(bitsetWords, bitset);
         Arrays.fill(bitset, 0);
         rows.clear(rows.capacity(), cols);
+    }
+
+    @Override public void recycleInternals() {
+        rows.recycleInternals();
+        bitset = ArrayPool.INT.offer(bitset, bitset.length);
     }
 
     @Override public int capacity() { return rows.capacity(); }

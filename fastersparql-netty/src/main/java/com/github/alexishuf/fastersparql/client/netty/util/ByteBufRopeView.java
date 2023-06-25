@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.client.netty.util;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadAffinityPool;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
@@ -12,21 +12,21 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import java.lang.foreign.MemorySegment;
 
 public final class ByteBufRopeView {
-    private static final ThreadAffinityPool<ByteBufRopeView> POOL = new ThreadAffinityPool<>(ByteBufRopeView.class, 8);
+    private static final int POOL_COLUMN = AffinityShallowPool.reserveColumn();
 
     private final SegmentRope sr = new SegmentRope();
     private @MonotonicNonNull TwoSegmentRope tsr;
     private byte @MonotonicNonNull[] copy;
 
     public static ByteBufRopeView create() {
-        ByteBufRopeView v = POOL.get();
+        ByteBufRopeView v = AffinityShallowPool.get(POOL_COLUMN);
         return v == null ? new ByteBufRopeView() : v;
     }
 
     private ByteBufRopeView() {}
 
     public void recycle() {
-        POOL.offer(this);
+        AffinityShallowPool.offer(POOL_COLUMN, this);
     }
 
     public SegmentRope wrapAsSingle(ByteBuf bb) {

@@ -288,7 +288,8 @@ public class WsClientParserBIt<B extends Batch<B>> extends AbstractWsParserBIt<B
     /* --- --- --- bindings upload virtual thread --- --- --- */
 
     private void sendBindingsThread() {
-        Thread.currentThread().setName("sendBindingsThread-"+id());
+        Thread.currentThread().setName("sendBindingsThread");
+        //Thread.currentThread().setName("sendBindingsThread-"+id());
         ResultsSender<?,?> sender = null;
         boolean sendEnd = true;
         try {

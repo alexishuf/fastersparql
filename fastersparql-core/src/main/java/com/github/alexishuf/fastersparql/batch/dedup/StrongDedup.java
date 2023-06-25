@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowBucket;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
-import org.checkerframework.checker.index.qual.NonNegative;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.concurrent.locks.ReentrantLock;
@@ -19,6 +19,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     /** When new additions will have weak semantics (instead of re-hashing, another
      *  addition also made under weak semantics will be overwritten). */
     private final int weakenAt;
+    private final int initialCapacity;
     /** When tableSize reaches this, perform a rehash */
     private int nextRehash;
     /** Capacity for new instantiations of Bucket */
@@ -35,9 +36,10 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     private StrongDedup(BatchType<B> bt, int initialCapacity, int weakenAt, int cols) {
         super(bt, cols);
         this.weakenAt  = weakenAt;
+        this.initialCapacity = initialCapacity;
         if (initialCapacity < 0)
             throw new IllegalArgumentException("Negative initialCapacity");
-        rehash(initialCapacity);
+        rehash();
     }
 
     public static <B extends Batch<B>>
@@ -56,7 +58,27 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
         age++;
     }
 
+    @Override public void recycleInternals() {
+        tableSize = 0;
+        nextRehash = 0;
+        @Nullable Bucket[] buckets = this.buckets;
+        this.buckets = null;
+        if (buckets.length > 1024)
+            Thread.startVirtualThread(() -> recycleInternalsThread(buckets));
+        else
+            recycleInternalsThread(buckets);
+    }
+
+    private void recycleInternalsThread(Bucket[] buckets) {
+        for (Bucket b : buckets) {
+            if (b != null)
+                b.recycleInternals();
+        }
+    }
+
     @Override public int capacity() {
+        if (buckets == null)
+            return 0;
         long sum = 0;
         for (Bucket b : buckets)
             sum += b == null ? bucketCapacity : b.hashes.length;
@@ -68,7 +90,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public boolean isWeak() { return tableSize >= weakenAt; }
 
     @SuppressWarnings({"unchecked"})
-    private void rehash(@NonNegative int initialCapacity) {
+    private void rehash() {
         int nBuckets;
         if (buckets == null) {
             nBuckets = initialCapacity < 8 ? 1
@@ -111,10 +133,13 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public boolean isDuplicate(B batch, int row, int source) {
         if (debug) checkBatchType(batch);
         int hash = batch.hash(row);
-        Bucket bucket = buckets[hash & bucketsMask];
-        // null bucket means nothing was added to it.
-        if (bucket != null && bucket.contains(batch, row, hash))
-            return true; // if contains() returns true, it is correct even with data races
+        Bucket bucket;
+        if (buckets != null) {
+            bucket = buckets[hash & bucketsMask];
+            // null bucket means nothing was added to it.
+            if (bucket != null && bucket.contains(batch, row, hash))
+                return true; // if contains() returns true, it is correct even with data races
+        }
         lock.lock();
         try {
             // once we reach MAX_VALUE, stop adding items and simply report anything not
@@ -126,12 +151,12 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             // and lock.lock(). row might have been added to bucket or the table could've been
             // rehashed.
             int bucketIdx = hash & bucketsMask;
-            bucket = buckets[bucketIdx];
+            bucket = buckets == null ? null : buckets[bucketIdx];
             if (bucket != null && bucket.contains(batch, row, hash))
                 return true;
             // at this point, row must be added to the table
-            if (tableSize == nextRehash) { // table requires rehash
-                rehash(0);
+            if (tableSize == nextRehash || buckets == null) { // table requires rehash
+                rehash();
                 bucket = buckets[bucketIdx = hash & bucketsMask]; //rehash changes buckets, find new one
             }
             // if this item is the first under weak semantics, we must change all buckets
@@ -157,14 +182,17 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
      */
     @Override public boolean contains(B batch, int row) {
         if (debug) checkBatchType(batch);
+        if (buckets == null) return false;
         int hash = batch.hash(row);
         Bucket bucket = buckets[hash & bucketsMask];
         return bucket != null && bucket.contains(batch, row, hash);
     }
 
     @Override public <E extends Throwable> void forEach(ThrowingConsumer<B, E> consumer) throws E {
-        for (Bucket b : buckets) {
-            if (b != null) b.forEach(consumer);
+        if (buckets != null) {
+            for (Bucket b : buckets) {
+                if (b != null) b.forEach(consumer);
+            }
         }
     }
 
@@ -198,6 +226,11 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             if (cols != rows.cols())
                 rows.clear(hashes.length, cols);
             age = StrongDedup.this.age;
+        }
+
+        void recycleInternals() {
+            rows.recycleInternals();
+            hashes = ArrayPool.INT.offer(hashes, hashes.length);
         }
 
         void weaken() {

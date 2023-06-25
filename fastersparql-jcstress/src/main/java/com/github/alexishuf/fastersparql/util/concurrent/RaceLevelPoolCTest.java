@@ -52,17 +52,18 @@ import org.openjdk.jcstress.infra.results.L_Result;
 @Outcome(id = "1,0 0,0", expect = Expect.ACCEPTABLE, desc = "consumers too early, prod-2 won")
 @Outcome(id = "0,0 0,0", expect = Expect.FORBIDDEN, desc = "consumers too early, both producers won")
 public class RaceLevelPoolCTest {
+    private static final int CAPACITY = 32;
     private static final Integer[] INTS = {0, 1, 2};
-    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 2);
+    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 1, 1, 1);
     private final int[] retained = new int[2];
     private final int[] got = new int[2];
 
     private void produce(int i) {
-        Integer retained = pool.offer(INTS[i], 2);
+        Integer retained = pool.offer(INTS[i], CAPACITY);
         this.retained[i-1] = retained == null ? INTS[0] : retained;
     }
     private void consume(int i) {
-        Integer pooled = pool.get(2);
+        Integer pooled = pool.getAtLeast(CAPACITY);
         this.got[i-1] = pooled == null ? INTS[0] : pooled;
     }
 
@@ -81,7 +82,7 @@ public class RaceLevelPoolCTest {
         sb.setLength(sb.length()-1);
 
         boolean dup = false;
-        Integer i0 = pool.get(2), i1 = pool.get(2);
+        Integer i0 = pool.getExact(2), i1 = pool.getExact(2);
         for (int idx = 1; idx < 3; idx++) {
             Integer iObj = INTS[idx];
             int iVal = iObj;

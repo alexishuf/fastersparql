@@ -93,9 +93,9 @@ public class LocalityCompositeDict extends Dict {
 
     public final class Lookup extends AbstractLookup {
         public final @Nullable Thread owner;
-        private final SegmentRope tmp = new SegmentRope(seg, 0, 1);
+        private final SegmentRope tmp = SegmentRope.pooledWrap(seg, null, 0, 1);
         private final TwoSegmentRope out = new TwoSegmentRope();
-        private final TwoSegmentRope termTmp = new TwoSegmentRope();
+        private final TwoSegmentRope termTmp = TwoSegmentRope.pooled();
         private final LocalityStandaloneDict.Lookup shared = sharedDict.lookup();
         private final Splitter split = new Splitter(splitMode);
 

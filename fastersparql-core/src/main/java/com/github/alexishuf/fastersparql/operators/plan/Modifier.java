@@ -214,11 +214,11 @@ public final class Modifier extends Plan {
                 int cap = Modifier.this.distinctCapacity;
                 if (d instanceof StrongDedup<B> sd) {
                     if (cap >= FSProperties.distinctCapacity())
-                        pool.offerDistinct(sd);
+                        pool.recycleDistinct(sd);
                     else if (cap >= reducedCapacity())
-                        pool.offerReduced(sd);
+                        pool.recycleReduced(sd);
                 } else if (d instanceof WeakDedup<B> wd) {
-                    pool.offerWeak(wd);
+                    pool.recycleWeak(wd);
                 }
             }
         }

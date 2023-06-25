@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-import static java.lang.Thread.ofVirtual;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
@@ -77,15 +76,19 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         if (n == 0) {
             complete(null);
         } else {
-            String parent = getClass().getSimpleName()+"@"+id();
-            var name = new StringBuilder(parent.length()+9+4);
-            name.append(parent).append("-drainer-");
-            int prefixLength = name.length();
+//            String parent = getClass().getSimpleName()+"@"+id();
+//            var name = new StringBuilder(parent.length()+9+4);
+//            name.append(parent).append("-drainer-");
+//            int prefixLength = name.length();
+//            for (int i = 0; i < n; i++) {
+//                final int idx = i;
+//                name.append(idx);
+//                ofVirtual().name(name.toString()).start(() -> drainTask(idx));
+//                name.setLength(prefixLength);
+//            }
             for (int i = 0; i < n; i++) {
                 final int idx = i;
-                name.append(idx);
-                ofVirtual().name(name.toString()).start(() -> drainTask(idx));
-                name.setLength(prefixLength);
+                Thread.startVirtualThread(() -> drainTask(idx));
             }
         }
     }
@@ -154,9 +157,9 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
                     DedupPool<B> pool = batchType.dedupPool;
                     if (d instanceof WeakCrossSourceDedup<B> cd)
-                        pool.offerWeakCross(cd);
+                        pool.recycleWeakCross(cd);
                     else if (d instanceof WeakDedup<B> wd)
-                        pool.offerWeak(wd);
+                        pool.recycleWeak(wd);
                 }
                 processor.release();
             }

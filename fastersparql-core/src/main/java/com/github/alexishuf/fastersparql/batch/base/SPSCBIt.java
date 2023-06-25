@@ -312,6 +312,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     private @Nullable B onTerminal() {
         lock();
         try {
+            batchType.recycle(stealRecycled());
             if (filling != null) {
                 batchType.recycle(filling);
                 filling = null;

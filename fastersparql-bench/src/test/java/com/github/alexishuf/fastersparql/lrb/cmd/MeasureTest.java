@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
@@ -38,6 +39,7 @@ class MeasureTest {
 
     @BeforeAll
     static void beforeAll() {
+        CompressedBatch.DISABLE_VALIDATE = true;
         String prop = System.getProperty(DATA_DIR_PROP);
         dataDir = prop != null && !prop.isEmpty() ? new File(prop) : new File("");
         hasHDT = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
@@ -54,6 +56,7 @@ class MeasureTest {
     }
 
     @AfterAll static void afterAll() {
+        CompressedBatch.DISABLE_VALIDATE = false;
         System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY,
                            String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY));
         FSProperties.refresh();
@@ -148,7 +151,8 @@ class MeasureTest {
                 assertEquals(exRows, rows, "unstable row count"+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
-            log.debug("{}, rep {} allRows={}us", m.task().query(), m.rep(),
+            log.debug("{}, rep {} rows={}, allRows={}us", m.task().query(), m.rep(),
+                      m.rows(),
                       String.format("%.3f", m.allRowsNs()/1_000.0));
         }
     }
@@ -175,4 +179,11 @@ class MeasureTest {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK);
     }
+
+    @ParameterizedTest @MethodSource("test")
+    void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+        SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
+        doTest(sourceKind, jsonPlans, "B1", sel, COUNT);
+    }
+
 }

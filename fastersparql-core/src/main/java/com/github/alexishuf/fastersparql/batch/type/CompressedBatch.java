@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
@@ -14,24 +15,25 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.UNTIL_DQ;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
 import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Arrays.*;
+import static java.util.Arrays.copyOfRange;
+import static java.util.Arrays.fill;
 import static java.util.Objects.requireNonNull;
 import static jdk.incubator.vector.IntVector.fromArray;
 import static jdk.incubator.vector.VectorMask.fromLong;
 
 public class CompressedBatch extends Batch<CompressedBatch> {
+    static final int MIN_LOCALS = 32;
     private static final int SH_SUFF_MASK = 0x80000000;
     private static final int     LEN_MASK = 0x7fffffff;
     private static final int SL_OFF = 0;
@@ -41,6 +43,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private static final int I_SP_LEN = I_SP.length();
     private static final int PUT_SLACK = I_SP_LEN;
     private static final int I_SP_MASK = I_SP_LEN-1;
+
+    public static boolean DISABLE_VALIDATE = false;
 
     /** Storage for local parts of terms. */
     private byte[] locals;
@@ -120,7 +124,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     boolean validate() {
         try {
-            if (cols == 0) return true;
+            if (cols == 0 || DISABLE_VALIDATE) return true;
             if (rows < 0 || cols < 0)
                 throw new AssertionError("Negative dimensions: rows" + rows + ", cols=" + cols);
             int lastRowAlignedEnd = 0;
@@ -164,7 +168,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     private void growLocals(int required) {
         byte[] locals = this.locals;
-        this.locals = locals = copyOf(locals, Math.max(required, locals.length+(locals.length>>1)));
+        this.locals = locals = grow(locals, required);
         this.localsSeg = MemorySegment.ofArray(locals);
     }
 
@@ -184,7 +188,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      *  {@code additionalInts} more integers and is aligned to {@code I_SP_LEN}. */
     private static int[] slGrow(int[] slices, int additionalInts) {
         int ints = slices.length + max(slices.length >> 1, additionalInts); // grow at least 50%
-        return Arrays.copyOf(slices, slCeil(ints));
+        return grow(slices, slCeil(ints));
     }
 
     /** Align ints to {@code I_SP_LEN}. */
@@ -247,25 +251,50 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     CompressedBatch(int rowsCapacity, int cols, int bytesCapacity) {
         super(0, cols);
-        this.locals = new byte[Math.max(bytesCapacity, 16)];
+        this.locals = bytesAtLeast(Math.max(bytesCapacity, 16));
         this.localsSeg = MemorySegment.ofArray(this.locals);
         this.slRowInts = (cols+1)<<1;
-        this.slices = new int[slCeil(max(1, rowsCapacity)*slRowInts+PUT_SLACK)];
-        this.shared = new SegmentRope[max(1, rowsCapacity)*slRowInts+PUT_SLACK];
+        this.slices = intsAtLeast(slCeil(max(1, rowsCapacity)*slRowInts+PUT_SLACK));
+        this.shared = segmentRopesAtLeast(max(1, rowsCapacity)*slRowInts+PUT_SLACK);
     }
 
     private CompressedBatch(CompressedBatch o) {
         super(o.rows, o.cols);
-        this.locals = copyOf(o.locals, o.locals.length);
+        this.locals = ArrayPool.copy(o.locals);
         this.localsSeg = MemorySegment.ofArray(this.locals);
-        this.slices = copyOf(o.slices, o.slices.length);
-        this.shared = copyOf(o.shared, o.shared.length);
+        this.slices = ArrayPool.copy(o.slices);
+        this.shared = ArrayPool.copy(o.shared);
         this.offerNextLocals = o.offerNextLocals;
         this.offerLastCol = o.offerLastCol;
         this.slRowInts = o.slRowInts;
     }
 
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
+
+    public void recycle() {
+        clear();
+        slices = INT.offer(slices, slices.length);
+        locals = BYTE.offer(locals, locals.length);
+        if (locals == null)
+            localsSeg = null;
+        shared = SEG_ROPE.offer(shared, shared.length);
+    }
+
+    public void hydrate(int rows, int cols, int bytes) {
+        byte[] locals = bytesAtLeast(Math.max(bytes, MIN_LOCALS), this.locals);
+        if (locals != this.locals) {
+            this.locals = locals;
+            this.localsSeg = MemorySegment.ofArray(this.locals);
+        }
+        this.rows       = 0;
+        this.cols       = cols;
+        this.slRowInts = (cols+1)<<1;
+        this.offerNextLocals = -1;
+        this.offerLastCol    = -1;
+        int required = max(1, rows) * slRowInts;
+        this.shared  = segmentRopesAtLeast(required,                   this.shared);
+        this.slices  =         intsAtLeast(slCeil(required+PUT_SLACK), this.slices);
+    }
 
     /* --- --- --- batch-level accessors --- --- --- */
 
@@ -294,7 +323,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int h = FNV_BASIS;
         if (cols == 0)
             return h;
-        SegmentRope fst, snd, local = new SegmentRope(localsSeg, locals, 0, 0);
+        SegmentRope fst, snd;
+        SegmentRope local = SegmentRope.pooledWrap(localsSeg, locals, 0, 0);
         for (int i = row*cols, e = i+cols, slb = row*slRowInts; i < e; ++i, slb += 2) {
             SegmentRope s = shared[i];
             if (s == null) s = EMPTY;
@@ -309,6 +339,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             }
             h = snd.hashCode(fst.hashCode(h));
         }
+        local.recycle();
         return h;
     }
 
@@ -400,8 +431,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             if (len == 0) return false;
             sh = EMPTY;
         }
-        var local = new SegmentRope(localsSeg, locals, slices[i2+SL_OFF], len);
-        dest.set(sh, local, suffix);
+        dest.set(sh, localsSeg, locals, slices[i2+SL_OFF], len, suffix);
         return true;
     }
 
@@ -529,8 +559,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                     return SharedRopes.DT_XMLLiteral;
             }
         }
-        SegmentRope local = new SegmentRope(localsSeg, locals, off, len);
-        return new Term(sh, local, false).asDatatypeSuff();
+        Term tmp = Term.pooledMutable();
+        tmp.set(sh, localsSeg, locals, off, len, false);
+        SegmentRope suff = tmp.asDatatypeSuff();
+        tmp.recycle();
+        return suff;
     }
 
     @Override public @Nullable Term datatypeTerm(int row, int col) {
@@ -551,7 +584,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         else if (locals[i+1] == '@')
             return Term.RDF_LANGSTRING;
         else if (end-i > 5 /*"^^<x>*/)
-            return Term.splitAndWrap(new SegmentRope(localsSeg, locals, i+3, end-(i+3)));
+            return Term.splitAndWrap(SegmentRope.pooledWrap(localsSeg, locals, i+3, end-(i+3)));
         else
             throw new InvalidTermException(this, i, "Unexpected literal suffix");
     }
@@ -612,9 +645,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         long fstOff, sndOff = slices[slBase+SL_OFF];
         SegmentRope sh = shared[row*cols + col];
         if (Term.isNumericDatatype(sh)) {
-            Term tmp = new Term();
-            if (getView(row, col, tmp))
-                return tmp.hashCode();
+            Term tmp = Term.pooledMutable();
+            if (getView(row, col, tmp)) {
+                int h = tmp.hashCode();
+                tmp.recycle();
+                return h;
+            }
             return 0;
         } else if (sh == null) {
             return SegmentRope.hashCode(FNV_BASIS, localsSeg, sndOff, sndLen&LEN_MASK);
@@ -716,10 +752,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     @Override public void reserve(int additionalRows, int additionalBytes) {
         int required = (rows + additionalRows) * cols;
         if (required > shared.length)
-            shared = copyOf(shared, Math.max(shared.length+(shared.length>>1), required));
+            shared = grow(shared, required);
         required = (rows+additionalRows) * slRowInts + PUT_SLACK;
         if (required > slices.length)
-            slices = slGrow(slices, Math.max(slices.length+ (slices.length>>1), required));
+            slices = slGrow(slices, required);
         required = bytesUsed()+additionalBytes;
         if (required > locals.length)
             growLocals(required);
@@ -739,7 +775,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         slRowInts       = (newColumns+1) << 1;
         int required = slCeil(newColumns<<2);
         if (slices.length < required) {
-            slices = new int[required];
+            slices = intsAtLeast(required);
         } else { // set off, len to make bytesUsed() return 0
             slices[slRowInts-2+SL_OFF] = 0;
             slices[slRowInts-2+SL_LEN] = 0;
@@ -791,6 +827,15 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
+    public boolean offerTerm(int col, SegmentRope shared, SegmentRope local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(true, col, shared,
+                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+        if (dest < 0) return rollbackOffer();
+        local.copy(localOff, localOff+localLen, locals, dest);
+        return true;
+    }
+
+    @Override
     public boolean offerTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff, int localLen, boolean sharedSuffix) {
         int dest = allocTerm(true, col, shared,
                              localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
@@ -831,13 +876,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         offerNextLocals = bytesUsed();
 
         int required = (rows+1) * slRowInts;
-        if (required > slices.length)  // grow capacity by 50% + 2 so that md fits at least 2 rows
+        if (required > slices.length)
             slices = slGrow(slices, slRowInts+PUT_SLACK);
         fill(slices, required-slRowInts, required, 0);
 
         required = (rows+1)*cols;
         if (required > shared.length)
-            shared = copyOf(shared, Math.max(shared.length + (shared.length >> 1), required));
+            shared = grow(shared, required);
         fill(shared, required-cols, required, null);
     }
 
@@ -872,6 +917,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
+    public void putTerm(int col, SegmentRope shared, SegmentRope local, int localOff,
+                        int localLen, boolean sharedSuffix) {
+        int dest = allocTerm(false, col, shared,
+                             localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
+        local.copy(localOff, localOff+localLen, locals, dest);
+    }
+
+    @Override
     public void putTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff, int localLen, boolean sharedSuffix) {
         int dest = allocTerm(false, col, shared,
                              localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
@@ -901,7 +954,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (required > slices.length)
             slices = slGrow(slices, required);
         if ((required >>= 1) > shared.length)
-            shared = copyOf(shared, Math.max(shared.length + (shared.length>>1), required));
+            shared = grow(shared, required);
         if ((required=lDst+lLen) > locals.length)
             growLocals(required);
 
@@ -985,7 +1038,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols, rows = other.rows;
         if (other.cols != cols) throw new IllegalArgumentException();
         reserve(rows, other.bytesUsed());
-        TwoSegmentRope t = new TwoSegmentRope();
+        TwoSegmentRope t = TwoSegmentRope.pooled();
         for (int r = 0; r < rows; r++) {
             beginPut();
             for (int c = 0; c < cols; c++) {
@@ -1005,71 +1058,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             }
             commitPut();
         }
+        t.recycle();
         return this;
     }
 
     /* --- --- --- operation objects --- --- --- */
-
-    private static final VarHandle REC_TMD, REC_SH;
-    @SuppressWarnings("unused") // access through REC_TMD
-    private static int[] recTMd;
-    @SuppressWarnings("unused") // access through REC_TMD
-    private static SegmentRope[] recSh;
-    static {
-        try {
-            REC_TMD = lookup().findStaticVarHandle(CompressedBatch.class,"recTMd",
-                                                   int[].class);
-            REC_SH = lookup().findStaticVarHandle(CompressedBatch.class,"recSh",
-                                                  SegmentRope[].class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-    /**
-     * Get a possibly recycled {@code int[]} with {@code length >= required}.
-     * @param required required size for the {@code int[]}
-     * @return a {@code int[]} that may not be zero-filled.
-     */
-    private static int[] getTSl(int required) {
-        required = slCeil(required);
-        int[] a = (int[]) REC_TMD.getAcquire();
-        if (a != null) {
-            if (a.length < required || !REC_TMD.compareAndSet(a, null))
-                a = null;
-        }
-        return a != null ? a : new int[required];
-    }
-
-    /** Analogous to {@link #getTSl(int)}. */
-    private static SegmentRope[] getTSh(int required) {
-        SegmentRope[] a = (SegmentRope[]) REC_SH.getAcquire();
-        if (a != null) {
-            if (a.length < required || !REC_SH.compareAndSet(a, null))
-                a = null;
-        }
-        return a != null ? a : new SegmentRope[required];
-    }
-
-    /**
-     * If the recycled and not yet taken {@code int[]} is null or smaller than {@code tmd},
-     * atomically replaces it with {@code tmd}. The caller of this method ALWAYS looses
-     * ownership of {@code tmd}, even if it was not stored.
-     *
-     * @param tmd a {@code int[] to recycle}
-     */
-    private static void recycleTSl(int[] tmd) {
-        int[] a = (int[]) REC_TMD.getAcquire();
-        if (a == null || tmd.length > a.length)
-            REC_TMD.setRelease(tmd);
-    }
-
-    /** Analogous to {@link #recycleTSl(int[])}. */
-    private static void recycleTSh(SegmentRope[] sh) {
-        SegmentRope[] a = (SegmentRope[]) REC_SH.getAcquire();
-        if (a == null || sh.length > a.length)
-            REC_SH.compareAndExchangeRelease(a, sh);
-    }
 
     static final class Merger extends BatchMerger<CompressedBatch> {
         private int @Nullable [] tsl;
@@ -1077,6 +1070,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
         public Merger(BatchType<CompressedBatch> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
+        }
+
+        @Override public void release() {
+            if (tsl != null) tsl =      INT.offer(tsl, tsl.length);
+            if (tsh != null) tsh = SEG_ROPE.offer(tsh, tsh.length);
         }
 
         @Override protected int[] makeColumns(int[] sources) {
@@ -1089,19 +1087,19 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         @Override public CompressedBatch projectInPlace(CompressedBatch b) {
             int[] columns = requireNonNull(this.columns);
             int rows = b.rows, bCols = b.cols, bSlWidth = b.slRowInts;
-            int tSlRequired = rows*((columns.length+1)<<1)+PUT_SLACK;
+            int tSlRequired = slCeil(rows*((columns.length+1)<<1)+PUT_SLACK);
             int tShRequired = rows*columns.length;
 
             //project/compact md
             int[] bsl = b.slices, tsl = this.tsl, otmd = null;
             if (tsl == null || tsl.length < tSlRequired) {
                 otmd = tsl;
-                tsl = getTSl(tSlRequired);
+                tsl = intsAtLeast(tSlRequired);
             }
             SegmentRope[] bsh = b.shared, tsh = this.tsh, otsh = null;
             if (tsh == null || tsh.length < tShRequired) {
                 otsh = tsh;
-                tsh = getTSh(tShRequired);
+                tsh = segmentRopesAtLeast(tShRequired);
             }
             for (int r = 0, slOut = 0, shOut = 0, slBase = 0; r < rows; r++, slBase += bSlWidth) {
                 int rowEnd = 0, shBase = r*bCols;
@@ -1133,8 +1131,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             b.shared = tsh;
             this.tsl = bsl;
             this.tsh = bsh;
-            if (otmd != null) recycleTSl(otmd);
-            if (otsh != null) recycleTSh(otsh);
+            if (otmd != null) INT.offer(otmd, otmd.length);
+            if (otsh != null) SEG_ROPE.offer(otsh, otsh.length);
             b.cols = columns.length;
             // md now is packed (before b.mdRowInts could be >cols)
             b.slRowInts = (columns.length+1)<<1;
@@ -1163,6 +1161,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 bogusProjection = false;
             }
             assert projector == null || projector.outVars.equals(outVars);
+        }
+
+        @Override public void release() {
+            if (tsl != null) tsl =      INT.offer(tsl, tsl.length);
+            if (tsh != null) tsh = SEG_ROPE.offer(tsh, tsh.length);
         }
 
         private CompressedBatch filterInPlaceEmpty(CompressedBatch in, int cols) {
@@ -1209,17 +1212,17 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
             // get working arrays
             int tslRowInts = (cols+1)<<1, islRowInts = in.slRowInts;
-            int tslRequired = rows * tslRowInts+PUT_SLACK, slOut = 0, shOut = 0;
+            int tslRequired = slCeil(rows * tslRowInts+PUT_SLACK), slOut = 0, shOut = 0;
             int tshRequired = rows*cols;
             int[] otmd = null, tsl = this.tsl, isl = in.slices;
             if (tsl == null || tsl.length < tslRequired) {
                 otmd = tsl;
-                tsl = getTSl(tslRequired);
+                tsl = intsAtLeast(tslRequired);
             }
             SegmentRope[] otsh = null, tsh = this.tsh, ish = in.shared;
             if (tsh == null || tsh.length < tshRequired) {
                 otsh = tsh;
-                tsh = getTSh(tshRequired);
+                tsh = segmentRopesAtLeast(tshRequired);
             }
 
             if (columns == null) { // faster code if we don't need to concurrently project
@@ -1269,8 +1272,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
             if (rows == -1 && slOut == 0) { //TERMINATED
                 batchType.recycle(in);
-                recycleTSl(tsl);
-                recycleTSh(tsh);
+                INT.offer(tsl, tsl.length);
+                SEG_ROPE.offer(tsh, tsh.length);
                 return null;
             }
             //update metadata. start with division so it runs while we do other stuff
@@ -1280,9 +1283,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             this.tsl = isl;   // use original isl on next call
             this.tsh = ish;
             if (otmd != null) // offer our old tsl to other instances
-                recycleTSl(otmd);
+                INT.offer(otmd, otmd.length);
             if (otsh != null)
-                recycleTSh(otsh);
+                SEG_ROPE.offer(otsh, otsh.length);
             in.slRowInts = tslRowInts;
             if (columns != null)
                 in.cols = columns.length;

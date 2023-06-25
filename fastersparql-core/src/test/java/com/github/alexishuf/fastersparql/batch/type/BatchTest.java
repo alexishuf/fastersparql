@@ -294,9 +294,9 @@ class BatchTest {
 
     @SuppressWarnings("SimplifiableAssertion")
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
-        Term tmpTerm = new Term();
-        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
-        SegmentRope tmpSR = new SegmentRope();
+        Term tmpTerm = Term.pooledMutable();
+        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = TwoSegmentRope.pooled();
+        SegmentRope tmpSR = SegmentRope.pooledWrap(EMPTY.segment, EMPTY.utf8, 0, 0);
         var assigner = new PrefixAssigner(new RopeArrayMap());
         assertEquals(expected.rows, batch.rows, outerCtx);
         assertEquals(expected.cols, batch.cols, outerCtx);
@@ -314,13 +314,15 @@ class BatchTest {
         assertTrue(expected.equals(batch), outerCtx);
         assertTrue(batch.equals(expected), outerCtx);
         assertEquals(expected.hashCode(), batch.hashCode());
+        tmpTerm.recycle();
+        tmpSR.recycle();
     }
 
     static <B extends Batch<B>> void assertBatchesEquals(Size size,
                                                          B batch, String outerCtx) {
-        Term tmpTerm = new Term();
+        Term tmpTerm = Term.pooledMutable();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
-        SegmentRope tmpSR = new SegmentRope();
+        SegmentRope tmpSR = SegmentRope.pooledWrap(EMPTY.segment, EMPTY.utf8, 0, 0);
         PrefixAssigner assigner = new PrefixAssigner(new RopeArrayMap());
         for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -332,6 +334,8 @@ class BatchTest {
             }
             assertTrue(batch.equals(r, size.terms[r]), "r="+r+", "+outerCtx);
         }
+        tmpTerm.recycle();
+        tmpSR.recycle();
     }
 
     @Test void testPut() {

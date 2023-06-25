@@ -13,7 +13,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
-import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
 
 import java.io.*;
 import java.util.List;
@@ -30,8 +30,8 @@ public class AskSelector extends Selector {
     public static final String STATE_FILE = "file";
     public static final List<String> STATE_FILE_P = List.of(STATE, STATE_FILE);
     private static final byte[] TYPE_LINE_U8 = (NAME+'\n').getBytes(UTF_8);
-    private static final LIFOPool<TermBatch> TRIPLE_POOL
-            = LIFOPool.perProcessor(TermBatch.class, 1);
+    private static final AffinityPool<TermBatch> TRIPLE_POOL
+            = new AffinityPool<>(TermBatch.class, 12);
 
     private final SparqlClient client;
     private final StrongDedup<TermBatch> positive, negative;

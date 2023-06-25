@@ -10,24 +10,31 @@ import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public class StoreBatchType extends BatchType<StoreBatch> {
     public static final StoreBatchType INSTANCE = new StoreBatchType(
-            new LevelPool<>(StoreBatch.class, 32, 8*PREFERRED_MIN_BATCH));
+            new LevelPool<>(StoreBatch.class));
+    private final LevelPool<StoreBatch> pool;
 
     public StoreBatchType(LevelPool<StoreBatch> pool) {
-        super(StoreBatch.class, pool);
+        super(StoreBatch.class);
+        this.pool = pool;
     }
 
     @Override public StoreBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        StoreBatch b = pool.get(rowsCapacity);
+        StoreBatch b = pool.getAtLeast(rowsCapacity*cols);
         if (b == null)
             return new StoreBatch(rowsCapacity, cols);
         b.clear(cols);
         return b;
+    }
+
+    @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
+        if (batch != null  && pool.offer(batch, batch.arr.length) != null)
+            batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
+        return null;
     }
 
     public <O extends Batch<O>> BIt<StoreBatch> convert(BIt<O> other, int dictId) {
@@ -73,11 +80,5 @@ public class StoreBatchType extends BatchType<StoreBatch> {
                                                BatchFilter<StoreBatch> before) {
         return new Filter<>(this, vars, null, filter, before);
     }
-
-    @Override public String toString() { return "StoreBatch"; }
-
-    @Override public boolean equals(Object obj) { return obj instanceof StoreBatchType; }
-
-    @Override public int hashCode() { return getClass().hashCode(); }
 
 }

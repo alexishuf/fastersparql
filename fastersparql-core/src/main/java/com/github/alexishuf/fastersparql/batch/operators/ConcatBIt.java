@@ -85,9 +85,5 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         return null;
     }
 
-    @Override public @Nullable B stealRecycled() {
-        B b = processor == null ? null : processor.stealRecycled();
-        return b == null ? super.stealRecycled() : b;
-    }
     @Override public String toString() { return toStringWithOperands(sources); }
 }

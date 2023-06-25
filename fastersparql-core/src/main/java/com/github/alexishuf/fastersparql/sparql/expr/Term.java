@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -29,6 +30,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("SpellCheckingInspection")
 public final class Term extends Rope implements Expr {
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
     private static final byte IS_READONLY = 0x0000010;
     private static final byte   IS_SUFFIX = 0x0000001;
     private static final byte   TYPE_MASK = 0x0000006;
@@ -403,29 +405,60 @@ public final class Term extends Rope implements Expr {
      * <p>Since it is impossible to construct an invalid {@link Term}, This will produce a
      * {@link Term} instance equals to {@link #EMPTY_STRING} (but with {@code set()} enabled).</p>
      */
-    public Term() {
+    private Term() {
         super(2);
-        first  = EMPTY_STRING.first;
+        SegmentRope f = EMPTY_STRING.first;
+        first  = SegmentRope.pooledWrap(f.segment, f.utf8, f.offset, f.len);
         second = EMPTY;
         flags  = IS_SUFFIX;
     }
 
-    public void set(@NonNull SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
+    public static Term pooledMutable() {
+        Term t = AffinityShallowPool.get(POOL_COL);
+        return t == null ? new Term() : t;
+    }
+
+    public void recycle() {
         if ((flags & IS_READONLY) != 0)
             throw new UnsupportedOperationException("This term instance is read-only.");
-        this.len = shared.len + local.len;
+        var myLocal = local();
+        myLocal.wrap(EMPTY_STRING.first);
+        set0(EMPTY, myLocal, true);
+        AffinityShallowPool.offer(POOL_COL, this);
+    }
+
+    public void set(@NonNull SegmentRope shared, @NonNull MemorySegment localSeg,
+                    byte @Nullable[] localU8, long localOff, int localLen, boolean suffixShared) {
+        if ((flags & IS_READONLY) != 0)
+            throw new UnsupportedOperationException("This term instance is read-only.");
+        var myLocal = local();
+        myLocal.wrapSegment(localSeg, localU8, localOff, localLen);
+        set0(shared, myLocal, suffixShared);
+    }
+
+    private void set0(SegmentRope shared, SegmentRope myLocal, boolean suffixShared) {
+        this.len = shared.len + myLocal.len;
         if (suffixShared) {
-            this.first = local;
+            this.first = myLocal;
             this.second = shared;
         } else {
             this.first = shared;
-            this.second = local;
+            this.second = myLocal;
         }
         this.hash = 0;
         this.number = null;
         this.flags = suffixShared ? IS_SUFFIX : 0;
         this.cachedEndLex = 0;
         assert validate();
+    }
+
+    public void set(@NonNull SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
+        if ((flags & IS_READONLY) != 0)
+            throw new UnsupportedOperationException("This term instance is read-only.");
+        this.len = shared.len + local.len;
+        var myLocal = local();
+        myLocal.wrap(local);
+        set0(shared, myLocal, suffixShared);
     }
 
     @SuppressWarnings("ConstantValue") private boolean validate() {

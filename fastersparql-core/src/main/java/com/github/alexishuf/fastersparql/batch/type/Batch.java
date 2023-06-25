@@ -494,8 +494,8 @@ public abstract class Batch<B extends Batch<B>> {
     public boolean offerTerm(int col, TermParser termParser) {
         var local = termParser.localBuf();
         int begin = termParser.localBegin;
-        return offerTerm(col, termParser.shared(), local.segment, local.offset+begin,
-                         termParser.localEnd - begin, termParser.sharedSuffixed());
+        return offerTerm(col, termParser.shared(), local, begin,
+                         termParser.localEnd-begin, termParser.sharedSuffixed());
     }
 
     /**
@@ -517,6 +517,12 @@ public abstract class Batch<B extends Batch<B>> {
 
     /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
     public boolean offerTerm(int col, SegmentRope shared, byte[] local, int localOff,
+                             int localLen, boolean sharedSuffix) {
+        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
+    }
+
+    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
+    public boolean offerTerm(int col, SegmentRope shared, SegmentRope local, int localOff,
                              int localLen, boolean sharedSuffix) {
         return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
@@ -596,8 +602,8 @@ public abstract class Batch<B extends Batch<B>> {
     public void putTerm(int col, TermParser termParser) {
         var local = termParser.localBuf();
         int begin = termParser.localBegin;
-        putTerm(col, termParser.shared(), local.segment, local.offset+begin,
-                  termParser.localEnd - begin, termParser.sharedSuffixed());
+        putTerm(col, termParser.shared(), local, begin,
+                  termParser.localEnd-begin, termParser.sharedSuffixed());
     }
 
     /**
@@ -613,6 +619,12 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public void putTerm(int col, SegmentRope shared, MemorySegment local,
                         long localOff, int localLen, boolean sharedSuffix) {
+        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
+    }
+
+    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)} */
+    public void putTerm(int col, SegmentRope shared, SegmentRope local, int localOff,
+                        int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
@@ -651,7 +663,7 @@ public abstract class Batch<B extends Batch<B>> {
         return Term.wrap(fst, snd);
     }
 
-    private Term makeTerm(SegmentRope shared, TwoSegmentRope local, int localOff,
+    private Term makeTerm(SegmentRope shared, PlainRope local, int localOff,
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import jdk.incubator.vector.VectorSpecies;
@@ -23,6 +24,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
 public class SegmentRope extends PlainRope {
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     public static final boolean HAS_UNSAFE;
@@ -60,6 +62,14 @@ public class SegmentRope extends PlainRope {
         this(MemorySegment.ofBuffer(buffer), null, 0, buffer.remaining());
     }
 
+    public static SegmentRope pooledWrap(MemorySegment segment, byte @Nullable[] utf8,
+                                         long offset, int len) {
+        SegmentRope r = AffinityShallowPool.get(POOL_COL);
+        if (r == null) r = new SegmentRope(segment, utf8, offset, len);
+        else           r.wrapSegment(segment, utf8, offset, len);
+        return r;
+    }
+
     public SegmentRope(MemorySegment segment, byte @Nullable[] utf8, long offset, int len) {
         super(len);
         if (offset < 0 || len < 0)
@@ -95,6 +105,11 @@ public class SegmentRope extends PlainRope {
             return new SegmentRope(tsr.toArray(0, tsr.len), 0, tsr.len);
         byte[] u8 = cs.toString().getBytes(UTF_8);
         return new SegmentRope(u8, 0, u8.length);
+    }
+
+    public void recycle() {
+        wrapEmptyBuffer();
+        AffinityShallowPool.offer(POOL_COL, this);
     }
 
     protected int rangeLen(int begin, int end) {
@@ -192,7 +207,7 @@ public class SegmentRope extends PlainRope {
 
     @Override public SegmentRope sub(int begin, int end) {
         int rLen = rangeLen(begin, end);
-        return rLen == len ? this : new SegmentRope(segment, utf8, offset + begin, rLen);
+        return rLen == len ? this : SegmentRope.pooledWrap(segment, utf8, offset + begin, rLen);
     }
 
     static long skipUntil(MemorySegment segment, long i, long e, char c0) {

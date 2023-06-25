@@ -12,11 +12,13 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.KEEP;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.TERMINATE;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
 import static java.lang.System.arraycopy;
-import static java.util.Arrays.copyOf;
 import static java.util.Objects.requireNonNull;
 
 public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
+    private static final long[] EMPTY_ARR = new long[0];
+    private static final  int[] EMPTY_HASHES = new int[0];
     private static final VarHandle CACHED_LOCK;
     static {
         try {
@@ -25,7 +27,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             throw new ExceptionInInitializerError(e);
         }
     }
-
 
     public long[] arr;
     protected int[] hashes;
@@ -38,14 +39,24 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public IdBatch(int rowsCapacity, int cols) {
         super(0, cols);
-        this.arr = new long[Math.min(1, rowsCapacity)*cols];
-        this.hashes = new int[arr.length];
+        this.arr = longsAtLeast(rowsCapacity*cols);
+        this.hashes = intsAtLeast(arr.length);
     }
 
     public IdBatch(long[] arr, int rows, int cols, int[] hashes) {
         super(rows, cols);
         this.arr = arr;
         this.hashes = hashes;
+    }
+
+    public void recycleInternals() {
+        LONG.offer(arr, arr.length);
+        INT.offer(hashes, hashes.length);
+        arr = EMPTY_ARR;
+        hashes = EMPTY_HASHES;
+        rows = 0;
+        cols = 0;
+        offerRowBase = -1;
     }
 
     /* --- --- --- batch accessors --- --- --- */
@@ -89,9 +100,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     @Override public void reserve(int additionalRows, int additionalBytes) {
         int required = (rows+additionalRows) * cols;
         if (arr.length < required)
-            arr = copyOf(arr, Math.max(required, arr.length+(arr.length>>2)));
+            arr = grow(arr, required);
         if (hashes.length < required)
-            hashes = copyOf(hashes, arr.length);
+            hashes = grow(hashes, required);
     }
 
 
@@ -216,9 +227,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             long[] tmpIds = this.tmpIds;
             int[] tmpHashes = this.tmpHashes;
             if (tmpIds == null || tmpIds.length < w)
-                this.tmpIds = tmpIds = new long[w];
+                this.tmpIds = tmpIds = longsAtLeast(w);
             if (tmpHashes == null || tmpHashes.length < w)
-                this.tmpHashes = tmpHashes = new int[w];
+                this.tmpHashes = tmpHashes = intsAtLeast(w);
             b.cols = columns.length;
             long[] arr = b.arr;
             int[] hashes = b.hashes;
@@ -302,9 +313,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 long[] tmpIds = this.tmpIds;
                 int[] tmpHashes = this.tmpHashes;
                 if (tmpIds == null || tmpIds.length < w)
-                    this.tmpIds = tmpIds = new long[w];
+                    this.tmpIds = tmpIds = longsAtLeast(w);
                 if (tmpHashes == null || tmpHashes.length < w)
-                    this.tmpHashes = tmpHashes = new int[w];
+                    this.tmpHashes = tmpHashes = intsAtLeast(w);
                 // when projecting and filtering, there is no gain in copying regions
                 for (int inRowStart = 0; r < rows; ++r, inRowStart += w) {
                     switch (rowFilter.drop(b, r)) {
@@ -312,12 +323,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                             arraycopy(arr, inRowStart, tmpIds, 0, w);
                             arraycopy(hashes, inRowStart, tmpHashes, 0, w);
                             int required = out+columns.length;
-                            if (required > arr.length) {
-                                int newLen = Math.max(columns.length*rows, arr.length+(arr.length>>1));
-                                b.arr = arr = copyOf(arr, newLen);
-                            }
+                            if (required > arr.length)
+                                b.arr = arr = grow(arr, columns.length*rows);
                             if (required > hashes.length)
-                                b.hashes = hashes = copyOf(b.hashes, arr.length);
+                                b.hashes = hashes = grow(b.hashes, required);
                             for (int src : columns) {
                                 if (src >= 0) {
                                     arr[out] = tmpIds[src];

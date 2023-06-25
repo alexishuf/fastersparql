@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 
 import java.lang.foreign.MemorySegment;
 
@@ -8,10 +9,19 @@ import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
     public MemorySegment fst, snd;
     public byte[] fstU8, sndU8;
     public long fstOff, sndOff;
     public int fstLen, sndLen;
+
+    public static TwoSegmentRope pooled() {
+        TwoSegmentRope r = AffinityShallowPool.get(POOL_COL);
+        return r == null ? new TwoSegmentRope() : r;
+    }
+    public void recycle() {
+        AffinityShallowPool.offer(POOL_COL, this);
+    }
 
     public TwoSegmentRope() {
         super(0);

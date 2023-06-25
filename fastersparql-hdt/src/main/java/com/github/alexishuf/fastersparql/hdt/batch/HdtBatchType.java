@@ -15,18 +15,27 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projector
 
 public class HdtBatchType extends BatchType<HdtBatch> {
     public static final HdtBatchType INSTANCE = new HdtBatchType(
-            new LevelPool<>(HdtBatch.class, 32, 8* BIt.PREFERRED_MIN_BATCH));
+            new LevelPool<>(HdtBatch.class));
+
+    private final LevelPool<HdtBatch> pool;
 
     public HdtBatchType(LevelPool<HdtBatch> pool) {
-        super(HdtBatch.class, pool);
+        super(HdtBatch.class);
+        this.pool = pool;
     }
 
     @Override public HdtBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        HdtBatch b = pool.get(rowsCapacity);
+        HdtBatch b = pool.getAtLeast(rowsCapacity*cols);
         if (b == null)
             return new HdtBatch(rowsCapacity, cols);
         b.clear(cols);
         return b;
+    }
+
+    @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
+        if (batch != null && pool.offer(batch, batch.arr.length) != null)
+            batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
+        return null;
     }
 
     public <O extends Batch<O>> BIt<HdtBatch> convert(BIt<O> other, int dictId) {
@@ -73,9 +82,4 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         return new Filter<>(this, vars, null, filter, before);
     }
 
-    @Override public String toString() { return "HdtBatch"; }
-
-    @Override public boolean equals(Object obj) { return obj instanceof HdtBatchType; }
-
-    @Override public int hashCode() { return getClass().hashCode(); }
 }

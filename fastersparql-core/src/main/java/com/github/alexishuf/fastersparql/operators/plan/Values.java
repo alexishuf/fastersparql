@@ -49,7 +49,7 @@ public final class Values extends Plan {
             var filter = TERM.filter(publicVars, dedup);
             this.dedupValues = dedupValues = filter.filter(null, values);
             filter.release();
-            TERM.dedupPool.offerWeak(dedup);
+            TERM.dedupPool.recycleWeak(dedup);
         }
         return dedupValues;
     }

@@ -157,6 +157,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override protected void cleanup(@Nullable Throwable cause) {
             super.cleanup(cause);
             bbRopeView.recycle();
+            parser.close();
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */

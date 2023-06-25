@@ -121,7 +121,8 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        batch = batchType.recycle(batch);
+        batchType.recycle(batch);
+        batch = null;
     }
 
     /**

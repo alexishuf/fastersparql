@@ -21,6 +21,15 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      */
     void clear(int rowsCapacity, int cols);
 
+    /**
+     * Releases internal resources which are pooled. This MAY change {@link #capacity()} and
+     * {@link #cols()} MAY clear totally or partially the contents of this bucket.
+     *
+     * <p>A subsequent {@link #clear(int, int)} call will restore the bucket to a determined
+     * capacity and will reset all rows.</p>
+     */
+    default void recycleInternals() {}
+
     /** How many rows fit in this bucket. */
     int capacity();
 

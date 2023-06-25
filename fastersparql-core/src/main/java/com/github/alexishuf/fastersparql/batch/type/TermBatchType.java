@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -15,20 +14,22 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projector
 
 public final class TermBatchType extends BatchType<TermBatch> {
     public static final TermBatchType INSTANCE = new TermBatchType(
-            new LevelPool<>(TermBatch.class, 32, 8*BIt.PREFERRED_MIN_BATCH));
+            new LevelPool<>(TermBatch.class));
+
+    private final LevelPool<TermBatch> pool;
 
     public static TermBatchType get() { return INSTANCE; }
 
     public TermBatchType(LevelPool<TermBatch> pool) {
-        super(TermBatch.class, pool);
+        super(TermBatch.class);
+        this.pool = pool;
     }
 
     @Override public TermBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        TermBatch b = pool.get(rowsCapacity);
+        TermBatch b = pool.getAtLeast(rowsCapacity);
         if (b == null)
             return new TermBatch(rowsCapacity, cols);
         b.clear(cols);
-//        b.reserve(rowsCapacity, bytesCapacity);
         return b;
     }
 
@@ -65,9 +66,4 @@ public final class TermBatchType extends BatchType<TermBatch> {
         return new Filter(this, vars, null, filter, before);
     }
 
-    @Override public String toString() { return "TermBatch"; }
-
-    @Override public boolean equals(Object obj) { return obj instanceof TermBatchType; }
-
-    @Override public int hashCode() { return getClass().hashCode(); }
 }
