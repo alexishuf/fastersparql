@@ -191,12 +191,12 @@ public class TwoSegmentRope extends PlainRope {
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
         if (begin < fstLen) {
-            i = (int)(SegmentRope.skipUntil(fst, begin+fstOff, e+fstOff, c0)-fstOff);
+            i = (int)(SegmentRope.skipUntil(fst, fstU8, begin+fstOff, e+fstOff, c0)-fstOff);
             if (i < e) return i;
         }
         if ((e = end-fstLen) > 0) {
             i = Math.max(0, begin-fstLen);
-            return fstLen + (int)(SegmentRope.skipUntil(snd, sndOff+i, sndOff+e, c0)-sndOff);
+            return fstLen + (int)(SegmentRope.skipUntil(snd, sndU8, sndOff+i, sndOff+e, c0)-sndOff);
         }
         return end;
     }
@@ -205,12 +205,12 @@ public class TwoSegmentRope extends PlainRope {
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
         if (begin < fstLen) {
-            i = (int)(SegmentRope.skipUntil(fst, begin+fstOff, e+fstOff, c0, c1)-fstOff);
+            i = (int)(SegmentRope.skipUntil(fst, fstU8, begin+fstOff, e+fstOff, c0, c1)-fstOff);
             if (i < e) return i;
         }
         if ((e = end-fstLen) > 0) {
             i = Math.max(0, begin-fstLen);
-            return fstLen + (int)(SegmentRope.skipUntil(snd, sndOff+i, sndOff+e, c0, c1)-sndOff);
+            return fstLen + (int)(SegmentRope.skipUntil(snd, sndU8, sndOff+i, sndOff+e, c0, c1)-sndOff);
         }
         return end;
     }

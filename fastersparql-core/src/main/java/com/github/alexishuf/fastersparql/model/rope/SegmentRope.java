@@ -210,7 +210,7 @@ public class SegmentRope extends PlainRope {
         return rLen == len ? this : SegmentRope.pooledWrap(segment, utf8, offset + begin, rLen);
     }
 
-    static long skipUntil(MemorySegment segment, long i, long e, char c0) {
+    static long safeSkipUntil(MemorySegment segment, long i, long e, char c0) {
         int rLen = (int)(e-i);
         if (rLen >= B_LEN) {
             Vector<Byte> c0Vec = B_SP.broadcast(c0);
@@ -221,15 +221,32 @@ public class SegmentRope extends PlainRope {
         }
         while (i < e && segment.get(JAVA_BYTE, i) != c0) ++i;
         return i;
+    }
+    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, char c0) {
+        if (U == null)
+            return safeSkipUntil(segment, i, e, c0);
+        int rLen = (int)(e-i);
+        if (rLen >= B_LEN) {
+            Vector<Byte> c0Vec = B_SP.broadcast(c0);
+            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
+                int lane = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN).eq(c0Vec).firstTrue();
+                if (lane < B_LEN) return (int) (i + lane);
+            }
+        }
+        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
+        i += address;
+        e += address;
+        while (i < e && U.getByte(utf8, i) != c0) ++i;
+        return i-address;
 
     }
 
     @Override public int skipUntil(int begin, int end, char c0) {
         rangeLen(begin, end);
-        return (int) (skipUntil(segment, begin+offset, end+offset, c0)-offset);
+        return (int) (skipUntil(segment, utf8, begin+offset, end+offset, c0)-offset);
     }
 
-    static long skipUntil(MemorySegment segment, long i, long e, char c0, char c1) {
+    static long safeSkipUntil(MemorySegment segment, long i, long e, char c0, char c1) {
         int rLen = (int)(e-i);
         if (rLen >= B_LEN) {
             Vector<Byte> c0Vec = B_SP.broadcast(c0);
@@ -243,10 +260,29 @@ public class SegmentRope extends PlainRope {
         for (byte c; i < e && (c=segment.get(JAVA_BYTE, i)) != c0 && c != c1;) ++i;
         return i;
     }
+    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, char c0, char c1) {
+        if (U == null)
+            return safeSkipUntil(segment, i, e, c0, c1);
+        int rLen = (int)(e-i);
+        if (rLen >= B_LEN) {
+            Vector<Byte> c0Vec = B_SP.broadcast(c0);
+            Vector<Byte> c1Vec = B_SP.broadcast(c1);
+            for (long ve = i + B_SP.loopBound(rLen); i < ve; i += B_LEN) {
+                ByteVector vec = fromMemorySegment(B_SP, segment, i, LITTLE_ENDIAN);
+                int lane = vec.eq(c0Vec).or(vec.eq(c1Vec)).firstTrue();
+                if (lane < B_LEN) return i + lane;
+            }
+        }
+        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
+        i += address;
+        e += address;
+        for (byte c; i < e && (c=U.getByte(utf8, i)) != c0 && c != c1;) ++i;
+        return i-address;
+    }
 
     @Override public int skipUntil(int begin, int end, char c0, char c1) {
         rangeLen(begin, end);
-        return (int)(skipUntil(segment, offset+begin, offset+end, c0, c1)-offset);
+        return (int)(skipUntil(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
     }
 
     static long skipUntilLast(MemorySegment segment, long begin, long end, char c0) {
