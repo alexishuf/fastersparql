@@ -38,14 +38,15 @@ public class OpaqueSparqlQuery implements SparqlQuery {
 
     public OpaqueSparqlQuery(CharSequence sparql) {
         this.sparql = SegmentRope.of(sparql);
-        var s = new Scan(this.sparql);
-        this.isGraph = s.isGraph;
-        this.publicVars = s.publicVars;
-        this.allVars = s.allVars;
-        this.varPos = s.varPositions;
-        this.verbBegin = s.verbBegin;
-        this.verbEnd = s.verbEnd;
-        this.aliasVars = s.aliasVars;
+        try (var s = new Scan(this.sparql)) {
+            this.isGraph = s.isGraph;
+            this.publicVars = s.publicVars;
+            this.allVars = s.allVars;
+            this.varPos = s.varPositions;
+            this.verbBegin = s.verbBegin;
+            this.verbEnd = s.verbEnd;
+            this.aliasVars = s.aliasVars;
+        }
     }
 
     @Override public boolean isAsk() {
@@ -195,7 +196,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         }
     }
 
-    private static final class Scan {
+    private static final class Scan implements AutoCloseable {
         final SegmentRope in;
         int pos;
         final int len;
@@ -225,6 +226,8 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                     varPositions = Arrays.copyOf(varPositions, nVarPositions);
             }
         }
+
+        @Override public void close() { termParser.close(); }
 
         private static final int[] PROLOGUE = alphabet("PBpb#");
         private void findQueryVerb() {

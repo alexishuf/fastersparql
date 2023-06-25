@@ -38,7 +38,7 @@ public class BindQuery<B extends Batch<B>> {
 
     public Plan parsedQuery() {
         if (parsedQuery == null)
-            parsedQuery = new SparqlParser().parse(query);
+            parsedQuery = SparqlParser.parse(query);
         return parsedQuery;
     }
 

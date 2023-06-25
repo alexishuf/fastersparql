@@ -72,12 +72,12 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     }
 
     public @This ResultsSparqlClient answerWith(SparqlQuery query, Results results) {
-        qry2results.put(new SparqlParser().parse(query), results);
+        qry2results.put(SparqlParser.parse(query), results);
         return this;
     }
 
     public @This ResultsSparqlClient answerWith(SparqlQuery query, RuntimeException t) {
-        qry2err.put(new SparqlParser().parse(query), t);
+        qry2err.put(SparqlParser.parse(query), t);
         return this;
     }
 
@@ -163,7 +163,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     @Override public void close() { }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        sparql = new SparqlParser().parse(sparql);
+        sparql = SparqlParser.parse(sparql);
         Results expected = qry2results.get(sparql);
         if (expected == null) {
             RuntimeException err = qry2err.get(sparql);

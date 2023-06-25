@@ -246,16 +246,40 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @Override public int skip(int begin, int end, int[] alphabet) {
+    private int skipSafe(int begin, int end, int[] alphabet) {
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
         if (begin < fstLen) {
-            i = (int)(SegmentRope.skip(fst, fstOff+begin, fstOff+e, alphabet)-fstOff);
+            i = (int)(SegmentRope.skipSafe(fst, fstOff+begin, fstOff+e, alphabet)-fstOff);
             if (i < e) return i;
         }
         if ((e = Math.max(0, end-fstLen)) > 0) {
             i = Math.max(0, begin-fstLen);
-            return fstLen + (int)(SegmentRope.skip(snd, sndOff+i, sndOff+e, alphabet)-sndOff);
+            return fstLen + (int)(SegmentRope.skipSafe(snd, sndOff+i, sndOff+e, alphabet)-sndOff);
+        }
+        return end;
+    }
+
+    @Override public int skip(int begin, int end, int[] alphabet) {
+        if (U == null)
+            return skipSafe(begin, end, alphabet);
+        checkRange(begin, end);
+        int e = Math.min(end, fstLen), i;
+        if (begin < fstLen) {
+            byte[] fstU8 = this.fstU8;
+            long off = fstOff+fst.address();
+            if (fstU8 != null)
+                off += U8_BASE;
+            i = (int)(SegmentRope.skipUnsafe(fstU8, off+begin, off+e, alphabet)-off);
+            if (i < e) return i;
+        }
+        if ((e = Math.max(0, end-fstLen)) > 0) {
+            i = Math.max(0, begin-fstLen);
+            long off = sndOff+snd.address();
+            byte[] sndU8 = this.sndU8;
+            if (sndU8 != null)
+                off += U8_BASE;
+            return fstLen + (int)(SegmentRope.skipUnsafe(sndU8, off+i, off+e, alphabet)-off);
         }
         return end;
     }

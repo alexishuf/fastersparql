@@ -325,7 +325,21 @@ public class SegmentRope extends PlainRope {
         return (int) (i-offset);
     }
 
-    static long skip(MemorySegment segment, long begin, long end, int[] alphabet) {
+    static long skipUnsafe(byte[] base, long begin, long end, int[] alphabet) {
+        boolean stopOnNonAscii = (alphabet[3] & 0x80000000) == 0;
+        for (; begin < end; ++begin) {
+            byte c = U.getByte(base, begin);
+            if (c >= 0) { // c is ASCII
+                if ((alphabet[c >> 5] & (1 << c)) == 0)
+                    break; // c is not in alphabet
+            } else if (stopOnNonAscii) {
+                break; // non-ASCII  not allowed by alphabet
+            }
+        }
+        return begin;
+    }
+
+    static long skipSafe(MemorySegment segment, long begin, long end, int[] alphabet) {
         boolean stopOnNonAscii = (alphabet[3] & 0x80000000) == 0;
         for (; begin < end; ++begin) {
             byte c = segment.get(JAVA_BYTE, begin);
@@ -341,7 +355,17 @@ public class SegmentRope extends PlainRope {
 
     @Override public int skip(int begin, int end, int[] alphabet) {
         rangeLen(begin, end);
-        return (int)(skip(segment, begin+offset, end+offset, alphabet)-offset);
+        long offset = this.offset, i;
+        if (U == null) {
+            i = skipSafe(segment, begin+offset, end+offset, alphabet);
+        } else {
+            offset += segment.address();
+            byte[] u8 = utf8;
+            if (u8 != null)
+                offset += U8_BASE;
+            i = skipUnsafe(u8, begin+offset, end+offset, alphabet);
+        }
+        return (int)(i-offset);
     }
 
     @Override public int skipWS(int begin, int end) {

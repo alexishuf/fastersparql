@@ -44,6 +44,11 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         this.eol = eol;
     }
 
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        termParser.close();
+    }
+
     @Override public void complete(@Nullable Throwable error) {
         try {
             if (error == null && (column > 0 || partialLine != null && partialLine.len > 0))

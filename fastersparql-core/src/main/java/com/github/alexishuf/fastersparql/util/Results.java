@@ -205,6 +205,7 @@ public final class Results {
                 row = new ArrayList<>();
             }
         }
+        termParser.close();
         if (!row.isEmpty())
             throw new IllegalArgumentException("Expected "+columns+" columns, but last row has only "+row.size()+" terms");
         return rows;
@@ -217,14 +218,15 @@ public final class Results {
     public static Results positiveResult() { return results(List.of(List.of())); }
 
     public static TriplePattern parseTP(CharSequence cs) {
-        TermParser parser = new TermParser().eager();
-        parser.prefixMap = Results.PREFIX_MAP;
-        SegmentRope r = SegmentRope.of(cs);
-        int len = r.len();
-        return new TriplePattern(parser.parseTerm(r, 0, len),
-                                 parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len),
-                                 parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len)
-        );
+        try (TermParser parser = new TermParser().eager()) {
+            parser.prefixMap = Results.PREFIX_MAP;
+            SegmentRope r = SegmentRope.of(cs);
+            int len = r.len();
+            return new TriplePattern(parser.parseTerm(r, 0, len),
+                    parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len),
+                    parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len)
+            );
+        }
     }
 
     /* --- --- --- variant constructors --- --- --- */
@@ -286,7 +288,7 @@ public final class Results {
                     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
                     """
             ).append(sparql);
-            query = new SparqlParser().parse(sparqlRope);
+            query = SparqlParser.parse(sparqlRope);
         }
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
     }
@@ -583,41 +585,42 @@ public final class Results {
     }
 
     public static List<Term> normalizeRow(Object row) {
-        TermParser p = new TermParser().eager();
-        p.prefixMap = PREFIX_MAP;
-        return switch (row) {
-            case Collection<?> l -> {
-                if (l instanceof List<?> && l.stream().allMatch(o -> o == null || o instanceof Term)) //noinspection unchecked
-                    yield (List<Term>) l;
-                var terms = new ArrayList<Term>();
-                for (Object o : l)
-                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
-                yield terms;
-            }
-            case Term[] a -> asList(a);
-            case Batch<?> b -> {
-                if (b.rows != 1)
-                    throw new IllegalArgumentException("Cannot normalize non-singleton batch as row");
-                var list = new ArrayList<Term>(b.cols);
-                for (int c = 0; c < b.cols; c++)
-                    list.add(b.get(0, c));
-                yield list;
-            }
-            case int[] a -> {
-                var terms = new ArrayList<Term>();
-                for (int i : a)
-                    terms.add(Term.valueOf(Rope.of("\"",i, SharedRopes.DT_integer)));
-                yield terms;
-            }
-            case Object[] a -> {
-                var terms = new ArrayList<Term>();
-                for (Object o : a)
-                    terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
-                yield terms;
-            }
-            case null -> throw new AssertionError("null is not a valid row object");
-            default -> throw new AssertionError("Unexpected row object of type" + row.getClass().getSimpleName() + ": " + row);
-        };
+        try (TermParser p = new TermParser().eager()) {
+            p.prefixMap = PREFIX_MAP;
+            return switch (row) {
+                case Collection<?> l -> {
+                    if (l instanceof List<?> && l.stream().allMatch(o -> o == null || o instanceof Term)) //noinspection unchecked
+                        yield (List<Term>) l;
+                    var terms = new ArrayList<Term>();
+                    for (Object o : l)
+                        terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
+                    yield terms;
+                }
+                case Term[] a -> asList(a);
+                case Batch<?> b -> {
+                    if (b.rows != 1)
+                        throw new IllegalArgumentException("Cannot normalize non-singleton batch as row");
+                    var list = new ArrayList<Term>(b.cols);
+                    for (int c = 0; c < b.cols; c++)
+                        list.add(b.get(0, c));
+                    yield list;
+                }
+                case int[] a -> {
+                    var terms = new ArrayList<Term>();
+                    for (int i : a)
+                        terms.add(Term.valueOf(Rope.of("\"", i, SharedRopes.DT_integer)));
+                    yield terms;
+                }
+                case Object[] a -> {
+                    var terms = new ArrayList<Term>();
+                    for (Object o : a)
+                        terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
+                    yield terms;
+                }
+                case null -> throw new AssertionError("null is not a valid row object");
+                default -> throw new AssertionError("Unexpected row object of type" + row.getClass().getSimpleName() + ": " + row);
+            };
+        }
     }
 
     private static String toString(List<Term> row) {

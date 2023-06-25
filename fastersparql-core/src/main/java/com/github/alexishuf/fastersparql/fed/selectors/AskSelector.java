@@ -59,11 +59,11 @@ public class AskSelector extends Selector {
             File file = spec.getFile(STATE_FILE_P, null);
             if (file == null || !file.exists() || file.length() == 0)
                 return new AskSelector(client, spec);
-            try (var in = new FileInputStream(file)) {
+            try (var in = new FileInputStream(file);
+                 var termParser = new TermParser()) {
                 var r = new ByteRope(64);
                 if (!r.clear().readLine(in) || !r.trim().toString().equalsIgnoreCase(NAME))
                     throw new BadSerializationException.SelectorTypeMismatch(NAME, r.toString());
-                var termParser = new TermParser();
                 StrongDedup<TermBatch> positive = null, negative = null, current = null;
                 while (r.clear().readLine(in)) {
                     if (r.get(0) == '@') {

@@ -19,7 +19,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-public final class TermParser {
+public final class TermParser implements AutoCloseable {
     private static final byte[][][] QUOTE_BYTES = {
             {null, {'\''}, null, {'\'', '\'', '\''}},
             {null, {'"' }, null, {'"',  '"',  '"'}},
@@ -77,6 +77,14 @@ public final class TermParser {
         EOF;
 
         public boolean isValid() { return this.ordinal() < 3; }
+    }
+
+
+    @Override public void close() {
+        if (ntBuf != null) {
+            ntBuf.recycle();
+            ntBuf = null;
+        }
     }
 
     /**
@@ -269,7 +277,7 @@ public final class TermParser {
                         shared = sh;
                     }
                 } else {
-                    if (ntBuf == null) ntBuf = new ByteRope(stopped - begin);
+                    if (ntBuf == null) ntBuf = ByteRope.pooled(stopped - begin);
                     toNT();
                     localBegin = 0;
                     if (typed) {
@@ -543,7 +551,7 @@ public final class TermParser {
         int stopped = this.stopped;
         int size = 2/*""*/ + lexEnd - (begin + qLen) + stopped-(lexEnd+qLen);
         ByteRope esc = ntBuf;
-        if (ntBuf == null) ntBuf = esc = new ByteRope(size);
+        if (ntBuf == null) ntBuf = esc = ByteRope.pooled(size);
         else               ntBuf.clear().ensureFreeCapacity(size);
         esc.append('"');
         for (int consumed = begin+qLen, i; consumed < lexEnd; consumed = i+1) {

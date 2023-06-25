@@ -736,14 +736,15 @@ public final class Term extends Rope implements Expr {
         if (terms.length == 1 && terms[0] instanceof Object[] arr)
             terms = arr;
         Term[] a = new Term[terms.length];
-        TermParser termParser = new TermParser().eager();
-        termParser.prefixMap.add(Rope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
-        termParser.prefixMap.add(Rope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
-        termParser.prefixMap.add(Rope.of(""), Term.valueOf("<http://example.org/>"));
-        termParser.prefixMap.add(Rope.of("ex"), Term.valueOf("<http://example.org/>"));
-        termParser.prefixMap.add(Rope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
-        for (int i = 0; i < terms.length; i++)
-            a[i] = terms[i] == null ? null : termParser.parseTerm(SegmentRope.of(terms[i]));
+        try (TermParser termParser = new TermParser().eager()) {
+            termParser.prefixMap.add(Rope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
+            termParser.prefixMap.add(Rope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
+            termParser.prefixMap.add(Rope.of(""), Term.valueOf("<http://example.org/>"));
+            termParser.prefixMap.add(Rope.of("ex"), Term.valueOf("<http://example.org/>"));
+            termParser.prefixMap.add(Rope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
+            for (int i = 0; i < terms.length; i++)
+                a[i] = terms[i] == null ? null : termParser.parseTerm(SegmentRope.of(terms[i]));
+        }
         return a;
     }
 

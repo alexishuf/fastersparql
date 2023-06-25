@@ -12,7 +12,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
-import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.BS;
@@ -286,7 +285,7 @@ public class Federation extends AbstractSparqlClient {
         // parse query or copy tree and sanitize
         cdc = FSProperties.crossDedupCapacity();
         Plan root = sparql instanceof Plan p
-                ? p.deepCopy() : new SparqlParser().parse(((OpaqueSparqlQuery) sparql).sparql);
+                ? p.deepCopy() : SparqlParser.parse(sparql);
         root = project(mutateSanitize(root), sparql.publicVars());
 
         // source selection & agglutination
@@ -346,7 +345,7 @@ public class Federation extends AbstractSparqlClient {
                     if (!(q.client instanceof UnboundSparqlClient)) yield q;
                     var sq = (q).sparql;
                     if (sq instanceof Plan p) yield p.transform(this, ctx);
-                    yield mutateSanitize(new SparqlParser().parse(q.sparql()));
+                    yield mutateSanitize(SparqlParser.parse(q.sparql()));
                 }
                 default -> parent;
             };
@@ -394,8 +393,7 @@ public class Federation extends AbstractSparqlClient {
                 var q = (Query)plan;
                 if (!(q.client instanceof UnboundSparqlClient)) yield plan;
                 SparqlQuery sq = q.sparql;
-                Plan parsed = sq instanceof Plan p ? p.deepCopy()
-                            : new SparqlParser().parse(sq.sparql());
+                var parsed = sq instanceof Plan p ? p.deepCopy() : SparqlParser.parse(sq);
                 yield mutateSanitize(parsed);
             }
             case MODIFIER -> {//noinspection DataFlowIssue

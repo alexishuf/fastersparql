@@ -165,7 +165,7 @@ public class NettySparqlServer implements AutoCloseable {
         protected final SparqlParser sparqlParser = new SparqlParser();
         protected BIt<CompressedBatch> it;
         protected @Nullable VolatileBindQuery bindQuery;
-        protected final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
+        protected ByteBufRopeView bbRopeView = ByteBufRopeView.create();
         protected Vars serializeVars = Vars.EMPTY;
         @MonotonicNonNull protected ResultsSerializer serializer;
         protected int round = -1;
@@ -184,6 +184,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) {
             bbRopeView.recycle();
+            bbRopeView = null;
         }
 
         @Override

@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
@@ -29,6 +30,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class SparqlParser {
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
 
     private SegmentRope in;
     private int start, pos, end;
@@ -37,6 +39,24 @@ public class SparqlParser {
     private boolean distinct, reduce;
     private long limit;
     private @Nullable Vars projection;
+
+
+    public static Plan parse(SparqlQuery q) {
+        if (q instanceof Plan p) return p;
+        SparqlParser parser = AffinityShallowPool.get(POOL_COL);
+        if (parser == null) parser = new SparqlParser();
+        var plan = parser.parse(q.sparql(), 0);
+        AffinityShallowPool.offer(POOL_COL, parser);
+        return plan;
+    }
+
+    public static Plan parse(SegmentRope rope) {
+        SparqlParser parser = AffinityShallowPool.get(POOL_COL);
+        if (parser == null) parser = new SparqlParser();
+        Plan plan = parser.parse(rope, 0);
+        AffinityShallowPool.offer(POOL_COL, parser);
+        return plan;
+    }
 
     /**
      * Parse a {@code {...}} block (i.e., {@code GroupGraphPattern} in SPARQL grammar).
@@ -61,10 +81,6 @@ public class SparqlParser {
         return plan;
 
     }
-    public Plan parse(SparqlQuery q) {
-        return q instanceof Plan p ? p : parse(q.sparql());
-    }
-    public Plan parse(SegmentRope query) { return parse(query, 0); }
     public Plan parse(SegmentRope query, int start) {
         end = (in = query).len();
         this.start = start;

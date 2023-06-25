@@ -357,7 +357,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        Plan plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);
+        Plan plan = SparqlParser.parse(sparql);
         Plan meat = supportedQueryMeat(plan);
         BIt<StoreBatch> storeIt = null;
         var l = meat == null ? null : lookup(dictId);

@@ -61,7 +61,7 @@ public abstract class CardinalityEstimator {
 
     public abstract int estimate(TriplePattern tp, @Nullable Binding binding);
     public int estimate(Query q, @Nullable Binding binding) {
-        var parsed = q.sparql instanceof Plan p ? p : new SparqlParser().parse(q.sparql);
+        var parsed = q.sparql instanceof Plan p ? p : SparqlParser.parse(q.sparql);
         return estimate(parsed, binding);
     }
 

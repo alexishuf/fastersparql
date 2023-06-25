@@ -60,8 +60,8 @@ public class HdtBench {
         nyt = new HdtSparqlClient(SparqlEndpoint.parse(url));
         Async.waitStage(nyt.estimator().ready());
         var p = new SparqlParser();
-        dump = p.parse(Rope.of(PROLOGUE, "SELECT * WHERE { ?s ?p ?o }"));
-        distinctPredicates = p.parse(Rope.of(PROLOGUE,"SELECT DISTINCT ?p WHERE { ?s ?p ?o }"));
+        dump = p.parse(Rope.of(PROLOGUE, "SELECT * WHERE { ?s ?p ?o }"), 0);
+        distinctPredicates = p.parse(Rope.of(PROLOGUE,"SELECT DISTINCT ?p WHERE { ?s ?p ?o }"), 0);
     }
 
     @Setup(Level.Iteration) public void iterationSetup() {

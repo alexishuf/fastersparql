@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
@@ -25,6 +26,7 @@ import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings("UnusedReturnValue")
 public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, ByteRope> {
+    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
     private static final VectorSpecies<Byte> B_SP = ByteVector.SPECIES_PREFERRED;
     private static final int B_LEN = B_SP.length();
     private static final int READLINE_CHUNK = 128;
@@ -77,6 +79,36 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
      */
     public ByteRope(byte[] utf8, int offset, int len) { super(utf8, offset, len); }
 
+    public static ByteRope pooled(int capacity) {
+        ByteRope br = AffinityShallowPool.get(POOL_COL);
+        byte[] u8 = br == null ? null : br.utf8;
+        if (u8 == null || u8.length < capacity) {
+            u8 = ArrayPool.bytesAtLeast(capacity, u8);
+            if (br == null) return new ByteRope(u8);
+        }
+        br.utf8    = u8;
+        br.segment = MemorySegment.ofArray(u8);
+        br.len     = 0;
+        return br;
+    }
+
+    @Override public void recycle() {
+        if (offset != 0 || this == EMPTY || utf8 == null) raiseImmutable();
+        len = 0;
+        if (AffinityShallowPool.offer(POOL_COL, this) != null) {
+            ArrayPool.BYTE.offer(utf8, utf8.length);
+            wrapEmptyBuffer();
+        }
+    }
+
+    public void recycleUtf8() {
+        byte[] utf8 = this.utf8;
+        if (offset != 0 || this == EMPTY || utf8 == null) raiseImmutable();
+        len = 0;
+        if (ArrayPool.BYTE.offer(utf8, utf8.length) == null)
+            wrapEmptyBuffer();
+    }
+
     public byte @NonNull[] u8() {//noinspection DataFlowIssue
         return utf8;
     }
@@ -101,12 +133,12 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     }
 
     @Override public @This ByteRope ensureFreeCapacity(int increment) {
-        if (offset != 0 || this == EMPTY) raiseImmutable();
+        byte[] u8 = utf8;
+        if (offset != 0 || this == EMPTY || u8 == null) raiseImmutable();
         int len = this.len, required = len+increment;
-        //noinspection DataFlowIssue (utf8 != null)
-        if (required > utf8.length) {
-            utf8 = copyOf(utf8, max(utf8.length+(utf8.length>>1), required));
-            segment = MemorySegment.ofArray(utf8);
+        if (required > u8.length) {
+            utf8 = u8 = Arrays.copyOf(u8, Math.max(required, u8.length+(u8.length>>1)));
+            segment = MemorySegment.ofArray(u8);
         }
         return this;
     }
@@ -122,15 +154,6 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
         return utf8.length == len ? utf8 : copyOf(utf8, len);
     }
 
-    public void recycleUtf8() {
-        byte[] utf8 = this.utf8;
-        if (offset != 0 || this == EMPTY || utf8 == null) raiseImmutable();
-        len = 0;
-        if (ArrayPool.BYTE.offer(utf8, utf8.length) == null) {
-            this.utf8 = EMPTY_UTF8;
-            segment = EMPTY_SEGMENT;
-        }
-    }
 
     public @This ByteRope clear() {
         if (offset != 0 || this == EMPTY) raiseImmutable();

@@ -501,7 +501,7 @@ public class Optimizer extends CardinalityEstimator {
 
     @Override public int estimate(Query q, @Nullable Binding binding) {
         SparqlQuery sparql = q.sparql;
-        Plan plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);
+        Plan plan = sparql instanceof Plan p ? p : SparqlParser.parse(sparql);
         return client2estimator.getOrDefault(q.client, DEFAULT).estimate(plan, binding);
     }
 }

@@ -89,7 +89,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     @Override public HdtCardinalityEstimator estimator() { return estimator; }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        var plan = sparql instanceof Plan p ? p : new SparqlParser().parse(sparql);
+        var plan = SparqlParser.parse(sparql);
         BIt<HdtBatch> hdtIt;
         if (plan instanceof Modifier m && m.left instanceof TriplePattern tp) {
             Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();

@@ -49,7 +49,7 @@ public class SingletonFederator extends Optimizer {
     @Override public int estimate(Query q, @Nullable Binding binding) {
         if (q.client != client)
             throw new IllegalArgumentException("Unexpected client");
-        Plan parsed = q.sparql instanceof Plan p ? p : new SparqlParser().parse(q.sparql);
+        Plan parsed = q.sparql instanceof Plan p ? p : SparqlParser.parse(q.sparql);
         return estimator.estimate(parsed);
     }
 
