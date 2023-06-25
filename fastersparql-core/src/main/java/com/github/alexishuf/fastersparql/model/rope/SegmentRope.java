@@ -439,14 +439,14 @@ public class SegmentRope extends PlainRope {
                           rope.utf8, rope.segment.address()+rOff, rLen) == 0;
     }
 
-    @Override public boolean has(int pos, Rope rope, int begin, int end) {
+    public boolean hasSafe(int pos, Rope rope, int begin, int end) {
         int rLen = end - begin;
         if (pos < 0 || rLen < 0) throw new IndexOutOfBoundsException();
         if (pos + rLen > len) return false;
 
         if (rope instanceof SegmentRope s) {
             return compare1_1(segment, offset+pos, rLen,
-                              s.segment, s.offset+begin, rLen) == 0;
+                    s.segment, s.offset+begin, rLen) == 0;
         } else {
             MemorySegment fst, snd;
             long fstOff, sndOff;
@@ -466,6 +466,39 @@ public class SegmentRope extends PlainRope {
             sndOff += Math.max(0, begin-fstLen);
             fstLen = Math.min(fstLen, end)-begin;
             return compare1_2(segment, pos, rLen, fst, fstOff, fstLen,
+                    snd, sndOff, rLen-fstLen) == 0;
+        }
+    }
+    @Override public boolean has(int pos, Rope rope, int begin, int end) {
+        if (U == null)
+            return hasSafe(pos, rope, begin, end);
+        int rLen = end - begin;
+        if (pos < 0 || rLen < 0) throw new IndexOutOfBoundsException();
+        if (pos + rLen > len) return false;
+
+        if (rope instanceof SegmentRope s) {
+            long lOff = this.offset +   segment.address() + pos;
+            long rOff =    s.offset + s.segment.address() + begin;
+            return compare1_1(utf8, lOff, rLen, s.utf8, rOff, rLen) == 0;
+        } else {
+            byte[] fst, snd;
+            long fstOff, sndOff;
+            int fstLen;
+            if (rope instanceof TwoSegmentRope t) {
+                fst = t.fstU8; fstOff = t.fst.address()+t.fstOff; fstLen = t.fstLen;
+                snd = t.sndU8; sndOff = t.snd.address()+t.sndOff;
+            } else if (rope instanceof Term t) {
+                SegmentRope fr = t.first(), sr = t.second();
+                fst = fr.utf8; fstOff = fr.segment.address()+fr.offset; fstLen = fr.len;
+                snd = sr.utf8; sndOff = sr.segment.address()+sr.offset;
+            } else {
+                if (rope == null) throw new NullPointerException("rope");
+                throw new UnsupportedOperationException("Unsupported Rope type");
+            }
+            fstOff += begin;
+            sndOff += Math.max(0, begin-fstLen);
+            fstLen = Math.min(fstLen, end)-begin;
+            return compare1_2(utf8, segment.address()+offset+pos, rLen, fst, fstOff, fstLen,
                               snd, sndOff, rLen-fstLen) == 0;
         }
     }
