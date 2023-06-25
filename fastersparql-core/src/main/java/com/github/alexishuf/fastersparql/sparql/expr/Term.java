@@ -520,7 +520,7 @@ public final class Term extends Rope implements Expr {
             if (skip(0, len(), UNTIL_SPECIAL_WS) != len())
                 throw new AssertionError("suspicious control char in term");
         } else if (get(0) == '"') { // literal
-            int endLex = reverseSkip(0, len(), UNTIL_DQ);
+            int endLex = reverseSkipUntil(0, len(), '"');
             if (endLex == 0)
                 throw new AssertionError("no closign \"");
             validateEscapes(endLex);
@@ -1111,7 +1111,7 @@ public final class Term extends Rope implements Expr {
         if (type() != Type.LIT) return -1;
         int endLex = 0xff&cachedEndLex;
         if (endLex == 0) {
-            endLex = reverseSkip(1, len, UNTIL_DQ);
+            endLex = reverseSkipUntil(1, len, '"');
             cachedEndLex = endLex > 0xff ? 0 : (byte)endLex;
         }
         return endLex;

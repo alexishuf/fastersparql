@@ -437,7 +437,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         assert partialLine != null;
         int i = partialLine.len;
         byte esc = (byte) (eol.len == 1 ? '\\' : '"');
-        while ((i = partialLine.reverseSkip(0, i, Rope.UNTIL_DQ)) > 0
+        while ((i = partialLine.reverseSkipUntil(0, i, '"')) > 0
                     && partialLine.get(i-1) != esc)
             --i;
         String msg = format("Unclosed quoted term at column %d of line %d.", column, line);
