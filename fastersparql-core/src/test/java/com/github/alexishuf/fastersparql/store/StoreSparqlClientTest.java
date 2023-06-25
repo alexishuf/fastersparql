@@ -149,7 +149,7 @@ class StoreSparqlClientTest {
             if (results.query() instanceof Plan p)
                 return new D(ubp, split, results.query(new OpaqueSparqlQuery(p.sparql())));
             else if (results.query() instanceof OpaqueSparqlQuery q)
-                return new D(ubp, split, results.query(new SparqlParser().parse(q)));
+                return new D(ubp, split, results.query(SparqlParser.parse(q)));
             else
                 return this;
         }
@@ -333,7 +333,7 @@ class StoreSparqlClientTest {
         List<D> queryData   = test()       .map(a -> (D) a.get()[0]).toList();
         List<D> bindingData = testBinding().map(a -> (D) a.get()[0]).toList();
         innerConcurrency = false;
-        int cpus = 2*Runtime.getRuntime().availableProcessors();
+        int cpus = Runtime.getRuntime().availableProcessors();
         try (var tasks = new TestTaskSet(CLS_NAME+"testConcurrentQuery",
                                           newFixedThreadPool(cpus))) {
             for (int rep = 0; rep < REPS; rep++) {
