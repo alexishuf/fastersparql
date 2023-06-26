@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -127,7 +126,6 @@ public class QueueBench {
         return count;
     }
 
-    @Benchmark public int   unit() { return drain(new SPSCUnitBIt<>(bt, vars)); }
     @Benchmark public int  queue() { return drain(new SPSCBIt<>(bt, vars, 8)); }
     @Benchmark public int queue2() { return drain(new SPSCBIt<>(bt, vars, maxItems)); }
 }

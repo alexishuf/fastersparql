@@ -30,7 +30,7 @@
  */
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
@@ -45,7 +45,7 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 @State
 public class SingleBatchSPSCUnitBItCTest extends BItCTest {
     public SingleBatchSPSCUnitBItCTest() {
-        super(new SPSCUnitBIt<>(TERM, X), new TermBatch[]{batch(1)});
+        super(new SPSCBIt<>(TERM, X, 1), new TermBatch[]{batch(1)});
     }
 
     @Actor   public void producer()           {  produceAndComplete(); }

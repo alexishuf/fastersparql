@@ -186,7 +186,7 @@ class MergeBItTest extends AbstractMergeBItTest {
         TermBatch b0 = intsBatch(1, 2);
         TermBatch b1 = intsBatch(3);
         var s0 = new SingletonBIt<>(b0, TERM, X);
-        var s1 = new SPSCUnitBIt<>(TERM, X);
+        var s1 = new SPSCBIt<>(TERM, X, 2);
         try (var it = new MergeBIt<>(List.of(s0, s1), TERM, X)) {
             TermBatch b = it.nextBatch(null);
             assertEquals(intsBatch(1, 2), b);
@@ -334,7 +334,7 @@ class MergeBItTest extends AbstractMergeBItTest {
                 watchdog.start(1_000_000_000L);
                 var s0 = new IteratorBIt<>(s0Batches, TERM, X);
                 var s1 = new SPSCBIt<>(TERM, X, 2);
-                var s2 = new SPSCUnitBIt<>(TERM, X);
+                var s2 = new SPSCBIt<>(TERM, X, 1);
                 sources.clear(); sources.add(s0); sources.add(s1); sources.add(s2);
                 s1Feeder.reset();  s2Feeder.reset();
                 Arrays.fill(consumed, 0);

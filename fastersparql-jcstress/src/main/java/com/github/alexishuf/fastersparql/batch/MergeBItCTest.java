@@ -33,7 +33,6 @@ package com.github.alexishuf.fastersparql.batch;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
-import com.github.alexishuf.fastersparql.batch.operators.SPSCUnitBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
@@ -51,7 +50,7 @@ import static java.util.stream.IntStream.range;
 @State
 public class MergeBItCTest extends BItCTest {
     private final SPSCBIt<TermBatch> cb1;
-    private final SPSCUnitBIt<TermBatch> cb2;
+    private final SPSCBIt<TermBatch> cb2;
     private final TermBatch[] batches1 = {batch(3), batch(4), batch(5)};
     private final TermBatch[] batches2 = {batch(6), batch(7)};
 
@@ -60,7 +59,7 @@ public class MergeBItCTest extends BItCTest {
         List<BIt<TermBatch>> sources = List.of(
                 new IteratorBIt<>(itBatches, TERM, X).maxBatch(1),
                 new SPSCBIt<>(TERM, X, 2),
-                new SPSCUnitBIt<>(TERM, X)
+                new SPSCBIt<>(TERM, X, 2)
         );
         MergeBIt<TermBatch> it = new MergeBIt<>(sources, TERM, X);
         it.maxReadyItems(2);
@@ -71,7 +70,7 @@ public class MergeBItCTest extends BItCTest {
         super(makeMerge(), range(1, 8).mapToObj(BItCTest::batch).toArray(TermBatch[]::new));
         var sources = ((MergeBIt<TermBatch>) it).sources();
         cb1 = (SPSCBIt<TermBatch>) sources.get(1);
-        cb2 = (SPSCUnitBIt<TermBatch>) sources.get(2);
+        cb2 = (SPSCBIt<TermBatch>) sources.get(2);
     }
 
     @Actor public void consumer () { consumeToCompletion(); }
