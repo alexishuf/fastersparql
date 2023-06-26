@@ -32,11 +32,11 @@ public class LevelPool<T> {
     public  static final int  DEF_LARGE_LEVEL_CAPACITY = 256;
     public  static final int   DEF_HUGE_LEVEL_CAPACITY = 8;
 
-    static final int      FIRST_CAPACITY = 4;
-    static final int       LAST_CAPACITY = 1024*1024;  // 1M (1<<20)
-    static final int  SMALL_MAX_CAPACITY = 256;   // 4,    8,    16,   32, 64, 128, 256
-    static final int MEDIUM_MAX_CAPACITY = 2048;  // 512,  1024, 2048
-    static final int  LARGE_MAX_CAPACITY = 16384; // 4096, 8192, 16384
+    public static final int      FIRST_CAPACITY = 4;
+    public static final int       LAST_CAPACITY = 1024*1024;  // 1M (1<<20)
+    public static final int  SMALL_MAX_CAPACITY = 256;   // 4,    8,    16,   32, 64, 128, 256
+    public static final int MEDIUM_MAX_CAPACITY = 2048;  // 512,  1024, 2048
+    public static final int  LARGE_MAX_CAPACITY = 16384; // 4096, 8192, 16384
     private static final int FIRST_LEVEL    = numberOfTrailingZeros(FIRST_CAPACITY);
     private static final int N_TINY_LEVELS   =  3; // 0, 1, 2
     private static final int N_SMALL_LEVELS  = numberOfTrailingZeros(SMALL_MAX_CAPACITY)  - (FIRST_LEVEL-1);

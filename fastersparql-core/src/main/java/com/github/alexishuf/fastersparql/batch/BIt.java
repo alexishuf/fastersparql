@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -38,7 +39,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
     /**
      * Preferred value for {@link BIt#maxBatch(int)}.
      */
-    int DEF_MAX_BATCH = 1<<16;
+    int DEF_MAX_BATCH = LevelPool.LARGE_MAX_CAPACITY;
 
     /**
      * Value to use with {@link BIt#minWait(long, TimeUnit)} when one desires the lowest possible
