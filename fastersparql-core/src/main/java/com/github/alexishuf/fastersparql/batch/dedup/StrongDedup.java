@@ -123,7 +123,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
                     Bucket newBucket = buckets[bIdx];
                     if (newBucket == null) // allocate on first use
                         buckets[bIdx] = newBucket = new Bucket(bucketCapacity);
-                    newBucket.add(rows.batchOf(i), rows.batchRow(i), hashes[i]);
+                    newBucket.add(rows, i, hashes[i]);
                 }
                 oldBuckets[oldBucketIdx] = null; // release memory
             }
@@ -261,7 +261,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             return true;
         }
 
-        boolean add(B batch, int row, int hash) {
+        @SuppressWarnings("unchecked") boolean add(Object batchOrBucket, int row, int hash) {
             if (age != StrongDedup.this.age)
                 clear();
             bitset |= 1L << (hash & 63);
@@ -280,7 +280,8 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
                 }
             }
             hashes[i] = hash;
-            rows.set(i, batch, row);
+            if (batchOrBucket instanceof RowBucket<?> b) rows.set(i, (RowBucket<B>)b,  row);
+            else                                         rows.set(i, (B)batchOrBucket, row);
             if (incSize)
                 ++size;
             return incSize;

@@ -40,7 +40,7 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
 
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
         if (b != null && pool.offer(b, b.rowsCapacity()*((b.cols+1)<<1)) != null)
-            b.recycle();
+            b.recycleInternals();
         return null;
     }
 
@@ -51,6 +51,10 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
             for (int c = 0; c < cols; c++) required += b.localLen(r, c);
         }
         return required;
+    }
+
+    @Override public RowBucket<CompressedBatch> createBucket(int rowsCapacity, int cols) {
+        return new CompressedRowBucket(rowsCapacity, cols);
     }
 
     @Override

@@ -58,7 +58,7 @@ public class QueryBench {
     @Param({"true"}) boolean builtinPlans;
     @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
-//    @Param({"true"}) boolean alt;
+//    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
         PREFERRED,
@@ -198,10 +198,12 @@ public class QueryBench {
         ropeLenCounter = new RopeLenCounter(batchType);
         termLenCounter = new TermLenCounter(batchType);
         this.dataDir = dataDir.toFile();
+        System.out.println("\nThermal cooldown: 7s...");
+        Async.uninterruptibleSleep(7_000);
     }
 
     @Setup(Level.Iteration) public void iterationSetup() throws IOException {
-//        LocalityCompositeDict.ALT = alt;
+//        CompressedBatchType.ALT = alt;
         fedHandle = FederationHandle.builder(dataDir).srcKind(srcKind)
                                     .selKind(selKind.forSource(srcKind))
                                     .waitInit(true).create();
@@ -227,7 +229,7 @@ public class QueryBench {
         IOUtils.fsync(50_000);
         Async.uninterruptibleSleep(100);
         System.gc();
-        Async.uninterruptibleSleep(100);
+        Async.uninterruptibleSleep(500);
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {

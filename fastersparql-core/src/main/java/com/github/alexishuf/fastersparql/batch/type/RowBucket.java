@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     BatchType<B> batchType();
 
@@ -39,28 +37,16 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     /** Whether there is a row stored at slot {@code row}. */
     boolean has(int row);
 
-    /**
-     * The underlying batch that where slot {@code rowSlot} of this bucket is stored.
-     *
-     * @param rowSlot a slot index in this bucket
-     * @return a batch containing the row at {@code rowSlot} in some index, or null.
-     * @see RowBucket#batchRow(int)
-     */
-    @Nullable B batchOf(int rowSlot);
-
-    /**
-     * Get the index into {@code batchOf(rowSlot}} corresponding to the bucket slot {@code rowSlot}.
-     *
-     * @param rowSlot a slot index in this bucket
-     * @return {@code i} such that {@code equals(rowSlot, batchOf(rowSlot), i)}.
-     */
-    int batchRow(int rowSlot);
-
     /** Copy {@code row}-th row of {@code batch} into slot {@code dst} */
     void set(int dst, B batch, int row);
 
     /** Copy row at {@code src} into {@code dst} */
     void set(int dst, int src);
+
+    /**
+     * Copy row {@code row} of {@code other} into row {@code dst} of {@code this} {@link RowBucket}.
+     */
+    void set(int dst, RowBucket<B> other, int src);
 
     /**
      * Whether the row stored at slot {@code row} is equal to the {@code batchRow}-th row of

@@ -7,7 +7,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
@@ -25,8 +24,8 @@ class RowBucketTest {
     }
 
     @ParameterizedTest @MethodSource() <B extends Batch<B>> void test(BatchType<B> bt) {
-        RowBucket<B> bucket = bt.createBucket(77, 2);
-        assertEquals(77, bucket.capacity());
+        RowBucket<B> bucket = bt.createBucket(57, 2);
+        assertTrue(bucket.capacity() >= 57 && bucket.capacity() <= 64);
         bucket.grow(128-bucket.capacity());
         assertEquals(128, bucket.capacity());
         assertEquals(List.of(), range(0, bucket.capacity()).filter(bucket::has).boxed().toList());
@@ -49,11 +48,6 @@ class RowBucketTest {
         bucket.set(bucket.capacity()-2, b3412, 1);
         assertTrue(bucket.equals(bucket.capacity()-1, b1234, 1));
         assertTrue(bucket.equals(bucket.capacity()-2, b12, 0));
-
-        assertTrue(Objects.requireNonNull(bucket.batchOf(1)).equals(bucket.batchRow(1), List.of(i1, i2)));
-        assertTrue(Objects.requireNonNull(bucket.batchOf(0)).equals(bucket.batchRow(1), List.of(i1, i2)));
-        assertTrue(Objects.requireNonNull(bucket.batchOf(bucket.capacity()-1)).equals(bucket.batchRow(bucket.capacity()-1), List.of(i3, i4)));
-        assertTrue(Objects.requireNonNull(bucket.batchOf(bucket.capacity()-2)).equals(bucket.batchRow(bucket.capacity()-2), List.of(i1, i2)));
 
         bucket.set(0, b__12, 1);
         bucket.set(1, b__12, 0);

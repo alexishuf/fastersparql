@@ -5,8 +5,8 @@ import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -33,8 +33,8 @@ import static jdk.incubator.vector.VectorMask.fromLong;
 
 public class CompressedBatch extends Batch<CompressedBatch> {
     static final int MIN_LOCALS = 32;
-    private static final int SH_SUFF_MASK = 0x80000000;
-    private static final int     LEN_MASK = 0x7fffffff;
+    static final int SH_SUFF_MASK = 0x80000000;
+    static final int     LEN_MASK = 0x7fffffff;
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
 
@@ -268,7 +268,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
 
-    public void recycle() {
+    public void recycleInternals() {
         rows            = 0;
         offerNextLocals = -1;
         offerLastCol    = -1;
@@ -301,6 +301,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (rows == 0) return 0;
         int base = slRowBase(rows - 1);
         return slices[base+SL_OFF] + slices[base+SL_LEN];
+    }
+
+    public int bytesCapacity() {
+        return locals.length-bytesUsed();
     }
 
     @Override public int rowsCapacity() {
@@ -479,6 +483,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return true;
     }
 
+    SegmentRope sharedUnchecked(@NonNegative int row, @NonNegative int col) {
+        SegmentRope sh = shared[row * cols + col];
+        return sh == null ? EMPTY : sh;
+    }
+
     @Override public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
         if (row < 0 || row >= rows || col < 0 || col >= cols)
@@ -511,6 +520,16 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int lexEnd = tmp.reverseSkipUntil(0, localLen, '"');
         tmp.recycle();
         return lexEnd;
+    }
+
+    int copyLocal(@NonNegative int row, @NonNegative int col, byte[] dst, int dstPos) {
+        int b = row * slRowInts + (col << 1), len = slices[b + SL_LEN] & LEN_MASK;
+        System.arraycopy(locals, slices[b+SL_OFF], dst, dstPos, len);
+        return len;
+    }
+
+    int flaggedLen(@NonNegative int row, @NonNegative int col) {
+        return slices[row*slRowInts + (col<<1) + SL_LEN];
     }
 
     @Override public int localLen(@NonNegative int row, @NonNegative int col) {
@@ -675,7 +694,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public boolean equals(@NonNegative int row, @NonNegative int col, @Nullable Term other) {
-        int base = slBase(row, col), fstLen = 0, sndLen = slices[base+SL_LEN];
+        int base = slBase(row, col), sndLen = slices[base+SL_LEN];
         boolean suffix = (sndLen & SH_SUFF_MASK) != 0;
         sndLen &= LEN_MASK;
         SegmentRope sh = shared[row*cols + col];
@@ -690,8 +709,33 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         else if (other.asNumber() != null)
             return Term.isNumericDatatype(sh) && other.equals(get(row, col));
         // compare as string
+        if (LowLevelHelper.HAS_UNSAFE) {
+            byte[] fst = EMPTY.u8(), snd = locals;
+            int fstLen = 0;
+            long fstOff = 0, sndOff = slices[base+SL_OFF];
+            if (sh != null) {
+                if (suffix) {
+                    fst = locals;  fstOff = sndOff;    fstLen = sndLen;
+                    snd = sh.utf8; sndOff = sh.segment.address()+sh.offset; sndLen = sh.len;
+                } else {
+                    fst = sh.utf8; fstOff = sh.segment.address()+sh.offset; fstLen = sh.len;
+                }
+            }
+            SegmentRope oFst = other.first(), oSnd = other.second();
+            return compare2_2( fst,  fstOff,  fstLen,  snd,  sndOff,  sndLen,
+                    oFst.utf8, oFst.segment.address()+oFst.offset, oFst.len,
+                    oSnd.utf8, oSnd.segment.address()+oSnd.offset, oSnd.len) == 0;
+        } else {
+            return safeEqualsTerm(other, base, sndLen, suffix, sh);
+        }
+    }
+
+    private boolean safeEqualsTerm(Term other, int base, int sndLen,
+                                   boolean suffix, SegmentRope sh) {
+        // compare as string
         MemorySegment fst = EMPTY.segment, snd = localsSeg;
-        long fstOff = 0, sndOff = slices[base+SL_OFF];
+        int fstLen = 0;
+        long fstOff = 0, sndOff = slices[base +SL_OFF];
         if (sh != null) {
             if (suffix) {
                 fst = localsSeg;  fstOff = sndOff;    fstLen = sndLen;
@@ -701,9 +745,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             }
         }
         SegmentRope oFst = other.first(), oSnd = other.second();
-        return compare2_2( fst,  fstOff,  fstLen,  snd,  sndOff,  sndLen,
-                          oFst.segment, oFst.offset, oFst.len,
-                          oSnd.segment, oSnd.offset, oSnd.len) == 0;
+        return compare2_2(fst, fstOff, fstLen, snd, sndOff, sndLen,
+                oFst.segment, oFst.offset, oFst.len,
+                oSnd.segment, oSnd.offset, oSnd.len) == 0;
     }
 
     @Override

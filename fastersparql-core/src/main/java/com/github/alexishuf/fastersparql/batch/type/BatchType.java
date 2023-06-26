@@ -95,9 +95,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @param cols number of columns that all rows must have
      * @return a new {@link RowBucket}
      */
-    public RowBucket<B> createBucket(int rowsCapacity, int cols) {
-        return new SingletonsRowBucket<>(this, rowsCapacity, cols);
-    }
+    public abstract RowBucket<B> createBucket(int rowsCapacity, int cols);
 
     /** Get a {@link BatchMerger} that only executes a projection on its left operand. */
     public abstract @Nullable BatchMerger<B> projector(Vars out, Vars in);

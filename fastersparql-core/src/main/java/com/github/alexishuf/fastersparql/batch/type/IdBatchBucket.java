@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -39,8 +37,6 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
 
     @Override public int            cols()               { return b.cols; }
     @Override public int            capacity()            { return b.rowsCapacity(); }
-    @Override public @Nullable B    batchOf(int rowSlot)  { return b; }
-    @Override public int            batchRow(int rowSlot) { return rowSlot; }
 
     @Override public boolean has(int row) {
         long[] a = b.arr;
@@ -54,6 +50,14 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
         if (cols != b.cols)
             throw new IllegalArgumentException();
         arraycopy(batch.arr, row*cols, b.arr, dst*cols, cols);
+    }
+
+    @Override public void set(int dst, RowBucket<B> other, int src) {
+        IdBatchBucket<B> bucket = (IdBatchBucket<B>) other;
+        int cols = b.cols;
+        if (bucket.b.cols != b.cols)
+            throw new IllegalArgumentException("cols mismatch");
+        arraycopy(bucket.b.arr, src*cols, b.arr, dst*cols, cols);
     }
 
     @Override public void set(int dst, int src) {
