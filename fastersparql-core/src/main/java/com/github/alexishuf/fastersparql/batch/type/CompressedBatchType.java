@@ -3,39 +3,44 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
+import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import com.github.alexishuf.fastersparql.util.concurrent.StealingLevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.MIN_LOCALS;
 
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
+    private static final int  SMALL_LEVEL_CAP = 32;
+    private static final int MEDIUM_LEVEL_CAP = 16;
+    private static final int  LARGE_LEVEL_CAP = 8;
+    private static final int   HUGE_LEVEL_CAP = 1;
     public static final CompressedBatchType INSTANCE = new CompressedBatchType(
-            new AffinityPool<>(CompressedBatch.class, 1024));
+            new StealingLevelPool<>(new LevelPool<>(CompressedBatch.class,
+                    SMALL_LEVEL_CAP, MEDIUM_LEVEL_CAP, LARGE_LEVEL_CAP, HUGE_LEVEL_CAP)));
 
-    private final AffinityPool<CompressedBatch> pool;
+    private final StealingLevelPool<CompressedBatch> pool;
 
     public static CompressedBatchType get() { return INSTANCE; }
 
-    public CompressedBatchType(AffinityPool<CompressedBatch> pool) {
+    public CompressedBatchType(StealingLevelPool<CompressedBatch> pool) {
         super(CompressedBatch.class);
         this.pool = pool;
     }
 
     @Override public CompressedBatch create(int rows, int cols, int bytes) {
-        var b = pool.get();
+        var b = pool.getAtLeast(rows*((cols+1)<<1));
         if (b == null)
-            return new CompressedBatch(rows, cols, bytes == 0 ? rows* CompressedBatch.MIN_LOCALS : bytes);
+            return new CompressedBatch(rows, cols, bytes == 0 ? rows* MIN_LOCALS : bytes);
         b.hydrate(rows, cols, bytes);
         return b;
     }
 
-    @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch batch) {
-        if (batch != null) {
-            batch.recycle();
-            pool.offer(batch);
-        }
+    @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
+        if (b != null && pool.offer(b, b.rowsCapacity()*((b.cols+1)<<1)) != null)
+            b.recycle();
         return null;
     }
 
