@@ -70,11 +70,8 @@ public class NativeBind {
         var leftVars = left.vars();
         var nOps = right.opCount();
         var queues = new ArrayList<SPSCBIt<B>>(nOps);
-        for (int i = 0; i < nOps; i++) {
-            var q = new SPSCBIt<>(bt, leftVars, left.maxBatch());
-            q.eager().maxBatch(left.maxBatch());
-            queues.add(q);
-        }
+        for (int i = 0; i < nOps; i++)
+            queues.add(new SPSCBIt<>(bt, leftVars, left.maxBatch()));
 
         Thread scatter = Thread.ofVirtual().unstarted(() -> {
             Thread.currentThread().setName("Scatter-"+(int)SCATTER_NEXT_ID.getAndAddAcquire(1));
