@@ -288,7 +288,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 consumer = Thread.currentThread();
                 LOCK.setRelease(this, 0);
                 locked = false;
-                parkNanos(this, parkNs);
+                if (parkNs == Long.MAX_VALUE)
+                    park(this);
+                else
+                    parkNanos(this, parkNs);
                 consumer = null;
                 if ((b = lockOrTakeReady()) != null) {
                     break;
