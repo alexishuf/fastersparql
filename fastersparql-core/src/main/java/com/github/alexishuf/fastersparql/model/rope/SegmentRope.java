@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -392,14 +392,21 @@ public class SegmentRope extends PlainRope {
         return (int) (Math.max(physBegin, i) - offset);
     }
 
-    @Override public boolean has(int position, byte[] seq) {
-        if (position < 0) throw new IndexOutOfBoundsException();
-        if (position + seq.length > len) return false;
+    private boolean hasSafe(int position, byte[] seq) {
         long i = position + offset;
         for (byte c : seq) {
             if (c != segment.get(JAVA_BYTE, i++)) return false;
         }
         return true;
+    }
+
+    @Override public boolean has(int position, byte[] seq) {
+        if (position < 0) throw new IndexOutOfBoundsException();
+        if (position + seq.length > len) return false;
+        if (U == null)
+            return hasSafe(position, seq);
+        return compare1_1(utf8, segment.address()+offset+position, seq.length,
+                          seq, 0, seq.length) == 0;
     }
 
     public static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {

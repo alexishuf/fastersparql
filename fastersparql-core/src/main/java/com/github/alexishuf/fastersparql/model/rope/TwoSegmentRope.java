@@ -1,12 +1,13 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 
 import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
@@ -285,8 +286,27 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
+    @Override public boolean has(int position, byte[] seq) {
+        if (!HAS_UNSAFE)
+            return super.has(position, seq);
+        if (position < 0) throw new IndexOutOfBoundsException(position);
+        if (position+seq.length > len) return false;
+        int fLen;
+        long sOff = snd.address()+sndOff;
+        if (position < fstLen) {
+            fLen = Math.min(seq.length, fstLen-position);
+            long fOff = fst.address()+fstOff+position;
+            return compare1_2(seq, 0, seq.length,
+                              fstU8, fOff, fLen, sndU8, sOff, seq.length-fLen) == 0;
+        } else {
+            int sPos = position - fstLen;
+            return compare1_1(seq, 0, seq.length,
+                              sndU8, sOff+sPos, Math.min(seq.length, sndLen-sPos)) == 0;
+        }
+    }
+
     @Override public boolean has(int pos, Rope rope, int begin, int end) {
-        if (!LowLevelHelper.HAS_UNSAFE)
+        if (!HAS_UNSAFE)
             return hasNoUnsafe(pos, rope, begin, end);
         int rLen = end - begin;
         if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
@@ -380,7 +400,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(SegmentRope o) {
-        if (LowLevelHelper.HAS_UNSAFE) {
+        if (HAS_UNSAFE) {
             return -compare1_2(o.utf8, o.segment.address()+o.offset, o.len,
                                fstU8, fst.address()+fstOff, fstLen,
                                sndU8, snd.address()+sndOff, sndLen);
@@ -391,7 +411,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(TwoSegmentRope o) {
-        if (LowLevelHelper.HAS_UNSAFE) {
+        if (HAS_UNSAFE) {
             return compare2_2(fstU8, fst.address()+fstOff, fstLen,
                               sndU8, snd.address()+sndOff, sndLen,
                               o.fstU8, o.fst.address()+o.fstOff, o.fstLen,
@@ -404,7 +424,7 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public int compareTo(SegmentRope o, int begin, int end) {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
-        if (LowLevelHelper.HAS_UNSAFE) {
+        if (HAS_UNSAFE) {
             return -compare1_2(o.utf8, o.segment.address()+o.offset + begin, end - begin,
                                fstU8, fst.address()+fstOff, fstLen,
                                sndU8, snd.address()+sndOff, sndLen);
@@ -415,7 +435,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     @Override public int compareTo(TwoSegmentRope o, int begin, int end) {
-        if (!LowLevelHelper.HAS_UNSAFE)
+        if (!HAS_UNSAFE)
             return compareToNoUnsafe(o, begin, end);
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)
