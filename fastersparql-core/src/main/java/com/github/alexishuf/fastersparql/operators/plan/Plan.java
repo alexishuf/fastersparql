@@ -529,7 +529,7 @@ public abstract sealed class Plan implements SparqlQuery
     /* --- --- --- pure abstract methods --- --- --- */
 
     /** Create a {@link BIt} over the results from this plan execution. */
-    public abstract <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup);
+    public abstract <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup);
 
     public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, boolean canDedup) { return execute(bt, null, canDedup); }
     public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt) { return execute(bt, false); }

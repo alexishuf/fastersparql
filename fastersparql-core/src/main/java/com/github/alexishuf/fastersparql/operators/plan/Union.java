@@ -59,16 +59,16 @@ public final class Union extends Plan {
 
     @Override
     public <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding,
-                                               boolean canDedup) {
+                                               boolean weakDedup) {
         var sources = new ArrayList<BIt<B>>(opCount());
         for (int i = 0, n = opCount(); i < n; i++)
-            sources.add(op(i).execute(bt, binding, canDedup));
+            sources.add(op(i).execute(bt, binding, weakDedup));
         Dedup<B> dedup = null;
-        if (canDedup || crossDedupCapacity > 0) {
+        if (weakDedup || crossDedupCapacity > 0) {
             int cap = sources.size() * (crossDedupCapacity > 0 ? crossDedupCapacity
                                                                : dedupCapacity());
             int cols = publicVars().size();
-            dedup = canDedup ? bt.dedupPool.getWeak(cap, cols)
+            dedup = weakDedup ? bt.dedupPool.getWeak(cap, cols)
                              : bt.dedupPool.getWeakCross(cap, cols);
         }
         Metrics m = Metrics.createIf(this);

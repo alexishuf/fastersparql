@@ -69,7 +69,7 @@ class NativeBindTest {
                 var finalResults = Results.results(results.vars(), finalRows)
                                           .duplicates(dedup || crossDedup ? ALLOW_DEDUP : EXACT);
 
-                try (var it = NativeBind.preferNative(Batch.TERM, join, null, dedup)) {
+                try (var it = NativeBind.preferNative(Batch.TERM, join, null, false)) {
                     assertFalse(it instanceof PlanBindingBIt, "not using native joins");
                     finalResults.check(it);
                 }

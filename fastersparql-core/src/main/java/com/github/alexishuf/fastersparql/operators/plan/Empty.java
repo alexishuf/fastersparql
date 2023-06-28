@@ -30,7 +30,7 @@ public final class Empty extends Plan {
 
     @Override
     public <B extends Batch<B>>
-    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         Vars vars = publicVars;
         if (binding != null && vars.intersects(binding.vars))
             vars = vars.minus(binding.vars);

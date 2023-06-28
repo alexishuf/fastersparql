@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 
@@ -154,21 +153,21 @@ public final class Modifier extends Plan {
 
     @Override
     public <B extends Batch<B>>
-    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         BIt<B> in = left().execute(bt, binding,
-                (canDedup && !(offset > 0)) || distinctCapacity > 0);
-        return executeFor(in, binding, canDedup);
+                (weakDedup && offset <= 0) || distinctCapacity > 0);
+        return executeFor(in, binding, weakDedup && distinctCapacity == 0);
     }
     public <B extends Batch<B>>
-    BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean canDedup) {
-        var processor = processorFor(in.batchType(), in.vars(), binding, canDedup);
+    BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean weakDedup) {
+        var processor = processorFor(in.batchType(), in.vars(), binding, weakDedup);
         if (processor == null) return in;
         return new ModifierBIt<>(in, processor).metrics(Metrics.createIf(this));
     }
 
     public <B extends Batch<B>>
     BatchProcessor<B> processorFor(BatchType<B> bt, Vars inVars,
-                                   @Nullable Binding binding, boolean canDedup) {
+                                   @Nullable Binding binding, boolean weakDedup) {
         Vars outVars = projection == null ? inVars : projection;
         if (binding != null)
             outVars = outVars.minus(binding.vars);
@@ -177,11 +176,16 @@ public final class Modifier extends Plan {
         long limit = this.limit;
 
         Dedup<B> dedup = null;
-        if      (cols == 0)                limit = dCap > 0 || canDedup ? 1 : limit;
-        else if (dCap > reducedCapacity()) dedup = bt.dedupPool.getDistinct(dCap, cols);
-        else if (dCap > dedupCapacity())   dedup = bt.dedupPool.getReduced(dCap, cols);
-        else if (dCap > 0)                 dedup = bt.dedupPool.getDistinct(dCap, cols);
-        else if (canDedup)                 dedup = bt.dedupPool.getWeak(dedupCapacity(), cols);
+        if (cols == 0) {
+            limit = dCap > 0 || weakDedup ? 1 : limit;
+        } else if (dCap > 0) {
+            if (dCap < FSProperties.reducedCapacity() || weakDedup)
+                dedup = bt.dedupPool.getWeak(dCap, cols);
+            else if (dCap >= FSProperties.distinctCapacity())
+                dedup = bt.dedupPool.getDistinct(dCap, cols);
+            else
+                dedup = bt.dedupPool.getReduced(dCap, cols);
+        }
 
         BatchProcessor<B> processor;
         boolean slice = limit < Long.MAX_VALUE || offset > 0;

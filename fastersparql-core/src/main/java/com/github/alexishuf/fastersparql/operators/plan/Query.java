@@ -30,10 +30,10 @@ public final class Query extends Plan {
     public SparqlQuery      query() { return sparql; }
     public SparqlClient client() { return client; }
 
-    @Override public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, @Nullable Binding binding, boolean canDedup) {
+    @Override public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, @Nullable Binding binding, boolean weakDedup) {
         var sparql = this.sparql;
         if (binding != null) sparql = sparql.bound(binding);
-        if (canDedup)        sparql = sparql.toDistinct(WEAK);
+        if (weakDedup)        sparql = sparql.toDistinct(WEAK);
         return client.query(batchType, sparql).metrics(Metrics.createIf(this));
     }
 

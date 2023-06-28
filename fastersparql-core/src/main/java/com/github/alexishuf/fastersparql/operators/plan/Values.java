@@ -35,9 +35,9 @@ public final class Values extends Plan {
     public TermBatch values() { return values; }
 
     @Override public <B extends Batch<B>> BIt<B>
-    execute(BatchType<B> batchType, @Nullable Binding binding, boolean canDedup) {
+    execute(BatchType<B> batchType, @Nullable Binding binding, boolean weakDedup) {
         TermBatch values = this.values;
-        if (canDedup && values != null && values.rows > 1)
+        if (weakDedup && values != null && values.rows > 1)
             values = dedupValues();
         return new ValuesBIt<>(batchType, values == null ? null : batchType.convert(values));
     }

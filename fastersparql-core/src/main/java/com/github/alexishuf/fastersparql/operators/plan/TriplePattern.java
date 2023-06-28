@@ -61,7 +61,7 @@ public final class TriplePattern extends Plan {
     @Override public Plan copy(@Nullable Plan[] ops) { return new TriplePattern(s, p, o); }
 
     @Override
-    public <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+    public <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         throw new UnsupportedOperationException();
     }
 

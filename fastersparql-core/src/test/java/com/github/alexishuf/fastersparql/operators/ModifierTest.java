@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -101,8 +102,8 @@ public class ModifierTest {
                 new D(distinct(in, 1), in),
                 new D(distinct(in, 2), in),
                 new D(distinct(dupIn, iMax), in),
-                new D(distinct(dupIn, in.size()), in),
-                new D(distinct(dupIn, 256), in)
+                new D(distinct(dupIn, FSProperties.reducedCapacity()), in),
+                new D(distinct(dupIn, FSProperties.distinctCapacity()), in)
         ));
         var numbers = results("?x0 ?x1",
                 "1", "2",

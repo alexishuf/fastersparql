@@ -82,11 +82,13 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         int i = sparql.skip(sparql.skip(verbBegin, len, UNTIL_WS), len, Rope.WS);
         var current = sparql.hasAnyCase(i, DISTINCT_u8) ? DistinctType.STRONG
                     : sparql.hasAnyCase(i, REDUCED_u8) ? DistinctType.WEAK : null;
-        if (current == distinctType || current == DistinctType.STRONG)
+        if (current == distinctType)
             return this; // distinctType already satisfied
         Binder b = new Binder(publicVars, aliasVars, allVars);
         b.b.append(sparql, 0, b.consumed = verbBegin+6);
-        if (current == DistinctType.WEAK)
+        if (current == DistinctType.STRONG)
+            b.consumed = sparql.skipWS(b.consumed, sparql.len())+8; // skip over DISTINCT
+        else if (current == DistinctType.WEAK)
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+7; // skip over REDUCED
         b.b.append(' ').append(distinctType.sparql());
         b.growth = b.b.len()-b.consumed;

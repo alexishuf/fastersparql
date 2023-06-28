@@ -39,8 +39,8 @@ public final class Join extends Plan {
 
     @Override
     public <B extends Batch<B>>
-    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
-        return NativeBind.preferNative(bt, this, binding, canDedup);
+    BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
+        return NativeBind.preferNative(bt, this, binding, weakDedup);
     }
 
     @Override public boolean equals(Object o) {

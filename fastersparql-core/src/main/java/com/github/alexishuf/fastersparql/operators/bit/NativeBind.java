@@ -52,7 +52,7 @@ public class NativeBind {
     @SuppressWarnings("GrazieInspection")
     public static <B extends Batch<B>> BIt<B>
     multiBind(BIt<B> left, BindType type, Vars outVars, Union right,
-              @Nullable Binding binding, boolean canDedup,
+              @Nullable Binding binding, boolean weakDedup,
               @Nullable JoinMetrics metrics, SparqlClient clientForAlgebra) {
         //          left
         //    +-------^------+      Scatter-planName VThread copies each batch from left
@@ -125,7 +125,7 @@ public class NativeBind {
                 sparql = operand;
                 client = clientForAlgebra;
             }
-            if (canDedup)        sparql = sparql.toDistinct(WEAK);
+            if (weakDedup)        sparql = sparql.toDistinct(WEAK);
             if (binding != null) sparql = sparql.bound(binding);
             boundIts.add(client.query(new BindQuery<>(sparql, queue, type)));
         }
@@ -135,18 +135,19 @@ public class NativeBind {
         int cdc = right.crossDedupCapacity;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      (canDedup) dedup = bt.dedupPool.getWeak(nOps*dedupCapacity(), dedupCols);
+        if      (weakDedup) dedup = bt.dedupPool.getWeak(nOps*dedupCapacity(), dedupCols);
         else if (cdc >  0) dedup = bt.dedupPool.getWeakCross(nOps*cdc, dedupCols);
         else               return new MergeBIt<>(boundIts, bt, outVars, metrics);
         return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
     }
 
     public static <B extends Batch<B>> BIt<B> preferNative(BatchType<B> batchType, Plan join,
-                                                           @Nullable Binding binding, boolean canDedup) {
+                                                           @Nullable Binding binding,
+                                                           boolean weakDedup) {
         BindType type = join.type.bindType();
         if (type == null) throw new IllegalArgumentException("Unsupported: Plan type");
         Metrics metrics = Metrics.createIf(join);
-        BIt<B> left = join.op(0).execute(batchType, binding, canDedup);
+        BIt<B> left = join.op(0).execute(batchType, binding, weakDedup);
         for (int i = 1, n = join.opCount(); i < n; i++) {
             var r = join.op(i);
             var jm = metrics == null ? null : metrics.joinMetrics[i];
@@ -155,13 +156,13 @@ public class NativeBind {
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
                 if (binding != null) sparql = sparql.bound(binding);
-                if (canDedup)        sparql = sparql.toDistinct(WEAK);
+                if (weakDedup)        sparql = sparql.toDistinct(WEAK);
                 left = q.client.query(new BindQuery<>(sparql, left, type, jm));
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
-                left = multiBind(left, type, projection, rUnion, binding, canDedup, jm, null);
+                left = multiBind(left, type, projection, rUnion, binding, weakDedup, jm, null);
             } else {
                 if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(new BindQuery<>(r, left, type, jm), canDedup, projection);
+                left = new PlanBindingBIt<>(new BindQuery<>(r, left, type, jm), weakDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)
