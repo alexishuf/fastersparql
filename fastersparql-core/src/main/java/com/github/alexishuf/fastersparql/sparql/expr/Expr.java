@@ -1132,7 +1132,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     List<byte[]> branches = new ArrayList<>();
                     int end = local.skipUntilLast(1, local.len, '"');
                     for (int i = 1, j; i < end; i = j + 1) {
-                        if ((j = local.skipUntilUnescaped(0, end, '|')) == end) break;
+                        j = local.skipUntilUnescaped(i, end, '|');
                         branches.add(local.toArray(i, j));
                     }
                     orBranches = branches.toArray(new byte[0][]);
