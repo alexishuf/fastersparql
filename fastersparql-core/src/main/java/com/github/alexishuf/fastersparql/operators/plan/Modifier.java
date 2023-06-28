@@ -169,7 +169,7 @@ public final class Modifier extends Plan {
     public <B extends Batch<B>>
     BatchProcessor<B> processorFor(BatchType<B> bt, Vars inVars,
                                    @Nullable Binding binding, boolean canDedup) {
-        Vars outVars = publicVars();
+        Vars outVars = projection == null ? inVars : projection;
         if (binding != null)
             outVars = outVars.minus(binding.vars);
         List<Expr> filters = binding == null ? this.filters : boundFilters(binding);
