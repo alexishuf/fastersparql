@@ -23,6 +23,8 @@ public final class LeftJoin extends Plan {
     @Override
     public <B extends Batch<B>>
     BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean canDedup) {
+        if (right instanceof Query q && q.sparql.isAsk())
+            return left().execute(bt, binding, canDedup);
         return NativeBind.preferNative(bt, this, binding, canDedup);
     }
 
