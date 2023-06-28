@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
+import com.github.alexishuf.fastersparql.sparql.expr.ExprEvaluator;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -312,11 +313,15 @@ public final class Modifier extends Plan {
     private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
         private final BatchBinding<B> binding;
         private final List<Expr> filters;
+        private final ExprEvaluator[] evaluators;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
             this.binding = new BatchBinding<>(bt, inVars);
             this.filters = filters;
+            this.evaluators = new ExprEvaluator[filters.size()];
+            for (int i = 0; i < evaluators.length; i++)
+                evaluators[i] = filters.get(i).evaluator(inVars);
         }
 
         private void logFailure(Throwable t) {
@@ -328,8 +333,8 @@ public final class Modifier extends Plan {
         @Override public Decision drop(B batch, int row) {
             var binding = this.binding.setRow(batch, row);
             try {
-                for (Expr expr : filters) {
-                    if (!expr.eval(binding).asBool()) return Decision.DROP;
+                for (ExprEvaluator e : evaluators) {
+                    if (!e.evaluate(batch, row).asBool()) return Decision.DROP;
                 }
                 return Decision.KEEP;
             } catch (Throwable t) {

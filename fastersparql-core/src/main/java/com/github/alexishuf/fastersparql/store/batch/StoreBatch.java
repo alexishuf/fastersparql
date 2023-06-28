@@ -142,7 +142,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
             return false;
         SegmentRope shared = new SegmentRope(tsr.fst, tsr.fstOff, tsr.fstLen);
         SegmentRope local = new SegmentRope(tsr.snd, tsr.sndOff, tsr.sndLen);
-        boolean isLit = tsr.fstLen > 0 && tsr.fst.get(JAVA_BYTE, 0) == '"';
+        boolean isLit = tsr.fstLen > 0 && tsr.get(0) == '"';
         if (isLit) {
             var tmp = shared;
             shared = local;

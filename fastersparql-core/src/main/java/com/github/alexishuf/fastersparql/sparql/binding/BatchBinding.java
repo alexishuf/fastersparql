@@ -10,23 +10,31 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 public final class BatchBinding<B extends Batch<B>> extends Binding {
     static boolean SUPPRESS_SET_WARN = false;
-    private final BatchType<B> batchType;
+    private final @Nullable BatchType<B> batchType;
     public @Nullable B batch;
     public int row;
 
-    public BatchBinding(BatchType<B> batchType, Vars vars) {
+    public BatchBinding(Vars vars) {
+        super(vars);
+        batchType = null;
+    }
+
+    public BatchBinding(@Nullable BatchType<B> batchType, Vars vars) {
         super(vars);
         this.batchType = batchType;
     }
 
-    public BatchBinding<B> setRow(@Nullable B batch, int row) {
-        this.batch = batch;
+    public BatchBinding<B> setRow(@Nullable Batch<?> batch, int row) {
+        //noinspection unchecked
+        this.batch = (B) batch;
         this.row = row;
         return this;
     }
 
     @Override public Binding set(int column, @Nullable Term value) {
         assert SUPPRESS_SET_WARN : "BatchBinding.set() is terribly slow. Use ArrayBinding instead.";
+        if (batchType == null)
+            throw new UnsupportedOperationException("No batchType set");
         int n = vars.size();
         B next = batchType.createSingleton(n);
         next.beginPut();

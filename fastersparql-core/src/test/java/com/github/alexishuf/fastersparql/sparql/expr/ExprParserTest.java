@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -230,6 +232,8 @@ public class ExprParserTest {
         return rows.stream().map(Arguments::arguments);
     }
 
+    private static final List<BatchType<?>> BATCH_TYPES = List.of(Batch.TERM, Batch.COMPRESSED);
+
     @ParameterizedTest @MethodSource
     void test(TestData data) {
         ExprParser parser = new ExprParser();
@@ -245,8 +249,22 @@ public class ExprParserTest {
         assertEquals(e2, e3);
 
         for (Expr e : List.of(e1, e2, e3)) {
-            for (int i = 0, size = data.rows.size(); i < size; ++i)
-                assertEquals(data.expected(i), e.eval(data.binding(i)), "at row " + i);
+            for (int i = 0, size = data.rows.size(); i < size; ++i) {
+                Binding binding = data.binding(i);
+                assertEquals(data.expected(i), e.eval(binding), "at row " + i);
+                var evaluator = e.evaluator(binding.vars);
+                for (BatchType<?> bt : BATCH_TYPES) {
+                    Batch<?> b = bt.create(1, binding.vars.size(), 0);
+                    b.beginPut();
+                    b.commitPut();
+                    b.beginPut();
+                    for (int col = 0; col < binding.vars.size(); col++)
+                        b.putTerm(col, binding.get(col));
+                    b.commitPut();
+                    assertEquals(data.expected(i), evaluator.evaluate(b, 1),
+                                 "at row " + i+", bt="+bt);
+                }
+            }
         }
     }
 

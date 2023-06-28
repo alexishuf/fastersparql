@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
@@ -20,16 +21,16 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
-import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("SpellCheckingInspection")
-public final class Term extends Rope implements Expr {
+public final class Term extends Rope implements Expr, ExprEvaluator {
     private static final int POOL_COL = AffinityShallowPool.reserveColumn();
     private static final byte IS_READONLY = 0x0000010;
     private static final byte   IS_SUFFIX = 0x0000001;
@@ -412,6 +413,8 @@ public final class Term extends Rope implements Expr {
         second = EMPTY;
         flags  = IS_SUFFIX;
     }
+
+    public static Term mutable() { return new Term(); }
 
     public static Term pooledMutable() {
         Term t = AffinityShallowPool.get(POOL_COL);
@@ -970,12 +973,44 @@ public final class Term extends Rope implements Expr {
                 ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
     }
 
+    /* --- --- --- ExprEvaluator implementation --- --- --- */
+
+    @Override public Term evaluate(Batch<?> batch, int row) {
+        return this;
+    }
+
+    private static final class UnboundEvalautor implements ExprEvaluator {
+        private static final UnboundEvalautor INSTANCE = new UnboundEvalautor();
+
+        @Override public @Nullable Term evaluate(Batch<?> batch, int row) {
+            return null;
+        }
+    }
+    private static final class VarEvalautor implements ExprEvaluator {
+        private final Term tmp = Term.mutable();
+        private final int col;
+
+        private VarEvalautor(int col) { this.col = col; }
+
+        @Override public @Nullable Term evaluate(Batch<?> batch, int row) {
+            return batch.getView(row, col, tmp) ? tmp : null;
+        }
+    }
+
     /* --- --- --- Expr implementation --- --- --- */
 
     @Override public int argCount() { return 0; }
     @Override public Expr arg(int i) { throw new IndexOutOfBoundsException(i); }
     @Override public Term eval(Binding binding) { return binding.getIf(this); }
     @Override public Expr bound(Binding binding) { return binding.getIf(this); }
+
+    @Override public ExprEvaluator evaluator(Vars vars) {
+        if (type() == Type.VAR) {
+            int col = vars.indexOf(this);
+            return col < 0 ? UnboundEvalautor.INSTANCE : new VarEvalautor(col);
+        }
+        return this;
+    }
 
     @Override public Vars vars() {
         var name = name();
@@ -1279,6 +1314,18 @@ public final class Term extends Rope implements Expr {
         return new Term(second, nLocal, true);
     }
 
+    public boolean isNumeric() {
+        SegmentRope s = second;
+        if (s.len == 0) return false;
+        int typeOrdinal = (flags & TYPE_MASK) >>> TYPE_BIT;
+        if (typeOrdinal > 0 && typeOrdinal != Type.LIT.ordinal() || s.get(0) != '"') return false;
+        return s == DT_INT || s == DT_unsignedShort || s == DT_DOUBLE || s == DT_FLOAT ||
+               s == DT_integer || s == DT_positiveInteger || s == DT_nonPositiveInteger ||
+               s == DT_nonNegativeInteger || s == DT_unsignedLong || s == DT_decimal ||
+               s == DT_LONG || s == DT_unsignedInt || s == DT_SHORT || s == DT_unsignedByte ||
+               s == DT_BYTE;
+    }
+
     public static boolean isNumericDatatype(SegmentRope suff) {
         return suff == DT_INT || suff == DT_unsignedShort || suff == DT_DOUBLE || suff == DT_FLOAT ||
                suff == DT_integer || suff == DT_positiveInteger || suff == DT_nonPositiveInteger ||
@@ -1290,7 +1337,7 @@ public final class Term extends Rope implements Expr {
 
     /** Get the {@link Number} for this term, or {@code null} if it is not a number. */
     public Number asNumber() {
-        if (number != null || second.len == 0 || !isNumericDatatype(second))
+        if (number != null || second.len == 0 || !isNumeric())
             return number;
         String lexical = first.toString(1, first.len);
         try {
@@ -1356,20 +1403,20 @@ public final class Term extends Rope implements Expr {
 
     /** Implements {@link Comparable#compareTo(Object)} for numeric literals */
     public int compareTo(Term rhs) {
-        Number l = asNumber(), r = rhs.asNumber();
-        if ((l == null) != (r == null)) {
-            throw new ExprEvalException("compareTo not defined for "+this+" and "+rhs);
-        } else if (l != null) {
+        if (rhs == null)
+            throw new ExprEvalException("cannot compare with unbound");
+        if (isNumeric() && rhs.isNumeric()) {
+            Number l = asNumber(), r = rhs.asNumber();
             if (l instanceof BigDecimal || r instanceof BigDecimal)
                 return asBigDecimal(l, r).compareTo(asBigDecimal(r, l));
             else if (l instanceof BigInteger || r instanceof BigInteger)
-                return asBigDecimal(l, r).compareTo(asBigDecimal(r, l));
+                return asBigInteger(l).compareTo(asBigInteger(r));
             else if (l instanceof Double || r instanceof Double || l instanceof Float || r instanceof Float)
                 return Double.compare(l.doubleValue(), r.doubleValue());
             else
                 return Long.compare(l.longValue(), r.longValue());
         } else {
-            return super.compareTo(rhs);
+            return cmp(0, len, rhs, 0, rhs.len);
         }
     }
 
@@ -1446,8 +1493,7 @@ public final class Term extends Rope implements Expr {
     }
 
     public Term negate() {
-        Number n = asNumber();
-        if (n != null) {
+        if (isNumeric()) {
             if (first.get(1) == '-')
                 return new Term(second, first.sub(1, first.len-1), true);
             ByteRope tmp = new ByteRope(first.len + 1);
@@ -1578,11 +1624,9 @@ public final class Term extends Rope implements Expr {
         return switch (type()) {
             case LIT -> {
                 if (second == DT_BOOLEAN) {
-                    yield first.get(1) == 't';
-                } else if (second == DT_string) {
-                    yield first.len > 1;
+                    yield this == TRUE;
                 } else if (second.len == 0) {
-                    yield endLex() > 1;
+                    yield first.get(1) != '"';
                 } else {
                     Number n = asNumber();
                     yield switch (n) {
@@ -1603,13 +1647,17 @@ public final class Term extends Rope implements Expr {
 
     @Override public boolean equals(Object o) {
         if (o == this) return true;
+        Rope rope;
         if (o instanceof Term t) {
-            Number n = asNumber(), tn = t.asNumber();
-            if      ( n != null) return tn != null && compareTo(t) == 0;
-            else if (tn != null) return false;
-            return len == t.len && cmp(0, len, t, 0, t.len) == 0;
+            if (isNumeric() && t.isNumeric())
+                return compareTo(t) == 0;
+            rope = t;
+        } else if (o instanceof Rope or) {
+            rope = or;
+        } else {
+            return false;
         }
-        return super.equals(o);
+        return len == rope.len && cmp(0, len, rope, 0, rope.len) == 0;
     }
 
     @Override public int fastHash(int begin, int end) {

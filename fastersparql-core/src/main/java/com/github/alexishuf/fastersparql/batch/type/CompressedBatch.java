@@ -704,10 +704,15 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (sh == null && sndLen == 0)
             return false;
         // handle numeric
-        if (Term.isNumericDatatype(sh))
-            return other.asNumber() != null && other.equals(get(row, col));
-        else if (other.asNumber() != null)
-            return Term.isNumericDatatype(sh) && other.equals(get(row, col));
+        boolean thisNumeric = Term.isNumericDatatype(sh), otherNumeric = other.isNumeric();
+        if (thisNumeric ^ otherNumeric) {
+            return false;
+        } else if (thisNumeric) {
+            Term tmp = Term.pooledMutable();
+            boolean eq = getView(row, col, tmp) && other.equals(tmp);
+            tmp.recycle();
+            return eq;
+        }
         // compare as string
         if (LowLevelHelper.HAS_UNSAFE) {
             byte[] fst = EMPTY.u8(), snd = locals;
