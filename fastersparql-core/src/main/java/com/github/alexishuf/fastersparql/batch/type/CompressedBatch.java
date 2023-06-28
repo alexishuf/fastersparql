@@ -1139,20 +1139,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         @Override public CompressedBatch projectInPlace(CompressedBatch b) {
             int[] columns = requireNonNull(this.columns);
             int rows = b.rows, bCols = b.cols, bSlWidth = b.slRowInts;
-            int tSlRequired = slCeil(rows*((columns.length+1)<<1)+PUT_SLACK);
-            int tShRequired = rows*columns.length;
 
-            //project/compact md
-            int[] bsl = b.slices, tsl = this.tsl, otmd = null;
-            if (tsl == null || tsl.length < tSlRequired) {
-                otmd = tsl;
-                tsl = intsAtLeast(tSlRequired);
-            }
-            SegmentRope[] bsh = b.shared, tsh = this.tsh, otsh = null;
-            if (tsh == null || tsh.length < tShRequired) {
-                otsh = tsh;
-                tsh = segmentRopesAtLeast(tShRequired);
-            }
+            //project/compact slices
+            var bsl = b.slices;
+            var tsl = intsAtLeast(slCeil(rows*((columns.length+1)<<1)+PUT_SLACK), this.tsl);
+            var bsh = b.shared;
+            var tsh = segmentRopesAtLeast(rows*columns.length, this.tsh);
             for (int r = 0, slOut = 0, shOut = 0, slBase = 0; r < rows; r++, slBase += bSlWidth) {
                 int rowEnd = 0, shBase = r*bCols;
                 for (int src : columns) {
@@ -1178,16 +1170,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 slOut += 2;
             }
 
-            // replace md, recycle bsl and omd
+            // replace metadata
             b.slices = tsl;
             b.shared = tsh;
+            b.cols = columns.length;
+            b.slRowInts = (columns.length+1)<<1;
             this.tsl = bsl;
             this.tsh = bsh;
-            if (otmd != null) INT.offer(otmd, otmd.length);
-            if (otsh != null) SEG_ROPE.offer(otsh, otsh.length);
-            b.cols = columns.length;
-            // md now is packed (before b.mdRowInts could be >cols)
-            b.slRowInts = (columns.length+1)<<1;
             assert b.validate() : "corrupted by projection";
             return b;
         }
@@ -1263,19 +1252,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 return filterInPlaceEmpty(in, cols);
 
             // get working arrays
-            int tslRowInts = (cols+1)<<1, islRowInts = in.slRowInts;
-            int tslRequired = slCeil(rows * tslRowInts+PUT_SLACK), slOut = 0, shOut = 0;
-            int tshRequired = rows*cols;
-            int[] otmd = null, tsl = this.tsl, isl = in.slices;
-            if (tsl == null || tsl.length < tslRequired) {
-                otmd = tsl;
-                tsl = intsAtLeast(tslRequired);
-            }
-            SegmentRope[] otsh = null, tsh = this.tsh, ish = in.shared;
-            if (tsh == null || tsh.length < tshRequired) {
-                otsh = tsh;
-                tsh = segmentRopesAtLeast(tshRequired);
-            }
+            int tslRowInts = (cols+1)<<1, islRowInts = in.slRowInts, slOut = 0, shOut = 0;
+            var isl = in.slices;
+            var tsl = intsAtLeast(rows*tslRowInts + PUT_SLACK, this.tsl);
+            var ish = in.shared;
+            var tsh = segmentRopesAtLeast(rows*cols, this.tsh);
 
             if (columns == null) { // faster code if we don't need to concurrently project
                 for (int r = 0; r < rows; r++) {
@@ -1324,23 +1305,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
             if (rows == -1 && slOut == 0) { //TERMINATED
                 batchType.recycle(in);
-                INT.offer(tsl, tsl.length);
-                SEG_ROPE.offer(tsh, tsh.length);
+                this.tsl = tsl;
+                this.tsh = tsh;
                 return null;
             }
-            //update metadata. start with division so it runs while we do other stuff
+            //update metadata
             in.rows = slOut/tslRowInts;
-            in.slices = tsl;  // replace metadata
+            in.slices = tsl;
             in.shared = tsh;
-            this.tsl = isl;   // use original isl on next call
-            this.tsh = ish;
-            if (otmd != null) // offer our old tsl to other instances
-                INT.offer(otmd, otmd.length);
-            if (otsh != null)
-                SEG_ROPE.offer(otsh, otsh.length);
             in.slRowInts = tslRowInts;
             if (columns != null)
                 in.cols = columns.length;
+            // use original isl on next call
+            this.tsl = isl;
+            this.tsh = ish;
             assert in.validate() : "corrupted by projection";
             return in;
         }

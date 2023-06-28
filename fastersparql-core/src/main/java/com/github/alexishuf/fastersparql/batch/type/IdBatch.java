@@ -224,12 +224,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 if (projected != b) recycle(b);
                 return projected;
             }
-            long[] tmpIds = this.tmpIds;
-            int[] tmpHashes = this.tmpHashes;
-            if (tmpIds == null || tmpIds.length < w)
-                this.tmpIds = tmpIds = longsAtLeast(w);
-            if (tmpHashes == null || tmpHashes.length < w)
-                this.tmpHashes = tmpHashes = intsAtLeast(w);
+            long[] tmpIds    = this.tmpIds    = longsAtLeast(w, this.tmpIds);
+            int[]  tmpHashes = this.tmpHashes =  intsAtLeast(w, this.tmpHashes);
             b.cols = columns.length;
             long[] arr = b.arr;
             int[] hashes = b.hashes;
@@ -310,12 +306,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 }
                 b.rows = out/w;
             } else {
-                long[] tmpIds = this.tmpIds;
-                int[] tmpHashes = this.tmpHashes;
-                if (tmpIds == null || tmpIds.length < w)
-                    this.tmpIds = tmpIds = longsAtLeast(w);
-                if (tmpHashes == null || tmpHashes.length < w)
-                    this.tmpHashes = tmpHashes = intsAtLeast(w);
+                long[] tmpIds    = this.tmpIds    = longsAtLeast(w, this.tmpIds);
+                int[]  tmpHashes = this.tmpHashes =  intsAtLeast(w, this.tmpHashes);
                 // when projecting and filtering, there is no gain in copying regions
                 for (int inRowStart = 0; r < rows; ++r, inRowStart += w) {
                     switch (rowFilter.drop(b, r)) {
