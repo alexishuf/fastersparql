@@ -24,7 +24,6 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
-import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.ByteArrayOutputStream;
@@ -33,10 +32,12 @@ import java.util.*;
 import java.util.function.Function;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
 import static java.lang.Math.max;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.asList;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.IntStream.range;
 
 @SuppressWarnings("unused")
@@ -288,7 +289,7 @@ public final class Results {
                     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
                     """
             ).append(sparql);
-            query = SparqlParser.parse(sparqlRope);
+            query = parse(sparqlRope);
         }
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
     }
@@ -427,14 +428,22 @@ public final class Results {
         SparqlQuery query = this.query;
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
-        if (bindingsList != null)
+        if (bindingsList != null) {
             queryAndCheck(client, batchType.convert(bindingsBIt()));
-        else
+        } else {
+            Plan oldParsed = parse(query);
+            int oldHash = query.hashCode();
+            String oldString = query.toString();
             check(client.query(batchType, query));
+            if (!oldString.equals(query.toString()) || oldHash != query.hashCode()
+                    || !oldParsed.equals(parse(query))) {
+                throw new AssertionError("Query changed by "+client);
+            }
+        }
     }
 
     private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings) {
-        queryAndCheck(client, bindings, this.query, this.bindType);
+        queryAndCheck(client, bindings, requireNonNull(this.query), this.bindType);
     }
 
     private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings,
@@ -442,6 +451,9 @@ public final class Results {
         assert bindingsList != null;
         var observedSeq = new BitSet();
         var errors = new StringBuilder();
+        String oldString = query.toString();
+        int oldHash = query.hashCode();
+        Plan oldParsed = parse(query);
         check(client.query(new BindQuery<B>(query, bindings, bindType) {
             public void binding(long seq) {
                 if (seq >= bindingsList.size() || seq < 0) {
@@ -459,8 +471,14 @@ public final class Results {
             if (!observedSeq.get(i))
                 errors.append("No *Binding(").append(i).append(") call\n");
         }
+        if (oldHash != query.hashCode() || !oldString.equals(query.toString())
+                || !oldParsed.equals(parse(query))) {
+            errors.append("Query mutated by client.\nBefore:\n")
+                    .append(oldString.replace("\n", "\n  "))
+                    .append("\nAfter:\n")
+                    .append(query.toString().replace("\n", "\n  "));
+        }
         if (!errors.isEmpty()) {
-            var sb = new StringBuilder();
             if (context != null)
                 throw new AssertionError("Context: "+context+"\n"+ errors);
             else
