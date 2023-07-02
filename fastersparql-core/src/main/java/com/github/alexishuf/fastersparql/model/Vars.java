@@ -262,6 +262,8 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
 
     /** Equivalent to {@code indexOf(varOrVarName) >= 0}. */
     @Override public boolean contains(Object varOrVarName) { return indexOf(varOrVarName) >= 0; }
+    public           boolean contains(SegmentRope name)    { return indexOf(name)         >= 0; }
+    public           boolean contains(Term term)           { return indexOf(term)         >= 0; }
 
     @Override public final int size() { return size; }
 

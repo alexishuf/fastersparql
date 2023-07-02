@@ -72,6 +72,18 @@ public class IdTranslator {
         return lookup(targetDictId).find(lookup(sourceDictId).get(sourcedId&ID_MASK));
     }
 
+    /***
+     * Equivalent to {@link #translate(long, int)}, but takes
+     * {@code targetLookup = lookup(targetDictId)} instead of fetching it internally.
+     */
+    public static long translate(long sourcedId, int targetDictId, Lookup targetLookup) {
+        if (sourcedId == NOT_FOUND) return NOT_FOUND;
+        int sourceDictId = (int) ((sourcedId&DICT_MASK) >>> DICT_BIT);
+        if (sourceDictId == 0) throw new NotSourcedIdException(sourcedId);
+        if (sourceDictId == targetDictId) return sourcedId & ID_MASK;
+        return targetLookup.find(lookup(sourceDictId).get(sourcedId&ID_MASK));
+    }
+
     /**
      * Extract the dictId from the sourced id.
      * @param sourcedId A sourced id created with {@link #source(long, int)}

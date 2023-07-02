@@ -429,6 +429,24 @@ public class FS {
         }
     }
 
+    public static Modifier filter(Plan input, List<Expr> filters) {
+        if (input instanceof Modifier m) {
+            List<Expr> union;
+            if (m.filters.isEmpty()) {
+                union = filters;
+            } else {
+                union = new ArrayList<>(m.filters.size()+filters.size());
+                union.addAll(m.filters);
+                union.addAll(filters);
+            }
+            return new Modifier(input.left, m.projection, m.distinctCapacity,
+                                m.offset, m.limit, union);
+        } else {
+            return new Modifier(input, null, 0, 0, Long.MAX_VALUE,
+                                filters);
+        }
+    }
+
     public static Exists    exists(Plan in, boolean negate, Plan filter) { return new Exists(in, negate, filter); }
     public static Exists    exists(Plan in,                 Plan filter) { return new Exists(in, false, filter); }
     public static Exists notExists(Plan in,                 Plan filter) { return new Exists(in, true, filter); }
