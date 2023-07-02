@@ -5,8 +5,8 @@ import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import jdk.incubator.vector.VectorMask;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.file.Path;
 import java.util.Iterator;
 
@@ -35,7 +35,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     private final SubKeyIt noSubKeyIt;
 
     public Triples(Path path) throws IOException {
-        super(path, SegmentScope.auto());
+        super(path, Arena.openShared());
         firstKey = seg.get(JAVA_LONG, FIRST_KEY_OFF);
         noValueIt = new ValueIt(0, 0, 0);
         noPairIt = new PairIt(0, 0);

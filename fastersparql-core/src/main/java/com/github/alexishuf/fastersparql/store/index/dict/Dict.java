@@ -8,8 +8,8 @@ import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -53,7 +53,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
      *                                  {@code file}.
      */
     protected Dict(Path file) throws IOException {
-        super(file, SegmentScope.auto());
+        super(file, Arena.openShared());
         long stringsAndFlags = seg.get(LE_LONG, 0);
         this.flags = (byte) (stringsAndFlags >>> FLAGS_BIT);
         this.nStrings = stringsAndFlags & STRINGS_MASK;

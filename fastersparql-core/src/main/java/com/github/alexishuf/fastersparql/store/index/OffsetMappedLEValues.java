@@ -132,6 +132,9 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
         try {
             ch.close();
         } catch (Throwable t) { log.error("Ignoring failure to close {}", ch); }
+        try {
+            if (arena != null) arena.close();
+        } catch (Throwable t) { log.error("Ignoring failure to close arena for {}", path); }
     }
 
     /**
