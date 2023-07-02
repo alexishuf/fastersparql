@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.store;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.LoggerContext;
 import com.github.alexishuf.fastersparql.store.index.HdtConverter;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import org.rdfhdt.hdt.hdt.HDT;
@@ -87,6 +89,7 @@ public class Hdt2Store implements Callable<Void> {
     }
 
     @Override public Void call() throws Exception {
+        setupLog();
         if (prolongSplit && penultimateSplit)
             return fail("--penultimate and --prolong cannot be set at the same time");
         long callStart = System.nanoTime();
@@ -118,6 +121,15 @@ public class Hdt2Store implements Callable<Void> {
         long callMs = (System.nanoTime()-callStart)/1_000_000L;
         log.info("Completed in {}m{}.{}s", callMs/60_000, (callMs%60_000)/1_000, callMs%1_000);
         return null;
+    }
+
+    private void setupLog() {
+        var ctx = (LoggerContext)LoggerFactory.getILoggerFactory();
+        var l = ctx.getLogger(getClass().getPackageName());
+        if (l == null)
+            log.warn("Failed to set log level to DEBUG");
+        else
+            l.setLevel(Level.DEBUG);
     }
 
     private Void fail(String fmt, Object... args) {

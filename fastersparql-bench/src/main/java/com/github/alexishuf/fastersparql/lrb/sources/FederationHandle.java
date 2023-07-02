@@ -107,7 +107,7 @@ public class FederationHandle implements AutoCloseable {
             AutoCloseableSet<SourceHandle> handles = new AutoCloseableSet<>();
             File dataDir = requireDataDir().getAbsoluteFile();
             for (LrbSource source : subset) {
-                log.info("Creating SourceHandle for {} with kind={}", source, srcKind);
+                log.debug("Creating SourceHandle for {} with kind={}", source, srcKind);
                 File hdt = new File(requireDataDir(), source.filename(srcKind));
                 if (!hdt.exists())
                     throw new IOException("File " + hdt + " does not exist");
