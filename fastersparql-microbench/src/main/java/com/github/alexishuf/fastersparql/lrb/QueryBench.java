@@ -102,6 +102,7 @@ public class QueryBench {
     private RowCounter rowCounter;
     private RopeLenCounter ropeLenCounter;
     private TermLenCounter termLenCounter;
+    private int iterationsComplete;
     private final MetricsConsumer metricsConsumer = new MetricsConsumer();
     private int lastBenchResult;
     private Blackhole bh;
@@ -198,8 +199,8 @@ public class QueryBench {
         ropeLenCounter = new RopeLenCounter(batchType);
         termLenCounter = new TermLenCounter(batchType);
         this.dataDir = dataDir.toFile();
-        System.out.println("\nThermal cooldown: 7s...");
-        Async.uninterruptibleSleep(7_000);
+        System.out.println("\nThermal cooldown: 5s...");
+        Async.uninterruptibleSleep(5_000);
     }
 
     @Setup(Level.Iteration) public void iterationSetup() throws IOException {
@@ -225,15 +226,17 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
-        System.gc();
         IOUtils.fsync(50_000);
-        Async.uninterruptibleSleep(100);
-        System.gc();
-        Async.uninterruptibleSleep(500);
+        if (iterationsComplete > 0) {
+            if ((iterationsComplete & 1) == 0)
+                System.gc();
+            Async.uninterruptibleSleep(500); //thermal slack
+        }
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
         fedHandle.close();
+        ++iterationsComplete;
     }
 
     @TearDown(Level.Trial) public void tearDown() {
