@@ -53,6 +53,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         return this instanceof Term t && t.type() != Type.VAR;
     }
 
+    default boolean isVar() {
+        return this instanceof Term t && t.type() == Type.VAR;
+    }
+
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
     int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner);
 
@@ -237,7 +241,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public Expr bound(Binding binding) { return this; }
     }
     non-sealed abstract class UnaryFunction extends Function {
-        protected final Expr in;
+        public final Expr in;
         public UnaryFunction(Expr in) { this.in = in; }
         public abstract Term eval(Term term);
         @Override public final Term eval(Binding binding) {return eval(in.eval(binding));}
@@ -271,8 +275,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     }
 
     non-sealed abstract class BinaryFunction extends Function {
-        protected final Expr l;
-        protected final Expr r;
+        public final Expr l;
+        public final Expr r;
         public BinaryFunction(Expr l, Expr r) { this.l = l; this.r = r; }
         protected abstract Term eval(Term l, Term r);
         @Override public final Term eval(Binding binding) {
@@ -1108,25 +1112,25 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         private final @Nullable Pattern rx;
+        private static final Term IGNORE_CASE_FLAGS = Term.valueOf("\"i\"");
         private static final int[] REGEX_SPECIAL_EX_OR = Rope.alphabet("$()*+.?[]^{}");
         private final byte[][] orBranches;
+        private final boolean ignoreCase;
         public Regex(Expr... args) { // REGEX(text, pattern[, flags])
             super(args);
             if (args.length < 2 || args.length > 3)
                 throw new IllegalArgumentException("REGEX takes 2 or 3 arguments, got "+args.length);
-            Expr flags = args.length > 2 && args[2].isGround() ? args[2] : null;
-            if (args[1].isGround() && flags != null) {
+            Expr flags = args.length > 2 ? args[2] : null;
+            boolean noFlags = flags == null || flags.equals(EMPTY_STRING);
+            ignoreCase = IGNORE_CASE_FLAGS.equals(flags);
+            if (args[1].isGround() && (noFlags || ignoreCase)) {
                 rx = compile(ArrayBinding.EMPTY, args[1], flags);
                 SegmentRope local = ((Term) args[1]).local();
                 boolean isOr = true;
-                for (int i = 1, end = local.len; i < end; i++) {
+                for (int i = 1, end = local.len; isOr && i < end; i++) {
                     byte c = local.get(i);
-                    if (c == '\\' || c < 0) {
-                        ++i;
-                    } else if (c != '|' && c > 0 && (REGEX_SPECIAL_EX_OR[c>>5] & (1<<c)) != 0) {
-                        isOr = false;
-                        break;
-                    }
+                    if (c == '\\') ++i;
+                    else           isOr = c < 0 || (REGEX_SPECIAL_EX_OR[c>>5] & (1<<c)) == 0;
                 }
                 if (isOr) {
                     List<byte[]> branches = new ArrayList<>();
@@ -1153,8 +1157,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         @Override
         public  ExprEvaluator evaluator(Vars vars) {
-            if (orBranches != null)
-                return new OrEval(vars, orBranches);
+            if (orBranches != null) {
+                return ignoreCase ? new OrEvalIgnoreCase(vars, orBranches)
+                                  : new OrEval(vars, orBranches);
+            }
             return new RegexEval(vars);
         }
 
@@ -1189,6 +1195,26 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 byte[] u8 = new byte[end - 1];
                 local.copy(1, end, u8, 0);
                 return pattern.matcher(new String(u8, UTF_8)).find() ? TRUE : FALSE;
+            }
+        }
+
+        private final class OrEvalIgnoreCase implements ExprEvaluator {
+            private final byte[][] branches;
+            private final ExprEvaluator textEval;
+
+            public OrEvalIgnoreCase(Vars vars, byte[][] branches) {
+                this.textEval = args[0].evaluator(vars);
+                this.branches = branches;
+            }
+
+            @Override public Term evaluate(Batch<?> batch, int row) {
+                Term text = Expr.requireLiteral(args[0], textEval.evaluate(batch, row));
+                SegmentRope local = text.local();
+                int len = local.len - (text.shared().len == 0 ? 2 : 1);
+                for (byte[] branch : branches) {
+                    if (len == branch.length && local.hasAnyCase(1, branch)) return TRUE;
+                }
+                return FALSE;
             }
         }
 
