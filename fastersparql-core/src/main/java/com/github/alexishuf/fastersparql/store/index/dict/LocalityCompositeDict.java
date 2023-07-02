@@ -1,15 +1,18 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
@@ -30,6 +33,7 @@ public class LocalityCompositeDict extends Dict {
     private final boolean sharedOverflow, embedSharedId;
     private final Splitter.Mode splitMode;
     private final LocalityStandaloneDict sharedDict;
+    private final long[] litSuffixes;
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -67,6 +71,24 @@ public class LocalityCompositeDict extends Dict {
         this.splitMode = prolong ? Splitter.Mode.PROLONG
                 : penultimate ? Splitter.Mode.PENULTIMATE : Splitter.Mode.LAST;
         quickValidateOffsets(OFF_MASK);
+        this.litSuffixes = scanLitSuffixes();
+    }
+
+    private long[] scanLitSuffixes() {
+        long[] litSuffixes = ArrayPool.longsAtLeast(16);
+        int nLangSuffixes = 0;
+        var l = sharedDict.lookup();
+        for (long id = 1; id < sharedDict.nStrings; id++) {
+            SegmentRope r = l.get(id);
+            if (r != null && r.len > 0 && r.get(0) == '"') {
+                if (nLangSuffixes == litSuffixes.length)
+                    litSuffixes = ArrayPool.grow(litSuffixes, nLangSuffixes<<1);
+                litSuffixes[nLangSuffixes++] = id;
+            }
+        }
+        long[] trimmed = Arrays.copyOf(litSuffixes, nLangSuffixes);
+        ArrayPool.LONG.offer(litSuffixes, litSuffixes.length);
+        return trimmed;
     }
 
     public LocalityCompositeDict(Path file) throws IOException {
@@ -91,6 +113,8 @@ public class LocalityCompositeDict extends Dict {
 
     public Lookup lookup()                       { return new Lookup(null ); }
     public Lookup lookup(@Nullable Thread owner) { return new Lookup(owner); }
+
+    public LocalityLexIt lexIt() { return new LocalityLexIt(new Lookup(null), litSuffixes); }
 
     public final class Lookup extends AbstractLookup {
         public final @Nullable Thread owner;
@@ -266,6 +290,93 @@ public class LocalityCompositeDict extends Dict {
             if (flip)
                 out.flipSegments();
             return out;
+        }
+    }
+
+    public static class LocalityLexIt extends LexIt {
+        private static final int BEFORE_BEGIN = -4;
+        private static final int BLANK        = -3;
+        private static final int IRI          = -2;
+        private static final int PLAIN        = -1;
+        private final Lookup lookup;
+        private final ByteRope string;
+        private final long[] suffixes;
+        private int lexEnd, suffix;
+
+        public LocalityLexIt(Lookup lookup, long[] suffixes) {
+            this.lookup = lookup;
+            this.suffixes = suffixes;
+            this.string = new ByteRope(16);
+            end();
+        }
+
+        @Override public void find(PlainRope nt) {
+            boolean bad = nt.len < 2;
+            if (!bad) {
+                byte[] u8 = string.clear().ensureFreeCapacity(nt.len+2).u8();
+                byte first = nt.get(0);
+                switch (first) {
+                    case '"', '<' -> {
+                        lexEnd = first == '<' ? nt.len-1
+                               : nt.reverseSkipUntil(0, nt.len, '"');
+                        if (lexEnd > 0) {
+                            u8[0] = '_'; u8[1] = ':';
+                            string.len = 2;
+                            string.append(nt, 1, lexEnd);
+                        } else {
+                            bad = true;
+                        }
+                    }
+                    case '_' -> {
+                        lexEnd = nt.len-1;
+                        string.append(nt);
+                    }
+                    default -> bad = true;
+                }
+            }
+            if (bad) {
+                end();
+            } else {
+                suffix = BEFORE_BEGIN;
+                string.ensureFreeCapacity(6); /* "@en-US */
+            }
+        }
+
+        @Override public void end() {
+            lexEnd = 1;
+            string.clear().append(Term.EMPTY_STRING.local().utf8);
+            id = NOT_FOUND;
+            suffix = suffixes.length;
+        }
+
+        @Override public boolean advance() {
+            long[] suffixes = this.suffixes;
+            byte[] u8 = string.u8();
+            int suffix = this.suffix;
+            id = NOT_FOUND;
+            while (id == NOT_FOUND && suffix < suffixes.length) {
+                switch (suffix) {
+                    case BEFORE_BEGIN -> suffix = BLANK;
+                    case BLANK -> {
+                        System.arraycopy(u8, 2, u8, 1, string.len-2);
+                        u8[0] = '<';
+                        u8[lexEnd] = '>';
+                        suffix = IRI;
+                    }
+                    case IRI -> {
+                        u8[0] = '"'; u8[lexEnd] = '"';
+                        suffix = PLAIN;
+                    }
+                    case PLAIN -> suffix = 0;
+                    default -> {
+                        string.len = lexEnd;
+                        string.append(lookup.shared.get(suffixes[suffix++]));
+                    }
+                }
+                id = lookup.find(string);
+            }
+            this.suffix = suffix;
+            return id != NOT_FOUND;
         }
     }
 }

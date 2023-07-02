@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.fed;
 
+import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.plan.*;
@@ -18,8 +19,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
-import static java.lang.Long.MAX_VALUE;
-import static java.lang.Long.numberOfTrailingZeros;
+import static java.lang.Long.*;
 
 public class Optimizer extends CardinalityEstimator {
     private static final long I_MAX = Integer.MAX_VALUE;
@@ -42,6 +42,36 @@ public class Optimizer extends CardinalityEstimator {
                 return true;
         }
         return false;
+    }
+
+    public static List<Expr> splitFilters(List<Expr> filters) {
+        int n = filters.size();
+        if (n == 0) return filters;
+        List<Expr> split = null;
+        for (int i = 0; i < n; i++) {
+            Expr e = filters.get(i);
+            if (e instanceof Expr.And a) {
+                if (split == null) {
+                    split = new ArrayList<>(Math.min(10, n));
+                    for (int j = 0; j < i; j++)
+                        split.add(filters.get(j));
+                }
+                add(split, a.l);
+                add(split, a.r);
+            } else if (split != null) {
+                split.add(e);
+            }
+        }
+        return split == null ? filters : split;
+    }
+
+    private static void add(List<Expr> list, Expr e) {
+        if (e instanceof Expr.And a) {
+            add(list, a.l);
+            add(list, a.r);
+        } else {
+            list.add(e);
+        }
     }
 
     private final class State {
@@ -67,6 +97,7 @@ public class Optimizer extends CardinalityEstimator {
 
         public void setup(Plan plan) {
             assert isEmptyState();
+            tmpVars.clear();
             Vars allVars = plan.allVars();
             if (grounded == null || !grounded.vars.equals(allVars))
                 grounded = new ArrayBinding(allVars);
@@ -162,7 +193,7 @@ public class Optimizer extends CardinalityEstimator {
          * a matching {@code popFilters(m)} call were filters taken by descendants will be
          * removed from {@code m.filters} and also from {@code upFilter*} fields */
         private boolean pushFilters(Modifier m) {
-            List<Expr> filters = m.filters;
+            List<Expr> filters = m.filters = splitFilters(m.filters);
             int filtersSize = filters.size();
             if ((upFiltersCount += filtersSize) > 64) {
                 upFiltersCount -= filtersSize;
@@ -471,29 +502,88 @@ public class Optimizer extends CardinalityEstimator {
         return state.optimize(plan, true);
     }
 
-    public void shallowOptimize(Plan join) { shallowOptimize(join, Vars.EMPTY); }
+    /** Equivalent to {@link #shallowOptimize(Plan, Vars)} with {@link Vars#EMPTY}. */
+    public Plan shallowOptimize(Plan join) { return shallowOptimize(join, Vars.EMPTY); }
+
     /**
-     * Reorders operands in {@code join} to minimize cost of iterating over all results.
+     * If {@code joinOrMod} is a {@link Join}, reorder operand to minimize the cost of
+     * iterating over all results. If {@code joinOrMod} is a {@link Modifier} with filters
+     * over a {@link Join}, tries to push filters to operands of the join and reorder the join.
+     * Else do nothing.
      *
-     * <p>Unlike {@link #optimize(Plan)}, the operands themselves will not be optimized dded, removed nor
-     * modified.</p>
+     * <p>Unlike {@link #optimize(Plan)}, the operands of the join themselves will not be optimized</p>
      *
      * @param boundVars set of vars to be considered as bound when estimating costs.
-     * @param join the join to optimize
+     * @param joinOrMod the join or `Modifier(Join)` to optimize
+     * @return the new root of the plan, which will either be {@code joinOrMod} or
+     *         {@code joinOrMod.left} in case all filters were pushed and the outer
+     *         {@link Modifier} became a no-op.
      */
-    public void shallowOptimize(Plan join, Vars boundVars) {
-        if (join.type != Operator.JOIN) return;
-        State state = stateThreadLocal.get();
-        state.setup(join);
-        var grounded = state.grounded;
+    public Plan shallowOptimize(Plan joinOrMod, Vars boundVars) {
+        Modifier mod;
+        Plan join;
+        if (joinOrMod instanceof Modifier m) {
+            join = (mod = m).left();
+            m.filters = splitFilters(m.filters); // FILTER(L && R) -> FILTER(L) FILTER(R)
+        } else {
+            mod = null;
+            join = joinOrMod;
+        }
+        if (join.type != Operator.JOIN)
+            return joinOrMod;
+
+        // FILTER(L && R) -> FILTER(L) FILTER(R) on join operands
+        for (int i = 0, n = join.opCount(); i < n; ++i) {
+            if (join.op(i) instanceof Modifier m && !m.filters.isEmpty()) {
+                List<Expr> split = splitFilters(m.filters);
+                if (split != m.filters) {
+                    Modifier m2 = (Modifier)m.copy();
+                    m2.filters = split;
+                    join.replace(i, m2);
+                }
+            }
+        }
+
+        // get and init State object
+        State st = stateThreadLocal.get();
+        st.setup(join);
+        var grounded = st.grounded;
         for (var name : boundVars) {
             int i = grounded.vars.indexOf(name);
             if (i >= 0)
                 grounded.set(i, GROUND);
         }
-        state.reorder(join);
-    }
 
+        // try to push filters on outer modifier
+        List<Expr> filters = mod != null && !mod.filters.isEmpty()
+                           ? mod.filters = new ArrayList<>(mod.filters) : List.of();
+        long taken = 0;
+        if (!filters.isEmpty()) {
+            for (int i = 0, n = join.opCount(); i < n; i++) {
+                st.tmpVars.addAll(boundVars);
+                st.tmpVars.addAll(join.op(i).publicVars());
+                List<Expr> opFilters = null;
+                for (int j = 0; j < filters.size(); j++) {
+                    Expr e = filters.get(j);
+                    if (st.tmpVars.containsAll(e.vars())) {
+                        taken |= 1L << j;
+                        (opFilters == null ? opFilters = new ArrayList<>() : opFilters).add(e);
+                    }
+                }
+                if (opFilters != null)
+                    join.replace(i, FS.filter(join.op(i), opFilters));
+                st.tmpVars.clear();
+            }
+            // removed pushed filters from outer modifier
+            for (int i; (i=63- numberOfLeadingZeros(taken)) >= 0; taken &= ~(1L << i))
+                filters.remove(i);
+            if (mod.isNoOp()) // remove outer modifier if it became a no-op
+                joinOrMod = join;
+        }
+        // reorder join operands by cost. will not push filters to subsets of operands
+        st.reorder(join);
+        return joinOrMod;
+    }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
         return DEFAULT.estimate(tp, binding);

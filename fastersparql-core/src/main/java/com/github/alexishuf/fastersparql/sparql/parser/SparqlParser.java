@@ -359,28 +359,19 @@ public class SparqlParser {
 
         @RequiresNonNull("filters")
         private Plan withFilters(Plan left) {
-            List<Expr.Exists> existsList = null;
-            List<Expr> filtersList = null;
-            for (int i = 0; i < filters.size(); i++) {
-                Expr e = filters.get(i);
-                if (e instanceof Expr.Exists exists) {
-                    if (existsList == null) {
-                        existsList = new ArrayList<>(filters.size());
-                        filtersList = new ArrayList<>(filters.size());
-                        for (int j = 0; j < i; j++)
-                            filtersList.add(filters.get(i));
-                    }
-                    existsList.add(exists);
-                } else if (filtersList != null) {
-                    filtersList.add(e);
-                }
+            List<Expr.Exists> exists = null;
+            List<Expr> exprs = null;
+            int n = filters.size();
+            for (Expr e : filters) {
+                if (e instanceof Expr.Exists ex)
+                    (exists == null ? exists = new ArrayList<>(n) : exists).add(ex);
+                else
+                    (exprs  == null ? exprs  = new ArrayList<>(n) : exprs ).add(e);
             }
-            if (filtersList == null)
-                filtersList = filters;
-            if (!filtersList.isEmpty())
-                left = FS.filter(left, filtersList);
-            if (existsList != null) {
-                for (Expr.Exists(var filter, var negate) : existsList)
+            if (exprs != null)
+                left = FS.filter(left, exprs);
+            if (exists != null) {
+                for (Expr.Exists(var filter, var negate) : exists)
                         left = FS.exists(left, negate, filter);
             }
             return left;
