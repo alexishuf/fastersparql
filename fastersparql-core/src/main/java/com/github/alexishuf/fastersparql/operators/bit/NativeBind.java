@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
+import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
@@ -84,17 +86,21 @@ public class NativeBind {
                         try {
                             q.copy(b);
                         } catch (Throwable t) {
-                            String bStr = "batch with "+b.rows+" rows";
-                            try {
-                                if (b.rows < 10) bStr = b.toString();
-                            } catch (Throwable t2) {
-                                log.error("Ignoring b.toString() failure", t2);
-                            }
-                            log.warn("{}.copy({}) failed", q, bStr);
-                            try {
-                                if (!q.isTerminated()) q.close();
-                            } catch (Throwable t2) {
-                                log.error("Ignoring q.close() failure", t2);
+                            if (!(t instanceof BItCompletedException e)
+                                    || !(e.getCause() instanceof BItClosedAtException)) {
+                                String bStr = "batch with " + b.rows + " rows";
+                                try {
+                                    if (b.rows < 10) bStr = b.toString();
+                                } catch (Throwable t2) {
+                                    log.error("Ignoring b.toString() failure", t2);
+                                }
+                                log.warn("{}.copy({}) failed", q, bStr, t);
+                                try {
+                                    if (q.state() == BIt.State.ACTIVE)
+                                        q.close();
+                                } catch (Throwable t2) {
+                                    log.error("Ignoring q.close() failure", t2);
+                                }
                             }
                             it.remove();
                         }

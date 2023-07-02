@@ -271,4 +271,13 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * instead of raising an {@link BItReadClosedException}.</p>
      */
     @Override void close();
+
+    enum State {
+        ACTIVE,
+        COMPLETED,
+        FAILED,
+        CANCELLED;
+
+        public boolean isTerminated() { return this != ACTIVE; }
+    }
 }

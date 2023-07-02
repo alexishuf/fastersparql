@@ -159,7 +159,7 @@ public class WsBindingParsersTest {
         } catch (Throwable t) {
             parser.complete(t);
         } finally {
-            if (!parser.isCompleted())
+            if (parser.state() == BIt.State.ACTIVE)
                 parser.complete(null);
         }
         return null;

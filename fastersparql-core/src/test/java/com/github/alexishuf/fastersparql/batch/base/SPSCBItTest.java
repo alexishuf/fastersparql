@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.IntsBatch;
@@ -136,11 +137,9 @@ class SPSCBItTest extends CallbackBItTest {
             assertSame(b2, it.nextBatch(null));
             assertEquals(intsBatch(2, 3, 4, 5), b2);
 
-            assertFalse(it.isCompleted());
-            assertFalse(it.isFailed());
+            assertEquals(BIt.State.ACTIVE, it.state());
             it.complete(null);
-            assertTrue(it.isCompleted());
-            assertFalse(it.isFailed());
+            assertEquals(BIt.State.COMPLETED, it.state());
 
             assertNull(it.nextBatch(null));
         }

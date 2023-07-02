@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
@@ -126,7 +127,7 @@ class ResultsParserTest {
                 ropeFac.invalidate(copy);
             } catch (Throwable ignored) {
             } finally {
-                if (!parser.isCompleted())
+                if (parser.state() == BIt.State.ACTIVE)
                     parser.complete(null);
             }
             ex.check(dst);
@@ -145,7 +146,7 @@ class ResultsParserTest {
                     }
                 } catch (Throwable ignored) {
                 } finally {
-                    if (!parser.isFailed())
+                    if (parser.state() == BIt.State.ACTIVE)
                         parser.complete(null);
                 }
             });
@@ -167,7 +168,7 @@ class ResultsParserTest {
                 } catch (Throwable t) {
                     parser.complete(t);
                 } finally {
-                    if (!parser.isCompleted())
+                    if (parser.state() == BIt.State.ACTIVE)
                         parser.complete(null);
                 }
             });
@@ -189,7 +190,7 @@ class ResultsParserTest {
                     }
                 } catch (Throwable ignored) {
                 } finally {
-                    if (!parser.isFailed())
+                    if (parser.state() == BIt.State.ACTIVE)
                         parser.complete(null);
                 }
             });

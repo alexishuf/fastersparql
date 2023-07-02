@@ -61,9 +61,17 @@ public interface CallbackBIt<B extends Batch<B>> extends BIt<B> {
 
     void complete(@Nullable Throwable error);
 
-    /** Whether there was a previous call to {@link #complete(Throwable)} */
-    boolean isCompleted();
-
-    /** Whether there was a previous call to {@link #complete(Throwable)} with non-null error. */
-    boolean isFailed();
+    /**
+     * Current state of the {@link CallbackBIt}
+     *
+     * <p>Interpretations: </p>
+     *
+     * <ul>
+     *     <li>{@link State#FAILED}: {@link #complete(Throwable)} called with non-null cause</li>
+     *     <li>{@link State#COMPLETED}: {@link #complete(Throwable)} called with null</li>
+     *     <li>{@link State#ACTIVE}: neither {@link #complete(Throwable)} nor {@link #close()} were called</li>
+     *     <li>{@link State#CANCELLED}: {@link #close()} was called</li>
+     * </ul>
+     */
+    State state();
 }

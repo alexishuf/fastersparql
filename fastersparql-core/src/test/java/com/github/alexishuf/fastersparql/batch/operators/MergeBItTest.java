@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.batch.operators;
 import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
@@ -80,7 +79,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             active.set(false);
             if (feeder != null)
                 feeder.join();
-            assertTrue(sources.stream().allMatch(AbstractBIt::isClosed));
+            assertTrue(sources.stream().allMatch(i -> i.state() == BIt.State.CANCELLED));
         }
     }
 

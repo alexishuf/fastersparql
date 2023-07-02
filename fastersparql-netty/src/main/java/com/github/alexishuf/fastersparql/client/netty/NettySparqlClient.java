@@ -137,7 +137,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         /* --- --- --- BIt methods --- --- --- */
 
         @Override public void complete(@Nullable Throwable error) {
-            if (isTerminated()) return;
+            if (state().isTerminated()) return;
             if (parser != null) parser.complete(error);
             super.complete(error);
         }

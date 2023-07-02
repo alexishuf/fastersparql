@@ -66,7 +66,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
     }
 
     @Override public void complete(@Nullable Throwable error) {
-        if (error == null && !isTerminated() && !hadSparqlProperties)
+        if (error == null && state() == State.ACTIVE && !hadSparqlProperties)
             error = new InvalidSparqlResultsException("No \"results\" object nor \"boolean\" value in JSON");
         super.complete(error);
     }

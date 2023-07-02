@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -13,6 +12,7 @@ import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.batch.base.AbstractBIt.cls2name;
+import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
 
 public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>> implements BIt<B> {
     protected BIt<S> delegate;
@@ -33,8 +33,8 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
         this.metrics = metrics;
-        if (metrics != null && delegate instanceof AbstractBIt<S> i && i.isTerminated())
-            metrics.completeAndDeliver(i.error, BItClosedAtException.isClosedFor(i.error, i));
+        if (metrics != null && delegate instanceof AbstractBIt<S> i && i.state().isTerminated())
+            metrics.completeAndDeliver(i.error, isCancel(i.error));
         return this;
     }
 

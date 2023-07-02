@@ -163,9 +163,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- WsFrameSender methods --- --- --- */
 
         @Override public void sendFrame(ByteBuf content) {
-            if (isTerminated()) {
-                //noinspection RedundantCast
-                log.debug("{}: ignoring sendFrame({}) after complete({})", this, content, (Object)error);
+            State state = state();
+            if (state != State.ACTIVE) {
+                log.debug("{}: ignoring sendFrame({}): {}", this, content, state);
                 content.release();
                 return;
             }
@@ -228,7 +228,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert channel == null : "previous attach()";
             this.recycler = recycler;
-            if (isCompleted()) {
+            if (state() != State.ACTIVE) {
                 this.recycler.recycle(ctx.channel());
                 return;
             }
@@ -237,9 +237,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void detach(Throwable cause) {
-            if (!isCompleted()) { // flush parser, which may call end() or onError(String)
+            if (state() == State.ACTIVE) { // flush parser, which may call end() or onError(String)
                 parser.complete(null);
-                if (!isCompleted()) {
+                if (state() == State.ACTIVE) {
                     if (cause == null) {
                         cause = new FSServerException("Connection closed before "
                                 + (gotFrames ? "!end but after " : "") + "starting a response"
@@ -254,7 +254,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             gotFrames = true;
             if (frame instanceof TextWebSocketFrame t) {
                 parser.feedShared(bbRopeView.wrapAsSingle(t.content()));
-            } else if (!isTerminated() && !(frame instanceof CloseWebSocketFrame)) {
+            } else if (state() == State.ACTIVE && !(frame instanceof CloseWebSocketFrame)) {
                 var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();
                 complete(new FSServerException("Unexpected "+suffix));
             }

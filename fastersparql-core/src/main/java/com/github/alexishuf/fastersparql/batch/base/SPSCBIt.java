@@ -50,19 +50,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public int                  maxReadyItems()      { return maxItems; }
     @Override public @This CallbackBIt<B> maxReadyItems(int n) { maxItems = n; return this; }
 
-    @Override public boolean isCompleted() {
-        lock();
-        try {
-            return isTerminated();
-        } finally { LOCK.setRelease(this, 0); }
-    }
-
-    @Override public boolean isFailed() {
-        lock();
-        try {
-            return error != null;
-        } finally { LOCK.setRelease(this, 0); }
-    }
     /* --- --- --- helper methods --- --- --- */
 
     /**
@@ -153,7 +140,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         try {
             while (true) {
                 B f = this.filling;
-                if (isTerminated()) {
+                if (plainState.isTerminated()) {
                     throw mkCompleted();
                 } else if (f == null) { // no filling batch
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
@@ -206,7 +193,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         boolean locked = true;
         Thread delayedWake = null;
         try {
-            if (isTerminated()) throw mkCompleted();
+            if (plainState.isTerminated()) throw mkCompleted();
             while (true) {
                 B dst = this.filling;
                 // try publishing filling as READY since put() might take > 1us
@@ -265,14 +252,14 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 if ((b = (B)READY.getAndSetAcquire(this, null)) != null) {
                     break;
                 } else if (filling != null) { // steal or determine nanos until re-check
-                    if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || isTerminated()) {
+                    if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || plainState.isTerminated()) {
                         if (filling.rows > 0) b = filling;
                         else                  batchType.recycle(filling);
                         this.filling = null;
                         fillingStart = Timestamp.ORIGIN;
                         break;
                     }
-                } else if (isTerminated()) { // also: READY and filling are null
+                } else if (plainState.isTerminated()) { // also: READY and filling are null
                     break;
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;

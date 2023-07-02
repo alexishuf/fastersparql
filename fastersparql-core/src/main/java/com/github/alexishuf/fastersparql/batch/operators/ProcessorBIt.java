@@ -10,7 +10,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.github.alexishuf.fastersparql.batch.BItClosedAtException.isClosedFor;
+import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
+
 
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
     private static final Logger log = LoggerFactory.getLogger(ProcessorBIt.class);
@@ -34,7 +35,7 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
     protected void cleanup(@Nullable Throwable cause) {
         try {
             if (metrics != null)
-                metrics.completeAndDeliver(cause, isClosedFor(cause, delegate));
+                metrics.completeAndDeliver(cause, isCancel(cause));
         } catch (Throwable t) {
             log.error("{}: Failed to deliver metrics {}", this, metrics, t);
         }

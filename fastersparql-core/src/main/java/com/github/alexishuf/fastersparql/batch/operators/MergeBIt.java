@@ -151,7 +151,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         } catch (Throwable t) {
             complete(t);
         } finally {
-            if ((int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1 && !isCompleted())
+            if ((int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1 && state() == State.ACTIVE)
                 complete(null);
             if (processor != null) {
                 if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
