@@ -706,6 +706,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                @Nullable BindingNotifier startNotifier,
                                @Nullable BindingNotifier notifier) {
             super(left.batchType(), projection);
+            this.minWaitNs = BIt.QUICK_MIN_WAIT_NS;
             this.left = left;
             this.bindType = bindType;
             this.startBindingNotifier = startNotifier;

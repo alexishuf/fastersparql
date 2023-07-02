@@ -13,6 +13,7 @@ public class Timestamp {
     /** A value smaller than any {@link #nanoTime()} call without overflow risks. */
     public static final long ORIGIN = System.nanoTime();
     private static final Logger log = LoggerFactory.getLogger(Timestamp.class);
+    private static final long PERIOD_NS = 50_000;
     private static final VarHandle NOW, ERR;
     static {
         try {
@@ -68,7 +69,7 @@ public class Timestamp {
         while (true) {
             // Linux and Windows impose their own minimum bounds on wait times and will let
             // this thread sleeping more than it requested.
-            LockSupport.parkNanos(50_000);
+            LockSupport.parkNanos(PERIOD_NS);
             long now = System.nanoTime();
             long elapsed = now-(long)NOW.getAndSet(now);
 
