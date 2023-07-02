@@ -10,6 +10,7 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.PrintStream;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
@@ -39,12 +40,12 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    public static void dumpActive() {
+    public static void dumpActive(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
-                System.out.println(d.name);
-                System.out.println(d.history);
+                dest.println(d.name);
+                dest.println(d.history);
             }
         } finally { ACTIVE_LOCK.unlock(); }
     }
@@ -57,12 +58,12 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    public static void dumpAndFlushActive() {
+    public static void dumpAndFlushActive(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
-                System.out.println(d.name);
-                System.out.println(d.history);
+                dest.println(d.name);
+                dest.println(d.history);
                 d.history.setLength(0);
             }
         } finally { ACTIVE_LOCK.unlock(); }
