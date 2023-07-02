@@ -101,7 +101,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.bindingAwareProtocol = true;
         Path dir = endpoint.asFile().toPath();
         boolean validate = FSProperties.storeClientValidate();
-        log.info("Loading{} {}...", validate ? "/validating" : "", dir);
+        log.debug("Loading{} {}...", validate ? "/validating" : "", dir);
         if (!Files.isDirectory(dir))
             throw new FSException(ep, dir+" is not a dir, cannot open store");
         LocalityCompositeDict dict = null;
@@ -136,7 +136,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.ops = ops;
         this.federator = new StoreSingletonFederator(this);
         REFS.setRelease(this, 1);
-        log.info("Loaded{} {}...", validate ? "/validated" : "", dir);
+        log.debug("Loaded{} {}...", validate ? "/validated" : "", dir);
     }
 
     private static Triples loadTriples(Path path, boolean validate) throws IOException {
