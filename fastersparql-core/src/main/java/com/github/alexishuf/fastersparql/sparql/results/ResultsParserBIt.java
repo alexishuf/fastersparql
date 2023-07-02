@@ -17,6 +17,13 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+
+import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
@@ -31,8 +38,21 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * @param <B> the row type
  */
 public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
+    private static final VarHandle FEEDING, PENDING_TERM;
+    static {
+        try {
+            FEEDING = MethodHandles.lookup().findVarHandle(ResultsParserBIt.class, "plainFeeding", int.class);
+            PENDING_TERM = MethodHandles.lookup().findVarHandle(ResultsParserBIt.class, "plainPendingTerm", Throwable.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private static final Logger log = LoggerFactory.getLogger(ResultsParserBIt.class);
     private static final int INIT_BATCH_ROWS = BIt.PREFERRED_MIN_BATCH;
     private static final int INIT_BATCH_BYTES = ((INIT_BATCH_ROWS*16-16)&~127);
+    private static final SuccessComplete SUCCESS_COMPLETE = new SuccessComplete();
+    private static final Cancel                    CANCEL = new Cancel();
     /** The {@link BatchType} for rows produced by this {@link BIt}. */
     public final BatchType<B> batchType;
 
@@ -40,6 +60,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
     protected long rowsParsed;
     protected final @Nullable CallbackBIt<B> destination;
     protected boolean rowStarted;
+    @SuppressWarnings("unused") private int plainFeeding;
+    @SuppressWarnings("unused") private @Nullable Throwable plainPendingTerm;
+
+    private static final class SuccessComplete extends RuntimeException {}
+    private static final class Cancel          extends RuntimeException {}
 
     /** Interface used via SPI to discover {@link ResultsParserBIt} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
@@ -153,6 +178,11 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * @throws BItReadClosedException if {@code this.close()} was previously called.
      */
     public final void feedShared(SegmentRope rope) {
+        // spin until concurrent complete()/close() exit.
+        while ((int)FEEDING.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.yield();
+        if (plainState.isTerminated())
+            throw mkCompleted(); // concurrent complete()/close()
         try {
             if (rope == null)
                 throw new IllegalArgumentException("null rope");
@@ -164,10 +194,13 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 else            emitBatch();
             }
         } catch (Throwable t) {
-            if (batch != null && batch.rows > 0)
-                emitBatch();
-            complete(t);
+            scheduledTermination(t); // will schedule and return true since feeding == true
             throw t;
+        } finally {
+            FEEDING.setRelease(this, 0); // allow close()/complete() and next feedShared()
+            Throwable t = (Throwable) PENDING_TERM.getAndSetAcquire(this, null);
+            if (t != null)
+                deliverPendingTerm(t); // deliver delayed complete()/close()
         }
     }
 
@@ -210,6 +243,31 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
         else                                batch.clear();
     }
 
+    private void deliverPendingTerm(Throwable t) {
+        if (t == CANCEL) {
+            close();
+        } else {
+            if (t == SUCCESS_COMPLETE) t = null;
+            complete(t);
+        }
+    }
+
+    private boolean scheduledTermination(Throwable reason) {
+        Throwable old = (Throwable)PENDING_TERM.compareAndExchangeRelease(this, null, reason);
+        if ((int)FEEDING.compareAndExchangeAcquire(this, 0, 1) == 0)
+            return false; // this thread became the feeder, subsequent feedShared() will wait
+        if (old != null) {
+            String previous = old.getClass().getSimpleName();
+            if (error != null) {
+                log.info("Will not schedule complete({}), previous {}",
+                        reason, previous, error);
+            } else {
+                log.debug("Will not schedule {} previous {}", reason, previous);
+            }
+        }
+        return true;
+    }
+
     /**
      * Report to downstream row consumers that there ar no more rows (if {@code error==null})
      * or that an error occurred while parsing the results and no further rows will
@@ -224,13 +282,15 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
      * @param error the error (if parsing failed) or {@code null} if parsing completed normally.
      */
     @Override public void complete(@Nullable Throwable error) {
-        boolean first = !isTerminated();
-        if (error != null && !(error instanceof BItIllegalStateException)
-                          && !(error instanceof FSCancelledException)
-                          && !(error instanceof FSServerException)) {
-            error = new InvalidSparqlResultsException(error);
-        }
+        if (scheduledTermination(error == null ? SUCCESS_COMPLETE : error))
+            return; // another thread will complete(error)
+        boolean first = true;
         try {
+            if (error != null && !isCancel(error) && !(error instanceof BItIllegalStateException)
+                    && !(error instanceof FSServerException)) {
+                error = new InvalidSparqlResultsException(error);
+            }
+            first = state() == State.ACTIVE;
             if (first) {
                 assert error != null || !rowStarted : "normal completion with unfinished row";
                 if (batch != null && batch.rows > 0)
@@ -238,14 +298,24 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             }
             super.complete(error);
         } finally {
-            if (destination != null && first)
-                destination.complete(error);
+            try {
+                if (destination != null && first)
+                    destination.complete(error);
+            } finally {
+                FEEDING.setRelease(this, 0);
+            }
         }
     }
 
     @Override public void close() {
-        if (batch != null && batch.rows > 0)
-            emitBatch();
-        super.close();
+        if (scheduledTermination(CANCEL))
+            return; // another thread will close()
+        try {
+            if (batch != null && batch.rows > 0)
+                emitBatch();
+            super.close();
+        } finally {
+            FEEDING.setRelease(this, 0);
+        }
     }
 }
