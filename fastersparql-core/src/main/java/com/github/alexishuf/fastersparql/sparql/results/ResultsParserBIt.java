@@ -258,11 +258,9 @@ public abstract class ResultsParserBIt<B extends Batch<B>> extends SPSCBIt<B> {
             return false; // this thread became the feeder, subsequent feedShared() will wait
         if (old != null) {
             String previous = old.getClass().getSimpleName();
-            if (error != null) {
+            if (reason != CANCEL && reason != SUCCESS_COMPLETE && reason != null) {
                 log.info("Will not schedule complete({}), previous {}",
-                        reason, previous, error);
-            } else {
-                log.debug("Will not schedule {} previous {}", reason, previous);
+                         reason.getClass().getSimpleName(), previous, reason);
             }
         }
         return true;
