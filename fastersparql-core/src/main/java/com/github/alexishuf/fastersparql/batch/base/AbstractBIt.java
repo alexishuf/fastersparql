@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
@@ -126,8 +127,11 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
             case COMPLETED -> log.trace(ON_TERM_TPL, this, "");
             case CANCELLED -> log.debug(ON_TERM_TPL, this, "closed");
             case FAILED    -> {
-                if (IS_DEBUG_ENABLED) log.debug(ON_TERM_TPL, this, cause, cause);
-                else                  log.info(ON_TERM_TPL, this, cause.toString());
+                String msg = cause.toString();
+                if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
+                    log.debug(ON_TERM_TPL, this, msg, cause);
+                else
+                    log.info(ON_TERM_TPL, this, msg);
             }
         }
         try {

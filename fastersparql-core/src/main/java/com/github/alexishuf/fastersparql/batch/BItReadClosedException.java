@@ -7,8 +7,16 @@ public class BItReadClosedException extends BItIllegalStateException {
 
     private static String buildMessage(BIt<?> it, @Nullable BItClosedAtException when) {
         StackTraceElement[] trace = when == null ? null : when.getStackTrace();
-        boolean has = trace != null && trace.length >= 2;
-        return it + " already close()d by " + (has ? trace[1] : "unknown caller");
+        var sb = new StringBuilder().append(it).append(" already close()d ");
+        if (trace == null) return sb.toString();
+        for (int i = 1, last = Math.min(trace.length, 6); i <= last; i++) {
+            StackTraceElement e = trace[i];
+            String cls = e.getClassName();
+            sb.append(cls.substring(cls.lastIndexOf('.')+1));
+            sb.append('.').append(e.getMethodName()).append('/');
+        }
+        sb.setLength(sb.length()-1);
+        return sb.toString();
     }
 
     public BItReadClosedException(BIt<?> it, @Nullable BItClosedAtException when) {

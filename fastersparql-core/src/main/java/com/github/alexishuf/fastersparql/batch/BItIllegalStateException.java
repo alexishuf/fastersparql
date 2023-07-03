@@ -5,4 +5,8 @@ public class BItIllegalStateException extends IllegalStateException {
     public BItIllegalStateException(String s, BIt<?> it) { super(s); this.it = it;}
     public BItIllegalStateException(String s, BIt<?> it, Throwable cause) { super(s, cause); this.it = it; }
     public BIt<?> it() { return it; }
+
+    @Override public String toString() {
+        return getClass().getSimpleName()+": "+getMessage();
+    }
 }
