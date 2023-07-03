@@ -182,7 +182,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         private final class BindingSerializerTask extends NettyResultsSender<TextWebSocketFrame> {
-            private static final ByteBuf CANCEL_BB = Unpooled.copiedBuffer("!cancel unknown reason\n", UTF_8);
+            private static final byte[] CANCEL_MSG = "!cancel unknown reason\n".getBytes(UTF_8);
             public BindingSerializerTask(ChannelHandlerContext ctx) {
                 super(WsSerializer.create(bindingsSerializerSizeHint), ctx);
                 sink.sizeHint(bindingsSerializerSizeHint);
@@ -208,7 +208,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 super.sendTrailer();
             }
 
-            @Override public void sendCancel() {execute(CANCEL_BB);}
+            @Override public void sendCancel() {
+                if (channel != null && channel.isActive()) {
+                    touch();
+                    execute(new TextWebSocketFrame(sink.append(CANCEL_MSG).take()));
+                }
+            }
         }
 
         @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {

@@ -30,7 +30,6 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -408,8 +407,12 @@ public class NettySparqlServer implements AutoCloseable {
                 log.debug("Drainer thread exiting", e);
             } catch (Throwable t) {
                 if (task != null) {
-                    log.info("Drainer thread exiting due to {}", t.toString());
-                    task.sendError(t);
+                    if (t instanceof BItReadClosedException) {
+                        task.sendCancel();
+                    } else {
+                        log.info("Drainer thread exiting due to {}", t.toString());
+                        task.sendError(t);
+                    }
                 } else {
                     log.error("Error creating SerializeTask, racing to end round", t);
                     endRound(INTERNAL_SERVER_ERROR, null, t);
@@ -624,8 +627,8 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] CANCEL = "!cancel".getBytes(UTF_8);
         private static final byte[] ERROR = "!error ".getBytes(UTF_8);
         private static final byte[] CANCELLED = "!cancelled ".getBytes(UTF_8);
+        private static final byte[] CANCELLED_MSG = "!cancelled unknown reason\n".getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
-        private static final ByteBuf CANCELLED_BB = Unpooled.copiedBuffer("!cancelled unknown reason\n", UTF_8);
 
         private final int maxBindings = wsServerBindings();
 
@@ -695,7 +698,12 @@ public class NettySparqlServer implements AutoCloseable {
                 lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
             }
 
-            @Override public void sendCancel() { execute(CANCELLED_BB); }
+            @Override public void sendCancel() {
+                if (ctx.channel().isActive()) {
+                    touch();
+                    execute(new TextWebSocketFrame(sink.append(CANCELLED_MSG).take()));
+                }
+            }
         }
 
         @Override

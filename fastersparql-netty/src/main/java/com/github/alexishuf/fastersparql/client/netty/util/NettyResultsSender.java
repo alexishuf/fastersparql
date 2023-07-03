@@ -8,6 +8,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.util.ReferenceCounted;
 import io.netty.util.concurrent.EventExecutor;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -78,12 +79,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void close() {
-        try {
-            touchState = TOUCH_DISABLED;
-            execute(Action.RELEASE);
-        } catch (RejectedExecutionException e) {
-            sink.release();
-        }
+        touchState = TOUCH_DISABLED;
+        execute(Action.RELEASE);
     }
 
     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
@@ -119,9 +116,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override public void sendTrailer() {
         if (sink.needsTouch()) touch();
         try {
-            touchState = TOUCH_DISABLED;
             serializer.serializeTrailer(sink);
-            execute(wrapLast(sink.take()));
+            M msg = wrapLast(sink.take());
+            touchState = TOUCH_DISABLED;
+            execute(msg);
         } catch (Throwable t) {
             execute(t);
         }
@@ -149,7 +147,33 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             if (spawn)
                 active = true;
         } finally { unlock(); }
-        if (spawn) executor.execute(this);
+        if (spawn) {
+            try {
+                executor.execute(this);
+            } catch (RejectedExecutionException e) {
+                onRejectedExecution();
+            }
+        }
+    }
+
+    private void onRejectedExecution() {
+        int nActions = 0, nReleases = 0;
+        lock();
+        try {
+            active = false;
+            while (actionsSize-- > 0) {
+                Object a = actions[actionsHead];
+                if      (a instanceof Action           ac) { ac.run(this); ++nActions;  }
+                else if (a instanceof ReferenceCounted rc) { rc.release(); ++nReleases; }
+                actionsHead = (byte)((actionsHead + 1) % actions.length);
+            }
+            if (touchState == TOUCH_PARKED) {
+                doTouch();
+                touchState = TOUCH_DISABLED;
+            }
+        } finally { unlock(); }
+        log.debug("{} rejected {}. Ran {} actions, released {} netty objects",
+                 executor, this, nActions, nReleases);
     }
 
     private void waitCapacity() {
@@ -171,8 +195,13 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             if (spawn)
                 active = true;
         } finally { unlock(); }
-        if (spawn)
-            executor.execute(this);
+        if (spawn) {
+            try {
+                executor.execute(this);
+            } catch (RejectedExecutionException e) {
+                onRejectedExecution();
+            }
+        }
 
         Throwable error;
         while (true) {
@@ -230,48 +259,66 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     @Override public void run() {
         boolean exhausted = false, flush = false;
-        Object action;
-        for (int i = 0; i < 8; i++) {
-            if (touchState != TOUCH_DISABLED && sink.needsTouch())
-                doTouch();
-            lock();
-            try {
-                exhausted = actionsSize == 0;
-                if (exhausted) {
-                    active = false;
-                    break;
+        try {
+            Object action;
+            for (int i = 0; i < 8 || executor.isShuttingDown(); i++) {
+                // speculative touch
+                if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                    doTouch();
+                // take next action
+                lock();
+                try {
+                    exhausted = actionsSize == 0;
+                    if (exhausted) {
+                        active = false;
+                        break;
+                    }
+                    --actionsSize;
+                    action = actions[actionsHead];
+                    actionsHead = (byte) ((actionsHead + 1) % actions.length);
+                } catch (Throwable t) {
+                    error = t;
+                    onError(t);
+                    continue;
+                } finally {
+                    unlock();
+                    if (actionsSize == actions.length - 1)
+                        LockSupport.unpark(owner);
                 }
-                --actionsSize;
-                action = actions[actionsHead];
-                actionsHead = (byte) ((actionsHead + 1) % actions.length);
-            } catch (Throwable t) {
-                error = t;
-                onError(t);
-                continue;
-            } finally {
-                unlock();
-                if (actionsSize == actions.length-1)
-                    LockSupport.unpark(owner);
-            }
-            if (touchState != TOUCH_DISABLED && sink.needsTouch())
-                doTouch();
-            try {
-                if (action instanceof Action a) {
-                    a.run(this);
-                } else if (action instanceof Throwable err) {
-                    throw err;
-                } else {
-                    beforeSend();
-                    ctx.write(action);
-                    flush = true;
+                // speculative touch
+                if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                    doTouch();
+                // execute action
+                try {
+                    if (action instanceof Action a) {
+                        a.run(this);
+                    } else if (action instanceof Throwable err) {
+                        throw err;
+                    } else {
+                        beforeSend();
+                        ctx.write(action);
+                        flush = true;
+                    }
+                } catch (Throwable t) {
+                    onError(t);
                 }
-            } catch (Throwable t) {
-                onError(t);
             }
+            if (flush)
+                ctx.flush(); // send messages over the wire
+            if (!exhausted) { // run other task in the executor before continuing
+                try {
+                    executor.execute(this);
+                } catch (RejectedExecutionException e) {
+                    run(); // executor shutting down, cannot continue later
+                }
+            }
+        } finally {
+            // release the rare speculative ByteBuf thatashould not have been allocated
+            lock(); // required to acquire the writes to touchState by the owner thread
+            boolean disabled = touchState == TOUCH_DISABLED;
+            unlock();
+            if (disabled)
+                sink.release();
         }
-        if (flush)
-            ctx.flush(); // send messages over the wire
-        if (!exhausted)
-            executor.execute(this); // not all actions processed, do netty work before continuing
     }
 }

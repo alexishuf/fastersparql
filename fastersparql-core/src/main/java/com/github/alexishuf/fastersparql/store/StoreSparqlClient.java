@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.store;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.EmptyBIt;
-import com.github.alexishuf.fastersparql.batch.SingletonBIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
+import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -934,11 +931,25 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
-                lb = batchType.recycle(lb);
-                rb = batchType.recycle(rb);
-                fb = batchType.recycle(fb);
-                super.cleanup(cause);
-            } finally { releaseRef(); }
+                // close() and failures from nextBatch() are rare. Rarely generating garbage is
+                // cheaper than precisely tracking whether lb ownership is with this or with left,
+                if (cause == null) {
+                    batchType.recycle(lb);
+                    lb = null; // signals exhaustion to nextBatch()
+                }
+                // if we arrived here from close(), nextBatch() may be concurrently executing.
+                // it is cheaper to leak rb and fb than to synchronize
+                if (!(cause instanceof BItClosedAtException)) {
+                    rb = batchType.recycle(rb);
+                    fb = batchType.recycle(fb);
+                }
+            } finally {
+                try {
+                    super.cleanup(cause);
+                } finally {
+                    releaseRef();
+                }
+            }
         }
 
         @Override public @Nullable B nextBatch(@Nullable B b) {
@@ -1028,7 +1039,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (b.rows == 0) b = handleEmptyBatch(b);
                 else             onBatch(b);
             } catch (Throwable t) {
-                onTermination(t);
+                if (state() == State.ACTIVE)
+                    onTermination(t);
                 lb = null; // signal exhaustion
                 throw t;
             }
