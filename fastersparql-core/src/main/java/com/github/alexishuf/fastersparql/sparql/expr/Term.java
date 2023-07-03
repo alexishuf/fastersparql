@@ -1383,7 +1383,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     }
     private static BigDecimal asBigDecimal(Number n, Number other) {
         int scale = Math.max(n     instanceof BigDecimal d ? d.scale() : 0,
-                other instanceof BigDecimal d ? d.scale() : 0);
+                             other instanceof BigDecimal d ? d.scale() : 0);
         if (scale == 0)
             scale = 8;
         if (n instanceof BigDecimal d)
@@ -1405,18 +1405,58 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     public int compareTo(Term rhs) {
         if (rhs == null)
             throw new ExprEvalException("cannot compare with unbound");
-        if (isNumeric() && rhs.isNumeric()) {
-            Number l = asNumber(), r = rhs.asNumber();
+        int diff = cmp(0, len, rhs, 0, rhs.len);
+        if (diff != 0 && isNumeric() && rhs.isNumeric())
+            return compareNumeric(rhs);
+        return diff;
+    }
+
+    private int compareNumeric(Term rhs) {
+        Number l = asNumber(), r = rhs.asNumber();
+        if (l instanceof BigInteger || r instanceof BigInteger) {
+            return asBigInteger(l).compareTo(asBigInteger(r));
+        } else if (l instanceof BigDecimal || l instanceof Double || l instanceof Float
+                || r instanceof BigDecimal || r instanceof Double || r instanceof Float) {
+            // handle comparison of 52.5167 to 52.516666666
+            SegmentRope shorter = local(), longer = rhs.local();
+            if (shorter.len != longer.len) {
+                if (shorter.len > longer.len) {
+                    SegmentRope tmp = shorter;
+                    shorter = longer;
+                    longer = tmp;
+                }
+                int frac = shorter.skipUntil(0, shorter.len - 1, '.') + 1;
+                if (frac < shorter.len
+                        && longer.has(0, shorter, 0, frac)
+                        && longer.has(frac, shorter, frac, shorter.len - 1)
+                        && shorter.reverseSkip(0, shorter.len, Rope.DIGITS) < frac
+                        && longer.reverseSkip(0, longer.len, Rope.DIGITS) < frac) {
+                    byte original = longer.get(shorter.len - 1);
+                    byte repeating = longer.get(shorter.len);
+                    if (repeating == original || repeating == '0' || repeating == '9') {
+                        for (int i = shorter.len, end = longer.len; i < end; i++) {
+                            byte c = longer.get(i);
+                            if (c != repeating) {
+                                if (c != repeating + 1 || i != end - 1) repeating = 0;
+                                break;
+                            }
+                        }
+                        if (repeating > 0) {
+                            repeating -= '0';
+                            original -= '0';
+                            byte round = (byte) (shorter.get(shorter.len - 1) - '0');
+                            if (repeating >= 5 && round == (original + 1) % 10) return 0;
+                            else if (repeating < 5 && round == original) return 0;
+                        }
+                    }
+                }
+            }
             if (l instanceof BigDecimal || r instanceof BigDecimal)
                 return asBigDecimal(l, r).compareTo(asBigDecimal(r, l));
-            else if (l instanceof BigInteger || r instanceof BigInteger)
-                return asBigInteger(l).compareTo(asBigInteger(r));
-            else if (l instanceof Double || r instanceof Double || l instanceof Float || r instanceof Float)
-                return Double.compare(l.doubleValue(), r.doubleValue());
             else
-                return Long.compare(l.longValue(), r.longValue());
+                return Double.compare(l.doubleValue(), r.doubleValue());
         } else {
-            return cmp(0, len, rhs, 0, rhs.len);
+            return Long.compare(l.longValue(), r.longValue());
         }
     }
 
@@ -1646,18 +1686,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
 
 
     @Override public boolean equals(Object o) {
-        if (o == this) return true;
-        Rope rope;
-        if (o instanceof Term t) {
-            if (isNumeric() && t.isNumeric())
-                return compareTo(t) == 0;
-            rope = t;
-        } else if (o instanceof Rope or) {
-            rope = or;
-        } else {
-            return false;
-        }
-        return len == rope.len && cmp(0, len, rope, 0, rope.len) == 0;
+        if (!(o instanceof Rope rope)) return false;
+        if (o == this || (len == rope.len && cmp(0, len, rope, 0, rope.len) == 0))
+            return true;
+        if (isNumeric() && o instanceof Term t && t.isNumeric())
+            return compareNumeric(t) == 0;
+        return false;
     }
 
     @Override public int fastHash(int begin, int end) {

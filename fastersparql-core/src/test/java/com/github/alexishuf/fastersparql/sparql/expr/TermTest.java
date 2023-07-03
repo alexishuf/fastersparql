@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
@@ -20,6 +21,7 @@ import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.CANON;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.NOP;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
+import static java.lang.Integer.signum;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.*;
@@ -629,5 +631,38 @@ class TermTest {
         int n = term.unescapedLexical(dest);
         assertEquals(dest.len, n+1);
         assertEquals("@"+ex, dest.toString());
+    }
+
+    static Stream<Arguments> testTolerantNumericComparison() {
+        return Stream.of(
+                arguments("\"1\"^^xsd:int", "\"1\"^^xsd:int", 0),
+                arguments("\"2\"^^xsd:int", "\"1\"^^xsd:int", 1),
+                arguments("\"10\"^^xsd:unsignedShort", "\"2\"^^xsd:integer", 1),
+                arguments("\"1.0\"^^xsd:float", "\"1.0\"^^xsd:float", 0),
+                arguments("\"2.0\"^^xsd:decimal", "\"1.0\"^^xsd:float", 1),
+                arguments("\"3.0\"^^xsd:double", "\"1.0\"^^xsd:decimal", 1),
+                arguments("\"1.00\"^^xsd:decimal", "\"1.0\"^^xsd:double", 0),
+                arguments("\"1.0\"^^xsd:float", "\"1\"^^xsd:decimal", 0),
+                arguments("\"1.000\"^^xsd:float", "\"1.0\"^^xsd:double", 0),
+                arguments("\"52.5167\"^^xsd:float", "\"52.5166666666\"^^xsd:float", 0),
+                arguments("\"52.5167\"^^xsd:float", "\"52.51666666\"^^xsd:double", 0),
+                arguments("\"52.5167\"^^xsd:float", "\"52.51666\"^^xsd:decimal", 0),
+                arguments("\"52.5167\"^^xsd:float", "\"52.5166\"^^xsd:float", 1),
+                arguments("\"52.5167\"^^xsd:float", "\"52.5168\"^^xsd:float", -1),
+                arguments("\"52.5167\"^^xsd:float", "\"52.51655\"^^xsd:float", 1),
+                arguments("\"52.5167\"^^xsd:double", "\"52.51688\"^^xsd:float", -1),
+                arguments("\"52.5167\"^^xsd:float", "\"52.516666666666666\"^^xsd:float", 0),
+                arguments("\"52.3167\"^^xsd:float", "\"52.31666666666667\"^^xsd:float", 0)
+        );
+    }
+
+    @ParameterizedTest @MethodSource
+    void testTolerantNumericComparison(String lStr, String rStr, int expected) {
+        Term l = Objects.requireNonNull(Term.termList(lStr).get(0));
+        Term r = Objects.requireNonNull(Term.termList(rStr).get(0));
+        assertEquals( signum(expected), signum(l.compareTo(r)));
+        assertEquals(-signum(expected), signum(r.compareTo(l)));
+        assertEquals(expected == 0, l.equals(r));
+        assertEquals(expected == 0, r.equals(l));
     }
 }
