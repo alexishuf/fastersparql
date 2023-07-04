@@ -1,7 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -20,6 +23,8 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
 import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
@@ -323,26 +328,50 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     /* --- --- --- row-level accessors --- --- --- */
 
     @Override public int hash(int row) {
-        int h = FNV_BASIS;
         if (cols == 0)
-            return h;
-        SegmentRope fst, snd;
-        SegmentRope local = SegmentRope.pooledWrap(localsSeg, locals, 0, 0);
-        for (int i = row*cols, e = i+cols, slb = row*slRowInts; i < e; ++i, slb += 2) {
-            SegmentRope s = shared[i];
-            if (s == null) s = EMPTY;
-            int len = slices[slb+SL_LEN];
-            local.slice(slices[slb+SL_OFF], len&LEN_MASK);
-            if ((len & SH_SUFF_MASK) == 0)  {
-                fst = s;
-                snd = local;
+            return FNV_BASIS;
+        if (!HAS_UNSAFE)
+            return safeHash(row);
+        int h = FNV_BASIS;
+        int slb = slBase(row, 0);
+        int[] slices = this.slices;
+        for (int c = 0, cols = this.cols; c < cols; c++) {
+            int cslb = slb+(c<<1), fstLen, sndLen = slices[cslb+SL_LEN];
+            long fstOff, sndOff = slices[cslb+SL_OFF];
+            var sh = shared[row*cols+c];
+            if (isNumericDatatype(sh)) {
+                h = FNV_PRIME * (h ^ hashTerm(row, c));
+            } else if (sh == null) {
+                h = SegmentRope.hashCode(h, locals, sndOff, sndLen & LEN_MASK);
             } else {
-                fst = local;
-                snd = s;
+                byte[] fst, snd;
+                long shOff = sh.segment.address() + sh.offset;
+                if ((sndLen & SH_SUFF_MASK) == 0) {
+                    fst = sh.utf8; fstOff = shOff; fstLen = sh.len;
+                    snd = locals;                  sndLen &= LEN_MASK;
+                } else {
+                    fst =  locals; fstOff = sndOff; fstLen = sndLen &LEN_MASK;
+                    snd = sh.utf8; sndOff =  shOff; sndLen = sh.len;
+                }
+                h = SegmentRope.hashCode(h, fst, fstOff, fstLen);
+                h = SegmentRope.hashCode(h, snd, sndOff, sndLen);
             }
-            h = snd.hashCode(fst.hashCode(h));
         }
-        local.recycle();
+        return h;
+    }
+
+    private int safeHash(int row) {
+        int h = FNV_BASIS, slb = slBase(row, 0);
+        int[] slices = this.slices;
+        for (int c = 0, cols = this.cols; c < cols; c++) {
+            var sh = shared[row*cols+c];
+            if (isNumericDatatype(sh)) {
+                h = FNV_PRIME * (h ^ hashTerm(row, c));
+            } else {
+                int base = slb+(c<<1);
+                h = safeHashString(h, sh, slices[base+SL_OFF], slices[base+SL_LEN]);
+            }
+        }
         return h;
     }
 
@@ -351,8 +380,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
-        if (!LowLevelHelper.HAS_UNSAFE)
-            return equalsNoUnsafe(row, other, oRow);
+        if (!HAS_UNSAFE)
+            return safeEquals(row, other, oRow);
         if (row < 0 || row >= rows)
             throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
         if (oRow < 0 || oRow >= other.rows)
@@ -360,50 +389,43 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols;
         if (cols != other.cols) return false;
         if (cols == 0) return true;
+        MemorySegment localsSeg = this.localsSeg, oLocalsSeg = other.localsSeg;
         byte[] locals = this.locals, oLocals = other.locals;
         SegmentRope[] shared = this.shared, oshared = other.shared;
         int[] sl = this.slices, osl = other.slices;
         int slb = row*slRowInts, oslb = oRow*slRowInts;
         int shBase = row*cols, oShBase = oRow*cols;
-        for (int c = 0; c < cols; ++c) {
+        for (int c = 0, c2, cslb, ocslb; c < cols; ++c) {
             SegmentRope sh = shared[shBase+c], osh = oshared[oShBase+c];
-            if ( sh == null) sh = EMPTY;
-            if (osh == null) osh = EMPTY;
-            int c2 = c << 1;
-            if (compare2_2(sh.utf8,  sh.segment.address()+sh.offset,  sh.len,
-                           locals, sl[slb+c2+SL_OFF], sl[slb+c2+SL_LEN]&LEN_MASK,
-                           osh.utf8, osh.segment.address()+osh.offset, osh.len,
-                           oLocals, osl[oslb+c2+SL_OFF], osl[oslb+c2+SL_LEN]&LEN_MASK) != 0)
+            cslb = slb + (c2 = c << 1);
+            ocslb = oslb + c2;
+            if (!termEquals( sh,  localsSeg,  locals,  sl[ cslb+SL_OFF],  sl[ cslb+SL_LEN],
+                            osh, oLocalsSeg, oLocals, osl[ocslb+SL_OFF], osl[ocslb+SL_LEN]))
                 return false;
         }
         return true;
     }
 
-
-    private boolean equalsNoUnsafe(int row, CompressedBatch other, int oRow) {
+    private boolean safeEquals(int row, CompressedBatch other, int oRow) {
         if (row < 0 || row >= rows)
             throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row));
         if (oRow < 0 || oRow >= other.rows)
-            throw new IndexOutOfBoundsException(other.mkOutOfBoundsMsg(row));
+            throw new IndexOutOfBoundsException(other.mkOutOfBoundsMsg(oRow));
         int cols = this.cols;
         if (cols != other.cols) return false;
         if (cols == 0) return true;
         MemorySegment localsSeg = this.localsSeg, oLocalsSeg = other.localsSeg;
+        byte[] locals = this.locals, oLocals = other.locals;
         SegmentRope[] shared = this.shared, oshared = other.shared;
-        int[] slices = this.slices, oSlices = other.slices;
-        int slBase = row*slRowInts, oSlBase = oRow*slRowInts;
+        int[] sl = this.slices, osl = other.slices;
+        int slb = row*slRowInts, oslb = oRow*slRowInts;
         int shBase = row*cols, oShBase = oRow*cols;
-        for (int c = 0; c < cols; ++c) {
+        for (int c = 0, c2, cslb, ocslb; c < cols; ++c) {
             SegmentRope sh = shared[shBase+c], osh = oshared[oShBase+c];
-            if ( sh == null) sh = EMPTY;
-            if (osh == null) osh = EMPTY;
-            int c2 = c << 1;
-            if (compare2_2(sh.segment,  sh.offset,  sh.len,  localsSeg,
-                    slices[ slBase+c2+SL_OFF],
-                    slices[ slBase+c2+SL_LEN]&LEN_MASK,
-                    osh.segment, osh.offset, osh.len, oLocalsSeg,
-                    oSlices[oSlBase+c2+SL_OFF],
-                    oSlices[oSlBase+c2+SL_LEN]&LEN_MASK) != 0)
+            cslb = slb + (c2 = c << 1);
+            ocslb = oslb + c2;
+            if (!safeTermEquals( sh,  localsSeg,  locals,  sl[ cslb+SL_OFF],  sl[ cslb+SL_LEN],
+                                osh, oLocalsSeg, oLocals, osl[ocslb+SL_OFF], osl[ocslb+SL_LEN]))
                 return false;
         }
         return true;
@@ -663,141 +685,140 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
+    private int hashTerm(int row, int col) {
+        Term tmp = Term.pooledMutable();
+        int h = getView(row, col, tmp) ? tmp.hashCode() : FNV_BASIS;
+        tmp.recycle();
+        return h;
+    }
+
     @Override public int hash(int row, int col) {
-        int slBase = slBase(row, col), fstLen, sndLen = slices[slBase+SL_LEN];
-        long fstOff, sndOff = slices[slBase+SL_OFF];
         SegmentRope sh = shared[row*cols + col];
-        if (Term.isNumericDatatype(sh)) {
-            Term tmp = Term.pooledMutable();
-            if (getView(row, col, tmp)) {
-                int h = tmp.hashCode();
-                tmp.recycle();
-                return h;
-            }
-            return 0;
-        } else if (sh == null) {
-            return SegmentRope.hashCode(FNV_BASIS, localsSeg, sndOff, sndLen&LEN_MASK);
-        } else {
-            MemorySegment fst = sh.segment, snd = localsSeg;
-            if (sndLen < 0) {
-                fstOff = sndOff; fstLen = sndLen & LEN_MASK;
-                sndOff = sh.offset; sndLen = sh.len;
-                MemorySegment tmp = fst;
-                fst = snd;
-                snd = tmp;
+        if (isNumericDatatype(sh))
+            return hashTerm(row, col);
+        int slb = slBase(row, col), fstLen, sndLen = slices[slb+SL_LEN];
+        long fstOff, sndOff = slices[slb+SL_OFF];
+        if (HAS_UNSAFE) {
+            if (sh == null)
+                return SegmentRope.hashCode(FNV_BASIS, locals, sndOff, sndLen & LEN_MASK);
+            byte[] fst, snd;
+            long shOff = sh.segment.address() + sh.offset;
+            if ((sndLen & SH_SUFF_MASK) == 0) {
+                fst = sh.utf8; fstOff = shOff; fstLen = sh.len;
+                snd = locals;                  sndLen &= LEN_MASK;
             } else {
-                fstOff = sh.offset; fstLen = sh.len;
+                fst =  locals; fstOff = sndOff; fstLen = sndLen &LEN_MASK;
+                snd = sh.utf8; sndOff =  shOff; sndLen = sh.len;
             }
-            int h = SegmentRope.hashCode(Rope.FNV_BASIS, fst, fstOff, fstLen);
+            int h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
             return SegmentRope.hashCode(h, snd, sndOff, sndLen);
+        } else {
+            return safeHashString(FNV_BASIS, sh, sndOff, sndLen);
         }
     }
 
-    @Override public boolean equals(@NonNegative int row, @NonNegative int col, @Nullable Term other) {
-        int base = slBase(row, col), sndLen = slices[base+SL_LEN];
-        boolean suffix = (sndLen & SH_SUFF_MASK) != 0;
-        sndLen &= LEN_MASK;
-        SegmentRope sh = shared[row*cols + col];
-        // handle nulls
-        if (other == null)
-            return sh == null && sndLen == 0;
-        if (sh == null && sndLen == 0)
+    private int safeHashString(int h, SegmentRope shared, long localOff, int localLen) {
+        long fstOff;
+        int fstLen;
+        if (shared == null)
+            return SegmentRope.hashCode(FNV_BASIS, locals, localOff, localLen&LEN_MASK);
+        MemorySegment fst, snd;
+        if ((localLen & SH_SUFF_MASK) == 0) {
+            fst = shared.segment; fstOff = shared.offset;    fstLen = shared.len;
+            snd = localsSeg;                              localLen &= LEN_MASK;
+        } else {
+            fst = localsSeg;        fstOff = localOff;        fstLen = localLen&LEN_MASK;
+            snd = shared.segment; localOff = shared.offset; localLen = shared.len;
+        }
+        SegmentRope.hashCode(h, fst, fstOff, fstLen);
+        return SegmentRope.hashCode(h, snd, localOff, localLen);
+    }
+
+    @Override public boolean equals(@NonNegative int row, @NonNegative int col,
+                                    @Nullable Term other) {
+        int[] slices = this.slices;
+        int slb = slBase(row, col), len = slices[slb + SL_LEN];
+        SegmentRope sh = shared[row * cols + col];
+        if (sh == null)
+            sh = EMPTY;
+        if (other == null != (sh.len == 0 && (len&LEN_MASK) == 0))
             return false;
-        // handle numeric
-        boolean thisNumeric = Term.isNumericDatatype(sh), otherNumeric = other.isNumeric();
-        if (thisNumeric ^ otherNumeric) {
+        else if (other == null)
+            return true;
+        SegmentRope ol = other.local();
+        return termEquals(sh, localsSeg, locals, slices[slb+SL_OFF], len,
+                          other.shared(), ol.segment, ol.utf8, ol.offset,
+                          ol.len|(other.sharedSuffixed() ? SH_SUFF_MASK : 0));
+    }
+
+    public boolean termEquals(@Nullable SegmentRope lSh, MemorySegment lSeg, byte[] lU8,
+                              long lOff, int lLen,
+                              @Nullable SegmentRope rSh, MemorySegment rSeg, byte[] rU8,
+                              long rOff, int rLen) {
+        boolean numeric = isNumericDatatype(lSh);
+        if (numeric != isNumericDatatype(rSh))
             return false;
-        } else if (thisNumeric) {
-            Term tmp = Term.pooledMutable();
-            boolean eq = getView(row, col, tmp) && other.equals(tmp);
-            tmp.recycle();
+        lLen&=LEN_MASK;
+        rLen&=LEN_MASK;
+        if (lSh == null) lSh = EMPTY;
+        if (rSh == null) rSh = EMPTY;
+        if (numeric) {
+            Term lTerm = Term.pooledMutable(), rTerm = Term.pooledMutable();
+            lTerm.set(lSh, lSeg, lU8, lOff, lLen, true);
+            rTerm.set(rSh, rSeg, rU8, rOff, rLen, true);
+            boolean eq = lTerm.compareNumeric(rTerm) == 0;
+            lTerm.recycle();
+            rTerm.recycle();
             return eq;
         }
-        // compare as string
-        if (LowLevelHelper.HAS_UNSAFE) {
-            byte[] fst = EMPTY.u8(), snd = locals;
-            int fstLen = 0;
-            long fstOff = 0, sndOff = slices[base+SL_OFF];
-            if (sh != null) {
-                if (suffix) {
-                    fst = locals;  fstOff = sndOff;    fstLen = sndLen;
-                    snd = sh.utf8; sndOff = sh.segment.address()+sh.offset; sndLen = sh.len;
-                } else {
-                    fst = sh.utf8; fstOff = sh.segment.address()+sh.offset; fstLen = sh.len;
-                }
-            }
-            SegmentRope oFst = other.first(), oSnd = other.second();
-            return compare2_2( fst,  fstOff,  fstLen,  snd,  sndOff,  sndLen,
-                    oFst.utf8, oFst.segment.address()+oFst.offset, oFst.len,
-                    oSnd.utf8, oSnd.segment.address()+oSnd.offset, oSnd.len) == 0;
-        } else {
-            return safeEqualsTerm(other, base, sndLen, suffix, sh);
-        }
+        return compare2_2(lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
+                          lU8, lOff, lLen,
+                          rSh.utf8, rSh.segment.address()+rSh.offset, rSh.len,
+                          rU8, rOff, rLen) == 0;
     }
 
-    private boolean safeEqualsTerm(Term other, int base, int sndLen,
-                                   boolean suffix, SegmentRope sh) {
-        // compare as string
-        MemorySegment fst = EMPTY.segment, snd = localsSeg;
-        int fstLen = 0;
-        long fstOff = 0, sndOff = slices[base +SL_OFF];
-        if (sh != null) {
-            if (suffix) {
-                fst = localsSeg;  fstOff = sndOff;    fstLen = sndLen;
-                snd = sh.segment; sndOff = sh.offset; sndLen = sh.len;
-            } else {
-                fst = sh.segment; fstOff = sh.offset; fstLen = sh.len;
-            }
+    public boolean safeTermEquals(@Nullable SegmentRope lSh, MemorySegment lSeg, byte[] lU8,
+                                  int lOff, int lLen,
+                                  @Nullable SegmentRope rSh, MemorySegment rSeg, byte[] rU8,
+                                  int rOff, int rLen) {
+        if ((lLen&SH_SUFF_MASK) != (rLen&SH_SUFF_MASK))
+            return false;
+        boolean numeric = isNumericDatatype(lSh);
+        if (numeric != isNumericDatatype(rSh))
+            return false;
+        lLen&=LEN_MASK;
+        rLen&=LEN_MASK;
+        if (lSh == null) lSh = EMPTY;
+        if (rSh == null) rSh = EMPTY;
+        if (numeric) {
+            Term lTerm = Term.pooledMutable(), rTerm = Term.pooledMutable();
+            lTerm.set(lSh, lSeg, lU8, lOff, lLen, true);
+            rTerm.set(rSh, rSeg, rU8, rOff, rLen, true);
+            boolean eq = lTerm.compareNumeric(rTerm) == 0;
+            lTerm.recycle();
+            rTerm.recycle();
+            return eq;
         }
-        SegmentRope oFst = other.first(), oSnd = other.second();
-        return compare2_2(fst, fstOff, fstLen, snd, sndOff, sndLen,
-                oFst.segment, oFst.offset, oFst.len,
-                oSnd.segment, oSnd.offset, oSnd.len) == 0;
+        return compare2_2(lSh.segment, lSh.offset, lSh.len, lSeg, lOff, lLen,
+                          rSh.segment, rSh.offset, rSh.len, rSeg, rOff, rLen) == 0;
     }
 
     @Override
     public boolean equals(@NonNegative int row, @NonNegative int col,
                           CompressedBatch other, int oRow, int oCol) {
-        int b = slBase(row, col), ob = other.slBase(oRow, oCol);
-        SegmentRope sh = shared[row*cols+col], osh = other.shared[oRow*other.cols + oCol];
-        // handle numeric
-        if (Term.isNumericDatatype(sh)) //noinspection DataFlowIssue
-            return Term.isNumericDatatype(osh) && get(row, col).equals(other.get(oRow, oCol));
-        if (Term.isNumericDatatype(osh)) //noinspection DataFlowIssue
-            return Term.isNumericDatatype(sh) && get(row, col).equals(other.get(oRow, oCol));
-
-        int  fstLen = 0, sndLen = slices[b+SL_LEN], oFstLen = 0, oSndLen = other.slices[ob+SL_LEN];
-        long fstOff = 0, sndOff = slices[b+SL_OFF], oFstOff = 0, oSndOff = other.slices[ob+SL_OFF];
-        boolean suff = sndLen < 0, oSuff = oSndLen < 0;
-        sndLen  &= LEN_MASK;
-        oSndLen &= LEN_MASK;
-        // handle nullity
-        if (sndLen == 0 && (sh == null || sh.len == 0))
-            return oSndLen == 0 && (osh == null || osh.len == 0);
-        if (oSndLen == 0 && (osh == null || osh.len == 0))
-            return false;
-
-        //compare as strings
-        MemorySegment  fst = EMPTY.segment,  snd = localsSeg;
-        MemorySegment oFst = EMPTY.segment, oSnd = other.localsSeg;
-        if (sh != null) {
-            if (suff) {
-                fst = snd;        fstOff = sndOff;    fstLen = sndLen;
-                snd = sh.segment; sndOff = sh.offset; sndLen = sh.len;
-            } else {
-                fst = sh.segment; fstOff = sh.offset; fstLen = sh.len;
-            }
+        int slb = slBase(row, col), oslb = other.slBase(oRow, oCol);
+        int[] sl = this.slices, osl = other.slices;
+        if (HAS_UNSAFE) {
+            return termEquals(shared[row*cols+col], localsSeg, locals,
+                              sl[slb+SL_OFF], sl[slb+SL_LEN],
+                              other.shared[oRow*other.cols+oCol], other.localsSeg, other.locals,
+                              osl[oslb+SL_OFF], osl[oslb+SL_LEN]);
+        } else {
+            return safeTermEquals(shared[row*cols+col], localsSeg, locals,
+                                  sl[slb+SL_OFF], sl[slb+SL_LEN],
+                                  other.shared[oRow*other.cols+oCol], other.localsSeg, other.locals,
+                                  osl[oslb+SL_OFF], osl[oslb+SL_LEN]);
         }
-        if (osh != null) {
-            if (oSuff) {
-                oFst = oSnd;        oFstOff = oSndOff;    oFstLen = oSndLen;
-                oSnd = osh.segment; oSndOff = osh.offset; oSndLen = osh.len;
-            } else {
-                oFst = osh.segment; oFstOff = osh.offset; oFstLen = osh.len;
-            }
-        }
-        return compare2_2(fst, fstOff, fstLen, snd, sndOff, sndLen,
-                          oFst, oFstOff, oFstLen, oSnd, oSndOff, oSndLen) == 0;
     }
 
     /* --- --- --- mutators --- --- --- */

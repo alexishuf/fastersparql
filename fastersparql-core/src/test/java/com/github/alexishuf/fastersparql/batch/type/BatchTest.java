@@ -951,4 +951,63 @@ class BatchTest {
         assertBatchesEquals(expected, o0, "o0");
         assertBatchesEquals(expected, o1, "o1");
     }
+
+    @Test void regressionHashC7() {
+        var b0 = Batch.COMPRESSED.create(1, 8, 0);
+        var b1 = Batch.COMPRESSED.create(1, 8, 0);
+        for (var b : List.of(b0, b1)) {
+            b.beginPut();
+            var terms = List.of(
+             /* 0 */"<http://data.semanticweb.org/person/martin-szomszor>",
+             /* 1 */"<http://data.semanticweb.org/conference/eswc/2010/main/chair/semanticwebtechnologieschair>",
+             /* 2 */"<http://data.semanticweb.org/conference/eswc/2010/paper/social_web/5>",
+             /* 3 */"<http://dbpedia.org/resource/United_Kingdom>",
+             /* 4 */"<http://dbpedia.org/resource/London>",
+             /* 5 */"\"51.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
+            );
+            for (int i = 0; i < terms.size(); i++)
+                b.putTerm(i, Term.valueOf(terms.get(i)));
+        }
+        b0.putTerm(6, Term.valueOf("\"-0.116667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+        b1.putTerm(6, Term.valueOf("\"-0.11666666666666667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+        for (var b : List.of(b0, b1)) {
+            b.putTerm(7, Term.valueOf("<http://data.semanticweb.org/conference/eswc/2010/proceedings>"));
+            b.commitPut();
+        }
+        assertTrue(b0.equals(0, b1, 0));
+        assertTrue(b1.equals(0, b0, 0));
+        assertEquals(b0.hash(0), b1.hash(0));
+        for (int c = 0; c < b0.cols; c++) {
+            assertTrue(b0.equals(0, c, b1, 0, c));
+            assertTrue(b1.equals(0, c, b0, 0, c));
+            assertEquals(b0.hash(0, c), b1.hash(0, c));
+        }
+    }
+
+    @Test void  regressionHashS6() {
+        String name = "\"Michael Bartels\"";
+        Term place = Term.valueOf("<http://sws.geonames.org/2911297/>");
+        var ex = Batch.COMPRESSED.create(1, 2, 0);
+        ex.beginPut();
+        ex.putTerm(0, EMPTY, name.getBytes(UTF_8), 0, name.length(), false);
+        ex.putTerm(1, place);
+        ex.commitPut();
+
+        var ac = Batch.COMPRESSED.create(1, 2, 0);
+        ac.beginPut();
+        ac.putTerm(0, EMPTY, (".."+name).getBytes(UTF_8), 2, name.length(), true);
+        ac.putTerm(1, SegmentRope.of("<http://sws.geonames.org/"),
+                    "2911297/>".getBytes(UTF_8), 0, 9, false);
+        ac.commitPut();
+
+        for (int c = 0; c < 2; c++) {
+            assertTrue(ac.equals(0, c, ex, 0, c), "c="+c);
+            assertTrue(ex.equals(0, c, ac, 0, c), "c="+c);
+            assertEquals(ex.hash(0, c), ac.hash(0, c), "c="+c);
+        }
+        assertTrue(ac.equals(0, ex, 0));
+        assertTrue(ex.equals(0, ac, 0));
+        assertEquals(ex.hash(0), ac.hash(0));
+    }
+
 }

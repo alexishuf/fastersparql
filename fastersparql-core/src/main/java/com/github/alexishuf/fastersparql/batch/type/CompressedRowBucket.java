@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
@@ -192,27 +193,31 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     @Override public boolean equals(int row, CompressedBatch other, int otherRow) {
         int cols = this.cols, shIdx = row*cols;
         if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
-        byte[] d = rowsData[row];
-        if (d == null) return false;
-        boolean eq = true, suffixed;
-        Term tmp = Term.pooledMutable();
-        SegmentRope local = SegmentRope.pooledWrap(MemorySegment.ofArray(d), d, 0, 0);
+        byte[] data = rowsData[row];
+        if (data == null) return false;
+        boolean eq = true;
+        var tmp     = Term.pooledMutable();
+        var dataSeg = MemorySegment.ofArray(data);
         for (int c = 0, c2; c < cols; c++) {
             SegmentRope sh = shared[shIdx++];
-            int len = read(d, (c2=c<<1)+SL_LEN);
-            suffixed = (len & SH_SUFF_MASK) != 0;
+            if (sh == null) sh = ByteRope.EMPTY;
+            int len = read(data, (c2=c<<1)+SL_LEN);
+            boolean suffixed = (len & SH_SUFF_MASK) != 0;
             len &= LEN_MASK;
-            if (sh.len == 0 && len == 0)
-                continue;
-            local.slice(read(d, c2+SL_OFF), len);
-            tmp.set(sh, local, suffixed);
-            if (!other.equals(otherRow, c, tmp)) {
-                eq = false;
-                break;
+            if (sh.len+len == 0) {
+                if (other.termType(otherRow, c) != null) {
+                    eq = false;
+                    break;
+                }
+            } else {
+                tmp.set(sh, dataSeg, data, read(data, c2+SL_OFF), len, suffixed);
+                if (!other.equals(otherRow, c, tmp)) {
+                    eq = false;
+                    break;
+                }
             }
         }
         tmp.recycle();
-        local.recycle();
         return eq;
     }
 

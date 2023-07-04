@@ -1411,7 +1411,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         return diff;
     }
 
-    private int compareNumeric(Term rhs) {
+    public int compareNumeric(Term rhs) {
         Number l = asNumber(), r = rhs.asNumber();
         if (l instanceof BigInteger || r instanceof BigInteger) {
             return asBigInteger(l).compareTo(asBigInteger(r));
@@ -1433,11 +1433,13 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
                         && longer.reverseSkip(0, longer.len, Rope.DIGITS) < frac) {
                     byte original = longer.get(shorter.len - 1);
                     byte repeating = longer.get(shorter.len);
-                    if (repeating == original || repeating == '0' || repeating == '9') {
-                        for (int i = shorter.len, end = longer.len; i < end; i++) {
+                    int end = longer.len;
+                    if ((repeating == original || repeating == '0' || repeating == '9')
+                            && end-shorter.len > 3) {
+                        for (int i = shorter.len; i < end; i++) {
                             byte c = longer.get(i);
-                            if (c != repeating) {
-                                if (c != repeating + 1 || i != end - 1) repeating = 0;
+                            if (c != repeating && i < end-1) {
+                                repeating = 0;
                                 break;
                             }
                         }
@@ -1716,13 +1718,23 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     @Override public int hashCode() {
         int hash = this.hash;
         if (hash == 0)  {
-            Number n = asNumber();
-            if (n == null) {
+            if (isNumeric()) {
+                SegmentRope local = first;
+                hash = FNV_BASIS;
+                boolean beforeNumber = true;
+                for (int i = 1, end = local.len; i < end; i++) {
+                    int c = 0xff & local.get(i);
+                    if (beforeNumber) {
+                        if (c == '0' || c == '+') continue;
+                        if (c != '-') beforeNumber = false;
+                    }
+                    if (c == '.' || c == 'e' || c == 'E') break;
+                    hash = FNV_PRIME * (hash ^ c);
+                }
+            } else {
                 SegmentRope fst = first, snd = second;
                 hash = SegmentRope.hashCode(FNV_BASIS, fst.segment, fst.offset, fst.len);
                 hash = SegmentRope.hashCode(hash, snd.segment, snd.offset, snd.len);
-            } else {
-                hash = n.hashCode();
             }
             this.hash = hash;
         }

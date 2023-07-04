@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.fed.FedMetrics;
 import com.github.alexishuf.fastersparql.fed.FedMetricsListener;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -18,6 +19,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -25,10 +27,7 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -86,6 +85,19 @@ public class Measure implements Callable<Void>{
         return null;
     }
 
+    @SuppressWarnings("unused") private static String resolveUris(Federation fed, String string) {
+        String[] out = {string};
+        Async.waitStage(fed.forEachSource((src, handler) -> {
+            String name = src.spec().getString("lrb-name");
+            if (name == null) name = src.spec().getString("name");
+            String uri = src.client.endpoint().uri().replace(".", "\\.").replace("*", "\\*")
+                                                    .replace("+", "\\+").replace("?", "\\?");
+            out[0] = out[0].replaceAll(uri, name);
+            handler.apply(null, null);
+        }));
+        return out[0];
+    }
+
     private void warmup(List<MeasureTask> tasks, Federation client) {
         int rep = -1, taskIdx = 0;
         for (int remMs = msrOp.warmupSecs*1_000, ms; remMs > 0; remMs -= ms) {
@@ -132,6 +144,7 @@ public class Measure implements Callable<Void>{
                 fedMetrics = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
+                //System.out.println(resolveUris(fed, plan.toString()));
                 it = plan.execute(msrOp.batchType);
             } else {
                 it = fed.query(msrOp.batchType, task.parsed());

@@ -1,11 +1,22 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.distinctCapacity;
 import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
@@ -61,6 +72,9 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
                 sb.append("\n  ").append(unexpected.toString(r));
             if (unexpected.rows > 9)
                 sb.append("\n +").append(unexpected.rows-9);
+            //serialize(new File("/tmp/expected.tsv"), expected);
+            //serialize(new File("/tmp/observed.tsv"), observed);
+            //serialize(new File("/tmp/unexpected.tsv"), unexpected);
             return sb.toString();
         } else if (rows == 0) {
             return "Results are unknown, but got no rows";
@@ -68,6 +82,38 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             return OK;
         }
     }
+
+    @SuppressWarnings("unused") private void serialize(File dest, Object rows) {
+        var sink = new ByteRope();
+        var serializer = new TsvSerializer();
+        serializer.init(vars, vars, false, sink);
+        if (rows instanceof Dedup<?> d)
+            d.forEach(b -> serializer.serialize(b, sink));
+        else if (rows instanceof Batch<?> b)
+            serializer.serialize(b, sink);
+        else
+            throw new IllegalArgumentException("Unsupported type for rows="+rows);
+        serializer.serializeTrailer(sink);
+        List<SegmentRope> lines = new ArrayList<>();
+        for (int i = 0, j; i < sink.len; i = j) {
+            long sepLenAndEnd = sink.skipUntilLineBreak(i, sink.len);
+            lines.add(sink.sub(i, j = (int)sepLenAndEnd + (int)(sepLenAndEnd>>32)));
+        }
+        lines.sort(Comparator.naturalOrder());
+        try (var out = new FileOutputStream(dest)) {
+            for (int i = 0, n = vars.size(); i < n; i++) {
+                if (i > 0) out.write('\t');
+                out.write('?');
+                vars.get(i).write(out);
+            }
+            out.write('\n');
+            for (SegmentRope line : lines)
+                line.write(out);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 
     public interface RowConsumer {
         boolean accept(Batch<?> batch, int row);

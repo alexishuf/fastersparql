@@ -646,13 +646,23 @@ class TermTest {
                 arguments("\"1.000\"^^xsd:float", "\"1.0\"^^xsd:double", 0),
                 arguments("\"52.5167\"^^xsd:float", "\"52.5166666666\"^^xsd:float", 0),
                 arguments("\"52.5167\"^^xsd:float", "\"52.51666666\"^^xsd:double", 0),
-                arguments("\"52.5167\"^^xsd:float", "\"52.51666\"^^xsd:decimal", 0),
+                arguments("\"52.5167\"^^xsd:float", "\"52.51666\"^^xsd:decimal", 1),
+                arguments("\"52.5167\"^^xsd:float", "\"52.51666666\"^^xsd:decimal", 0),
                 arguments("\"52.5167\"^^xsd:float", "\"52.5166\"^^xsd:float", 1),
                 arguments("\"52.5167\"^^xsd:float", "\"52.5168\"^^xsd:float", -1),
                 arguments("\"52.5167\"^^xsd:float", "\"52.51655\"^^xsd:float", 1),
                 arguments("\"52.5167\"^^xsd:double", "\"52.51688\"^^xsd:float", -1),
                 arguments("\"52.5167\"^^xsd:float", "\"52.516666666666666\"^^xsd:float", 0),
-                arguments("\"52.3167\"^^xsd:float", "\"52.31666666666667\"^^xsd:float", 0)
+                arguments("\"52.3167\"^^xsd:float", "\"52.31666666666667\"^^xsd:float", 0),
+                arguments("\"12.4833\"^^xsd:double", "\"12.483333333333333\"^^xsd:double", 0),
+                arguments("\"12.4833\"^^xsd:float", "\"12.483333333333333\"^^xsd:float", 0),
+                arguments("\"12.4833\"^^xsd:double", "\"12.483333333333333\"^^xsd:float", 0),
+                arguments("\"23.7167\"^^xsd:float", "\"23.716666666666665\"^^xsd:float", 0),
+                arguments("\"23.7167\"^^xsd:float", "\"23.716666666666664\"^^xsd:float", 0),
+                arguments("\"23.7167\"^^xsd:float", "\"23.716666666666668\"^^xsd:float", 0),
+                arguments("\"-0.116667\"^^xsd:double", "\"-0.11666666666666667\"^^xsd:double", 0),
+                arguments("\"39.9167\"^^xsd:float", "\"39.916666666666664\"^^xsd:float", 0)
+
         );
     }
 
@@ -664,5 +674,9 @@ class TermTest {
         assertEquals(-signum(expected), signum(r.compareTo(l)));
         assertEquals(expected == 0, l.equals(r));
         assertEquals(expected == 0, r.equals(l));
+        assertTrue(l.hashCode() != 0);
+        assertTrue(r.hashCode() != 0);
+        if (expected == 0)
+            assertEquals(l.hashCode(), r.hashCode());
     }
 }
