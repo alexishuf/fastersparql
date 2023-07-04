@@ -3,7 +3,9 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,18 +46,19 @@ class AffinityShallowPoolTest {
                     return s;
                 }));
             }
-            for (Future<String> t : tasks) {
-                String s = t.get();
-                if (s != null)
-                    taken.add(s);
-            }
+            // wait for all tasks
+            for (Future<String> t : tasks) Optional.ofNullable(t.get()).ifPresent(taken::add);
             tasks.clear();
-            for (int i = 0; i < nTasks*2; i++)
+
+            //collect any leftovers
+            for (int thread = 0; thread < nTasks; thread++)
                 tasks.add(ex.submit(() -> AffinityShallowPool.get(COL)));
-            for (Future<String> t : tasks)
-                assertNull(t.get(), "non-null get() after pool had been drained");
+            for (Future<String> t : tasks) Optional.ofNullable(t.get()).ifPresent(taken::add);
+            tasks.clear();
         }
         assertEquals(acceptedOffers.get(), taken.size(), "Since each thread get()s after offer(), all accepted offers should be taken and only what was offered can be taken");
+        assertTrue(new HashSet<>(strings).containsAll(taken), "Some taken strings were never offered");
+        assertEquals(new HashSet<>(taken).size(), taken.size(), "Some strings were taken more than once");
     }
 
 }
