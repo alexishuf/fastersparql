@@ -3,8 +3,6 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -162,7 +160,7 @@ public final class Modifier extends Plan {
     BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean weakDedup) {
         var processor = processorFor(in.batchType(), in.vars(), binding, weakDedup);
         if (processor == null) return in;
-        return new ModifierBIt<>(in, processor).metrics(Metrics.createIf(this));
+        return new ProcessorBIt<>(in, processor, Metrics.createIf(this));
     }
 
     public <B extends Batch<B>>
@@ -207,27 +205,6 @@ public final class Modifier extends Plan {
         return processor;
     }
 
-    private final class ModifierBIt<B extends Batch<B>> extends ProcessorBIt<B> {
-        public ModifierBIt(BIt<B> in, BatchProcessor<B> processor) {
-            super(in, processor, Metrics.createIf(Modifier.this));
-        }
-
-        @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
-                var pool = batchType.dedupPool;
-                int cap = Modifier.this.distinctCapacity;
-                if (d instanceof StrongDedup<B> sd) {
-                    if (cap >= FSProperties.distinctCapacity())
-                        pool.recycleDistinct(sd);
-                    else if (cap >= reducedCapacity())
-                        pool.recycleReduced(sd);
-                } else if (d instanceof WeakDedup<B> wd) {
-                    pool.recycleWeak(wd);
-                }
-            }
-        }
-    }
 
     /* --- --- --- RowFilter implementations --- --- --- */
 

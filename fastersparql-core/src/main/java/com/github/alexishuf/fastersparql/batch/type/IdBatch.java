@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -210,11 +209,17 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     /* --- --- --- operation objects --- --- --- */
 
     public static final class Merger<B extends IdBatch<B>> extends BatchMerger<B> {
-        private long @MonotonicNonNull [] tmpIds;
-        private int  @MonotonicNonNull [] tmpHashes;
+        private long @Nullable [] tmpIds;
+        private int  @Nullable [] tmpHashes;
 
         public Merger(BatchType<B> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
+        }
+
+        @Override public void release() {
+            if (tmpIds    != null) tmpIds    = LONG.offer(tmpIds,       tmpIds.length);
+            if (tmpHashes != null) tmpHashes =  INT.offer(tmpHashes, tmpHashes.length);
+            super.release();
         }
 
         @Override public B projectInPlace(B b) {
@@ -245,12 +250,18 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
     public static final class Filter<B extends IdBatch<B>> extends BatchFilter<B> {
-        private long @MonotonicNonNull [] tmpIds;
-        private int  @MonotonicNonNull [] tmpHashes;
+        private long @Nullable [] tmpIds;
+        private int  @Nullable [] tmpHashes;
 
         public Filter(BatchType<B> batchType, Vars vars, @Nullable BatchMerger<B> projector,
                       RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
             super(batchType, vars, projector, rowFilter, before);
+        }
+
+        @Override public void release() {
+            if (tmpIds    != null) tmpIds    = LONG.offer(tmpIds,       tmpIds.length);
+            if (tmpHashes != null) tmpHashes =  INT.offer(tmpHashes, tmpHashes.length);
+            super.release();
         }
 
         private B filterInPlaceEmpty(B b) {

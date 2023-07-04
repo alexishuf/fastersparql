@@ -45,11 +45,9 @@ public final class Values extends Plan {
     private TermBatch dedupValues() {
         TermBatch dedupValues = this.dedupValues;
         if (dedupValues == null && values != null) {
-            var dedup = TERM.dedupPool.getWeak(values.rows, values.cols);
-            var filter = TERM.filter(publicVars, dedup);
+            var filter = TERM.filter(publicVars, TERM.dedupPool.getWeak(values.rows, values.cols));
             this.dedupValues = dedupValues = filter.filter(null, values);
             filter.release();
-            TERM.dedupPool.recycleWeak(dedup);
         }
         return dedupValues;
     }

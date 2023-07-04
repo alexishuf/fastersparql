@@ -1,5 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -9,6 +14,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     public final @Nullable BatchMerger<B> projector;
     public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
+    protected boolean released;
 
     public BatchFilter(BatchType<B> batchType, Vars outVars,
                        @Nullable BatchMerger<B> projector,
@@ -17,6 +23,25 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         this.projector = projector;
         this.rowFilter = rowFilter;
         this.before = before;
+    }
+
+    @Override public void release() {
+        if (released)
+            return;
+        released = true;
+        if (before != null)
+            before.release();
+        if (rowFilter instanceof WeakCrossSourceDedup<B> d) {
+            batchType.dedupPool.recycleWeakCross(d);
+        } else if (rowFilter instanceof WeakDedup<B> d) {
+            batchType.dedupPool .recycleWeak(d);
+        } else if (rowFilter instanceof StrongDedup<B> d) {
+            if (d.weakenAt() >= FSProperties.distinctCapacity())
+                batchType.dedupPool.recycleDistinct(d);
+            else
+                batchType.dedupPool.recycleReduced(d);
+        }
+        super.release();
     }
 
     @Override public final B processInPlace(B b) { return filterInPlace(b, projector); }
@@ -32,6 +57,10 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         rowFilter.reset();
         if (before != null)
             before.reset();
+    }
+
+    public final boolean isDedup() {
+        return rowFilter instanceof Dedup<B> || (before != null && before.isDedup());
     }
 
     public abstract B filterInPlace(B in, @Nullable BatchMerger<B> projector);

@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.operators;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
@@ -30,6 +31,19 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         if (p == null)
             return in;
         return new ProcessorBIt<>(in, p, null);
+    }
+
+    public static boolean isDedup(BIt<?> it) {
+        while (true) {
+            if (it instanceof ProcessorBIt<?> p) {
+                if (p.processor instanceof BatchFilter<?> f && f.isDedup())
+                    return true;
+            } else if (it instanceof DelegatedControlBIt<?,?> d) {
+                it = d.delegate();
+            } else {
+                return false;
+            }
+        }
     }
 
     protected void cleanup(@Nullable Throwable cause) {
