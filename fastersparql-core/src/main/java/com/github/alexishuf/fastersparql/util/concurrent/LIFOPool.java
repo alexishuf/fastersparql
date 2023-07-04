@@ -5,7 +5,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
 
-import static java.lang.Runtime.getRuntime;
 import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
@@ -51,9 +50,8 @@ public final class LIFOPool<T> {
         while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
             if (size == 0) return null;
-            T o = recycled[--size];
-            recycled[size] = null;
-            return o;
+            return recycled[--size];
+            //recycled[size] = null;
         } finally {
             S.setRelease(this, size);
         }
