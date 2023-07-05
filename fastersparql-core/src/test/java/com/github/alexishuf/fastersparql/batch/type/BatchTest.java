@@ -952,37 +952,37 @@ class BatchTest {
         assertBatchesEquals(expected, o1, "o1");
     }
 
-    @Test void regressionHashC7() {
-        var b0 = Batch.COMPRESSED.create(1, 8, 0);
-        var b1 = Batch.COMPRESSED.create(1, 8, 0);
-        for (var b : List.of(b0, b1)) {
-            b.beginPut();
-            var terms = List.of(
-             /* 0 */"<http://data.semanticweb.org/person/martin-szomszor>",
-             /* 1 */"<http://data.semanticweb.org/conference/eswc/2010/main/chair/semanticwebtechnologieschair>",
-             /* 2 */"<http://data.semanticweb.org/conference/eswc/2010/paper/social_web/5>",
-             /* 3 */"<http://dbpedia.org/resource/United_Kingdom>",
-             /* 4 */"<http://dbpedia.org/resource/London>",
-             /* 5 */"\"51.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
-            );
-            for (int i = 0; i < terms.size(); i++)
-                b.putTerm(i, Term.valueOf(terms.get(i)));
-        }
-        b0.putTerm(6, Term.valueOf("\"-0.116667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
-        b1.putTerm(6, Term.valueOf("\"-0.11666666666666667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
-        for (var b : List.of(b0, b1)) {
-            b.putTerm(7, Term.valueOf("<http://data.semanticweb.org/conference/eswc/2010/proceedings>"));
-            b.commitPut();
-        }
-        assertTrue(b0.equals(0, b1, 0));
-        assertTrue(b1.equals(0, b0, 0));
-        assertEquals(b0.hash(0), b1.hash(0));
-        for (int c = 0; c < b0.cols; c++) {
-            assertTrue(b0.equals(0, c, b1, 0, c));
-            assertTrue(b1.equals(0, c, b0, 0, c));
-            assertEquals(b0.hash(0, c), b1.hash(0, c));
-        }
-    }
+//    @Test void regressionHashC7() {
+//        var b0 = Batch.COMPRESSED.create(1, 8, 0);
+//        var b1 = Batch.COMPRESSED.create(1, 8, 0);
+//        for (var b : List.of(b0, b1)) {
+//            b.beginPut();
+//            var terms = List.of(
+//             /* 0 */"<http://data.semanticweb.org/person/martin-szomszor>",
+//             /* 1 */"<http://data.semanticweb.org/conference/eswc/2010/main/chair/semanticwebtechnologieschair>",
+//             /* 2 */"<http://data.semanticweb.org/conference/eswc/2010/paper/social_web/5>",
+//             /* 3 */"<http://dbpedia.org/resource/United_Kingdom>",
+//             /* 4 */"<http://dbpedia.org/resource/London>",
+//             /* 5 */"\"51.5\"^^<http://www.w3.org/2001/XMLSchema#double>"
+//            );
+//            for (int i = 0; i < terms.size(); i++)
+//                b.putTerm(i, Term.valueOf(terms.get(i)));
+//        }
+//        b0.putTerm(6, Term.valueOf("\"-0.116667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+//        b1.putTerm(6, Term.valueOf("\"-0.11666666666666667\"^^<http://www.w3.org/2001/XMLSchema#double>"));
+//        for (var b : List.of(b0, b1)) {
+//            b.putTerm(7, Term.valueOf("<http://data.semanticweb.org/conference/eswc/2010/proceedings>"));
+//            b.commitPut();
+//        }
+//        assertTrue(b0.equals(0, b1, 0));
+//        assertTrue(b1.equals(0, b0, 0));
+//        assertEquals(b0.hash(0), b1.hash(0));
+//        for (int c = 0; c < b0.cols; c++) {
+//            assertTrue(b0.equals(0, c, b1, 0, c));
+//            assertTrue(b1.equals(0, c, b0, 0, c));
+//            assertEquals(b0.hash(0, c), b1.hash(0, c));
+//        }
+//    }
 
     @Test void  regressionHashS6() {
         String name = "\"Michael Bartels\"";

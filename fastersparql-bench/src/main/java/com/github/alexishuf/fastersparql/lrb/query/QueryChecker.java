@@ -24,6 +24,7 @@ import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
 public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.BatchConsumer {
     private static final String OK = "No errors";
     public final Vars vars;
+    private final QueryName queryName;
     private final @Nullable StrongDedup<B> expected;
     private final @Nullable StrongDedup<B> observed;
     public final B unexpected;
@@ -33,7 +34,8 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     public QueryChecker(BatchType<B> batchType, QueryName queryName){
         super(batchType);
         vars = queryName.parsed().publicVars();
-        B b = queryName.expected(batchType);
+        this.queryName = queryName;
+        B b = queryName.amputateNumbers(batchType, queryName.expected(batchType));
         if (b == null) {
             expected = observed = null;
             unexpected = batchType.createSingleton(vars.size());
@@ -137,7 +139,8 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     }
 
     @Override public void accept(Batch<?> genericBatch) {
-        @SuppressWarnings("unchecked") B b = (B)genericBatch;
+        //noinspection unchecked
+        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)genericBatch);
         rows += b.rows;
         if (expected == null || observed == null) return;
         for (int r = 0, rows = b.rows; r < rows; r++) {

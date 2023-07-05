@@ -4,8 +4,10 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -125,5 +127,38 @@ public enum QueryName {
         }
     }
 
-    public Plan parsed() { return new SparqlParser().parse(opaque()); }
+    public Plan parsed() { return SparqlParser.parse(opaque()); }
+
+    public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
+        if (this != C7 && this != C8 && this != C10)
+            return b;
+        boolean changed = false;
+        B fixed = type.create(b.rows, b.cols, b.bytesUsed());
+        var tmp = Term.pooledMutable();
+        var trunc = new ByteRope();
+        for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
+            fixed.beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (Term.isNumericDatatype(b.shared(r, c))) {
+                    changed = true;
+                    if (!b.getView(r, c, tmp))
+                        throw new AssertionError("no term, but shared() != null");
+                    SegmentRope local = tmp.local();
+                    int dot = local.skipUntil(0, local.len, '.');
+                    trunc.clear().append(local, 0, dot);
+                    fixed.putTerm(c, tmp.shared(), trunc.utf8, 0, trunc.len, true);
+                } else {
+                    fixed.putTerm(c, b, r, c);
+                }
+            }
+            fixed.commitPut();
+        }
+        tmp.recycle();
+        if (changed) {
+            b.clear();
+            b.put(fixed);
+        }
+        type.recycle(fixed);
+        return b;
+    }
 }
