@@ -55,15 +55,22 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
     }
 
+    @Override public SparqlClient.Guard retain() { return new RefGuard(); }
+
+    @Override protected void doClose() { netty.close(); }
+
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sp) {
         if (sp.isGraph())
             throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
+        acquireRef();
         try {
             return new QueryBIt<>(batchType, sp) ;
-        } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
     }
-
-    @Override public void close() { netty.close(); }
 
     /* --- --- --- helper methods  --- --- ---  */
 

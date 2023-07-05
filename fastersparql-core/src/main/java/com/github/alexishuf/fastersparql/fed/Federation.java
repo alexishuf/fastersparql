@@ -54,7 +54,6 @@ public class Federation extends AbstractSparqlClient {
     private final Path specPathsRelativeTo;
     private final Lock lock = new ReentrantLock();
     private int cdc = FSProperties.crossDedupCapacity();
-    private boolean closed;
     private CompletableFuture<Void> init;
 
     public Federation(SparqlEndpoint endpoint,
@@ -63,6 +62,10 @@ public class Federation extends AbstractSparqlClient {
         (init = new CompletableFuture<>()).complete(null);
         this.specPathsRelativeTo = specPathsRelativeTo;
     }
+
+    @Override public RefGuard retain() { return new RefGuard(); }
+
+    @Override protected void doClose() { closeAll(sources); }
 
     /* --- --- --- load/save --- --- --- */
 
@@ -186,9 +189,8 @@ public class Federation extends AbstractSparqlClient {
         var future = new CompletableFuture<Void>();
         var err = new ExceptionCondenser<>(RuntimeException.class, RuntimeException::new);
         lock.lock();
+        acquireRef();
         try {
-            if (closed)
-                throw new IllegalStateException("Federation closed");
             AtomicInteger pending = new AtomicInteger(sources.size());
             for (Source source : sources) {
                 launcher.launch(source, (ignored, throwable) -> {
@@ -198,16 +200,18 @@ public class Federation extends AbstractSparqlClient {
                     return null;
                 });
             }
-        } finally { lock.unlock(); }
+        } finally {
+            releaseRef();
+            lock.unlock();
+        }
         return future;
     }
 
     /** Add all sources in {@code collection} to this {@link Federation}. */
     public void addSources(Collection<Source> collection) {
         lock.lock();
+        acquireRef();
         try {
-            if (closed)
-                throw new IllegalStateException("Federation closed");
             var initialized = this.init = new CompletableFuture<>();
             sources.addAll(collection);
             for (Source s : collection)
@@ -219,6 +223,7 @@ public class Federation extends AbstractSparqlClient {
                             .thenCompose(origin -> s.estimator.ready()).handle(handler)
             ).thenAccept(initialized::complete);
         } finally {
+            releaseRef();
             lock.unlock();
         }
     }
@@ -243,42 +248,42 @@ public class Federation extends AbstractSparqlClient {
         } finally { lock.unlock(); }
     }
 
-    @Override public void close() {
-        lock.lock();
-        try {
-            if (closed) return;
-            closed = true;
-        } finally {
-            lock.unlock();
-        }
-        closeAll(sources);
-    }
 
     /* --- --- --- querying --- --- --- */
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        long entryNs = Timestamp.nanoTime();
-        var m = new FedMetrics(this, sparql);
-        var it = plan(sparql, m).execute(batchType);
-        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
+        acquireRef();
+        try {
+            long entryNs = Timestamp.nanoTime();
+            var m = new FedMetrics(this, sparql);
+            var it = plan(sparql, m).execute(batchType);
+            m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
-        // deliver metrics
-        for (var l : fedListeners)
-            l.accept(m);
-        return it;
+            // deliver metrics
+            for (var l : fedListeners)
+                l.accept(m);
+            return it;
+        } finally {
+            releaseRef();
+        }
     }
 
     public <B extends Batch<B>> Plan plan(SparqlQuery sparql) {
-        long entryNs = Timestamp.nanoTime();
-        var m = new FedMetrics(this, sparql);
+        acquireRef();
+        try {
+            long entryNs = Timestamp.nanoTime();
+            var m = new FedMetrics(this, sparql);
 
-        Plan root = plan(sparql, m);
-        m.dispatchNs = Timestamp.nanoTime()-entryNs-m.selectionAndAgglutinationNs-m.optimizationNs;
+            Plan root = plan(sparql, m);
+            m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
-        // deliver metrics
-        for (var l : fedListeners)
-            l.accept(m);
-        return root;
+            // deliver metrics
+            for (var l : fedListeners)
+                l.accept(m);
+            return root;
+        } finally {
+            releaseRef();
+        }
     }
 
     private Plan plan(SparqlQuery sparql, FedMetrics m) {

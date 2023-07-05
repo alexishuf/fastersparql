@@ -45,8 +45,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -69,14 +67,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
     private static final StoreBatchType TYPE = StoreBatchType.INSTANCE;
-    private static final VarHandle REFS;
-    static {
-        try {
-            REFS = MethodHandles.lookup().findVarHandle(StoreSparqlClient.class, "plainRefs", int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
     private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
             (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
     private static final LIFOPool<SegmentRope[]> PREFIXES_POOL
@@ -86,7 +76,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private final int dictId;
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
-    @SuppressWarnings("unused") private int plainRefs;
     private final SegmentRope[] prefixes;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -132,7 +121,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.pso = pso;
         this.ops = ops;
         this.federator = new StoreSingletonFederator(this);
-        REFS.setRelease(this, 1);
         log.debug("Loaded{} {}...", validate ? "/validated" : "", dir);
     }
 
@@ -143,57 +131,21 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return t;
     }
 
-    /** An {@link AutoCloseable} that ensures the {@link StoreSparqlClient} and the
-     *  underlying storage remains open (i.e., {@link StoreSparqlClient#close()} will be
-     *  silently delayed if there are unterminated {@link BIt}s or unclosed refs). */
-    public class Ref implements AutoCloseable {
-        private boolean closed;
-
-        public Ref() { acquireRef(); }
-
+    public class Guard extends RefGuard {
+        public Guard() { acquireRef(); }
         public StoreSparqlClient get() { return StoreSparqlClient.this; }
-
-        @Override public void close() {
-            if (closed) return;
-            closed = true;
-            releaseRef();
-        }
     }
 
-    /** Get a {@link Ref}, which will delay {@link StoreSparqlClient#close()} until after
-     * the {@link Ref} itself is {@link Ref#close()}d. */
-    public Ref liveRef() { return new Ref(); }
+    public Guard retain() { return new Guard(); }
 
-    private void acquireRef() {
-        while (true) {
-            int current = (int) REFS.getAcquire(this);
-            if (current == 0)
-                throw new IllegalStateException("Attempt to use closed SparqlClient "+this);
-            if ((int)REFS.compareAndExchangeAcquire(this, current, current+1) == current)
-                break;
-            Thread.onSpinWait();
-        }
-    }
-
-    private void releaseRef() {
-        int refs = (int)REFS.getAndAddRelease(this, -1);
-        if (refs == 1) {
-            IdTranslator.deregister(dictId, dict);
-            dict.close();
-            spo.close();
-            pso.close();
-            ops.close();
-            PREFIXES_POOL.offer(prefixes);
-        } else if (refs < 0) {
-            log.error("This or a previous releaseRef() was mismatched for {}",
-                       this, new IllegalStateException());
-            REFS.getAndAdd(this, 1);
-        }
-    }
-
-    @Override public void close() {
-        if ((int)REFS.getAcquire(this) > 0) // double close() is not an error
-            releaseRef();
+    @Override protected void doClose() {
+        log.debug("Closing {}", this);
+        IdTranslator.deregister(dictId, dict);
+        dict.close();
+        spo.close();
+        pso.close();
+        ops.close();
+        PREFIXES_POOL.offer(prefixes);
     }
 
     /* --- --- --- properties--- --- --- */
@@ -360,27 +312,34 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        Plan plan = SparqlParser.parse(sparql);
-        Plan meat = supportedQueryMeat(plan);
-        BIt<StoreBatch> storeIt = null;
-        var l = meat == null ? null : lookup(dictId);
-        if (meat instanceof TriplePattern tp) {
-            Modifier m = plan instanceof Modifier mod ? mod : null;
-            // if possible, push projection to when turning Triple.* iterators into batches
-            Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-            storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
-                                          tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
-                                          tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
-                                          tp.varRoles());
-            if (m != null) // apply the modifier. executeFor() detects a no-op
-                storeIt = m.executeFor(storeIt, null, false);
-            storeIt.metrics(Metrics.createIf(plan));
-        } else if (meat != null) {
-            storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
+        acquireRef();
+        try {
+            Plan plan = SparqlParser.parse(sparql);
+            Plan meat = supportedQueryMeat(plan);
+            BIt<StoreBatch> storeIt = null;
+            var l = meat == null ? null : lookup(dictId);
+            if (meat instanceof TriplePattern tp) {
+                Modifier m = plan instanceof Modifier mod ? mod : null;
+                // if possible, push projection to when turning Triple.* iterators into batches
+                Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+                storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
+                        tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
+                        tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
+                        tp.varRoles());
+                if (m != null) // apply the modifier. executeFor() detects a no-op
+                    storeIt = m.executeFor(storeIt, null, false);
+                storeIt.metrics(Metrics.createIf(plan));
+            } else if (meat != null) {
+                storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
+            }
+            if (meat == null || storeIt == null)
+                return federator.execute(batchType, plan);
+            return batchType.convert(storeIt);
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
         }
-        if (meat == null || storeIt == null)
-            return federator.execute(batchType, plan);
-        return batchType.convert(storeIt);
     }
 
     private BIt<StoreBatch> queryBGP(Plan joinOrMod, LocalityCompositeDict.Lookup lookup) {
@@ -456,6 +415,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
+        acquireRef();
         try {
             Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
             if (bq.query.isGraph())
@@ -505,6 +465,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return it;
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
         }
     }
 

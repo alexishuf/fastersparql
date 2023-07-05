@@ -11,7 +11,9 @@ public class DummySparqlClient extends AbstractSparqlClient {
 
     public DummySparqlClient(SparqlEndpoint endpoint) { super(endpoint); }
 
-    @Override public void close() { }
+    @Override public Guard retain() { return NoOpGuard.INSTANCE; }
+
+    @Override protected void doClose() { }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         throw new UnsupportedOperationException();

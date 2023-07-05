@@ -12,11 +12,11 @@ import java.io.IOException;
 
 public class FSStoreSelector extends Selector {
     public static final String NAME = "store";
-    private final StoreSparqlClient.Ref client;
+    private final StoreSparqlClient.Guard client;
 
     public FSStoreSelector(StoreSparqlClient client, Spec spec) {
         super(client.endpoint(), spec);
-        this.client = client.liveRef();
+        this.client = client.retain();
         notifyInit(InitOrigin.LOAD, null);
     }
 

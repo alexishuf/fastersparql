@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
@@ -29,6 +30,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
@@ -40,30 +42,17 @@ import org.rdfhdt.hdt.triples.TripleID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.invoke.VarHandle;
-
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorPeek;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatch.TYPE;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static java.lang.String.format;
-import static java.lang.invoke.MethodHandles.lookup;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class HdtSparqlClient extends AbstractSparqlClient implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(HdtSparqlClient.class);
-    private static final VarHandle HDT_REFS;
-    static {
-        try {
-            HDT_REFS = lookup().findVarHandle(HdtSparqlClient.class, "plainHdtRefs", int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
 
     private final HDT hdt;
     final int dictId;
-    @SuppressWarnings("unused") // accessed through DICT_REFS
-    private int plainHdtRefs;
     private final SingletonFederator federator;
     private final HdtCardinalityEstimator estimator;
 
@@ -81,25 +70,48 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             throw FSException.wrap(ep, t);
         }
         dictId = IdAccess.register(hdt.getDictionary());
-        HDT_REFS.setRelease(this, 1);
         estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
         federator = new SingletonFederator(this, TYPE, estimator);
+    }
+
+    @Override public SparqlClient.Guard retain() { return new RefGuard(); }
+
+    @Override protected void doClose() {
+        log.debug("Closing {}", this);
+        try {
+            Async.waitStage(estimator.ready());
+        } catch (Throwable t) {
+            log.info("Ignoring estimator failure", t);
+        }
+        IdAccess.release(dictId);
+        try {
+            hdt.close();
+        } catch (Throwable t) {
+            log.error("Ignoring failure to close HDT object for {}", endpoint, t);
+        }
     }
 
     @Override public HdtCardinalityEstimator estimator() { return estimator; }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        var plan = SparqlParser.parse(sparql);
-        BIt<HdtBatch> hdtIt;
-        if (plan instanceof Modifier m && m.left instanceof TriplePattern tp) {
-            Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-            hdtIt = m.executeFor(queryTP(vars, tp), null, false);
-        } else if (plan instanceof TriplePattern tp) {
-            hdtIt = queryTP(tp.publicVars(), tp);
-        } else {
-            hdtIt = federator.execute(TYPE, plan);
+        acquireRef();
+        try {
+            var plan = SparqlParser.parse(sparql);
+            BIt<HdtBatch> hdtIt;
+            if (plan instanceof Modifier m && m.left instanceof TriplePattern tp) {
+                Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+                hdtIt = m.executeFor(queryTP(vars, tp), null, false);
+            } else if (plan instanceof TriplePattern tp) {
+                hdtIt = queryTP(tp.publicVars(), tp);
+            } else {
+                hdtIt = federator.execute(TYPE, plan);
+            }
+            return batchType.convert(hdtIt);
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
         }
-        return batchType.convert(hdtIt);
     }
 
     private BIt<HdtBatch> queryTP(Vars vars, TriplePattern tp) {
@@ -121,6 +133,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
+        acquireRef();
         try {
             Plan q = bq.parsedQuery();
             if (q.isGraph())
@@ -133,29 +146,9 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             return new ClientBindingBIt<>(bq, this);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
         }
-    }
-
-    private void acquireHdt() {
-        if  ((int) HDT_REFS.getAndAdd(this, 1) == 0) {
-            HDT_REFS.getAndAdd(this, -1);
-            throw new IllegalStateException(this+" closed, cannot access HDT");
-        }
-    }
-    private void releaseHdt() {
-        if ((int) HDT_REFS.getAndAdd(this, -1) == 1) {
-            IdAccess.release(dictId);
-            log.info("Closing {}", this);
-            try {
-                hdt.close();
-            } catch (Throwable t) {
-                log.error("Ignoring failure to close HDT object for {}", endpoint, t);
-            }
-        }
-    }
-
-    @Override public void close() {
-        releaseHdt();
     }
 
     /* --- --- --- inner classes --- --- --- */
@@ -168,7 +161,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         public HdtIteratorBIt(Vars vars, Term s, Term p, Term o, IteratorTripleID it) {
             super(TYPE, vars);
-            acquireHdt();
+            acquireRef();
             this.it = it;
 
             final int n = vars.size();
@@ -213,7 +206,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
                 super.cleanup(cause);
-            } finally { releaseHdt(); }
+            } finally { releaseRef(); }
         }
     }
 
@@ -227,7 +220,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         public HdtBindingBIt(BindQuery<HdtBatch> bq, Plan rightPlan) {
             super(bq, null);
-            acquireHdt();
+            acquireRef();
             if (rightPlan instanceof Modifier m) {
                 this.modifier = m;
                 this.right = (TriplePattern) m.left();
@@ -250,7 +243,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             super.cleanup(cause);
-            releaseHdt();
+            releaseRef();
         }
 
         private long bind(Term term, long sourcedId, TripleComponentRole role,

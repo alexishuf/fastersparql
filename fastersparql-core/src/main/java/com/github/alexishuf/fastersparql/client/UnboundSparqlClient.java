@@ -15,6 +15,10 @@ public class UnboundSparqlClient extends AbstractSparqlClient {
         super(UNBOUND_ENDPOINT);
     }
 
+    @Override public Guard retain() { return NoOpGuard.INSTANCE; }
+
+    @Override protected void doClose() {}
+
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
@@ -22,6 +26,4 @@ public class UnboundSparqlClient extends AbstractSparqlClient {
     @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
-
-    @Override public void close() { }
 }

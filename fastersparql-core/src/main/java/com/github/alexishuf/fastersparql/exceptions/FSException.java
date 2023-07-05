@@ -13,6 +13,10 @@ public class FSException extends RuntimeException {
         } else if (t instanceof FSException ce) {
             ce.offerEndpoint(endpoint);
             return ce;
+        } else if (t.getClass() == IllegalStateException.class) {
+            return new FSIllegalStateException(endpoint, t.getMessage());
+        } else if (t instanceof IllegalStateException) {
+            return new FSIllegalStateException(endpoint, t.getMessage(), t);
         } else {
             return new FSException(endpoint, t.getMessage(), t);
         }

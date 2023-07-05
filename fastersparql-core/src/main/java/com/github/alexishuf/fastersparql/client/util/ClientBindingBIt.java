@@ -12,7 +12,8 @@ public final class ClientBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
 
     public ClientBindingBIt(BindQuery<B> bindQuery, SparqlClient client) {
         super(bindQuery, null);
-        this.client        = client;
+        this.client = client;
+        addGuard(client.retain());
     }
 
     @Override protected BIt<B> bind(BatchBinding<B> binding) {

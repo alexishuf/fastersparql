@@ -29,6 +29,28 @@ public interface SparqlClient extends AutoCloseable {
     /** The endpoint queried by this {@link SparqlClient}. */
     SparqlEndpoint endpoint();
 
+    /** Delays the effects of {@link SparqlClient#close()} until after {@link Guard#close()} */
+    interface Guard extends AutoCloseable {
+        /**
+         * Closes or allows {@link SparqlClient#close()} to effectively close the client.
+         *
+         * <p>This method is idempotent.</p>
+         */
+        @Override void close();
+    }
+
+    /**
+     * Get a Guard object that guarantees this {@link SparqlClient} will remain usable so long
+     * {@link Guard#close()} is not called.
+     *
+     * <p>Callers <strong>MUST</strong> ensure that {@link Guard#close()} is eventually
+     * called at least once for every {@code acquire()} call. {@link Guard#close()} is
+     * idempotent, thus it can be called more than once</p>
+     *
+     * @return a gaurd object ensuring {@link SparqlClient} is alive.
+     */
+    Guard retain();
+
     /**
      * Execute a SELECT or ASK query and retrieve a {@link BIt} over the solutions (rows)
      * of the query.

@@ -48,8 +48,9 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(NettyWsSparqlClient.class);
-    private final NettyWsClient netty;
     private static int bindingsSerializerSizeHint = WsSerializer.DEF_BUFFER_HINT;
+
+    private final NettyWsClient netty;
 
     private static SparqlEndpoint restrictConfig(SparqlEndpoint endpoint) {
         SparqlConfiguration request = endpoint.configuration();
@@ -85,16 +86,26 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
     }
 
+    @Override public SparqlClient.Guard retain() { return new RefGuard(); }
+
+    @Override protected void doClose() { netty.close(); }
+
     @Override
     public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         if (sparql.isGraph())
             throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
+        acquireRef();
         try {
             return new WsBIt<>(batchType, sparql);
-        } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
     }
 
     @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
+        acquireRef();
         try {
             var sp = bq.query;
             var bindings = bq.bindings;
@@ -104,10 +115,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (type == MINUS && !bindings.vars().intersects(sp.allVars()))
                 return bindings;
             return new WsBIt<>(bq);
-        } catch (Throwable t) { throw FSException.wrap(endpoint, t); }
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
     }
-
-    @Override public void close() { this.netty.close(); }
 
     /* --- --- --- helper methods --- --- --- */
 

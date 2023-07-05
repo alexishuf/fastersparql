@@ -66,6 +66,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         this.errors = errors;
     }
 
+    @Override public Guard retain() { return NoOpGuard.INSTANCE; }
+
+    @Override protected void doClose() {}
+
     public ResultsSparqlClient asEmulatingWs() {
         return new ResultsSparqlClient(true, endpoint, qry2results, qry2WsResults,
                                        qry2err, errors);
@@ -159,8 +163,6 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new AssertionError(msg);
         }
     }
-
-    @Override public void close() { }
 
     @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
         sparql = SparqlParser.parse(sparql);

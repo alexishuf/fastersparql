@@ -41,7 +41,8 @@ class QueryRunnerTest {
                 });
                return it;
             }
-            @Override public void close() {}
+            @Override public Guard retain() { return NoOpGuard.INSTANCE; }
+            @Override protected void doClose() {}
         };
         OpaqueSparqlQuery query = new OpaqueSparqlQuery("SELECT * WHERE {?s ?p ?o}");
         long start = System.nanoTime();

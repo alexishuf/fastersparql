@@ -6,11 +6,21 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
+    private static final Logger log = LoggerFactory.getLogger(BindingBIt.class);
+    private static final int GUARDS_POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+
     protected final BatchMerger<B> merger;
     protected final BindQuery<B> bindQuery;
     private @Nullable B lb, rb;
@@ -19,6 +29,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private final BatchBinding<B> tempBinding;
     private long bindingSeq;
     private boolean bindingEmpty = false;
+    private @Nullable List<SparqlClient.Guard> guards;
     private @Nullable Thread safeCleanupThread;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -26,6 +37,9 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     public BindingBIt(BindQuery<B> bindQuery, @Nullable Vars projection) {
         super(projection != null ? projection : bindQuery.resultVars(),
               EmptyBIt.of(bindQuery.bindings.batchType()));
+        this.guards = GlobalAffinityShallowPool.get(GUARDS_POOL_COL);
+        if (this.guards == null)
+            this.guards = new ArrayList<>();
         var left = bindQuery.bindings;
         Vars leftPublicVars = left.vars();
         Vars rFree = bindQuery.query.publicVars().minus(leftPublicVars);
@@ -37,8 +51,23 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         this.metrics     = bindQuery.metrics;
     }
 
+    protected void addGuard(SparqlClient.Guard g) {
+        //noinspection DataFlowIssue guards != null
+        guards.add(g);
+    }
+
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
+        if (guards != null) {
+            for (var g : guards) {
+                try {
+                    g.close();
+                } catch (Throwable t) {
+                    log.error("Guard.close() failed for {}: {}", g, t.toString());
+                }
+            }
+            guards = GlobalAffinityShallowPool.offer(GUARDS_POOL_COL, guards);
+        }
         if (safeCleanupThread == Thread.currentThread()) {
             // only recycle lb and rb if we are certain they are exclusively held by this BIt.
             lb = batchType.recycle(lb);
