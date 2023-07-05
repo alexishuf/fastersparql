@@ -394,7 +394,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (r.type == MODIFIER)
                 r = (join.right = federator.shallowOptimize(r)).left();
             switch (r.type) {
-                case JOIN   -> { rightJoin = r; rIdx = 0; }
+                case JOIN   -> {
+                    if (join.type != JOIN)
+                        return null; // can't handle LeftJoin|Exists|Minus(L, Join(...))
+                    rightJoin = r; rIdx = 0;
+                }
                 case TRIPLE ->   rIdx = 2; // accept even if wrapped in Modifier
                 default     -> { return null; }
             }
@@ -407,7 +411,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                        : new Join(copyOfRange(join.operandsArray, 1, n));
         }
         var metrics = Metrics.createIf(join);
-        var bq = new BindQuery<>(r, query(TYPE, join.left), BindType.JOIN,
+        var bq = new BindQuery<>(r, query(TYPE, join.left), join.type.bindType(),
                                  metrics == null ? null : metrics.joinMetrics[1]);
         BIt<StoreBatch> it;
         var tp = (r.type == MODIFIER ? r.left : r) instanceof TriplePattern t ? t : null;
@@ -483,7 +487,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
             } else {
                 Plan rightJoin = right.type == MODIFIER ? right.left() : right;
-                if (rightJoin.type == JOIN && canExecuteRightBGP(rightJoin, 0)) {
+                if (bq.type == BindType.JOIN && rightJoin.type == JOIN
+                                             && canExecuteRightBGP(rightJoin, 0)) {
                     if (right == bq.query) {
                         right = right.copy();
                         if (right.type == MODIFIER)
