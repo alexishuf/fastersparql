@@ -8,12 +8,14 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -173,6 +175,43 @@ class QueryNameTest {
             return new WsClientParserBIt<>(frameSender, type, vars, 1<<16);
         } else {
             return ResultsParserBIt.createFor(format, type, vars, 1<<16);
+        }
+    }
+
+    @Test void regressionC8() {
+        var r0 = Term.termList(
+                "<http://data.semanticweb.org/conference/iswc/2009/paper/research/306>",
+                "\"Berlin, Heidelberg, New York\"",
+                "<http://data.semanticweb.org/person/christian-bizer>",
+                "<http://data.semanticweb.org/organization/freie-universitaet-berlin>",
+                "\"Christian Bizer\"",
+                "<http://dbpedia.org/resource/Germany>",
+                "<http://dbpedia.org/resource/Berlin>",
+                "\"228.959\"^^xsd:double",
+                "<http://dbpedia.org/resource/Federal_republic>",
+                "<http://dbpedia.org/resource/German_language>",
+                "\"President\"@en"
+        );
+        var rX = Term.termList(
+                "<http://data.semanticweb.org/conference/iswc/2009/paper/poster_demo/158>",
+                "\"Berlin, Heidelberg, New York\"",
+                "<http://data.semanticweb.org/person/yuan-ren>",
+                "<http://data.semanticweb.org/organization/university-of-aberdeen>",
+                "\"Yuan Ren\"",
+                "<http://dbpedia.org/resource/United_Kingdom>",
+                "<http://dbpedia.org/resource/London>",
+                "\"254.673\"^^xsd:double",
+                "<http://dbpedia.org/resource/Constitutional_monarchy>",
+                "<http://dbpedia.org/resource/English_language>",
+                "\"Prime Minister\"@en"
+        );
+
+        var b = QueryName.C8.expected(Batch.COMPRESSED);
+        assertNotNull(b);
+        assertEquals(r0.size(), b.cols);
+        for (int c = 0; c < b.cols; c++) {
+            assertEquals(r0.get(c), b.get(0,        c), "c="+c);
+            assertEquals(rX.get(c), b.get(b.rows-1, c), "c="+c);
         }
     }
 }
