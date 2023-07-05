@@ -19,6 +19,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private final BatchBinding<B> tempBinding;
     private long bindingSeq;
     private boolean bindingEmpty = false;
+    private @Nullable Thread safeCleanupThread;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -38,8 +39,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        lb = batchType.recycle(lb);
-        rb = batchType.recycle(rb);
+        if (safeCleanupThread == Thread.currentThread()) {
+            // only recycle lb and rb if we are certain they are exclusively held by this BIt.
+            lb = batchType.recycle(lb);
+            rb = batchType.recycle(rb);
+        }
         inner.close();
         merger.release();
         if (cause != null)
@@ -98,7 +102,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             if (b.rows == 0) b = handleEmptyBatch(b);
             else             onBatch(b);
         } catch (Throwable t) {
-            batchType.recycle(lb);
             lb = null; // signal exhaustion
             onTermination(t);
             throw t;
@@ -108,7 +111,9 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     private B handleEmptyBatch(B batch) {
         batchType.recycle(recycle(batch));
+        safeCleanupThread = Thread.currentThread();
         onTermination(null);
+        safeCleanupThread = null;
         return null;
     }
 
