@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.fed.FedMetrics;
 import com.github.alexishuf.fastersparql.fed.FedMetricsListener;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -150,6 +149,9 @@ public class Measure implements Callable<Void>{
                 it = fed.query(msrOp.batchType, task.parsed());
             }
             QueryRunner.drain(it, consumer, timeoutMs);
+            //try (var out = new PrintStream("/tmp/dump")) {
+            //    NettyChannelDebugger.dumpAndFlushActive(out);
+            //}
         } catch (Throwable t) {
             consumer.finish(t);
         }

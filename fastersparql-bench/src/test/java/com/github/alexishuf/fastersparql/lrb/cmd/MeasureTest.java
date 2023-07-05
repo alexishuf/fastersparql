@@ -171,7 +171,6 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testSQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK);
-        NettyChannelDebugger.dumpAndFlushActive();
     }
 
     @ParameterizedTest @MethodSource("test")
@@ -185,5 +184,4 @@ class MeasureTest {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         doTest(sourceKind, jsonPlans, "B1", sel, COUNT);
     }
-
 }
