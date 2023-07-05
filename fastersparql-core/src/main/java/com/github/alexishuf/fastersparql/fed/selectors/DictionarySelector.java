@@ -14,7 +14,7 @@ import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.DictSorter;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityStandaloneDict;
 import com.github.alexishuf.fastersparql.util.IOUtils;
-import com.github.alexishuf.fastersparql.util.concurrent.CheapThreadLocal;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +38,7 @@ public class DictionarySelector extends Selector {
     public static final List<String> STATE_DIR_P = List.of(STATE, STATE_DIR);
 
     private @Nullable LocalityStandaloneDict predicates, classes;
-    private final CheapThreadLocal<Lookup> lookup = new CheapThreadLocal<>(Lookup::new);
+    private final AffinityShallowPool<Lookup> lookupsPool = new AffinityShallowPool<>(Lookup.class);
 
     private class Lookup {
         final LocalityStandaloneDict.Lookup predicates, classes;
@@ -169,9 +169,14 @@ public class DictionarySelector extends Selector {
     }
 
     @Override public boolean has(TriplePattern tp) {
-        var l = lookup.get();
+        int thread = (int) Thread.currentThread().threadId();
+        Lookup l = lookupsPool.get(thread);
+        if (l == null) l = new Lookup();
+
         if (l.classes != null && tp.p == Term.RDF_TYPE && tp.o.isIri())
             return l.classes.find(tp.o) != Dict.NOT_FOUND;
-        return l.predicates == null || l.predicates.find(tp.p) != Dict.NOT_FOUND;
+        boolean has = l.predicates == null || l.predicates.find(tp.p) != Dict.NOT_FOUND;
+        lookupsPool.offer(l, thread);
+        return has;
     }
 }

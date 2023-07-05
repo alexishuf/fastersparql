@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -22,7 +22,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
 public class SegmentRope extends PlainRope {
-    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
+    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
     public long offset;
     public byte @Nullable [] utf8;
@@ -40,7 +40,7 @@ public class SegmentRope extends PlainRope {
 
     public static SegmentRope pooledWrap(MemorySegment segment, byte @Nullable[] utf8,
                                          long offset, int len) {
-        SegmentRope r = AffinityShallowPool.get(POOL_COL);
+        SegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
         if (r == null) r = new SegmentRope(segment, utf8, offset, len);
         else           r.wrapSegment(segment, utf8, offset, len);
         return r;
@@ -85,7 +85,7 @@ public class SegmentRope extends PlainRope {
 
     public void recycle() {
         wrapEmptyBuffer();
-        AffinityShallowPool.offer(POOL_COL, this);
+        GlobalAffinityShallowPool.offer(POOL_COL, this);
     }
 
     protected int rangeLen(int begin, int end) {

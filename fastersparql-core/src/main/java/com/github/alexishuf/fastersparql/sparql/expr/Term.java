@@ -5,7 +5,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -31,7 +31,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("SpellCheckingInspection")
 public final class Term extends Rope implements Expr, ExprEvaluator {
-    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
+    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
     private static final byte IS_READONLY = 0x0000010;
     private static final byte   IS_SUFFIX = 0x0000001;
     private static final byte   TYPE_MASK = 0x0000006;
@@ -417,7 +417,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     public static Term mutable() { return new Term(); }
 
     public static Term pooledMutable() {
-        Term t = AffinityShallowPool.get(POOL_COL);
+        Term t = GlobalAffinityShallowPool.get(POOL_COL);
         return t == null ? new Term() : t;
     }
 
@@ -427,7 +427,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         var myLocal = local();
         myLocal.wrap(EMPTY_STRING.first);
         set0(EMPTY, myLocal, true);
-        AffinityShallowPool.offer(POOL_COL, this);
+        GlobalAffinityShallowPool.offer(POOL_COL, this);
     }
 
     public void set(@NonNull SegmentRope shared, @NonNull MemorySegment localSeg,

@@ -13,18 +13,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 import static org.junit.jupiter.api.Assertions.*;
 
-class AffinityShallowPoolTest {
-    private static final int COL = AffinityShallowPool.reserveColumn();
+class GlobalAffinityShallowPoolTest {
+    private static final int COL = GlobalAffinityShallowPool.reserveColumn();
     private static final String A = "a", B = "b";
 
     @Test
     void testOfferAndGet() throws InterruptedException {
-        AffinityShallowPool.offer(COL, A);
-        assertSame(A, AffinityShallowPool.get(COL));
-        assertNull(AffinityShallowPool.get(COL));
+        GlobalAffinityShallowPool.offer(COL, A);
+        assertSame(A, GlobalAffinityShallowPool.get(COL));
+        assertNull(GlobalAffinityShallowPool.get(COL));
 
-        Thread.startVirtualThread(() -> AffinityShallowPool.offer(COL, B, 10)).join();
-        assertSame(B, AffinityShallowPool.get(COL, 11));
+        Thread.startVirtualThread(() -> GlobalAffinityShallowPool.offer(COL, B, 10)).join();
+        assertSame(B, GlobalAffinityShallowPool.get(COL, 11));
     }
 
     @Test
@@ -39,8 +39,8 @@ class AffinityShallowPoolTest {
             for (int i = 0; i < nTasks; i++) {
                 int thread = i;
                 tasks.add(ex.submit(() -> {
-                    boolean accepted = AffinityShallowPool.offer(COL, strings.get(thread)) == null;
-                    String s = AffinityShallowPool.get(COL);
+                    boolean accepted = GlobalAffinityShallowPool.offer(COL, strings.get(thread)) == null;
+                    String s = GlobalAffinityShallowPool.get(COL);
                     if (accepted)
                         acceptedOffers.getAndIncrement();
                     return s;
@@ -52,7 +52,7 @@ class AffinityShallowPoolTest {
 
             //collect any leftovers
             for (int thread = 0; thread < nTasks; thread++)
-                tasks.add(ex.submit(() -> AffinityShallowPool.get(COL)));
+                tasks.add(ex.submit(() -> GlobalAffinityShallowPool.get(COL)));
             for (Future<String> t : tasks) Optional.ofNullable(t.get()).ifPresent(taken::add);
             tasks.clear();
         }

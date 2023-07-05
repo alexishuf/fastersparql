@@ -10,7 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.util.concurrent.CheapThreadLocal;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -24,7 +24,7 @@ import static java.lang.Long.*;
 public class Optimizer extends CardinalityEstimator {
     private static final long I_MAX = Integer.MAX_VALUE;
     private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
-    private final CheapThreadLocal<State> stateThreadLocal = new CheapThreadLocal<>(State::new);
+    private final AffinityShallowPool<State> pool = new AffinityShallowPool<>(State.class);
 
     public Optimizer() {
         super(new CompletableFuture<>());
@@ -479,9 +479,12 @@ public class Optimizer extends CardinalityEstimator {
 
     /** Equivalent to {@link #optimize(Plan, Vars)} with {@link Vars#EMPTY} */
     public Plan optimize(Plan plan) {
-        State state = stateThreadLocal.get();
+        State state = pool.get();
+        if (state == null) state = new State();
         state.setup(plan);
-        return state.optimize(plan, true);
+        Plan out = state.optimize(plan, true);
+        pool.offer(state);
+        return out;
     }
     /**
      * Recursively performs filter-pushing and join-reordering on the plan rooted at {@code plan}.
@@ -491,7 +494,8 @@ public class Optimizer extends CardinalityEstimator {
      *         possibly mutated tree.
      */
     public Plan optimize(Plan plan, Vars boundVars) {
-        State state = stateThreadLocal.get();
+        State state = pool.get();
+        if (state == null) state = new State();
         state.setup(plan);
         var grounded = state.grounded;
         for (var name : boundVars) {
@@ -499,7 +503,9 @@ public class Optimizer extends CardinalityEstimator {
             if (i >= 0)
                 grounded.set(i, GROUND);
         }
-        return state.optimize(plan, true);
+        Plan out = state.optimize(plan, true);
+        pool.offer(state);
+        return out;
     }
 
     /** Equivalent to {@link #shallowOptimize(Plan, Vars)} with {@link Vars#EMPTY}. */
@@ -545,7 +551,9 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         // get and init State object
-        State st = stateThreadLocal.get();
+        State st = pool.get();
+        if (st == null)
+            st = new State();
         st.setup(join);
         var grounded = st.grounded;
         for (var name : boundVars) {
@@ -582,6 +590,7 @@ public class Optimizer extends CardinalityEstimator {
         }
         // reorder join operands by cost. will not push filters to subsets of operands
         st.reorder(join);
+        pool.offer(st);
         return joinOrMod;
     }
 

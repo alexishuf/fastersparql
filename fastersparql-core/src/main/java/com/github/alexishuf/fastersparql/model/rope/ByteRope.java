@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import jdk.incubator.vector.Vector;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -27,7 +27,7 @@ import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings("UnusedReturnValue")
 public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, ByteRope> {
-    private static final int POOL_COL = AffinityShallowPool.reserveColumn();
+    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
     private static final int READLINE_CHUNK = 128;
 
     static final byte[] EMPTY_UTF8 = new byte[0];
@@ -79,7 +79,7 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     public ByteRope(byte[] utf8, int offset, int len) { super(utf8, offset, len); }
 
     public static ByteRope pooled(int capacity) {
-        ByteRope br = AffinityShallowPool.get(POOL_COL);
+        ByteRope br = GlobalAffinityShallowPool.get(POOL_COL);
         byte[] u8 = br == null ? null : br.utf8;
         if (u8 == null || u8.length < capacity) {
             u8 = ArrayPool.bytesAtLeast(capacity, u8);
@@ -94,7 +94,7 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     @Override public void recycle() {
         if (offset != 0 || this == EMPTY || utf8 == null) raiseImmutable();
         len = 0;
-        if (AffinityShallowPool.offer(POOL_COL, this) != null) {
+        if (GlobalAffinityShallowPool.offer(POOL_COL, this) != null) {
             ArrayPool.BYTE.offer(utf8, utf8.length);
             wrapEmptyBuffer();
         }
