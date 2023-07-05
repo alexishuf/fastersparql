@@ -74,6 +74,13 @@ public class Optimizer extends CardinalityEstimator {
         }
     }
 
+    private State getState(Plan plan) {
+        State state = pool.get();
+        if (state == null) state = new State();
+        state.setup(plan);
+        return state;
+    }
+
     private final class State {
         private final Vars.Mutable tmpVars = new Vars.Mutable(10);
         private int upFiltersCount = 0;
@@ -84,25 +91,32 @@ public class Optimizer extends CardinalityEstimator {
         private long upFiltersTakenByChildren = 0L;
         private final ArrayList<Expr> tmpFilters = new ArrayList<>();
         private ArrayBinding grounded = null;
+        private boolean inUse;
 
-        private boolean isEmptyState() {
-            return tmpFilters.isEmpty()
-                    && upFilterVars == Vars.EMPTY
-                    && upFiltersCount == 0
-                    && upFiltersTaken == 0
-                    && upFiltersTakenByChildren == 0
-                    && upFilterVarsSets.isEmpty()
-                    && upFilters.isEmpty();
+        public void release() {
+            inUse = false;
+            pool.offer(this);
         }
 
         public void setup(Plan plan) {
-            assert isEmptyState();
+            assert !inUse;
             tmpVars.clear();
+            tmpFilters.clear();
+            upFilters.clear();
+            upFiltersCount = 0;
+            upFiltersTaken = 0;
+            upFiltersTakenByChildren = 0;
+            upFilterVars = Vars.EMPTY;
+            upFilterVarsSets.clear();
             Vars allVars = plan.allVars();
-            if (grounded == null || !grounded.vars.equals(allVars))
-                grounded = new ArrayBinding(allVars);
-            else
+            Vars.Mutable gv;
+            if (grounded != null && (gv = (Vars.Mutable)grounded.vars).size() == allVars.size()) {
                 grounded.clear();
+                gv.clear();
+                gv.addAll(allVars);
+            } else {
+                grounded = new ArrayBinding(allVars);
+            }
         }
 
         /**
@@ -479,11 +493,9 @@ public class Optimizer extends CardinalityEstimator {
 
     /** Equivalent to {@link #optimize(Plan, Vars)} with {@link Vars#EMPTY} */
     public Plan optimize(Plan plan) {
-        State state = pool.get();
-        if (state == null) state = new State();
-        state.setup(plan);
+        State state = getState(plan);
         Plan out = state.optimize(plan, true);
-        pool.offer(state);
+        state.release();
         return out;
     }
     /**
@@ -494,9 +506,7 @@ public class Optimizer extends CardinalityEstimator {
      *         possibly mutated tree.
      */
     public Plan optimize(Plan plan, Vars boundVars) {
-        State state = pool.get();
-        if (state == null) state = new State();
-        state.setup(plan);
+        State state = getState(plan);
         var grounded = state.grounded;
         for (var name : boundVars) {
             int i = grounded.vars.indexOf(name);
@@ -504,7 +514,7 @@ public class Optimizer extends CardinalityEstimator {
                 grounded.set(i, GROUND);
         }
         Plan out = state.optimize(plan, true);
-        pool.offer(state);
+        state.release();
         return out;
     }
 
@@ -551,10 +561,7 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         // get and init State object
-        State st = pool.get();
-        if (st == null)
-            st = new State();
-        st.setup(join);
+        State st = getState(join);
         var grounded = st.grounded;
         for (var name : boundVars) {
             int i = grounded.vars.indexOf(name);
@@ -590,7 +597,7 @@ public class Optimizer extends CardinalityEstimator {
         }
         // reorder join operands by cost. will not push filters to subsets of operands
         st.reorder(join);
-        pool.offer(st);
+        st.release();
         return joinOrMod;
     }
 
