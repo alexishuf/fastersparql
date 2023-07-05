@@ -208,10 +208,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)} or
      *                                   {@code col} is not  in {@code [0, cols)}
      */
-    public @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col) {
-        Term t = get(row, col);
-        return t == null ? null : new TwoSegmentRope(t.first(), t.second());
-    }
+    public abstract @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col);
 
     /**
      * Get the {@link Term} at column {@code col} of row {@code row} into {@code dest}.
@@ -232,12 +229,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} or {@code col} are negative or above the
      *                                   number of rows (or columns) in this batch.
      */
-    public boolean getView(@NonNegative int row, @NonNegative int col, Term dest)  {
-        Term t = get(row, col);
-        if (t == null) return false;
-        dest.set(t.shared(), t.local(), t.sharedSuffixed());
-        return true;
-    }
+    public abstract boolean getView(@NonNegative int row, @NonNegative int col, Term dest);
 
     /**
      * Analogous to {@link #getRope(int, int)}, but modifies {@code dest}
@@ -254,19 +246,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)} or
      *                                   {@code col} is not  in {@code [0, cols)}
      */
-    public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
-        PlainRope r = getRope(row, col);
-        if (r == null) return false;
-        if (r instanceof SegmentRope s) {
-            dest.wrapFirst(s);
-            dest.wrapSecond(EMPTY);
-        } else {
-            TwoSegmentRope t = (TwoSegmentRope) r;
-            dest.wrapFirst(t.fst, t.fstU8, t.fstOff, t.fstLen);
-            dest.wrapSecond(t.snd, t.sndU8, t.sndOff, t.sndLen);
-        }
-        return true;
-    }
+    public abstract boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest);
 
     /**
      * Change {@code dest} so that it wraps the underlying storage for the local segment of the

@@ -2,8 +2,10 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -87,6 +89,27 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         Term term = cachedTerm(addr);
         if (term == null) cacheTerm(addr, term = IdAccess.toTerm(id));
         return term;
+    }
+
+    @Override public boolean getView(@NonNegative int row, @NonNegative int col, Term dest) {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.set(t.shared(), t.local(), t.sharedSuffixed());
+        return true;
+    }
+
+    @Override public @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        return t == null ? null : new TwoSegmentRope(t.first(), t.second());
+    }
+
+    @Override
+    public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.wrapFirst(t.first());
+        dest.wrapSecond(t.second());
+        return true;
     }
 
 

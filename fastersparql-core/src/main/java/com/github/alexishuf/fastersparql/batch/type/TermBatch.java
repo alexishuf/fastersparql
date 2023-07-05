@@ -1,7 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -114,6 +116,27 @@ public final class TermBatch extends Batch<TermBatch> {
         if (row < 0 || col < 0 || row >= rows || col >= cols)
             throw new IndexOutOfBoundsException();
         return arr[row * cols + col];
+    }
+
+    @Override public @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        return t == null ? null : new TwoSegmentRope(t.first(), t.second());
+    }
+
+    @Override public boolean getView(@NonNegative int row, @NonNegative int col, Term dest) {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.set(t.shared(), t.local(), t.sharedSuffixed());
+        return true;
+    }
+
+    @Override
+    public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
+        Term t = get(row, col);
+        if (t == null) return false;
+        dest.wrapFirst(t.first());
+        dest.wrapSecond(t.second());
+        return true;
     }
 
     /* --- --- --- mutators --- --- --- */
