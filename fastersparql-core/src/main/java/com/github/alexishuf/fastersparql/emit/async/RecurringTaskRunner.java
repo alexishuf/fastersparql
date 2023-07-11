@@ -42,23 +42,15 @@ public class RecurringTaskRunner {
         private static final VarHandle S;
         static {
             try {
-                S = MethodHandles.lookup().findVarHandle(Task.class, "plainState", State.class);
+                S = MethodHandles.lookup().findVarHandle(Task.class, "plainScheduled", int.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
 
-        private enum State {
-            IDLE,
-            SCHEDULED,
-            RUNNING,
-            RESCHEDULE,
-            LOCKED
-        }
-
         private int worker;
         private final RecurringTaskRunner runner;
-        @SuppressWarnings("FieldMayBeFinal") private State plainState = State.IDLE;
+        @SuppressWarnings("unused") private int plainScheduled;
         private boolean unloaded;
 
         public Task(RecurringTaskRunner runner) {
@@ -82,28 +74,8 @@ public class RecurringTaskRunner {
          * may start and complete before the return of this call.
          */
         public final void awake() {
-            State s = (State)S.getAcquire(this);
-            while (true) {
-                switch (s) {
-                    case IDLE -> {
-                        if ((s=(State)S.compareAndExchange(this, State.IDLE, State.SCHEDULED)) == State.IDLE) {
-                            runner.add(this, true);
-                            return;
-                        }
-                    }
-                    case RUNNING -> {
-                        if ((s=(State)S.compareAndExchange(this, State.RUNNING, State.RESCHEDULE)) == State.RUNNING)
-                            return;
-                    }
-                    case SCHEDULED,RESCHEDULE -> {
-                        return;
-                    }
-                    case LOCKED -> {
-                        onSpinWait();
-                        s = (State)S.getAcquire(this);
-                    }
-                }
-            }
+            if ((int)S.getAndAdd(this, 1) == 0)
+                runner.add(this,  true);
         }
 
         /**
@@ -113,23 +85,17 @@ public class RecurringTaskRunner {
         protected abstract TaskResult task();
 
         protected final void run() {
-            S.setRelease(this, State.RUNNING);
-
-            boolean resched = false; // assume failed task() returns DONE
+            int old = (int) S.getVolatile(this);
+            boolean resched = false;
             try {
                 resched = task() == TaskResult.RESCHEDULE;
             } catch (Throwable t) {
                 handleTaskException(t);
             }
-            // check if awake() was called while RUNNING. LOCKED blocks awake()
-            // overwriting our write of SCHEDULED or IDLE with RESCHEDULE
-            resched |= (State)S.getAndSetAcquire(this, State.LOCKED) == State.RESCHEDULE;
-            if (resched) {
-                S.setRelease(this, State.SCHEDULED); // stop awake() from spinning
-                runner.add(this, false);
-            } else {
-                S.setRelease(this, State.IDLE); // allow future awake() to call service.add()
-            }
+            if (resched || (int)S.compareAndExchange(this, old, 0) != old) {
+                S.setVolatile(this, 1);
+                runner.add(this, false); // do not unpark() itself
+            } // else: S == 0 and not enqueued, future awake() can enqueue
         }
 
         private void handleTaskException(Throwable t) {
@@ -215,7 +181,7 @@ public class RecurringTaskRunner {
         var grp = new ThreadGroup("RecurringTaskRunner-"+id);
         for (int i = 0; i < nThreads; i++)
             workers[i] = new Worker(grp, i);
-        sharedScheduler = Thread.ofVirtual().unstarted(this::sharedScheduler);
+        sharedScheduler = Thread.ofPlatform().unstarted(this::sharedScheduler);
         sharedQueue = new ArrayDeque<>(nThreads*QUEUE_CAP);
         sharedScheduler.setName("RecurringTaskRunner-"+id+"-Scheduler");
         sharedScheduler.setDaemon(true);
@@ -328,10 +294,14 @@ public class RecurringTaskRunner {
      */
     private boolean tryAdd(Task task, boolean canUnpark) {
         int mdb = task.worker<<MD_BITS, lockIdx = mdb+MD_LOCK, size;
-        boolean local = false;
-        for (int i = 0; !local && i < 16; i++, onSpinWait())
-            local = (int)MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
-        if (!local)
+        boolean got = false;
+        for (int i = 0; i < 16; i++) {
+            got = (int) MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
+            if (got || i == 7 && md[(((task.worker+1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
+                break; // got spinlock or next worker has an empty queue
+            onSpinWait();
+        }
+        if (!got)
             return false; // congested spinlock
         try {
             if ((size = md[mdb+MD_SIZE]) >= QUEUE_CAP)
@@ -361,23 +331,24 @@ public class RecurringTaskRunner {
      * queue if the worker queue is full or under heavy contention.
      *
      * @param task the nonnull {@link Task} to add.
-     * @param canUnpark if true and adding to an empty queue, will
-     *                  {@link LockSupport#unpark(Thread)} the worker thread. Should be
-     *                  {@code true} unless the caller is the worker thread itself.
+     * @param external whether this is called from anywhere other than {@link Task#run()}.
+     *                 If {@code false} (calling from {@link Task#run()}, will not
+     *                 {@link LockSupport#unpark(Thread)} the preferred worker since the
+     *                 preferred worker thread is running this code
      */
-    private void add(Task task, boolean canUnpark) {
+    private void add(Task task, boolean external) {
         int size = md[(task.worker << MD_BITS) + MD_SIZE];
         int overloaded = size < QUEUE_IMBALANCE_CHECK ? QUEUE_IMBALANCE_CHECK
                                                       : 2+(runnerMd[RMD_TASKS]>>threadMaskBits);
         // break affinity if queue is >2 tasks above ideal average, full or under heavy contention
-        if (size > overloaded || !tryAdd(task, canUnpark)) {
+        if (size > overloaded || !tryAdd(task, external)) {
             // before unpark()ing sharedScheduler(), try the right-side worker which is the least
             // likely to steal from this queue
             boolean added = false;
             int nextWorker = (task.worker+1) & threadsMask;
             if (md[(nextWorker<<MD_BITS) + MD_SIZE] < overloaded) {
                 task.worker = nextWorker;
-                added = tryAdd(task, canUnpark);
+                added = tryAdd(task, true);
             }
             if (!added)
                 sharedAdd(task);

@@ -103,23 +103,33 @@ public abstract class ProducerTask<B extends Batch<B>>
     }
 
     @Override public @Nullable Throwable error() {
-        return (State) S.getOpaque(this) == State.FAILED ? error : null;
+        return (State) S.getAcquire(this) == State.FAILED ? error : null;
     }
 
     /**
      * Produce one batch with at most {@code limit} rows.
      *
-     * @param offer If non-null, a batch that can be {@link Batch#clear()}ed, filled with
-     *              rows and returned by this method
-     * @return a batch with at most {@code limit} rows or null if the producer reached its
-     *         natural end and a completion should be propagated to the {@link AsyncEmitter}
+     * @param offer If non-null, a batch whose ownership is ceded by the caller. Implementations
+     *              may fill {@code offer} and return it or swap it by another already filled
+     *              batch.
+     * @return a batch with at most {@code limit} rows. An empty batch does not imply
+     *         {@link #exhausted()} and the producer may return a non-empty batch and still become
+     *         {@link #exhausted()}
+     *
      * @throws Throwable if something goes wrong. Once this method throws, it will not be called
      *                   again for this instance, the {@link ProducerTask} will move
      *                   into a failed state and  the {@link Throwable} will be propagated to
      *                   the {@link AsyncEmitter}, which will consolidate it and eventually
      *                   propagate the failure to the downstream {@link Receiver}s
      */
-    protected abstract @Nullable B produce(long limit, @Nullable B offer) throws Throwable;
+    protected abstract B produce(long limit, @Nullable B offer) throws Throwable;
+
+    /**
+     * Whether this producer is exhausted and a completion event should be propagated.
+     * @return {@code true} if calling {@link #produce(long, Batch)} will return an empty batch
+     *         <strong>neither will raise an exception</strong>.
+     */
+    protected abstract boolean exhausted();
 
     /**
      * Notifies that {@link #produce(long, Batch)} will not be called anymore and that the
@@ -149,15 +159,7 @@ public abstract class ProducerTask<B extends Batch<B>>
                         B tmp = this.tmp;
                         this.tmp = null;
                         tmp = produce(demand, tmp);
-                        if (tmp == null) {
-                            transitionToTerminal(State.COMPLETED, null);
-                        } else if (tmp.rows == 0) {
-                            if (!warnedEmptyBatch) {
-                                warnedEmptyBatch = true;
-                                log.warn("{}: produce() returned empty batch, will not lock subsequent instances", this);
-                            }
-                            this.tmp = tmp;
-                        } else  {
+                        if (tmp != null && tmp.rows > 0) {
                             try {
                                 this.tmp = emitter.offer(tmp);
                                 result = RESCHEDULE;
@@ -165,6 +167,10 @@ public abstract class ProducerTask<B extends Batch<B>>
                                 this.tmp = tmp;
                                 transitionToTerminal(State.CANCELLED, CancelledException.INSTANCE);
                             }
+                        }
+                        if (exhausted()) {
+                            transitionToTerminal(State.COMPLETED, null);
+                            result = DONE;
                         }
                     } catch (Throwable t) {
                         fail(t);

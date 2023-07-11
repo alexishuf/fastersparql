@@ -27,6 +27,7 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TASK_RUNNER;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.lang.Thread.currentThread;
+import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AsyncEmitterTest {
@@ -71,21 +72,20 @@ class AsyncEmitterTest {
 
             @SuppressWarnings("unchecked") @Override
             protected @Nullable B produce(long limit, @Nullable B b) throws Throwable {
+                int rem = end - next;
                 int n = switch (id & 3) {
-                    case 0  -> 1;
-                    case 1  -> Math.max(1, (int) Math.min( limit,           end - next));
-                    case 2  -> Math.max(1, (int) Math.min( limit >> 2,      end - next));
-                    default -> Math.max(1, (int) Math.min((limit >> 2) - 1, end - next));
+                    case 0  ->                   Math.min( 1,               rem);
+                    case 1  -> Math.max(1, (int) Math.min( limit,           rem));
+                    case 2  -> Math.max(1, (int) Math.min( limit >> 2,      rem));
+                    default -> Math.max(1, (int) Math.min((limit >> 2) - 1, rem));
                 };
                 if (failAt >= next && failAt < next + n) {
                     ((BatchType<B>) batchType).recycle(b);
                     throw new DummyException(id, next);
-                } else if (next >= end) {
-                    return null;
                 } else {
                     if (b == null)   b = (B)batchType.create(n, 1, n*12);
                     else           { b.clear(); b.reserve(n, n*12); }
-                    for (long e = next+n; next < e; next++) {
+                    for (long e = Math.min(end, next+n); next < e; next++) {
                         b.beginPut();
                         nt.clear().append('"').append(next);
                         b.putTerm(0, DT_integer, nt.u8(), 0, nt.len, true);
@@ -93,6 +93,10 @@ class AsyncEmitterTest {
                     }
                     return b;
                 }
+            }
+
+            @Override protected boolean exhausted() {
+                return next >= end;
             }
 
             @Override protected void cleanup(@Nullable Throwable reason) {
@@ -215,9 +219,14 @@ class AsyncEmitterTest {
             for (int i = 0; i < nConsumers; i++)
                 consumers.add(new C<>(ae, consumerBarrier, i));
             long requestSize = (long) height * nProducers + 1;
-            CompressedBatch.DISABLE_VALIDATE = requestSize > 1_024;
-            ae.request(requestSize);
-            consumerBarrier.await();
+            boolean oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
+            try {
+                CompressedBatch.DISABLE_VALIDATE = requestSize > 1_024;
+                ae.request(requestSize);
+                consumerBarrier.await();
+            } finally {
+                CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
+            }
             assertTerminationStatus(consumerBarrier);
             assertCleanProducers(producers);
             assertHistory(consumers.iterator().next());
@@ -381,13 +390,19 @@ class AsyncEmitterTest {
     void test(D d) throws Exception {
         d.run();
         TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, d);
-    }
+}
 
     @Test
     void testConcurrent() throws Exception {
         System.gc();
-        try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
-            test().map(a -> (D) a.get()[0]).forEach(tasks::add);
+        boolean disableValidate = CompressedBatch.DISABLE_VALIDATE;
+        CompressedBatch.DISABLE_VALIDATE = true;
+        String name = getClass().getSimpleName();
+        try (TestTaskSet tasks = new TestTaskSet(name, newFixedThreadPool(THREADS))) {
+            test().map(a -> (D) a.get()[0])
+                    .forEach(tasks::add);
+        } finally {
+            CompressedBatch.DISABLE_VALIDATE = disableValidate;
         }
     }
 

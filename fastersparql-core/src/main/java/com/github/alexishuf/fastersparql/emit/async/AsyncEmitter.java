@@ -196,7 +196,11 @@ public final class AsyncEmitter<B extends Batch<B>>
      */
     public void producerTerminated() {
         int nTerm = (int)TERM_PRODS.getAndAddRelease(this, 1)+1;
-        if (nTerm < nProducers) return;
+        if (nTerm < nProducers)
+            return;
+        var s = (State)S.getOpaque(this);
+        if (s.isTerminated())
+            return;
         boolean cancelled = false, terminated = true;
         Throwable firstError = null, error;
         if (producers != null) {
@@ -213,22 +217,23 @@ public final class AsyncEmitter<B extends Batch<B>>
                 }
             }
         } else if (producer != null) {
-            cancelled = producer.isCancelled();
-            firstError = producer.error();
-            terminated = producer.isTerminated();
+            if ((firstError = producer.error()) == null) {
+                if (producer.isCancelled()) cancelled = true;
+                else if (!producer.isComplete()) terminated = false;
+            }
         }
         if (terminated) {
-            State ex, tgt, s = plainState;
+            State ex, tgt;
             if (firstError != null) {
                 tgt = State.FAILED;
                 this.error = firstError;
             } else {
                 tgt = cancelled ? State.CANCEL_COMPLETED : State.COMPLETED;
             }
-            while ((s = (State) S.compareAndExchangeRelease(this, ex=s, tgt)) != ex) {
+            do {
+                s = (State)S.compareAndExchangeRelease(this, ex=s, tgt);
                 if (s.isTerminated()) return;
-                onSpinWait();
-            }
+            } while (s != ex);
             awake(); // deliver termination
         }
     }
@@ -478,7 +483,7 @@ public final class AsyncEmitter<B extends Batch<B>>
     private void handleTerminationError(Receiver<B> receiver, Throwable e) {
         String name = e.getClass().getSimpleName();
         if (IS_DEBUG)
-            log.info("Ignoring {} while delivering termiantion to {}", name, receiver, e);
+            log.info("Ignoring {} while delivering termination to {}", name, receiver, e);
         else
             log.info("Ignoring {} while delivering termination to {}", name, receiver);
     }
