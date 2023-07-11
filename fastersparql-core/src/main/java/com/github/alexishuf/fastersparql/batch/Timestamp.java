@@ -14,11 +14,11 @@ public class Timestamp {
     public static final long ORIGIN = System.nanoTime();
     private static final Logger log = LoggerFactory.getLogger(Timestamp.class);
     private static final long PERIOD_NS = 50_000;
-    private static final VarHandle NOW, ERR;
+    private static final VarHandle NOW;
+
     static {
         try {
             NOW = lookup().findStaticVarHandle(Timestamp.class, "plainNow", long.class);
-            ERR = lookup().findStaticVarHandle(Timestamp.class, "plainErr", long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -47,8 +47,7 @@ public class Timestamp {
      *
      * <p>The result value will always be behind the value reported by a direct
      * {@link System#nanoTime()} call (it can be seen as a lowe bound for
-     * {@link System#nanoTime()}). See {@link #nanoTimeError()} for the observed maximum error in
-     * in a recent window.</p>
+     * {@link System#nanoTime()}).</p>
      *
      * @return A (very) loose approximation for the number of nanoseconds since the Timestamp
      *         class was loaded (which implicitly happens before the first call to any of its
@@ -56,30 +55,37 @@ public class Timestamp {
      */
     public static long nanoTime() { return (long)NOW.getOpaque(); }
 
-    /**
-     * Get a weighted moving average of the maximum error observed between {@link #nanoTime()}
-     * and {@link System#nanoTime()}.
-     */
-    public static long nanoTimeError() { return (long)ERR.getOpaque(); }
-
     /* --- --- --- internal --- --- --- */
 
     private static void tick() {
+        long delta = initDelta();
         //noinspection InfiniteLoopStatement
-        while (true) {
-            // Linux and Windows impose their own minimum bounds on wait times and will let
-            // this thread sleeping more than it requested.
-            LockSupport.parkNanos(PERIOD_NS);
-            long now = System.nanoTime();
-            long elapsed = now-(long)NOW.getAndSet(now);
-
-            // err is the moving average between elapsed and the last 15 elapsed values
-            ERR.setOpaque((15*(long)ERR.getOpaque() + elapsed)>>4);
-
+        for (int i = 0; true; ++i) {
+            if ((i & 511) == 0) {
+                long before = System.nanoTime();
+                LockSupport.parkNanos(PERIOD_NS);
+                // compute moving average over last 8 samples (including this)
+                delta = ((System.nanoTime()-before) + delta)>>1;
+            } else {
+                LockSupport.parkNanos(PERIOD_NS);
+            }
+            NOW.getAndAddRelease(delta);
             if (Thread.interrupted() && !tickerInterruptLogged) {
                 tickerInterruptLogged = true;
                 log.warn("Ignoring thread interrupt. Will silently ignore future interrupts.");
             }
         }
+    }
+
+    private static long initDelta() {
+        long delta = PERIOD_NS;
+        int rounds = (int)(1_000_000/PERIOD_NS);
+        for (int i = 0; i < rounds; i++) {
+            long before = System.nanoTime();
+            LockSupport.parkNanos(PERIOD_NS);
+            delta = System.nanoTime()-before;
+        }
+        delta /= rounds;
+        return delta;
     }
 }
