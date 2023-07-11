@@ -25,7 +25,7 @@ public class Timestamp {
     }
 
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) private static long plainNow = System.nanoTime();
-    @SuppressWarnings("unused") private static long plainErr;
+    private static long delta = PERIOD_NS;
     private static boolean tickerInterruptLogged = false;
     @SuppressWarnings("unused") private static final Thread ticker
             = ofPlatform().name("Timestamp-tick").daemon(true).start(Timestamp::tick);
@@ -55,6 +55,18 @@ public class Timestamp {
      */
     public static long nanoTime() { return (long)NOW.getOpaque(); }
 
+    /**
+     * Estimated next value to be returned by {@link #nanoTime()}.
+     *
+     * <p>Keep in mind that the length of a {@link Timestamp} tick is not constant. The nominal
+     * increment on {@link #nanoTime()} is regularly updated to approximate the average wall-clock
+     * tick in nanoseconds, which is not tracked precisely due to performance requirements.</p>
+     *
+     * @return Estimated smalleest future value of {@link #nanoTime()} that is larger than the
+     *         current {@link #nanoTime()} value.
+     */
+    public static long nextTick() { return (long)NOW.getOpaque()+delta; }
+
     /* --- --- --- internal --- --- --- */
 
     private static void tick() {
@@ -65,7 +77,7 @@ public class Timestamp {
                 long before = System.nanoTime();
                 LockSupport.parkNanos(PERIOD_NS);
                 // compute moving average over last 8 samples (including this)
-                delta = ((System.nanoTime()-before) + delta)>>1;
+                Timestamp.delta = delta = ((System.nanoTime()-before) + delta)>>1;
             } else {
                 LockSupport.parkNanos(PERIOD_NS);
             }
@@ -85,7 +97,7 @@ public class Timestamp {
             LockSupport.parkNanos(PERIOD_NS);
             delta = System.nanoTime()-before;
         }
-        delta /= rounds;
+        Timestamp.delta = delta /= rounds;
         return delta;
     }
 }

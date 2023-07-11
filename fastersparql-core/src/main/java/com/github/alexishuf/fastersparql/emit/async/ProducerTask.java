@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter.CancelledException;
@@ -11,6 +12,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.batch.Timestamp.nextTick;
 import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TaskResult.DONE;
 import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TaskResult.RESCHEDULE;
 
@@ -109,6 +111,27 @@ public abstract class ProducerTask<B extends Batch<B>>
     /**
      * Produce one batch with at most {@code limit} rows.
      *
+     * <p>Implementations MUST NOT block. Tasks run on a small fixed-size thread pool and
+     * blocking on results produced by another task of that pool might lead to a deadlock.
+     * Work-stealing might very slowly recover from some deadlocks, but if all threads in the pool
+     * block, it will be non-recoverable.</p>
+     *
+     * <p>There is no preemption and implementations should try to respect the provided
+     * {@code deadline}, lest other tasks might observe problematic latencies. Likewise,
+     * implementations should not try to return ASAP before the deadline, as doing so would break
+     * CPU instruction and data locality and increase the overhead associated with task
+     * scheduling.</p>
+     *
+     * @param limit The returned batch should contain no more than {@code limit} rows. This limit
+     *              may be exceeded if not exceeding it would take more time than otherwise
+     *              (i.e., returning a ready batch exceeding the limit instead of slicing it
+     *              into two and returning the first half)
+     * @param deadline This call should return once {@link Timestamp#nanoTime()} exceeds
+     *                 {@code deadline}, even if zero rows have been obtained. An implementation
+     *                 may exceed the deadline if tracking the deadline more precisely or
+     *                 preempting computation in of a row would be inefficient. Nevertheless,
+     *                 implementations should avoid unbounded computation as they could starve
+     *                 other tasks, including tasks on which this producer might depend.
      * @param offer If non-null, a batch whose ownership is ceded by the caller. Implementations
      *              may fill {@code offer} and return it or swap it by another already filled
      *              batch.
@@ -122,29 +145,29 @@ public abstract class ProducerTask<B extends Batch<B>>
      *                   the {@link AsyncEmitter}, which will consolidate it and eventually
      *                   propagate the failure to the downstream {@link Receiver}s
      */
-    protected abstract B produce(long limit, @Nullable B offer) throws Throwable;
+    protected abstract B produce(long limit, long deadline, @Nullable B offer) throws Throwable;
 
     /**
      * Whether this producer is exhausted and a completion event should be propagated.
-     * @return {@code true} if calling {@link #produce(long, Batch)} will return an empty batch
+     * @return {@code true} if calling {@link #produce(long, long, Batch)} will return an empty batch
      *         <strong>neither will raise an exception</strong>.
      */
     protected abstract boolean exhausted();
 
     /**
-     * Notifies that {@link #produce(long, Batch)} will not be called anymore and that the
+     * Notifies that {@link #produce(long, long, Batch)} will not be called anymore and that the
      * producer implementation should release any resources it holds.
      *
      * <p>Implementations can assume that:</p>
      * <ul>
-     *     <li>It will never be called concurrently with {@link #produce(long, Batch)}</li>
+     *     <li>It will never be called concurrently with {@link #produce(long, long, Batch)}</li>
      *     <li>It will be called at most once per {@link ProducerTask}</li>
      * </ul>
      *
      * @param reason the reason for this call: {@code null} in case of completion ({@code null}
-     *               {@link #produce(long, Batch)}), {@link CancelledException} if
+     *               {@link #produce(long, long, Batch)}), {@link CancelledException} if
      *               due to cancellation, or a non-null {@link Throwable} if terminating due to
-     *               an error raised by {@link #produce(long, Batch)}.
+     *               an error raised by {@link #produce(long, long, Batch)}.
      */
     protected abstract void cleanup(@Nullable Throwable reason);
 
@@ -155,22 +178,20 @@ public abstract class ProducerTask<B extends Batch<B>>
                 RecurringTaskRunner.TaskResult result = DONE;
                 long demand = emitter.requested();
                 if (demand > 0) {
+                    B tmp = this.tmp;
+                    this.tmp = null;
                     try {
-                        B tmp = this.tmp;
-                        this.tmp = null;
-                        tmp = produce(demand, tmp);
-                        if (tmp != null && tmp.rows > 0) {
-                            try {
-                                this.tmp = emitter.offer(tmp);
-                                result = RESCHEDULE;
-                            } catch (AsyncEmitter.AsyncEmitterStateException e) {
-                                this.tmp = tmp;
-                                transitionToTerminal(State.CANCELLED, CancelledException.INSTANCE);
-                            }
+                        tmp = produce(demand, 1023|nextTick(), tmp);
+                        try {
+                            this.tmp = emitter.offer(tmp);
+                            result = RESCHEDULE;
+                        } catch (AsyncEmitter.AsyncEmitterStateException e) {
+                            this.tmp = tmp;
+                            transitionToTerminal(State.CANCELLED, CancelledException.INSTANCE);
                         }
                         if (exhausted()) {
-                            transitionToTerminal(State.COMPLETED, null);
                             result = DONE;
+                            transitionToTerminal(State.COMPLETED, null);
                         }
                     } catch (Throwable t) {
                         fail(t);

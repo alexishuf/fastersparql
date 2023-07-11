@@ -71,7 +71,7 @@ class AsyncEmitterTest {
             @Override public String toString() { return "P("+id+")"; }
 
             @SuppressWarnings("unchecked") @Override
-            protected @Nullable B produce(long limit, @Nullable B b) throws Throwable {
+            protected @Nullable B produce(long limit, long deadline, @Nullable B b) throws Throwable {
                 int rem = end - next;
                 int n = switch (id & 3) {
                     case 0  ->                   Math.min( 1,               rem);
