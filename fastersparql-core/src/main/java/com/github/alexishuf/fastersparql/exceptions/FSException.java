@@ -8,18 +8,22 @@ public class FSException extends RuntimeException {
     private @Nullable SparqlEndpoint endpoint;
 
     public static FSException wrap(SparqlEndpoint endpoint, Throwable t) {
-        if (t == null) {
-            return null;
-        } else if (t instanceof FSException ce) {
-            ce.offerEndpoint(endpoint);
-            return ce;
-        } else if (t.getClass() == IllegalStateException.class) {
-            return new FSIllegalStateException(endpoint, t.getMessage());
-        } else if (t instanceof IllegalStateException) {
-            return new FSIllegalStateException(endpoint, t.getMessage(), t);
-        } else {
-            return new FSException(endpoint, t.getMessage(), t);
-        }
+        return switch (t) {
+            case null -> null;
+            case FSException fs -> {
+                fs.offerEndpoint(endpoint);
+                yield fs;
+            }
+            case IllegalStateException e -> {
+                if (e.getClass() == IllegalStateException.class) {
+                    var fs = new FSIllegalStateException(endpoint, e.getMessage());
+                    fs.setStackTrace(e.getStackTrace());
+                    yield fs;
+                }
+                yield  new FSIllegalStateException(endpoint, t.getMessage(), t);
+            }
+            default -> new FSException(endpoint, t.getMessage(), t);
+        };
     }
 
     public FSException(String message) { this(null, message, null); }
