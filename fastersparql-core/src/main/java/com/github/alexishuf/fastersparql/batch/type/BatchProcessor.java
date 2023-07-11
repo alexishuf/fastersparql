@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.emit.Stage;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -7,9 +8,8 @@ import java.lang.invoke.VarHandle;
 
 import static java.lang.invoke.MethodHandles.lookup;
 
-public abstract class BatchProcessor<B extends Batch<B>> {
+public abstract class BatchProcessor<B extends Batch<B>> extends Stage<B, B> {
     private static final VarHandle RECYCLED;
-
     static {
         try {
             RECYCLED = lookup().findVarHandle(BatchProcessor.class, "recycled", Batch.class);
@@ -21,6 +21,8 @@ public abstract class BatchProcessor<B extends Batch<B>> {
     protected @Nullable B recycled;
     protected BatchType<B> batchType;
     public final Vars outVars;
+
+    /* --- --- --- lifecycle --- --- --- */
 
     public BatchProcessor(BatchType<B> batchType, Vars outVars) {
         this.batchType = batchType;
@@ -34,6 +36,8 @@ public abstract class BatchProcessor<B extends Batch<B>> {
     public void release() {
         batchType.recycle(stealRecycled());
     }
+
+    /* --- --- --- processing --- --- --- */
 
     /**
      * Tries to process {@code b} in-place avoiding new allocations. If this cannot be done,
@@ -56,6 +60,16 @@ public abstract class BatchProcessor<B extends Batch<B>> {
      * @return a batch with processing results.
      */
     public abstract B process(B b);
+
+    /* --- --- --- Emitter/Receiver --- --- --- */
+
+    @Override public Vars vars() { return outVars; }
+
+    @Override public @Nullable B onBatch(B batch) {
+        return downstream.onBatch(processInPlace(batch));
+    }
+
+    /* --- --- --- recycling --- --- --- */
 
     /**
      * Offers a batch for recycling and reuse in {@link BatchProcessor#process(Batch)}.
