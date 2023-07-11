@@ -28,12 +28,15 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         HdtBatch b = pool.getAtLeast(rowsCapacity*cols);
         if (b == null)
             return new HdtBatch(rowsCapacity, cols);
+        b.unmarkPooled();
         b.clear(cols);
         return b;
     }
 
     @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
-        if (batch != null && pool.offer(batch, batch.arr.length) != null)
+        if (batch == null) return null;
+        batch.markPooled();
+        if (pool.offer(batch, batch.arr.length) != null)
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
         return null;
     }

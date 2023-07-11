@@ -296,7 +296,7 @@ class BatchTest {
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
         Term tmpTerm = Term.pooledMutable();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = TwoSegmentRope.pooled();
-        SegmentRope tmpSR = SegmentRope.pooledWrap(EMPTY.segment, EMPTY.utf8, 0, 0);
+        SegmentRope tmpSR = SegmentRope.pooled();
         var assigner = new PrefixAssigner(new RopeArrayMap());
         assertEquals(expected.rows, batch.rows, outerCtx);
         assertEquals(expected.cols, batch.cols, outerCtx);
@@ -322,7 +322,7 @@ class BatchTest {
                                                          B batch, String outerCtx) {
         Term tmpTerm = Term.pooledMutable();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
-        SegmentRope tmpSR = SegmentRope.pooledWrap(EMPTY.segment, EMPTY.utf8, 0, 0);
+        SegmentRope tmpSR = SegmentRope.pooled();
         PrefixAssigner assigner = new PrefixAssigner(new RopeArrayMap());
         for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -593,8 +593,6 @@ class BatchTest {
                     assertBatchesEquals(size, full, ctx);
                     B inPlace = projector.projectInPlace(full);
                     assertBatchesEquals(expected, inPlace, ctx);
-                    if (inPlace != full)
-                        assertBatchesEquals(size, full, ctx);
                 }
             }
         });

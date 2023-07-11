@@ -125,45 +125,40 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     boolean validate() {
+        if (cols == 0 || DISABLE_VALIDATE)
+            return true;
+        if (rows < 0 || cols < 0)
+            return false;
+        Term view = Term.pooledMutable();
         try {
-            if (cols == 0 || DISABLE_VALIDATE) return true;
-            if (rows < 0 || cols < 0)
-                throw new AssertionError("Negative dimensions: rows" + rows + ", cols=" + cols);
             int lastRowAlignedEnd = 0;
             for (int r = 0; r < rows; r++) {
                 int rOff = slices[slRowBase(r) + SL_OFF];
                 int rEnd = rOff + slices[slRowBase(r) + SL_LEN];
                 if (rEnd < rOff)
-                    throw new AssertionError("Negative length for row "+r);
+                    return false;
                 if (rEnd > rOff && rOff < lastRowAlignedEnd)
-                    throw new AssertionError("Non-empty row (" + r + ") locals start at " + rOff + ", before end (" + lastRowAlignedEnd + ") of previous row ");
+                    return false;
                 int rowAlignedEnd = rOff + bytesUsed(r);
                 if (rEnd > rowAlignedEnd)
-                    throw new AssertionError("stored locals end " + rEnd + " for row " + r + " overflows bytesUsed(r)=" + bytesUsed(r));
+                    return false;
                 for (int c = 0; c < cols; c++) {
                     int off = slices[r * slRowInts + (c << 1) + SL_OFF];
                     int len = slices[r * slRowInts + (c << 1) + SL_LEN];
                     if (len > 0 && off < lastRowAlignedEnd)
-                        throw new AssertionError("locals offset for col " + c + " of row " + r + " is before the assigned start for this row");
+                        return false;
                     if (len > 0 && off+len > rowAlignedEnd)
-                        throw new AssertionError("locals offset for col " + c + " of row " + r + " overflows assigned locals segment for row");
-                    try {
-                        get(r, c);
-                    } catch (Throwable t) {
-                        throw new AssertionError("Failed to get(" + r + ", " + c + "): " + t);
-                    }
-                    if (!equals(r, c, this, r, c))
-                        throw new AssertionError("Equality not reflexive for col " + c + " of row " + r);
+                        return false;
+                    Term term = getView(r, c, view) ? view : null;
+                    if (!equals(r, c, term) || !equals(r, c, this, r, c))
+                        return false;
                 }
                 if (!equals(r, this, r))
-                    throw new AssertionError("Equality not reflexive for row " + r);
+                    return false;
                 lastRowAlignedEnd = Math.max(lastRowAlignedEnd, rowAlignedEnd);
             }
-        } catch (Throwable t) {
-            try {
-                System.err.println(dump());
-            } catch (Throwable ignored) {}
-            throw t;
+        } finally {
+            view.recycle();
         }
         return true;
     }
@@ -175,6 +170,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     private int slBase(int row, int col) {
+        requireUnpooled();
         if (row < 0 || col < 0 || row >= rows || col >= cols)
             throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row, col));
         return row* slRowInts + (col<<1);
@@ -260,18 +256,18 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.shared = segmentRopesAtLeast(max(1, rowsCapacity)*slRowInts+PUT_SLACK);
     }
 
-    private CompressedBatch(CompressedBatch o) {
-        super(o.rows, o.cols);
-        this.locals = ArrayPool.copy(o.locals);
-        this.localsSeg = MemorySegment.ofArray(this.locals);
-        this.slices = ArrayPool.copy(o.slices);
-        this.shared = ArrayPool.copy(o.shared);
-        this.offerNextLocals = o.offerNextLocals;
-        this.offerLastCol = o.offerLastCol;
-        this.slRowInts = o.slRowInts;
+    public CompressedBatch copy(@Nullable CompressedBatch dest) {
+        int bytes = bytesUsed();
+        if (dest == null)
+            dest = CompressedBatchType.INSTANCE.create(rows, cols, bytes);
+        dest.reserve(rows, bytes);
+        arraycopy(locals, 0, dest.locals, 0, bytes);
+        arraycopy(slices, 0, dest.slices, 0, slRowInts*rows);
+        arraycopy(shared, 0, dest.shared, 0, rows);
+        dest.rows = rows;
+        dest.cols = cols;
+        return dest;
     }
-
-    @Override public Batch<CompressedBatch> copy() { return new CompressedBatch(this); }
 
     public void recycleInternals() {
         rows            = 0;
@@ -546,7 +542,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     int copyLocal(@NonNegative int row, @NonNegative int col, byte[] dst, int dstPos) {
         int b = row * slRowInts + (col << 1), len = slices[b + SL_LEN] & LEN_MASK;
-        System.arraycopy(locals, slices[b+SL_OFF], dst, dstPos, len);
+        arraycopy(locals, slices[b+SL_OFF], dst, dstPos, len);
         return len;
     }
 
@@ -833,6 +829,10 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         required = bytesUsed()+additionalBytes;
         if (required > locals.length)
             growLocals(required);
+    }
+
+    @Override public @Nullable CompressedBatch recycle() {
+        return CompressedBatchType.INSTANCE.recycle(this);
     }
 
     @Override public void clear() {

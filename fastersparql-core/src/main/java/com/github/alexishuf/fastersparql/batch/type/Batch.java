@@ -11,6 +11,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -20,15 +22,85 @@ import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
+    private static final VarHandle P;
+
+    static {
+        try {
+            P = MethodHandles.lookup().findVarHandle(Batch.class, "plainPooled", boolean.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private static final boolean DEBUG = Batch.class.desiredAssertionStatus();
+
     public static final TermBatchType TERM = TermBatchType.INSTANCE;
     public static final CompressedBatchType COMPRESSED = CompressedBatchType.INSTANCE;
 
     public int rows, cols;
+    @SuppressWarnings("unused") private boolean plainPooled;
+    private PoolEvent[] poolTraces;
 
     protected Batch(int rows, int cols) {
         this.rows = rows;
         this.cols = cols;
     }
+
+    /* --- --- --- pooling lifecycle --- --- ---  */
+
+    protected static sealed class PoolEvent extends Exception {
+        public PoolEvent(String message, PoolEvent cause) {super(message, cause);}
+    }
+    protected static final class PooledEvent extends PoolEvent {
+        public PooledEvent(PoolEvent cause) {super("pooled here", cause);}
+    }
+    protected static final class UnpooledEvent extends PoolEvent {
+        public UnpooledEvent(PoolEvent cause) {super("pooled here", cause);}
+    }
+
+    public void markPooled() {
+        if (DEBUG) {
+            if ((boolean)P.compareAndExchangeRelease(this, false, true)) {
+                throw new IllegalStateException("pooling already pooled batch",
+                                                poolTraces == null ? null : poolTraces[0]);
+            }
+            if (poolTraces == null) poolTraces = new PoolEvent[2];
+            poolTraces[0] = new PooledEvent(poolTraces[1]);
+        }
+    }
+
+    public void unmarkPooled() {
+        if (DEBUG) {
+            if (!(boolean)P.compareAndExchangeRelease(this, true, false))
+                throw new IllegalStateException("un-pooling batch that is not pooled",
+                        poolTraces == null ? null : poolTraces[1]);
+            if (poolTraces == null) poolTraces = new PoolEvent[2];
+            poolTraces[1] = new UnpooledEvent(poolTraces[0]);
+        }
+    }
+
+    public void requirePooled() {
+        if (DEBUG && (boolean)P.getOpaque(this)) {
+            throw new IllegalStateException("batch is not pooled",
+                                            poolTraces == null ? null : poolTraces[1]);
+        }
+    }
+
+    public void requireUnpooled() {
+        if (DEBUG && (boolean)P.getOpaque(this)) {
+            throw new IllegalStateException("batch is pooled",
+                                            poolTraces == null ? null : poolTraces[0]);
+        }
+    }
+
+    /**
+     * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
+     * this instance. MAy be a no-op for some implementations.
+     *
+     * @return {@code null} if the batch got recycled adn the caller lost ownership, {@code this}
+     *         if the caller still retains ownership.
+     */
+    public abstract @Nullable B recycle();
 
     /* --- --- --- batch-level accessors --- --- --- */
 
@@ -38,9 +110,11 @@ public abstract class Batch<B extends Batch<B>> {
     /** Number of columns in rows of this batch */
     public final int cols() { return cols; }
 
-    /** Get a {@link Batch} with same rows as this. The copy is deep,so that changing a row
-     *  in {@code this} will have no effect on the row at the returned batch. */
-    public abstract Batch<B> copy();
+    /**
+     * {@link #clear(int)}s {@code offer} or allocates a new batch and copy all contents of this
+     * into {@code offer} or the new batch and return such destination batch.
+     */
+    public abstract B copy(@Nullable B offer);
 
     /**
      * How many bytes should be given to {@link #reserve(int, int)} {@code bytes}
@@ -129,6 +203,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} not in {@code [0, rows)}.
      */
     public int hash(int row) {
+        requireUnpooled();
         int acc = 0;
         for (int c = 0, cols = this.cols; c < cols; c++)
             acc ^= hash(row, c);
@@ -402,6 +477,7 @@ public abstract class Batch<B extends Batch<B>> {
      *                        {@code additionalRows}.
      */
     public abstract void reserve(int additionalRows, int additionalBytes);
+
 
     /** Remove all rows from this batch.*/
     public void clear() { clear(cols); }

@@ -34,12 +34,15 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         var b = pool.getAtLeast(rows*((cols+1)<<1));
         if (b == null)
             return new CompressedBatch(rows, cols, bytes == 0 ? rows* MIN_LOCALS : bytes);
+        b.unmarkPooled();
         b.hydrate(rows, cols, bytes);
         return b;
     }
 
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
-        if (b != null && pool.offer(b, b.rowsCapacity()*((b.cols+1)<<1)) != null)
+        if (b == null) return null;
+        b.markPooled();
+        if (pool.offer(b, b.rowsCapacity() * (b.cols + 1 << 1)) != null)
             b.recycleInternals();
         return null;
     }

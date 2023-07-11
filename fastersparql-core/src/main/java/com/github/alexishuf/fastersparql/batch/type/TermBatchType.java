@@ -29,6 +29,7 @@ public final class TermBatchType extends BatchType<TermBatch> {
         TermBatch b = pool.getAtLeast(rowsCapacity);
         if (b == null)
             return new TermBatch(rowsCapacity, cols);
+        b.unmarkPooled();
         b.clear(cols);
         return b;
     }
@@ -37,6 +38,7 @@ public final class TermBatchType extends BatchType<TermBatch> {
         if (batch == null) return null;
         Arrays.fill(batch.arr, null); // allow collection of Terms
         batch.rows = 0;
+        batch.markPooled();
         pool.offer(batch, batch.rowsCapacity());
         return null; // fill(null) forces us to take ownership even the pool rejected.
     }

@@ -65,7 +65,10 @@ public abstract class BatchProcessor<B extends Batch<B>> {
      *         {@code batch} if ownership remains with caller
      */
     public final @Nullable B recycle(@Nullable B batch) {
+        if (batch == null) return null;
+        batch.markPooled();
         if (RECYCLED.compareAndExchange(this, null, batch) == null) return null;
+        batch.unmarkPooled();
         return batch;
     }
 
@@ -79,7 +82,9 @@ public abstract class BatchProcessor<B extends Batch<B>> {
      */
     public final @Nullable B stealRecycled() {
         //noinspection unchecked
-        return (B) RECYCLED.getAndSet(this, null);
+        B b = (B) RECYCLED.getAndSet(this, null);
+        if (b != null) b.unmarkPooled();
+        return b;
     }
 
     protected final B getBatch(int rowsCapacity, int cols, int bytesCapacity) {

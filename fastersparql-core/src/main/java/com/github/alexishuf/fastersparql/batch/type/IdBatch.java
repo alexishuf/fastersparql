@@ -48,6 +48,16 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         this.hashes = hashes;
     }
 
+    protected final B doCopy(B dest) {
+        int n = rows * cols;
+        dest.reserve(rows, 0);
+        arraycopy(arr, 0, dest.arr, 0, n);
+        arraycopy(hashes, 0, dest.hashes, 0, n);
+        dest.rows = rows;
+        dest.cols = cols;
+        return dest;
+    }
+
     public void recycleInternals() {
         LONG.offer(arr, arr.length);
         INT.offer(hashes, hashes.length);
@@ -90,6 +100,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     /* --- --- --- term-level access --- --- --- */
 
     public long id(int row, int col) {
+        requireUnpooled();
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
         return arr[row * cols + col];
     }
@@ -103,7 +114,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         if (hashes.length < required)
             hashes = grow(hashes, required);
     }
-
 
     @Override public void clear(int newColumns) {
         rows = 0;

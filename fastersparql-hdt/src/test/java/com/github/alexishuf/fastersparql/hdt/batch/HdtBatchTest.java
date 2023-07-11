@@ -54,7 +54,7 @@ class HdtBatchTest {
         assertThrows(IndexOutOfBoundsException.class, () -> b.get(0, 1));
         assertThrows(IndexOutOfBoundsException.class, () -> b.get(1, 0));
 
-        HdtBatch copy0 = b.copy(), copy1 = b.copy();
+        HdtBatch copy0 = b.copy(null), copy1 = b.copy(null);
         assertEquals(b, copy0);
         assertEquals(b, copy1);
         assertNotSame(b, copy0);

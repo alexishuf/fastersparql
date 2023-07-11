@@ -24,7 +24,6 @@ import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_RO
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.util.Arrays.copyOf;
 import static java.util.Objects.requireNonNull;
 
 public class StoreBatch extends IdBatch<StoreBatch> {
@@ -39,7 +38,9 @@ public class StoreBatch extends IdBatch<StoreBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public StoreBatch copy()        { return new StoreBatch(copyOf(arr, arr.length), rows, cols, copyOf(hashes, hashes.length)); }
+    @Override public StoreBatch copy(@Nullable StoreBatch offer) {
+        return doCopy(offer == null ? TYPE.create(rows, cols, 0) : offer);
+    }
 
     /* --- --- --- term-level accessors --- --- --- */
 
@@ -90,6 +91,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     private @Nullable TwoSegmentRope tmpRope(int row, int col) {
+        requireUnpooled();
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
         long sourcedId = arr[row * cols + col];
         if (sourcedId == NOT_FOUND) return null;
@@ -97,6 +99,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
+        requireUnpooled();
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
 
@@ -120,6 +123,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, Term dest) {
+        requireUnpooled();
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
 
@@ -295,6 +299,10 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     /* --- --- --- mutators --- --- --- */
+
+    @Override public @Nullable StoreBatch recycle() {
+        return StoreBatchType.INSTANCE.recycle(this);
+    }
 
     @Override public boolean offerTerm(int col, Term t) {
         if (offerRowBase < 0) throw new IllegalStateException();

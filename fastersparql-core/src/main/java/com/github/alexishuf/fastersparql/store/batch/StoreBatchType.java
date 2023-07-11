@@ -27,12 +27,15 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         StoreBatch b = pool.getAtLeast(rowsCapacity*cols);
         if (b == null)
             return new StoreBatch(rowsCapacity, cols);
+        b.unmarkPooled();
         b.clear(cols);
         return b;
     }
 
     @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
-        if (batch != null  && pool.offer(batch, batch.arr.length) != null)
+        if (batch == null) return null;
+        batch.markPooled();
+        if (pool.offer(batch, batch.arr.length) != null)
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
         return null;
     }

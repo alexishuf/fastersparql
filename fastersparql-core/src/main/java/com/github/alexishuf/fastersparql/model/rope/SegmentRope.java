@@ -13,6 +13,8 @@ import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_SEGMENT;
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_UTF8;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -31,13 +33,19 @@ public class SegmentRope extends PlainRope {
     public SegmentRope() {
         super(0);
         this.offset = 0;
-        this.utf8 = ByteRope.EMPTY_UTF8;
-        this.segment = ByteRope.EMPTY_SEGMENT;
+        this.utf8 = EMPTY_UTF8;
+        this.segment = EMPTY_SEGMENT;
     }
     public SegmentRope(ByteBuffer buffer) {
         this(MemorySegment.ofBuffer(buffer), null, 0, buffer.remaining());
     }
 
+    public static SegmentRope pooled() {
+        SegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
+        if (r == null) r = new SegmentRope(EMPTY_SEGMENT, EMPTY_UTF8, 0, 0);
+        else           r.wrapSegment(EMPTY_SEGMENT, EMPTY_UTF8, 0, 0);
+        return r;
+    }
     public static SegmentRope pooledWrap(MemorySegment segment, byte @Nullable[] utf8,
                                          long offset, int len) {
         SegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
@@ -143,8 +151,8 @@ public class SegmentRope extends PlainRope {
     }
 
     public void wrapEmptyBuffer() {
-        segment = ByteRope.EMPTY_SEGMENT;
-        utf8 = ByteRope.EMPTY_UTF8;
+        segment = EMPTY_SEGMENT;
+        utf8 = EMPTY_UTF8;
         offset = 0;
         len = 0;
     }

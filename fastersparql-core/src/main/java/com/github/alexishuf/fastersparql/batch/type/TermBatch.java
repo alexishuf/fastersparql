@@ -84,7 +84,6 @@ public final class TermBatch extends Batch<TermBatch> {
         return b;
     }
 
-
     public TermBatch(int rowsCapacity, int cols) {
         super(0, cols);
         this.arr = new Term[Math.max(1, rowsCapacity)*cols];
@@ -92,8 +91,14 @@ public final class TermBatch extends Batch<TermBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public Batch<TermBatch> copy() {
-        return new TermBatch(arr, rows, cols);
+    @Override public TermBatch copy(@Nullable TermBatch dest) {
+        if (dest == null)
+            dest = TermBatchType.INSTANCE.create(rows, cols, 0);
+        dest.reserve(rows, 0);
+        System.arraycopy(arr, 0, dest.arr, 0, rows*cols);
+        dest.rows = rows;
+        dest.cols = cols;
+        return dest;
     }
 
     @Override public int rowsCapacity() {
@@ -112,6 +117,7 @@ public final class TermBatch extends Batch<TermBatch> {
     /* --- --- --- term accessors --- --- --- */
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
+        requireUnpooled();
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols)
             throw new IndexOutOfBoundsException();
@@ -142,9 +148,14 @@ public final class TermBatch extends Batch<TermBatch> {
     /* --- --- --- mutators --- --- --- */
 
     @Override public void reserve(int additionalRows, int addBytes) {
+        requireUnpooled();
         int required = (rows+additionalRows) * cols;
         if (arr.length < required)
             arr = Arrays.copyOf(arr, Math.max(required, arr.length+(arr.length>>2)));
+    }
+
+    @Override public @Nullable TermBatch recycle() {
+        return TermBatchType.INSTANCE.recycle(this);
     }
 
     @Override public void clear(int newColumns) {

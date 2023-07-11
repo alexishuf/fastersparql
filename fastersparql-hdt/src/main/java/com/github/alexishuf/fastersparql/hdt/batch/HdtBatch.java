@@ -27,7 +27,9 @@ public class HdtBatch extends IdBatch<HdtBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public HdtBatch copy() { return new HdtBatch(copyOf(arr, arr.length), rows, cols, copyOf(hashes, hashes.length)); }
+    @Override public HdtBatch copy(@Nullable HdtBatch offer) {
+        return doCopy(offer == null ? TYPE.create(rows, cols, 0) : offer);
+    }
 
     /* --- --- --- term-level accessors --- --- --- */
 
@@ -76,6 +78,7 @@ public class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
+        requireUnpooled();
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
 
@@ -114,6 +117,10 @@ public class HdtBatch extends IdBatch<HdtBatch> {
 
 
     /* --- --- --- mutators --- --- --- */
+
+    @Override public @Nullable HdtBatch recycle() {
+        return HdtBatchType.INSTANCE.recycle(this);
+    }
 
     /**
      * Similar to {@link Batch#putConverting(Batch)}, but converts {@link Term}s into

@@ -322,7 +322,9 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     @Override public @Nullable B recycle(@Nullable B batch) {
         if (batch == null) return null;
+        batch.markPooled();
         if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null) return null;
+        batch.unmarkPooled();
         return batch;
     }
 
@@ -340,7 +342,9 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     @Override public @Nullable B stealRecycled() {
         //noinspection unchecked
-        return (B) RECYCLED.getAndSetAcquire(this, null);
+        B b = (B) RECYCLED.getAndSetAcquire(this, null);
+        if (b != null) b.unmarkPooled();
+        return b;
     }
 
     @Override public void close() {
