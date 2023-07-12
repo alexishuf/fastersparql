@@ -236,7 +236,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             int w = b.cols;
             if (columns == null || columns.length > w) {
                 var projected = project(null, b);
-                if (projected != b) recycle(b);
+                if (projected != b && recycle(b) != null) batchType.recycle(b);
                 return projected;
             }
             long[] tmpIds    = this.tmpIds    = longsAtLeast(w, this.tmpIds);

@@ -42,8 +42,10 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
         if (b == null) return null;
         b.markPooled();
-        if (pool.offer(b, b.rowsCapacity() * (b.cols + 1 << 1)) != null)
+        if (pool.offer(b, b.rowsCapacity() * (b.cols + 1 << 1)) != null) {
             b.recycleInternals();
+            b.markGC();
+        }
         return null;
     }
 

@@ -35,8 +35,10 @@ public class StoreBatchType extends BatchType<StoreBatch> {
     @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
         if (batch == null) return null;
         batch.markPooled();
-        if (pool.offer(batch, batch.arr.length) != null)
+        if (pool.offer(batch, batch.arr.length) != null) {
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
+            batch.markGC();
+        }
         return null;
     }
 

@@ -23,10 +23,13 @@ import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
     private static final VarHandle P;
+    private static final int P_UNPOOLED = 0;
+    private static final int P_POOLED   = 1;
+    private static final int P_GC       = 2;
 
     static {
         try {
-            P = MethodHandles.lookup().findVarHandle(Batch.class, "plainPooled", boolean.class);
+            P = MethodHandles.lookup().findVarHandle(Batch.class, "plainPooled", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -38,7 +41,7 @@ public abstract class Batch<B extends Batch<B>> {
     public static final CompressedBatchType COMPRESSED = CompressedBatchType.INSTANCE;
 
     public int rows, cols;
-    @SuppressWarnings("unused") private boolean plainPooled;
+    @SuppressWarnings("unused") private int plainPooled;
     private PoolEvent[] poolTraces;
 
     protected Batch(int rows, int cols) {
@@ -60,7 +63,7 @@ public abstract class Batch<B extends Batch<B>> {
 
     public void markPooled() {
         if (DEBUG) {
-            if ((boolean)P.compareAndExchangeRelease(this, false, true)) {
+            if ((int)P.compareAndExchangeRelease(this, P_UNPOOLED, P_POOLED) == P_POOLED) {
                 throw new IllegalStateException("pooling already pooled batch",
                                                 poolTraces == null ? null : poolTraces[0]);
             }
@@ -77,7 +80,7 @@ public abstract class Batch<B extends Batch<B>> {
 
     public void unmarkPooled() {
         if (DEBUG) {
-            if (!(boolean)P.compareAndExchangeRelease(this, true, false))
+            if ((int)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) == P_UNPOOLED)
                 throw new IllegalStateException("un-pooling batch that is not pooled",
                         poolTraces == null ? null : poolTraces[1]);
             if (poolTraces == null) poolTraces = new PoolEvent[2];
@@ -91,15 +94,19 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
+    public void markGC() {
+        if (DEBUG) P.setRelease(this, P_GC);
+    }
+
     public void requirePooled() {
-        if (DEBUG && !(boolean)P.getOpaque(this)) {
+        if (DEBUG && (int)P.getOpaque(this) != P_POOLED) {
             throw new IllegalStateException("batch is not pooled",
                                             poolTraces == null ? null : poolTraces[1]);
         }
     }
 
     public void requireUnpooled() {
-        if (DEBUG && (boolean)P.getOpaque(this)) {
+        if (DEBUG && (int)P.getOpaque(this) != P_UNPOOLED) {
             throw new IllegalStateException("batch is pooled",
                                             poolTraces == null ? null : poolTraces[0]);
         }
@@ -109,8 +116,8 @@ public abstract class Batch<B extends Batch<B>> {
      * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
      * this instance. MAy be a no-op for some implementations.
      *
-     * @return {@code null} if the batch got recycled adn the caller lost ownership, {@code this}
-     *         if the caller still retains ownership.
+     * @return {@code null}, for conveniently clearing references:
+     *         {@code b = b.recycle();}
      */
     public abstract @Nullable B recycle();
 

@@ -39,8 +39,9 @@ public final class TermBatchType extends BatchType<TermBatch> {
         Arrays.fill(batch.arr, null); // allow collection of Terms
         batch.rows = 0;
         batch.markPooled();
-        pool.offer(batch, batch.rowsCapacity());
-        return null; // fill(null) forces us to take ownership even the pool rejected.
+        if (pool.offer(batch, batch.rowsCapacity()) != null)
+            batch.markGC();
+        return null;
     }
 
     @Override public RowBucket<TermBatch> createBucket(int rowsCapacity, int cols) {

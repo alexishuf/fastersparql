@@ -83,8 +83,8 @@ public abstract class BatchType<B extends Batch<B>> {
      * {@link BatchType#create(int, int, int)}/{@link BatchType#createSingleton(int)} calls.
      *
      * @param batch the {@link Batch} to be recycled
-     * @return {@code batch} is the caller retains ownership, {@code null} if
-     *         batch ownership was taken by this call.
+     * @return {@code null}, for conveniently setting recycled references to null:
+     *         {@code b = type.recycle(b)}
      */
     public abstract @Nullable B recycle(@Nullable B batch);
 

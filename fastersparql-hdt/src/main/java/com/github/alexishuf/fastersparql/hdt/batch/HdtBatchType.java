@@ -36,8 +36,10 @@ public class HdtBatchType extends BatchType<HdtBatch> {
     @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
         if (batch == null) return null;
         batch.markPooled();
-        if (pool.offer(batch, batch.arr.length) != null)
+        if (pool.offer(batch, batch.arr.length) != null) {
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
+            batch.markGC();
+        }
         return null;
     }
 

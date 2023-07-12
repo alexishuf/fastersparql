@@ -267,7 +267,7 @@ public final class TermBatch extends Batch<TermBatch> {
             int w = b.cols;
             if (columns == null || columns.length > w) {
                 var projected = project(null, b);
-                if (projected != b) recycle(b);
+                if (projected != b && recycle(b) != null) batchType.recycle(b);
                 return projected;
             }
             Term[] tmp = this.tmp;
