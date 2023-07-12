@@ -29,7 +29,7 @@ public class ReceiverProducer<B extends Batch<B>> implements Producer, Receiver<
 
     @SuppressWarnings({"FieldMayBeFinal"}) private State plainState = State.ACTIVE;
     @SuppressWarnings("unused") private int plainRequested;
-    private final AsyncEmitter<B> downstream;
+    private @MonotonicNonNull AsyncEmitter<B> downstream;
     private final Emitter<B> upstream;
     private @MonotonicNonNull Throwable error;
 
@@ -42,10 +42,8 @@ public class ReceiverProducer<B extends Batch<B>> implements Producer, Receiver<
         FAILED
     }
 
-    public ReceiverProducer(AsyncEmitter<B> downstream, Emitter<B> upstream) {
-        this.downstream = downstream;
+    public ReceiverProducer(Emitter<B> upstream) {
         this.upstream = upstream;
-        downstream.registerProducer(this);
         try {
             upstream.subscribe(this);
         } catch (Emitter.RegisterAfterStartException e) { // revert downstream.registerProducer
@@ -54,6 +52,15 @@ public class ReceiverProducer<B extends Batch<B>> implements Producer, Receiver<
             downstream.producerTerminated();
             throw e;
         }
+    }
+
+    public void registerDownstream(AsyncEmitter<B> emitter) {
+        if (downstream != null) {
+            if (downstream == emitter) return;
+            throw new IllegalStateException("Already registered with another emitter");
+        }
+        downstream = emitter;
+        emitter.registerProducer(this);
     }
 
     @Override public String toString() {

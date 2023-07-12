@@ -31,9 +31,10 @@ import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AsyncEmitterTest {
+    private static final Vars X = Vars.of("x");
     private static final int THREADS = Runtime.getRuntime().availableProcessors();
 
-    public static final class DummyException extends Exception {
+    private static final class DummyException extends Exception {
         public final int producer;
         public final long row;
 
@@ -58,14 +59,13 @@ class AsyncEmitterTest {
             private int next;
             private boolean cleaned;
 
-            public P(AsyncEmitter<B> emitter, RecurringTaskRunner runner,
+            public P(RecurringTaskRunner runner,
                      int id, int begin, int failAt) {
-                super(emitter, runner);
+                super(runner);
                 this.id     = id;
                 this.next   = begin;
                 this.end    = begin+height;
                 this.failAt = failAt;
-                emitter.registerProducer(this);
             }
 
             @Override public String toString() { return "P("+id+")"; }
@@ -95,8 +95,8 @@ class AsyncEmitterTest {
                 }
             }
 
-            @Override protected boolean exhausted() {
-                return next >= end;
+            @Override protected ExhaustReason exhausted() {
+                return next >= end ? ExhaustReason.COMPLETED : null;
             }
 
             @Override protected void cleanup(@Nullable Throwable reason) {
@@ -207,12 +207,13 @@ class AsyncEmitterTest {
 
         @Override public void run() { genericRun(); }
         private <B extends Batch<B>> void genericRun() {
-            //noinspection unchecked
-            var ae = new AsyncEmitter<>((BatchType<B>) batchType, Vars.of("x"), TASK_RUNNER);
+            AsyncEmitter<B> ae = new AsyncEmitter<>(X, TASK_RUNNER);
             List<P<B>> producers = new ArrayList<>();
             for (int i = 0, begin = 0; i < nProducers; i++, begin += height) {
                 int failAt = i == failingProducer ? begin+this.failAtRow : -1;
-                producers.add(new P<>(ae, TASK_RUNNER, i, begin, failAt));
+                P<B> p = new P<>(TASK_RUNNER, i, begin, failAt);
+                p.registerOn(ae);
+                producers.add(p);
             }
             Set<C<B>> consumers = new HashSet<>();
             ConsumerBarrier<B> consumerBarrier = new ConsumerBarrier<>(consumers);
@@ -400,6 +401,9 @@ class AsyncEmitterTest {
         String name = getClass().getSimpleName();
         try (TestTaskSet tasks = new TestTaskSet(name, newFixedThreadPool(THREADS))) {
             test().map(a -> (D) a.get()[0])
+                    .map(d -> d.height <= 1024 ? d
+                            : new D(d.batchType, 1024, d.nConsumers, d.nProducers,
+                                    d.cancelAtRow, d.failAtRow, d.failingProducer))
                     .forEach(tasks::add);
         } finally {
             CompressedBatch.DISABLE_VALIDATE = disableValidate;

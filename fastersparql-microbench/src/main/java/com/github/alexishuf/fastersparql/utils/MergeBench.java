@@ -56,8 +56,8 @@ public class MergeBench {
     }
 
     @Setup(Level.Trial) public void trialSetup() {
-        System.out.println("Thermal cooldown: 5s...");
-        Async.uninterruptibleSleep(5_000);
+        System.out.println("Thermal cooldown: 2s...");
+        Async.uninterruptibleSleep(2_000);
     }
 
     @SuppressWarnings("unused") @Setup(Level.Iteration) public <B extends Batch<B>> void setup() {
@@ -107,9 +107,11 @@ public class MergeBench {
     @Benchmark
     public <B extends Batch<B>> int emit() {
         BatchType<B> type = (BatchType<B>) this.type;
-        var ae = new AsyncEmitter<>(type, X, TASK_RUNNER);
-        for (Batch<?> source : columns)
-            ae.registerProducer(new SourceProducer<>(ae, type, (B) source));
+        AsyncEmitter<B> ae = new AsyncEmitter<>(X, TASK_RUNNER);
+        for (Batch<?> source : columns) {
+            SourceProducer<B> p = new SourceProducer<>(type, (B) source);
+            p.registerOn(ae);
+        }
         var receiver = new BenchReceiver<B>();
         ae.subscribe(receiver);
         ae.request(Long.MAX_VALUE);
@@ -159,8 +161,9 @@ public class MergeBench {
         private final B source;
         private final BatchType<B> type;
         private int row;
-        public SourceProducer(AsyncEmitter<B> emitter, BatchType<B> type, B source) {
-            super(emitter, TASK_RUNNER);
+
+        public SourceProducer(BatchType<B> type, B source) {
+            super(TASK_RUNNER);
             this.type = type;
             this.source = source;
         }
@@ -185,8 +188,8 @@ public class MergeBench {
             return dest;
         }
 
-        @Override protected boolean exhausted() {
-            return row >= source.rows;
+        @Override protected ExhaustReason exhausted() {
+            return row >= source.rows ? ExhaustReason.COMPLETED : null;
         }
 
         @Override protected void cleanup(@Nullable Throwable reason) {}

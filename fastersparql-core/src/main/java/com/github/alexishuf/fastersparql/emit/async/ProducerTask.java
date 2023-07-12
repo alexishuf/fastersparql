@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter.CancelledException;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,11 +31,10 @@ public abstract class ProducerTask<B extends Batch<B>>
         }
     }
 
-    private final AsyncEmitter<B> emitter;
+    private @MonotonicNonNull AsyncEmitter<B> emitter;
     private int id;
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) private State plainState = State.CREATED;
     private @Nullable Throwable error;
-    private boolean warnedEmptyBatch;
     private @Nullable B tmp;
 
     private enum State {
@@ -64,9 +64,24 @@ public abstract class ProducerTask<B extends Batch<B>>
         }
     }
 
-    public ProducerTask(AsyncEmitter<B> emitter, RecurringTaskRunner runner) {
+    public ProducerTask(RecurringTaskRunner runner) {
         super(runner);
+    }
+
+    /**
+     * Calls {@code emitter.registerProducer(this)} and stores the assigned index.
+     *
+     * @param emitter the {@link AsyncEmitter} to where this producer will send batches
+     * @throws IllegalStateException if this method has been previously called with another
+     *                               {@code emitter}
+     */
+    public void registerOn(AsyncEmitter<B> emitter) {
+        if (this.emitter != null) {
+            if (this.emitter == emitter) return;
+            throw new IllegalStateException("Already registered to another emitter");
+        }
         this.emitter = emitter;
+        emitter.registerProducer(this);
     }
 
     @Override public String toString() {
@@ -140,19 +155,38 @@ public abstract class ProducerTask<B extends Batch<B>>
      *         {@link #exhausted()}
      *
      * @throws Throwable if something goes wrong. Once this method throws, it will not be called
-     *                   again for this instance, the {@link ProducerTask} will move
+     *                   again for this instance. The {@link ProducerTask} will move
      *                   into a failed state and  the {@link Throwable} will be propagated to
      *                   the {@link AsyncEmitter}, which will consolidate it and eventually
      *                   propagate the failure to the downstream {@link Receiver}s
      */
-    protected abstract B produce(long limit, long deadline, @Nullable B offer) throws Throwable;
+    protected abstract B produce(long limit, long deadline, @Nullable B offer)
+            throws Throwable;
+
+    protected enum ExhaustReason {
+        CANCELLED,
+        COMPLETED
+    }
 
     /**
-     * Whether this producer is exhausted and a completion event should be propagated.
-     * @return {@code true} if calling {@link #produce(long, long, Batch)} will return an empty batch
-     *         <strong>neither will raise an exception</strong>.
+     * Checks, with minimal cost, whether {@link #produce(long, long, Batch)} should be called
+     * to fetch more rows.
+     *
+     * <p>This should be implemented to avoid computation or blocking. Ideally, it should be
+     * the {@link #produce(long, long, Batch)} implementation that detects exhaustion of the
+     * source or cancellation, while this method simply checks a flag. This method exists simply
+     * because simulating multi-value returns in Java is not efficient.</p>
+     *
+     * This method MAY detect a cancellation due to {@link #cleanup(Throwable)} but
+     * implementations are NOT REQUIRED to do so and can return {@code null} after a
+     * {@link #cleanup(Throwable)}. </p>
+     *
+     * @return {@code null} if this producer is not certainly exhausted (a future
+     *         {@link #produce(long, long, Batch)} MAY yield a non-empty batches), else returns
+     *         the reason for exhaustion: successful or out-of-band cancellation not caused by
+     *         {@link #cleanup(Throwable)}.
      */
-    protected abstract boolean exhausted();
+    protected abstract ExhaustReason exhausted();
 
     /**
      * Notifies that {@link #produce(long, long, Batch)} will not be called anymore and that the
@@ -160,7 +194,10 @@ public abstract class ProducerTask<B extends Batch<B>>
      *
      * <p>Implementations can assume that:</p>
      * <ul>
-     *     <li>It will never be called concurrently with {@link #produce(long, long, Batch)}</li>
+     *     <li>It will never be called concurrently with {@link #produce(long, long, Batch)}
+     *         or {@link #exhausted()}</li>
+ *         <li>{@link #produce(long, long, Batch)} and {@link #exhausted()} will not be called
+     *         after this method</li>
      *     <li>It will be called at most once per {@link ProducerTask}</li>
      * </ul>
      *
@@ -189,9 +226,14 @@ public abstract class ProducerTask<B extends Batch<B>>
                             this.tmp = tmp;
                             transitionToTerminal(State.CANCELLED, CancelledException.INSTANCE);
                         }
-                        if (exhausted()) {
+                        State tgt = switch (exhausted()) {
+                            case null -> null;
+                            case CANCELLED -> State.CANCELLED;
+                            case COMPLETED -> State.COMPLETED;
+                        };
+                        if (tgt != null) {
                             result = DONE;
-                            transitionToTerminal(State.COMPLETED, null);
+                            transitionToTerminal(tgt, null);
                         }
                     } catch (Throwable t) {
                         fail(t);
