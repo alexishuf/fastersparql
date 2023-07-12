@@ -125,7 +125,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         error = cause;
         switch (tgt) {
             case COMPLETED -> log.trace(ON_TERM_TPL, this, "");
-            case CANCELLED -> log.debug(ON_TERM_TPL, this, "close()/cancelled");
+            case CANCELLED -> log.trace(ON_TERM_TPL, this, "close()/cancelled");
             case FAILED    -> {
                 String msg = cause.toString();
                 if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
