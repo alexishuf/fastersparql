@@ -55,7 +55,7 @@ public abstract class Batch<B extends Batch<B>> {
         public PooledEvent(PoolEvent cause) {super("pooled here", cause);}
     }
     protected static final class UnpooledEvent extends PoolEvent {
-        public UnpooledEvent(PoolEvent cause) {super("pooled here", cause);}
+        public UnpooledEvent(PoolEvent cause) {super("unpopooled here", cause);}
     }
 
     public void markPooled() {
@@ -65,7 +65,13 @@ public abstract class Batch<B extends Batch<B>> {
                                                 poolTraces == null ? null : poolTraces[0]);
             }
             if (poolTraces == null) poolTraces = new PoolEvent[2];
-            poolTraces[0] = new PooledEvent(poolTraces[1]);
+            PoolEvent cause = poolTraces[1];
+            if (cause != null) {
+                var acyclical = new UnpooledEvent(null);
+                acyclical.setStackTrace(cause.getStackTrace());
+                cause = acyclical;
+            }
+            poolTraces[0] = new PooledEvent(cause);
         }
     }
 
@@ -75,12 +81,18 @@ public abstract class Batch<B extends Batch<B>> {
                 throw new IllegalStateException("un-pooling batch that is not pooled",
                         poolTraces == null ? null : poolTraces[1]);
             if (poolTraces == null) poolTraces = new PoolEvent[2];
-            poolTraces[1] = new UnpooledEvent(poolTraces[0]);
+            PoolEvent cause = poolTraces[0];
+            if (cause != null) {
+                var acyclical = new PooledEvent(null);
+                acyclical.setStackTrace(cause.getStackTrace());
+                cause = acyclical;
+            }
+            poolTraces[1] = new UnpooledEvent(cause);
         }
     }
 
     public void requirePooled() {
-        if (DEBUG && (boolean)P.getOpaque(this)) {
+        if (DEBUG && !(boolean)P.getOpaque(this)) {
             throw new IllegalStateException("batch is not pooled",
                                             poolTraces == null ? null : poolTraces[1]);
         }
