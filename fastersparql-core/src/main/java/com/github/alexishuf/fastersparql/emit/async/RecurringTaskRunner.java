@@ -55,9 +55,9 @@ public class RecurringTaskRunner {
 
         public Task(RecurringTaskRunner runner) {
             this.runner = runner;
-            this.worker = (int)MD.getAndAddAcquire(runner.runnerMd, RMD_WORKER, 1)
+            this.worker = (int)MD.getAndAddRelease(runner.runnerMd, RMD_WORKER, 1)
                         & runner.threadsMask;
-            MD.getAndAddAcquire(runner.runnerMd, RMD_TASKS, 1);
+            MD.getAndAddRelease(runner.runnerMd, RMD_TASKS, 1);
         }
 
         /**
@@ -66,7 +66,7 @@ public class RecurringTaskRunner {
         public final void unload() {
             if (unloaded) return;
             unloaded = true;
-            MD.getAndAddAcquire(runner.runnerMd, RMD_TASKS, -1);
+            MD.getAndAddRelease(runner.runnerMd, RMD_TASKS, -1);
         }
 
         /**
@@ -74,7 +74,7 @@ public class RecurringTaskRunner {
          * may start and complete before the return of this call.
          */
         public final void awake() {
-            if ((int)S.getAndAdd(this, 1) == 0)
+            if ((int)S.getAndAddRelease(this, 1) == 0)
                 runner.add(this,  true);
         }
 
@@ -85,7 +85,7 @@ public class RecurringTaskRunner {
         protected abstract TaskResult task();
 
         protected final void run() {
-            int old = (int) S.getVolatile(this);
+            int old = (int) S.getAcquire(this);
             boolean resched = false;
             try {
                 resched = task() == TaskResult.RESCHEDULE;
@@ -93,7 +93,7 @@ public class RecurringTaskRunner {
                 handleTaskException(t);
             }
             if (resched || (int)S.compareAndExchange(this, old, 0) != old) {
-                S.setVolatile(this, 1);
+                S.setRelease(this, 1);
                 runner.add(this, false); // do not unpark() itself
             } // else: S == 0 and not enqueued, future awake() can enqueue
         }

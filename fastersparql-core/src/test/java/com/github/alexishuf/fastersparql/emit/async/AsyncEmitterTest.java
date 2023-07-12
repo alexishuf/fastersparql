@@ -11,7 +11,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -399,7 +399,7 @@ class AsyncEmitterTest {
         TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, d);
 }
 
-    @Test
+    @RepeatedTest(4)
     void testConcurrent() throws Exception {
         System.gc();
         CompressedBatch.DISABLE_VALIDATE = true;
