@@ -271,8 +271,8 @@ public final class AsyncEmitter<B extends Batch<B>>
         }
         awake();
         if (b == null) {
-            if ((b = (B)RECYCLED0.getAndSetAcquire(this, null)) == null)
-                b = (B)RECYCLED1.getAndSetAcquire(this, null);
+            if ((b = (B)RECYCLED0.getAndSetRelease(this, null)) == null)
+                b = (B)RECYCLED1.getAndSetRelease(this, null);
             if (b != null)
                 b.unmarkPooled();
         }

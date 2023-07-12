@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -222,7 +223,7 @@ class AsyncEmitterTest {
             long requestSize = (long) height * nProducers + 1;
             boolean oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
             try {
-                CompressedBatch.DISABLE_VALIDATE = requestSize > 1_024;
+                CompressedBatch.DISABLE_VALIDATE = oldDisableValidate || requestSize > 1_024;
                 ae.request(requestSize);
                 consumerBarrier.await();
             } finally {
@@ -387,6 +388,11 @@ class AsyncEmitterTest {
         return list.stream().map(Arguments::arguments);
     }
 
+    @AfterEach
+    void tearDown() {
+        CompressedBatch.DISABLE_VALIDATE = false;
+    }
+
     @ParameterizedTest @MethodSource
     void test(D d) throws Exception {
         d.run();
@@ -396,17 +402,10 @@ class AsyncEmitterTest {
     @Test
     void testConcurrent() throws Exception {
         System.gc();
-        boolean disableValidate = CompressedBatch.DISABLE_VALIDATE;
         CompressedBatch.DISABLE_VALIDATE = true;
         String name = getClass().getSimpleName();
         try (TestTaskSet tasks = new TestTaskSet(name, newFixedThreadPool(THREADS))) {
-            test().map(a -> (D) a.get()[0])
-                    .map(d -> d.height <= 1024 ? d
-                            : new D(d.batchType, 1024, d.nConsumers, d.nProducers,
-                                    d.cancelAtRow, d.failAtRow, d.failingProducer))
-                    .forEach(tasks::add);
-        } finally {
-            CompressedBatch.DISABLE_VALIDATE = disableValidate;
+            test().map(a -> (D) a.get()[0]).forEach(tasks::add);
         }
     }
 
