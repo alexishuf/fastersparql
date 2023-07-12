@@ -42,10 +42,13 @@ public final class AsyncEmitter<B extends Batch<B>>
     private static final Producer[] NO_PRODUCERS = new Producer[0];
 
     private static final VarHandle READY, FILL_LOCK, S, REQUESTED, TERM_PRODS;
+    private static final VarHandle RECYCLED0, RECYCLED1;
     private static final VarHandle NEXT_ID;
     static {
         try {
             READY = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainReady", Batch.class);
+            RECYCLED0 = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled0", Batch.class);
+            RECYCLED1 = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled1", Batch.class);
             REQUESTED = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRequested", long.class);
             TERM_PRODS = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainTerminatedProducers", int.class);
             FILL_LOCK = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainFillLock", int.class);
@@ -95,8 +98,8 @@ public final class AsyncEmitter<B extends Batch<B>>
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) private State plainState = State.CREATED;
     @SuppressWarnings("unused") private long plainRequested;
     @SuppressWarnings("unused") private int plainTerminatedProducers;
-//    private Batch<?>[] recycled = new Batch[20];
-    private @Nullable B filling;
+    @SuppressWarnings("unused") private @Nullable B plainRecycled0, plainRecycled1;
+    private @Nullable B scatterRecycled, filling;
     private @Nullable Throwable error;
     private int id;
     public final Vars vars;
@@ -267,6 +270,12 @@ public final class AsyncEmitter<B extends Batch<B>>
             }
         }
         awake();
+        if (b == null) {
+            if ((b = (B)RECYCLED0.getAndSetAcquire(this, null)) == null)
+                b = (B)RECYCLED1.getAndSetAcquire(this, null);
+            if (b != null)
+                b.unmarkPooled();
+        }
         return b;
     }
 
@@ -394,19 +403,28 @@ public final class AsyncEmitter<B extends Batch<B>>
     }
 
     private void deliver(Receiver<B>[] receivers, int last, @NonNull B b) {
-        B offer = null;
         if (last == 0) {
             try {
-                offer = receivers[0].onBatch(b);
+                B offer = receivers[0].onBatch(b);
+                if (offer != null) {
+                    offer.markPooled();
+                    if (RECYCLED0.compareAndExchangeRelease(this, null, offer) != null) {
+                        if (RECYCLED1.compareAndExchangeRelease(this, null, offer) != null) {
+                            offer.unmarkPooled();
+                            offer.recycle();
+                        }
+                    }
+                }
             } catch (Throwable t) {
                 handleEmitError(receivers[0], t);
             }
         } else {
+            B offer = scatterRecycled;
+            scatterRecycled = null;
             for (int i = 0; i <= last; i++) {
                 B copy;
                 if (i == last) {
                     copy = b;
-                    if (offer != null) offer.recycle();
                 } else {
                     copy = b.copy(offer);
                 }
@@ -416,8 +434,8 @@ public final class AsyncEmitter<B extends Batch<B>>
                     handleEmitError(receivers[i], t);
                 }
             }
+            scatterRecycled = offer;
         }
-        if (offer != null) offer.recycle();
     }
 
     private void deliverTermination(State terminated) {
