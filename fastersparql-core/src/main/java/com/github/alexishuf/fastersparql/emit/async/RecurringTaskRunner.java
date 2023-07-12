@@ -245,6 +245,8 @@ public class RecurringTaskRunner {
     private @Nullable Task localSteal(int emptyQueue) {
         for (int i = (emptyQueue+1)&threadsMask; i != emptyQueue; i = (i+1)&threadsMask) {
             int mdb = i<<MD_BITS;
+            if ((int)MD.getOpaque(md, mdb+MD_SIZE) == 0)
+                continue;
             if ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) == 0) {
                 Task task = localPollLocked(mdb);
                 MD.setRelease(md, mdb+MD_LOCK, 0);
@@ -274,10 +276,10 @@ public class RecurringTaskRunner {
         Task task = localPollLocked(mdb);
         MD.setRelease(md, mdb+MD_LOCK, 0);
         if (task == null) {
-            if ((task = sharedPoll()) == null)
+            if (!sharedQueue.isEmpty())
+                task = sharedSteal();
+            if (task == null)
                 task = localSteal(queue);
-            else if (sharedQueue.size() > 0 && (int)MD.getOpaque(runnerMd, RMD_SHR_PRKD) == 1)
-                LockSupport.unpark(sharedScheduler);
         }
         return task;
     }
@@ -362,11 +364,22 @@ public class RecurringTaskRunner {
         } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
     }
 
+    private @Nullable Task sharedSteal() {
+        while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
+        try {
+            var task = sharedQueue.poll();
+            if (!sharedQueue.isEmpty() && runnerMd[RMD_SHR_PRKD] != 0)
+                LockSupport.unpark(sharedScheduler);
+            return task;
+        } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
+    }
+
     private void sharedAdd(Task task) {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
+            boolean unpark = sharedQueue.isEmpty();
             sharedQueue.add(task);
-            if (sharedQueue.size() == 1)
+            if (unpark)
                 LockSupport.unpark(sharedScheduler);
         } finally {
             MD.setRelease(runnerMd, RMD_SHR_LOCK, 0);
