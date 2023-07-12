@@ -1,7 +1,10 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.lang.reflect.Array;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.*;
 import static java.lang.System.arraycopy;
@@ -30,9 +33,17 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         prime(MEDIUM_MAX_CAPACITY<<1, LARGE_MAX_CAPACITY, Math.min(4,  DEF_LARGE_LEVEL_CAPACITY));
     }
 
-    /* --- --- --- methods --- --- --- */
+    /* --- --- --- lifecycle --- --- --- */
+    
+    private final Class<?> componentType;
 
-    public ArrayPool(Class<T> cls) { super(new LevelPool<>(cls)); }
+    public ArrayPool(Class<T> cls) { this(new LevelPool<>(cls)); }
+    public ArrayPool(LevelPool<T> shared) {
+        super(shared);
+        this.componentType = shared.itemClass().componentType();
+    }
+
+    /* --- --- --- methods --- --- --- */
 
     @Override public String toString() {
         if (this ==     BYTE) return "LevelPool.BYTE";
@@ -40,6 +51,22 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         if (this ==     LONG) return "LevelPool.LONG";
         if (this == SEG_ROPE) return "LevelPool.SEG_ROPE";
         return super.toString();
+    }
+
+    public T grow(T a, int capacity, int required) {
+        T bigger = getAtLeast(required);
+        if (bigger == null) //noinspection unchecked
+            bigger = (T) Array.newInstance(componentType, required);
+        //noinspection SuspiciousSystemArraycopy
+        arraycopy(a, 0, bigger, 0, capacity);
+        offer(a, capacity);
+        return bigger;
+    }
+
+    public @NonNull T arrayAtLeast(int capacity) {
+        T a = getAtLeast(capacity);
+        //noinspection unchecked
+        return a == null ? (T)Array.newInstance(componentType, capacity) : a;
     }
 
     /* --- --- --- empty array instances --- --- --- */
