@@ -145,7 +145,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
 
     public static byte[] bytesAtLeast(int minSize, byte @Nullable [] a) {
         if (a != null) {
-            if (a.length > minSize) return a;
+            if (a.length >= minSize) return a;
             BYTE.offer(a, a.length);
         } else if (minSize == 0) {
             return EMPTY_BYTE;
@@ -155,7 +155,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
     }
     public static int[] intsAtLeast(int minSize, int @Nullable[] a) {
         if (a != null) {
-            if (a.length > minSize) return a;
+            if (a.length >= minSize) return a;
             INT.offer(a, a.length);
         } else if (minSize == 0) {
             return EMPTY_INT;
@@ -165,7 +165,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
     }
     public static long[] longsAtLeast(int minSize, long @Nullable[] a) {
         if (a != null) {
-            if (a.length > minSize) return a;
+            if (a.length >= minSize) return a;
             LONG.offer(a, a.length);
         } else if (minSize == 0) {
             return EMPTY_LONG;
@@ -175,7 +175,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
     }
     public static SegmentRope[] segmentRopesAtLeast(int minSize, SegmentRope @Nullable[] a) {
         if (a != null) {
-            if (a.length > minSize) return a;
+            if (a.length >= minSize) return a;
             SEG_ROPE.offer(a, a.length);
         } else if (minSize == 0) {
             return EMPTY_SEG_ROPE;
