@@ -81,7 +81,6 @@ public class FederationHandle implements AutoCloseable {
                 federation = Federation.load(toml);
                 if (waitInit) {
                     log.info("Waiting sources init...");
-                    System.gc();
                     Async.waitStage(federation.init());
                 }
                 return new FederationHandle(federation, handles.parallelClose(true));
