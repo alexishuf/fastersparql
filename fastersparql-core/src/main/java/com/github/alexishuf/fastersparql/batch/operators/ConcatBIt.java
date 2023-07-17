@@ -80,9 +80,11 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     }
 
     @Override public @Nullable B recycle(B batch) {
-        if (batch != null && super.recycle(batch) != null && processor != null)
+        if (super.recycle(batch) == null)
+            return null;
+        if (processor != null)
             return processor.recycle(batch);
-        return null;
+        return batch;
     }
 
     @Override public String toString() { return toStringWithOperands(sources); }

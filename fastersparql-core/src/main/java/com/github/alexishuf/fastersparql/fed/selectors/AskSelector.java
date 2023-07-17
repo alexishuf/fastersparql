@@ -158,58 +158,62 @@ public class AskSelector extends Selector {
         Term o = tp.o.type() == Term.Type.VAR ? X : tp.o;
         int vars = ((s == X ? 1 : 0)<<2) | ((p == X ? 1 : 0)<<1) | (o == X ? 1 : 0);
         TermBatch canonBatch = triple(s, p, o);
-        Term[] canon = canonBatch.arr();
-        if (positive.contains(canonBatch, 0)) return true;
-        if (negative.contains(canonBatch, 0)) return false;
-
-        // try a negative match against more general queries
-        if (s != X) {
-            canon[0] = X;
+        try {
+            Term[] canon = canonBatch.arr();
+            if (positive.contains(canonBatch, 0)) return true;
             if (negative.contains(canonBatch, 0)) return false;
+
+            // try a negative match against more general queries
+            if (s != X) {
+                canon[0] = X;
+                if (negative.contains(canonBatch, 0)) return false;
+                if (o != X) {
+                    canon[2] = X;
+                    if (negative.contains(canonBatch, 0)) return false;
+                    canon[2] = o;
+                }
+                canon[0] = s;
+            }
             if (o != X) {
                 canon[2] = X;
                 if (negative.contains(canonBatch, 0)) return false;
                 canon[2] = o;
             }
-            canon[0] = s;
-        }
-        if (o != X) {
-            canon[2] = X;
-            if (negative.contains(canonBatch, 0)) return false;
-            canon[2] = o;
-        }
-        if (p != X) {
-            canon[1] = X;
-            if (negative.contains(canonBatch, 0)) return false;
-            canon[1] = p;
-        }
-        // canon == {s, p, o}
-
-        // not in cache, issue a query using the given tp
-        try (BIt<CompressedBatch> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
-            var batch = it.nextBatch(null);
-            boolean has = batch != null;
-            if (has) {
-                COMPRESSED.recycle(batch);
-                positive.add(canonBatch, 0);
-            } else {
-                negative.add(canonBatch, 0);
+            if (p != X) {
+                canon[1] = X;
+                if (negative.contains(canonBatch, 0)) return false;
+                canon[1] = p;
             }
-            if (has && (vars&2) == 0) { // if positive and ground predicate, store generalized
-                if (s != X) {
-                    canon[0] = X;
-                    positive.add(canonBatch, 0); // store X p o
+            // canon == {s, p, o}
+
+            // not in cache, issue a query using the given tp
+            try (BIt<CompressedBatch> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
+                var batch = it.nextBatch(null);
+                boolean has = batch != null;
+                if (has) {
+                    COMPRESSED.recycle(batch);
+                    positive.add(canonBatch, 0);
+                } else {
+                    negative.add(canonBatch, 0);
                 }
-                if (o != X) {
-                    canon[2] = X;
-                    positive.add(canonBatch, 0); // store X p X
+                if (has && (vars & 2) == 0) { // if positive and ground predicate, store generalized
                     if (s != X) {
-                        canon[0] = s;
-                        positive.add(canonBatch, 0); // store s p X
+                        canon[0] = X;
+                        positive.add(canonBatch, 0); // store X p o
+                    }
+                    if (o != X) {
+                        canon[2] = X;
+                        positive.add(canonBatch, 0); // store X p X
+                        if (s != X) {
+                            canon[0] = s;
+                            positive.add(canonBatch, 0); // store s p X
+                        }
                     }
                 }
+                return has;
             }
-            return has;
+        } finally {
+            canonBatch.recycle();
         }
     }
 

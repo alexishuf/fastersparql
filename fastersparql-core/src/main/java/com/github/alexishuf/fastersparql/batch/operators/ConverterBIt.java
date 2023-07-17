@@ -16,19 +16,34 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
         this.batchType = batchType;
     }
 
+    @Override protected void cleanup(boolean cancelled, @Nullable Throwable error) {
+        super.cleanup(cancelled, error);
+        S in = lastIn;
+        lastIn = null;
+        if (in != null)
+            in.recycle();
+    }
+
     @Override public @Nullable B nextBatch(@Nullable B out) {
-        S in = delegate.nextBatch(lastIn);
+        S in = lastIn;
+        lastIn = null;
+        try {
+            in = delegate.nextBatch(in);
+        } catch (Throwable t) {
+            onTermination(false, t);
+            throw t;
+        }
         if (in == null) {
             batchType.recycle(out);
-            batchType.recycle(stealRecycled());
+            onTermination(false, null);
             return null;
         }
-        lastIn = in;
         if (out != null || (out = stealRecycled()) != null)
             out.clear(in.cols);
         else
-            out = batchType.create(in.rows, in.cols, batchType.bytesRequired(in));
+            out = batchType.create(in.rows, in.cols, batchType.localBytesRequired(in));
         out = out.putConverting(in);
+        lastIn = in;
         if (metrics != null) metrics.batch(out.rows);
         return out;
     }

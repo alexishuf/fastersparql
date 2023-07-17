@@ -17,7 +17,6 @@ import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
     private static final Logger log = LoggerFactory.getLogger(ProcessorBIt.class);
     protected final BatchProcessor<B> processor;
-    protected boolean terminated;
 
     public ProcessorBIt(BIt<B> delegate, BatchProcessor<B> processor,
                         @Nullable MetricsFeeder metrics) {
@@ -46,26 +45,16 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         }
     }
 
-    protected void cleanup(@Nullable Throwable cause) {
+    protected void cleanup(boolean cancelled, @Nullable Throwable error) {
         try {
             if (metrics != null)
-                metrics.completeAndDeliver(cause, isCancel(cause));
+                metrics.completeAndDeliver(error, isCancel(error));
         } catch (Throwable t) {
             log.error("{}: Failed to deliver metrics {}", this, metrics, t);
         }
         processor.release();
-        if (cause != null)
+        if (error != null)
             delegate.close();
-    }
-
-    protected final void onTermination(@Nullable Throwable cause) {
-        if (terminated) return;
-        terminated = true;
-        try {
-            cleanup(cause);
-        } catch (Throwable t) {
-            log.error("Ignoring failed cleanup() for {}", this, t);
-        }
     }
 
     @Override public @Nullable B nextBatch(B b) {
@@ -78,11 +67,11 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                     break;
                 }
             }
-            if      (b       == null) onTermination(null); //exhausted
+            if      (b       == null) onTermination(false, null); //exhausted
             else if (metrics != null) metrics.batch(b.rows);
             return b;
         } catch (Throwable t) {
-            onTermination(t); //error
+            onTermination(false, t); //error
             throw t;
         }
     }

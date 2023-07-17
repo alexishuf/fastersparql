@@ -51,9 +51,9 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
     }
 
     @Override public @Nullable B recycle(B batch) {
-        if (batch != null && !(inner instanceof EmptyBIt) && inner.recycle(batch) != null)
-            return super.recycle(batch);
-        return null;
+        if (batch == null || (!(inner instanceof EmptyBIt<B>) && inner.recycle(batch) == null))
+            return null; // null or recycled by inner
+        return super.recycle(batch);
     }
 
     @Override public @This BIt<B> tempEager() {

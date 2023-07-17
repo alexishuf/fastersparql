@@ -21,14 +21,24 @@ public abstract class RecyclingDelegatedControlBIt<B extends Batch<B>, S extends
             throw new ExceptionInInitializerError(e);
         }
     }
-    private B plainRecycled;
+    @SuppressWarnings("unused") private B plainRecycled;
 
     public RecyclingDelegatedControlBIt(BIt<S> delegate, BatchType<B> batchType, Vars vars) {
         super(delegate, batchType, vars);
     }
 
+    @Override protected void cleanup(boolean cancelled, @Nullable Throwable error) {
+        for (B b; (b = stealRecycled()) != null; )
+            b.recycle();
+    }
+
     @Override public @Nullable B recycle(B batch) {
-        return RECYCLED.compareAndExchange(this, null, batch) == null ? null : batch;
+        if (batch == null)
+            return null;
+        batch.markPooled();
+        if (RECYCLED.compareAndExchange(this, null, batch) == null) return null;
+        batch.unmarkPooled();
+        return batch;
     }
 
     @Override public @Nullable B stealRecycled() {

@@ -46,6 +46,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             observed = batchType.dedupPool.getDistinct(distinctCapacity(), b.cols);
             unexpected = batchType.create(PREFERRED_MIN_BATCH, b.cols, PREFERRED_MIN_BATCH*32);
         }
+        unexpected.markGarbage();
     }
 
     public boolean isValid() { return OK.equals(explanation()); }
