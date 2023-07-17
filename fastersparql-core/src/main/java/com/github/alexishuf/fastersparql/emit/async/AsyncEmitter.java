@@ -4,8 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -13,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.lang.reflect.Array;
+import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
 import static java.lang.Thread.onSpinWait;
@@ -29,15 +30,14 @@ public final class AsyncEmitter<B extends Batch<B>>
         extends RecurringTaskRunner.Task implements Emitter<B> {
     private static final Logger log = LoggerFactory.getLogger(AsyncEmitter.class);
     private static final boolean IS_DEBUG = log.isDebugEnabled();
-    private static final int POOL_SMALL_CAP = 256;
-    private static final int POOL_UNIT_CAP = 1;
+    private static final int ARRAY_INIT_CAP = 32;
+    private static final int POOL_CAP       = 256;
+    private static final int POOL_THREADS   = Runtime.getRuntime().availableProcessors();
     @SuppressWarnings("RedundantCast")
-    private static final ArrayPool<Receiver<?>[]> RECV_POOL
-            = new ArrayPool<>(new LevelPool<>((Class<Receiver<?>[]>)(Object)Receiver[].class,
-                              POOL_UNIT_CAP, POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
-    private static final ArrayPool<Producer   []> PROD_POOL
-            = new ArrayPool<>(new LevelPool<>(Producer[].class,
-                              POOL_UNIT_CAP, POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
+    private static final AffinityPool<Receiver<?>[]> RECV_POOL
+            = new AffinityPool<>((Class<Receiver<?>[]>) (Object)Receiver[].class, POOL_CAP, POOL_THREADS);
+    private static final AffinityPool<Producer[]>    PROD_POOL
+            = new AffinityPool<>(Producer[].class, POOL_CAP, POOL_THREADS);
     private static final Receiver<?>[] NO_RECEIVERS = new Receiver[0];
     private static final Producer[] NO_PRODUCERS = new Producer[0];
 
@@ -46,21 +46,24 @@ public final class AsyncEmitter<B extends Batch<B>>
     private static final VarHandle NEXT_ID;
     static {
         try {
-            READY = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainReady", Batch.class);
-            RECYCLED0 = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled0", Batch.class);
-            RECYCLED1 = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled1", Batch.class);
-            REQUESTED = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRequested", long.class);
+            READY      = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainReady", Batch.class);
+            RECYCLED0  = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled0", Batch.class);
+            RECYCLED1  = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRecycled1", Batch.class);
+            REQUESTED  = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainRequested", long.class);
             TERM_PRODS = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainTerminatedProducers", int.class);
-            FILL_LOCK = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainFillLock", int.class);
-            S = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainState", State.class);
-            NEXT_ID = MethodHandles.lookup().findStaticVarHandle(AsyncEmitter.class, "plainNextId", int.class);
+            FILL_LOCK  = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainFillLock", int.class);
+            S          = MethodHandles.lookup().findVarHandle(AsyncEmitter.class, "plainState", State.class);
+            NEXT_ID    = MethodHandles.lookup().findStaticVarHandle(AsyncEmitter.class, "plainNextId", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
+        }
+        for (int i = 0, n = POOL_CAP/4; i < n; i++) {
+            RECV_POOL.offer(new Receiver[ARRAY_INIT_CAP]);
+            PROD_POOL.offer(new Producer[ARRAY_INIT_CAP]);
         }
     }
 
     @SuppressWarnings("unused") private static int plainNextId;
-
 
     private enum State {
         CREATED,
@@ -110,8 +113,14 @@ public final class AsyncEmitter<B extends Batch<B>>
     public AsyncEmitter(Vars vars, RecurringTaskRunner runner) {
         super(runner);
         this.vars = vars;
-        this.receivers = (Receiver<B>[]) RECV_POOL.arrayAtLeast(16);
-        this.producers = PROD_POOL.arrayAtLeast(16);
+        Receiver<B>[] receivers = (Receiver<B>[])RECV_POOL.get();
+        if (receivers == null)
+            receivers = (Receiver<B>[]) Array.newInstance(Receiver.class, ARRAY_INIT_CAP);
+        Producer[] producers = PROD_POOL.get();
+        if (producers == null)
+            producers = (Producer[])Array.newInstance(Producer.class, ARRAY_INIT_CAP);
+        this.receivers = receivers;
+        this.producers = producers;
     }
 
     /* --- --- --- java.lang.Object --- --- --- */
@@ -131,6 +140,13 @@ public final class AsyncEmitter<B extends Batch<B>>
             else if (s == State.CREATED    ) break;
             else                             throw new RegisterAfterStartException();
         }
+    }
+
+    private static <T> T[] grow(T[] array, AffinityPool<T[]> pool) {
+        T[] bigger = Arrays.copyOf(array, array.length + (array.length >> 1));
+        Arrays.fill(array, null);
+        pool.offer(array);
+        return bigger;
     }
 
     /* --- --- --- producer methods --- --- --- */
@@ -165,7 +181,7 @@ public final class AsyncEmitter<B extends Batch<B>>
             int n = this.nProducers;
             Producer[] a = this.producers;
             if (n == a.length)
-                this.producers = a = PROD_POOL.grow(a, n, Math.max(8, n)<<1);
+                this.producers = a = grow(a, PROD_POOL);
             a[n] = producer;
             this.nProducers = n+1;
         } finally {
@@ -185,7 +201,7 @@ public final class AsyncEmitter<B extends Batch<B>>
      * {@link AsyncEmitter} will also complete normally.</p>
      */
     public void producerTerminated() {
-        int nTerm = (int)TERM_PRODS.getAndAddRelease(this, 1)+1;
+        int nTerm = (int)TERM_PRODS.getAndAdd(this, 1)+1;
         if (nTerm < nProducers)
             return;
         var s = (State)S.getOpaque(this);
@@ -227,7 +243,7 @@ public final class AsyncEmitter<B extends Batch<B>>
      * @return the current number of unsatisfied {@link #request(long)}ed rows. <strong>May be
      *         negative</strong>
      */
-    public long requested() { return (long)REQUESTED.getAcquire(this); }
+    public long requested() { return (long)REQUESTED.getOpaque(this); }
 
     /**
      * Sends {@code b} or {@code b} rows to the receiver of this {@link AsyncEmitter}.
@@ -290,7 +306,7 @@ public final class AsyncEmitter<B extends Batch<B>>
             int n = this.nReceivers;
             var a = this.receivers;
             if (n == a.length)
-                this.receivers = a = (Receiver<B>[]) RECV_POOL.grow(a, n, Math.max(8, n)<<1);
+                this.receivers = a = (Receiver<B>[]) grow(a, RECV_POOL);
             a[n] = receiver;
             this.nReceivers = n+1;
         } finally {
