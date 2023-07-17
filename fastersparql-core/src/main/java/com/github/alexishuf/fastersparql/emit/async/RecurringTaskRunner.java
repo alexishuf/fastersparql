@@ -114,12 +114,14 @@ public class RecurringTaskRunner {
         }
 
         @Override public void run() {
+            int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
             var parent = RecurringTaskRunner.this;
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task task = pollOrSteal(id);
                 if (task == null) {
                     LockSupport.park(parent);
+                    md[mdParkedIdx] = 0;
                 } else {
                     try {
                         task.run();
@@ -137,11 +139,13 @@ public class RecurringTaskRunner {
     private static final int MD_QUEUE_BASE = 2;
     private static final int MD_TAKE       = 3;
     private static final int MD_PUT        = 4;
+    private static final int MD_PARKED     = 5;
+    static { assert MD_PARKED < (1<<MD_BITS); }
 
-    private static final int RMD_SHR_LOCK = 0;
-    private static final int RMD_SHR_PRKD = 1;
-    private static final int RMD_WORKER   = 2;
-    private static final int RMD_TASKS    = 3;
+    private static final int RMD_SHR_LOCK   = 0;
+    private static final int RMD_SHR_PARKED = 1;
+    private static final int RMD_WORKER     = 2;
+    private static final int RMD_TASKS      = 3;
 
     private static final int QUEUE_CAP = 128/4;
     private static final int QUEUE_IMBALANCE_CHECK = QUEUE_CAP>>3;
@@ -267,7 +271,7 @@ public class RecurringTaskRunner {
      *
      * @param queue the worker queue to be polled first
      * @return A {@link Task} removed from one of the queues or {@code null} if all queues were
-     *         empty or with too much contention to allow stealing
+     * empty or with too much contention to allow stealing
      */
     private @Nullable Task pollOrSteal(int queue) {
         int mdb = queue << MD_BITS;
@@ -280,6 +284,14 @@ public class RecurringTaskRunner {
                 task = sharedSteal();
             if (task == null)
                 task = localSteal(queue);
+            if (task == null) {
+                while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
+                    onSpinWait();
+                task = localPollLocked(mdb);
+                if (task == null)
+                    md[mdb+MD_PARKED] = 1;
+                MD.setRelease(md, mdb+MD_LOCK, 0);
+            }
         }
         return task;
     }
@@ -295,8 +307,8 @@ public class RecurringTaskRunner {
      *         queue was full or if there was too much contention on the spinlock.
      */
     private boolean tryAdd(Task task, boolean canUnpark) {
-        int mdb = task.worker<<MD_BITS, lockIdx = mdb+MD_LOCK, size;
-        boolean got = false;
+        int mdb = task.worker<<MD_BITS, lockIdx = mdb+MD_LOCK;
+        boolean got = false, unpark;
         for (int i = 0; i < 16; i++) {
             got = (int) MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
             if (got || i == 7 && md[(((task.worker+1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
@@ -306,7 +318,8 @@ public class RecurringTaskRunner {
         if (!got)
             return false; // congested spinlock
         try {
-            if ((size = md[mdb+MD_SIZE]) >= QUEUE_CAP)
+            int size = md[mdb+MD_SIZE];
+            if (size >= QUEUE_CAP)
                 return false; // full queue
             md[mdb+MD_SIZE] = size+1;
             int putIdx;
@@ -320,10 +333,11 @@ public class RecurringTaskRunner {
                 md[mdb+MD_PUT] = (putIdx+1) & QUEUE_MASK;
             }
             queues[md[mdb+MD_QUEUE_BASE]+putIdx] = task;
+            unpark = canUnpark && md[mdb+MD_PARKED] == 1;
         } finally {
             MD.setRelease(md, lockIdx, 0);
         }
-        if (size == 0 && canUnpark)
+        if (unpark)
             LockSupport.unpark(workers[mdb>>MD_BITS]);
         return true;
     }
@@ -368,7 +382,7 @@ public class RecurringTaskRunner {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
             var task = sharedQueue.poll();
-            if (!sharedQueue.isEmpty() && runnerMd[RMD_SHR_PRKD] != 0)
+            if (!sharedQueue.isEmpty() && runnerMd[RMD_SHR_PARKED] != 0)
                 LockSupport.unpark(sharedScheduler);
             return task;
         } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
@@ -419,9 +433,9 @@ public class RecurringTaskRunner {
                     }
                 }
                 if (task == null) {
-                    MD.setOpaque(runnerMd, RMD_SHR_PRKD, 1);
+                    MD.setOpaque(runnerMd, RMD_SHR_PARKED, 1);
                     LockSupport.park(this);
-                    MD.setOpaque(runnerMd, RMD_SHR_PRKD, 0);
+                    MD.setOpaque(runnerMd, RMD_SHR_PARKED, 0);
                 }
             } catch (Throwable t) {
                 log.error("Ignoring exception on sharedScheduler", t);
