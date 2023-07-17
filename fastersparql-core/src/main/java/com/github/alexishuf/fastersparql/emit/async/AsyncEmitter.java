@@ -204,8 +204,7 @@ public final class AsyncEmitter<B extends Batch<B>>
         int nTerm = (int)TERM_PRODS.getAndAdd(this, 1)+1;
         if (nTerm < nProducers)
             return;
-        var s = (State)S.getOpaque(this);
-        if (s.isTerminated())
+        if (plainState.isTerminated())
             return;
         boolean cancelled = false, terminated = true;
         Throwable firstError = null, error;
@@ -222,7 +221,7 @@ public final class AsyncEmitter<B extends Batch<B>>
             }
         }
         if (terminated) {
-            State ex, tgt;
+            State ex, tgt, curr = plainState;
             if (firstError != null) {
                 tgt = State.FAILED;
                 this.error = firstError;
@@ -230,9 +229,9 @@ public final class AsyncEmitter<B extends Batch<B>>
                 tgt = cancelled ? State.CANCEL_COMPLETED : State.COMPLETED;
             }
             do {
-                s = (State)S.compareAndExchangeRelease(this, ex=s, tgt);
-                if (s.isTerminated()) return;
-            } while (s != ex);
+                curr = (State)S.compareAndExchangeRelease(this, ex=curr, tgt);
+                if (curr.isTerminated()) return;
+            } while (curr != ex);
             awake(); // deliver termination
         }
     }

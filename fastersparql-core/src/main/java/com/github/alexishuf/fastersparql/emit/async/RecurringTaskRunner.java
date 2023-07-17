@@ -248,12 +248,10 @@ public class RecurringTaskRunner {
      */
     private @Nullable Task localSteal(int emptyQueue) {
         for (int i = (emptyQueue+1)&threadsMask; i != emptyQueue; i = (i+1)&threadsMask) {
-            int mdb = i<<MD_BITS;
-            if ((int)MD.getOpaque(md, mdb+MD_SIZE) == 0)
-                continue;
-            if ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) == 0) {
-                Task task = localPollLocked(mdb);
-                MD.setRelease(md, mdb+MD_LOCK, 0);
+            int b = i<<MD_BITS;
+            if (md[b+MD_SIZE] > 0 && (int)MD.compareAndExchangeAcquire(md, b+MD_LOCK, 0, 1) == 0) {
+                Task task = localPollLocked(b);
+                MD.setRelease(md, b+MD_LOCK, 0);
                 if (task != null)
                     return task;
             }
