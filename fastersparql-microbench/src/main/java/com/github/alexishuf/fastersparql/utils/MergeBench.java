@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 
@@ -71,6 +72,10 @@ public class MergeBench {
         for (int i = 0; i < nEmpty; i++, next += tallHeight)
             columns.add(type.create(1, 1, 0));
         Async.uninterruptibleSleep(100); // thermal slack
+    }
+
+    @TearDown(Level.Iteration) public void tearDown() {
+        PoolCleaner.INSTANCE.sync();
     }
 
     private static final class SourceBIt<B extends Batch<B>> extends UnitaryBIt<B> {

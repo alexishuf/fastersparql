@@ -23,6 +23,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -226,6 +227,7 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
+        PoolCleaner.INSTANCE.sync();
         IOUtils.fsync(50_000);
         if (iterationsComplete > 0) {
             if ((iterationsComplete & 1) == 0)

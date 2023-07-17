@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -88,14 +89,13 @@ public class MeasureOptions {
         var runtime = Runtime.getRuntime();
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
+        PoolCleaner.INSTANCE.sync();
+        if (ms > 50) uninterruptibleSleep(50);
         System.gc();
-        IOUtils.fsync(ms-(Timestamp.nanoTime()-start)/1_000_000);
-        do {
-            uninterruptibleSleep(250);
-            System.gc();
-        } while ((Timestamp.nanoTime()-start) < 250_000_000);
-
+        IOUtils.fsync(ms - (Timestamp.nanoTime()-start)/1_000_000);
+        uninterruptibleSleep(ms - (int)((Timestamp.nanoTime()-start)/1_000_000));
         double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
+
         log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*freeAfter-freeBefore));
     }
 

@@ -5,10 +5,11 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
+import java.util.Arrays;
 
 import static java.lang.Thread.currentThread;
 
-public class AffinityPool<T> {
+public class AffinityPool<T> implements LeakyPool {
     private static final int LOCKED = Integer.MIN_VALUE;
     private static final int L_SHIFT = Integer.numberOfTrailingZeros(64/4);
     private static final VarHandle L = MethodHandles.arrayElementVarHandle(Object[].class);
@@ -35,6 +36,15 @@ public class AffinityPool<T> {
         this.local  = (T[]) Array.newInstance(cls, safeThreads<<L_SHIFT);
         this.capacity = capacity;
         this.mask = safeThreads-1;
+        PoolCleaner.INSTANCE.monitor(this);
+    }
+
+    @Override public void cleanLeakyRefs() {
+        int size;
+        while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
+        try {
+            Arrays.fill(shared, size, shared.length, null);
+        } finally { S.setRelease(this, size); }
     }
 
     @SuppressWarnings("unchecked") public @Nullable T get() {

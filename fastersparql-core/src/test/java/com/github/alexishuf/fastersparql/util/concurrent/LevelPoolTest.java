@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -48,6 +49,10 @@ class LevelPoolTest {
         interesting[o  ] = capacities[capacities.length-1];
         CAPACITIES = capacities;
         INTERESTING_CAPACITIES = interesting;
+    }
+
+    @AfterAll static void afterAll() {
+        PoolCleaner.INSTANCE.sync();
     }
 
     @ParameterizedTest @ValueSource(ints = {1, 2, 3, 4, 257})

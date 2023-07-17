@@ -1,26 +1,19 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
-import java.util.Map;
-import java.util.WeakHashMap;
+import java.util.Arrays;
 
 import static java.lang.Integer.numberOfLeadingZeros;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.System.identityHashCode;
-import static java.lang.Thread.MIN_PRIORITY;
 import static java.lang.Thread.onSpinWait;
-import static java.util.Collections.synchronizedMap;
 
 @SuppressWarnings("unchecked")
-public final class LevelPool<T> {
-    private static final Logger log = LoggerFactory.getLogger(LevelPool.class);
-
+public final class LevelPool<T> implements LeakyPool {
     /* --- --- --- atomic access --- --- --- */
 
     private static final VarHandle S = MethodHandles.arrayElementVarHandle(short[].class);
@@ -46,39 +39,6 @@ public final class LevelPool<T> {
     private static final int S_SHIFT = numberOfTrailingZeros(64/4); // one "size" per cache line
     private static final short LOCKED  = Short.MIN_VALUE;
     private static final int MD_BASE_AND_CAP = (32+1)<<S_SHIFT;
-
-    /* --- --- --- references cleanup --- --- --- */
-
-    private static final int CLEAN_INTERVAL_MS = 2_000;
-    private static final Map<LevelPool<?>, Boolean> pools = synchronizedMap(new WeakHashMap<>());
-
-    private static void refCleanerThread() {
-        while (true) {
-            try {
-                for (LevelPool<?> pool : pools.keySet()) {
-                    try {
-                        pool.cleanLeakyRefs();
-                    } catch (Exception e) {
-                        log.warn("{}.cleanLeakyRefs failed: ", pool, e);
-                    }
-                }
-                //noinspection BusyWait
-                Thread.sleep(CLEAN_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                log.info("refCleanerThread exiting due to InterruptedException");
-                break;
-            } catch (Exception e) {
-                log.warn("Unexpected error", e);
-            }
-        }
-    }
-
-    static {
-        var t = new Thread(LevelPool::refCleanerThread, "LevelPool-refCleanerThread");
-        t.setDaemon(true);
-        t.setPriority(MIN_PRIORITY);
-        t.start();
-    }
 
     /* --- --- --- instance fields --- --- --- */
 
@@ -111,6 +71,7 @@ public final class LevelPool<T> {
         base = fillMetadata(MEDIUM_MAX_CAPACITY<<1,  LARGE_MAX_CAPACITY, base, (short)largeLevelCap);
         base = fillMetadata( LARGE_MAX_CAPACITY<<1,   HUGE_MAX_CAPACITY, base, (short)hugeLevelCap);
         assert base == pool.length : "base != pool.length";
+        PoolCleaner.INSTANCE.monitor(this);
     }
 
     private short fillMetadata(int firstCapacity, int lastCapacity, short base, short itemsPerLevel) {
@@ -159,7 +120,7 @@ public final class LevelPool<T> {
         }
     }
 
-    private void cleanLeakyRefs() {
+    @Override public void cleanLeakyRefs() {
         for (int l = 0; l < 33; l++) {
             short size;
             int base =      metadata[MD_BASE_AND_CAP+(l<<1)  ];
@@ -167,8 +128,7 @@ public final class LevelPool<T> {
             while ((size = (short)S.getAndSetAcquire(metadata, l<<S_SHIFT, LOCKED)) == LOCKED)
                 onSpinWait();
             try {
-                for (int i = base+size; i < end && pool[i] != null; i++)
-                    pool[i] = null;
+                Arrays.fill(pool, base+size, end, null);
             } finally {
                 S.setRelease(metadata, l<<S_SHIFT, size);
             }

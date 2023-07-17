@@ -12,9 +12,9 @@ import static java.lang.System.arraycopy;
 public class ArrayPool<T> extends AffinityLevelPool<T> {
     /* --- --- --- instances --- --- --- */
 
-    public static final ArrayPool<byte[]> BYTE     = new ArrayPool<>(       byte[].class);
-    public static final ArrayPool<int[]> INT      = new ArrayPool<>(        int[].class);
-    public static final ArrayPool<long[]> LONG     = new ArrayPool<>(       long[].class);
+    public static final ArrayPool<byte[]> BYTE            = new ArrayPool<>(       byte[].class);
+    public static final ArrayPool<int[]> INT              = new ArrayPool<>(        int[].class);
+    public static final ArrayPool<long[]> LONG            = new ArrayPool<>(       long[].class);
     public static final ArrayPool<SegmentRope[]> SEG_ROPE = new ArrayPool<>(SegmentRope[].class);
 
     private static void prime(int firstCapacity, int lastCapacity, int n) {

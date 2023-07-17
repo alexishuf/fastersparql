@@ -4,12 +4,13 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
+import java.util.Arrays;
 
 import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
 
-public final class LIFOPool<T> {
+public final class LIFOPool<T> implements LeakyPool {
     private static final int LOCKED = Integer.MIN_VALUE;
     private static final VarHandle S;
     static {
@@ -33,6 +34,16 @@ public final class LIFOPool<T> {
 
     public Class<T> itemClass() { return cls; }
 
+    @Override public void cleanLeakyRefs() {
+        int size;
+        while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
+        try {
+            Arrays.fill(recycled, size, recycled.length, null);
+        } finally {
+            S.setRelease(this, size);
+        }
+    }
+
     /**
      * Possibly get a {@code T} previously given to {@link LIFOPool#offer(Object)}.
      *
@@ -51,7 +62,6 @@ public final class LIFOPool<T> {
         try {
             if (size == 0) return null;
             return recycled[--size];
-            //recycled[size] = null;
         } finally {
             S.setRelease(this, size);
         }
