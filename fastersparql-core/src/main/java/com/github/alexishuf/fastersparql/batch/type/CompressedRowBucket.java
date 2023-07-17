@@ -21,7 +21,8 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
     private static final byte[][] EMPTY_ROWS_DATA = new byte[0][];
-    private static final LevelPool<byte[][]> DATA_POOL = new LevelPool<>(byte[][].class, 1024, 16, 1, 1);
+    private static final LevelPool<byte[][]> DATA_POOL = new LevelPool<>(byte[][].class,
+            16, 1024, 16, 1, 1);
 
     private int cols;
     private byte[][] rowsData;
@@ -100,35 +101,44 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         cols = 0;
     }
 
+    private class It implements Iterator<CompressedBatch> {
+        private CompressedBatch batch;
+        private boolean filled = false;
+        private int row = 0;
+
+        public It() {
+            int rows = Math.min(64, rowsData.length);
+            batch = CompressedBatchType.INSTANCE.create(rows, cols, rows*32);
+        }
+
+        @Override public boolean hasNext() {
+            boolean has = batch != null;
+            if (!filled && has) {
+                filled = true;
+                row = fill(batch, row);
+                has = batch.rows != 0;
+                if (!has)
+                    batch = CompressedBatchType.INSTANCE.recycle(batch);
+            }
+            return has;
+        }
+
+        @Override public CompressedBatch next() {
+            if (!hasNext()) throw new NoSuchElementException();
+            filled = false;
+            return batch;
+        }
+    }
+
     @Override public Iterator<CompressedBatch> iterator() {
-        return new Iterator<>() {
-            final CompressedBatch batch = new CompressedBatch(64, cols, 512);
-            boolean filled = false;
-            int row = 0;
-
-            @Override public boolean hasNext() {
-                if (!filled) {
-                    filled = true;
-                    row = fill(batch, row);
-                    if (batch.rows == 0)
-                        batch.recycleInternals();
-                }
-                return batch.rows != 0;
-            }
-
-            @Override public CompressedBatch next() {
-                if (!hasNext()) throw new NoSuchElementException();
-                filled = false;
-                return batch;
-            }
-        };
+        return new It();
     }
 
     private int fill(CompressedBatch b, int row) {
         int cols = this.cols;
         b.clear(cols);
         while (row < rowsData.length && !has(row)) ++row;
-        while (b.bytesCapacity() >= 32 && row < rowsData.length) {
+        while (b.localsFreeCapacity() >= 32 && row < rowsData.length) {
             // add row
             byte[] d = rowsData[row];
             b.beginPut();

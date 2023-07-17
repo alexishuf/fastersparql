@@ -9,7 +9,7 @@ import java.lang.reflect.Array;
 import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.*;
 import static java.lang.System.arraycopy;
 
-public class ArrayPool<T> extends StealingLevelPool<T> {
+public class ArrayPool<T> extends AffinityLevelPool<T> {
     /* --- --- --- instances --- --- --- */
 
     public static final ArrayPool<byte[]> BYTE     = new ArrayPool<>(       byte[].class);
@@ -28,9 +28,10 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         }
     }
     static {
-        prime(FIRST_CAPACITY, SMALL_MAX_CAPACITY,  Math.min(64, DEF_SMALL_LEVEL_CAPACITY));
-        prime(SMALL_MAX_CAPACITY<<1, MEDIUM_MAX_CAPACITY, Math.min(32, DEF_MEDIUM_LEVEL_CAPACITY));
-        prime(MEDIUM_MAX_CAPACITY<<1, LARGE_MAX_CAPACITY, Math.min(4,  DEF_LARGE_LEVEL_CAPACITY));
+        prime(1,                      TINY_MAX_CAPACITY,   Math.min(64, DEF_TINY_LEVEL_CAPACITY));
+        prime(TINY_MAX_CAPACITY<<1,   SMALL_MAX_CAPACITY,  Math.min(64, DEF_SMALL_LEVEL_CAPACITY));
+        prime(SMALL_MAX_CAPACITY<<1,  MEDIUM_MAX_CAPACITY, Math.min(32, DEF_MEDIUM_LEVEL_CAPACITY));
+        prime(MEDIUM_MAX_CAPACITY<<1, LARGE_MAX_CAPACITY,  Math.min(4,  DEF_LARGE_LEVEL_CAPACITY));
     }
 
     /* --- --- --- lifecycle --- --- --- */
@@ -120,25 +121,25 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
 
     public static byte[] bytesAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_BYTE;
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         byte[] a = BYTE.getFromLevel(level);
         return a == null ? new byte[1<<level] : a;
     }
     public static int[] intsAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_INT;
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         int[] a = INT.getFromLevel(level);
         return a == null ? new int[1<<level] : a;
     }
     public static long[] longsAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_LONG;
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         long[] a = LONG.getFromLevel(level);
         return a == null ? new long[1<<level] : a;
     }
     public static SegmentRope[] segmentRopesAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_SEG_ROPE;
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         SegmentRope[] a = SEG_ROPE.getFromLevel(level);
         return a == null ? new SegmentRope[1<<level] : a;
     }
@@ -150,7 +151,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         } else if (minSize == 0) {
             return EMPTY_BYTE;
         }
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = BYTE.getFromLevel(level)) == null ? new byte[1<<level] : a;
     }
     public static int[] intsAtLeast(int minSize, int @Nullable[] a) {
@@ -160,7 +161,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         } else if (minSize == 0) {
             return EMPTY_INT;
         }
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = INT.getFromLevel(level)) == null ? new int[1<<level] : a;
     }
     public static long[] longsAtLeast(int minSize, long @Nullable[] a) {
@@ -170,7 +171,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         } else if (minSize == 0) {
             return EMPTY_LONG;
         }
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = LONG.getFromLevel(level)) == null ? new long[1<<level] : a;
     }
     public static SegmentRope[] segmentRopesAtLeast(int minSize, SegmentRope @Nullable[] a) {
@@ -180,7 +181,7 @@ public class ArrayPool<T> extends StealingLevelPool<T> {
         } else if (minSize == 0) {
             return EMPTY_SEG_ROPE;
         }
-        int level = 32 - Integer.numberOfLeadingZeros(minSize-1);
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = SEG_ROPE.getFromLevel(level)) == null ? new SegmentRope[1<<level] : a;
     }
 

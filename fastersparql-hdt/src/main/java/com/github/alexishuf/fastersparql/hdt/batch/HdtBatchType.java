@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,31 +14,36 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSou
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public class HdtBatchType extends BatchType<HdtBatch> {
-    public static final HdtBatchType INSTANCE = new HdtBatchType(
-            new LevelPool<>(HdtBatch.class));
+    /**
+     * A batch with 1 row and 1 column will report/require a
+     * {@link HdtBatch#directBytesCapacity()} of 12. Applying {@code >> POOL_SHIFT}, turns
+     * ensures that the lower pool levels also get used.
+     */
+    private static final int POOL_SHIFT = 3;
+    public static final HdtBatchType INSTANCE = new HdtBatchType();
 
-    private final LevelPool<HdtBatch> pool;
+    public HdtBatchType() {super(HdtBatch.class);}
 
-    public HdtBatchType(LevelPool<HdtBatch> pool) {
-        super(HdtBatch.class);
-        this.pool = pool;
-    }
-
-    @Override public HdtBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        HdtBatch b = pool.getAtLeast(rowsCapacity*cols);
+    @Override public HdtBatch create(int rowsCapacity, int cols, int localBytes) {
+        int capacity = rowsCapacity * cols;
+        HdtBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new HdtBatch(rowsCapacity, cols);
         b.unmarkPooled();
         b.clear(cols);
+        BatchEvent.Unpooled.record(capacity<<POOL_SHIFT);
         return b;
     }
 
     @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
         if (batch == null) return null;
         batch.markPooled();
-        if (pool.offer(batch, batch.arr.length) != null) {
-            batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
-            batch.markGC();
+        int capacity = batch.directBytesCapacity();
+        if (pool.offerToNearest(batch, capacity>>POOL_SHIFT) == null) {
+            BatchEvent.Pooled.record(capacity);
+        } else {
+            batch.recycleInternals();
+            BatchEvent.Garbage.record(capacity);
         }
         return null;
     }

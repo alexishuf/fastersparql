@@ -25,7 +25,10 @@ class RowBucketTest {
 
     @ParameterizedTest @MethodSource() <B extends Batch<B>> void test(BatchType<B> bt) {
         RowBucket<B> bucket = bt.createBucket(57, 2);
-        assertTrue(bucket.capacity() >= 57 && bucket.capacity() <= 64);
+        assertTrue(bucket.capacity() >= 57);
+        if (bucket instanceof CompressedRowBucket)
+            assertTrue(bucket.capacity() <= 64);
+        // else: other implementations hold a Batch<?>, which may be bigger due to offerToNearest()
         bucket.grow(128-bucket.capacity());
         assertEquals(128, bucket.capacity());
         assertEquals(List.of(), range(0, bucket.capacity()).filter(bucket::has).boxed().toList());

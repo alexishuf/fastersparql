@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
@@ -11,7 +12,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -19,34 +19,38 @@ import java.util.List;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static java.lang.invoke.MethodHandles.lookup;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
     private static final VarHandle P;
-    private static final int P_UNPOOLED = 0;
-    private static final int P_POOLED   = 1;
-    private static final int P_GC       = 2;
+    private static final byte P_UNPOOLED = 0;
+    private static final byte P_POOLED   = 1;
+    private static final byte P_GARBAGE  = 2;
 
     static {
         try {
-            P = MethodHandles.lookup().findVarHandle(Batch.class, "plainPooled", int.class);
+            P = lookup().findVarHandle(Batch.class, "plainPooled", byte.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
-    private static final boolean DEBUG = Batch.class.desiredAssertionStatus();
+    protected static final boolean MARK_POOLED = FSProperties.batchPooledMark();
+    protected static final boolean TRACE_POOLED = FSProperties.batchPooledTrace();
 
     public static final TermBatchType TERM = TermBatchType.INSTANCE;
     public static final CompressedBatchType COMPRESSED = CompressedBatchType.INSTANCE;
 
     public int rows, cols;
-    @SuppressWarnings("unused") private int plainPooled;
+    @SuppressWarnings("unused") private byte plainPooled;
     private PoolEvent[] poolTraces;
 
     protected Batch(int rows, int cols) {
         this.rows = rows;
         this.cols = cols;
+        if (TRACE_POOLED)
+            poolTraces = new PoolEvent[] {null, new UnpooledEvent(null)};
     }
 
     /* --- --- --- pooling lifecycle --- --- ---  */
@@ -62,55 +66,74 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     public void markPooled() {
-        if (DEBUG) {
-            if ((int)P.compareAndExchangeRelease(this, P_UNPOOLED, P_POOLED) == P_POOLED) {
-                throw new IllegalStateException("pooling already pooled batch",
+        if (MARK_POOLED) {
+            if ((byte)P.compareAndExchangeRelease(this, P_UNPOOLED, P_POOLED) != P_UNPOOLED) {
+                throw new IllegalStateException("pooling batch that is not unpooled",
                                                 poolTraces == null ? null : poolTraces[0]);
             }
-            if (poolTraces == null) poolTraces = new PoolEvent[2];
-            PoolEvent cause = poolTraces[1];
-            if (cause != null) {
-                var acyclical = new UnpooledEvent(null);
-                acyclical.setStackTrace(cause.getStackTrace());
-                cause = acyclical;
+            if (TRACE_POOLED) {
+                if (poolTraces == null) poolTraces = new PoolEvent[2];
+                PoolEvent cause = poolTraces[1];
+                if (cause != null) {
+                    var acyclic = new UnpooledEvent(null);
+                    acyclic.setStackTrace(cause.getStackTrace());
+                    cause = acyclic;
+                }
+                poolTraces[0] = new PooledEvent(cause);
             }
-            poolTraces[0] = new PooledEvent(cause);
+        }
+    }
+
+    public void markGarbage() {
+        if (MARK_POOLED) {
+            byte old = (byte) P.getAndSetRelease(this, P_GARBAGE);
+            if (old == P_GARBAGE)
+                throw new IllegalStateException("garbage batch marked as garbage again");
         }
     }
 
     public void unmarkPooled() {
-        if (DEBUG) {
-            if ((int)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) == P_UNPOOLED)
+        if (MARK_POOLED) {
+            if ((byte)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) != P_POOLED)
                 throw new IllegalStateException("un-pooling batch that is not pooled",
                         poolTraces == null ? null : poolTraces[1]);
-            if (poolTraces == null) poolTraces = new PoolEvent[2];
-            PoolEvent cause = poolTraces[0];
-            if (cause != null) {
-                var acyclical = new PooledEvent(null);
-                acyclical.setStackTrace(cause.getStackTrace());
-                cause = acyclical;
+            if (TRACE_POOLED) {
+                if (poolTraces == null) poolTraces = new PoolEvent[2];
+                PoolEvent cause = poolTraces[0];
+                if (cause != null) {
+                    var acyclic = new PooledEvent(null);
+                    acyclic.setStackTrace(cause.getStackTrace());
+                    cause = acyclic;
+                }
+                poolTraces[1] = new UnpooledEvent(cause);
             }
-            poolTraces[1] = new UnpooledEvent(cause);
         }
     }
 
-    public void markGC() {
-        if (DEBUG) P.setRelease(this, P_GC);
-    }
-
     public void requirePooled() {
-        if (DEBUG && (int)P.getOpaque(this) != P_POOLED) {
+        if (MARK_POOLED && (byte)P.getOpaque(this) != P_POOLED) {
             throw new IllegalStateException("batch is not pooled",
                                             poolTraces == null ? null : poolTraces[1]);
         }
     }
 
     public void requireUnpooled() {
-        if (DEBUG && (int)P.getOpaque(this) != P_UNPOOLED) {
+        if (MARK_POOLED && (byte)P.getOpaque(this) != P_UNPOOLED) {
             throw new IllegalStateException("batch is pooled",
                                             poolTraces == null ? null : poolTraces[0]);
         }
     }
+
+//    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
+//        if (MARK_POOLED) {
+//            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
+//                BatchEvent.Leaked.record(this);
+//                PoolEvent e;
+//                if (poolTraces != null && (e = poolTraces[1]) != null)
+//                    e.printStackTrace();
+//            }
+//        }
+//    }
 
     /**
      * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
@@ -142,6 +165,26 @@ public abstract class Batch<B extends Batch<B>> {
      * @return how many bytes are being currently used.
      */
     public int bytesUsed() { return (rows*cols)<<3; }
+
+    /**
+     * Total number of bytes that this batch directly holds.
+     *
+     * <p>This value is intended to be used in conjunction with pooling: batches can be mapped
+     * to specific buckets according to their capacity while pool lookup can use the expected
+     * direct byte usage to obtain a batch that can handle the demand without triggering internal
+     * re-allocations. </p>
+     *
+     * <p>The relation between {@link #rows()} and {@link #cols()} to this capacity
+     * is implementation dependent, but for all implementations, increasing {@code rows} or
+     * {@code cols} by {@code }O(n)} will require an {@code O(n)} increase in direct
+     * bytes capacity. The length of shared segments of stored terms generally have no impact on
+     * direct bytes capacity by the definition of <strong>shared</strong>. Local segments have
+     * an impact only if the batch directly stores the local parts, which is the case of
+     * {@link CompressedBatch} but is not the case for {@link TermBatch} and {@link IdBatch}.</p>
+     *
+     * @return the number of bytes that this batch directly owns for storing terms.
+     */
+    public abstract int directBytesCapacity();
 
     public abstract int rowsCapacity();
 

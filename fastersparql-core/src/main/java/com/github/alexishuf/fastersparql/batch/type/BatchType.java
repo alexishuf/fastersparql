@@ -4,18 +4,29 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityLevelPool;
+import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchType<B extends Batch<B>> {
+    private static final int   TINY_LEVEL_CAP =   64;
+    private static final int  SMALL_LEVEL_CAP =  128;
+    private static final int MEDIUM_LEVEL_CAP =  128;
+    private static final int  LARGE_LEVEL_CAP =  128;
+    private static final int   HUGE_LEVEL_CAP =   64;
+
     public final Class<B> batchClass;
     public final DedupPool<B> dedupPool;
     private final String name;
+    protected final AffinityLevelPool<B> pool;
 
     public BatchType(Class<B> batchClass) {
         this.batchClass = batchClass;
         this.dedupPool = new DedupPool<>(this);
         this.name = getClass().getSimpleName().replaceAll("Type$", "");
+        this.pool = new AffinityLevelPool<>(new LevelPool<>(batchClass, TINY_LEVEL_CAP,
+                SMALL_LEVEL_CAP, MEDIUM_LEVEL_CAP, LARGE_LEVEL_CAP, HUGE_LEVEL_CAP));
     }
 
     /** Get the {@link Class} object of {@code B}. */
@@ -38,11 +49,11 @@ public abstract class BatchType<B extends Batch<B>> {
      *                     insertions before this is reached. Some implementations may
      *                     ignore this in favor of {@code bytesCapacity}
      * @param cols number of columns in the batch
-     * @param bytesCapacity number of bytesCapacity to allocate. Some implementations may ignore this in favor
-     *              of {@code rowsCapacity}
+     * @param localBytes number of bytesCapacity to allocate. Some implementations may ignore this in favor
+     *                   of {@code rowsCapacity}
      * @return an empty {@link Batch}
      */
-    public abstract B create(int rowsCapacity, int cols, int bytesCapacity);
+    public abstract B create(int rowsCapacity, int cols, int localBytes);
 
     /**
      * Create a batch that will very likely hold at most single row.
@@ -50,7 +61,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @param cols number of columns for the new batch
      * @return a new empty batch that can hold @{code cols} columns.
      */
-    public B createSingleton(int cols) { return create(1, cols, 16); }
+    public B createSingleton(int cols) { return create(1, cols, 0); }
 
     /**
      * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
@@ -66,7 +77,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @param b a batch for which bytes usage of local segments will be computed
      * @return the required number of bytes
      */
-    public int bytesRequired(Batch<?> b) { return b.bytesUsed(); }
+    public int localBytesRequired(Batch<?> b) { return b.bytesUsed(); }
 
     /**
      * Convert/copy a single batch.
@@ -75,7 +86,7 @@ public abstract class BatchType<B extends Batch<B>> {
      * @return a batch of this type ({@code B}) with the same rows as {@code src}
      */
     public final <O extends Batch<O>> B convert(O src) {
-        return create(src.rows, src.cols, bytesRequired(src)).putConverting(src);
+        return create(src.rows, src.cols, localBytesRequired(src)).putConverting(src);
     }
 
     /**

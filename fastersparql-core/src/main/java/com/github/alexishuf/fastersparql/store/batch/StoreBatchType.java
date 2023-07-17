@@ -1,12 +1,12 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,30 +14,36 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSou
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public class StoreBatchType extends BatchType<StoreBatch> {
-    public static final StoreBatchType INSTANCE = new StoreBatchType(
-            new LevelPool<>(StoreBatch.class));
-    private final LevelPool<StoreBatch> pool;
+    /**
+     * A batch with 1 row and 1 column will report/require a
+     * {@link StoreBatch#directBytesCapacity()} of 12. Applying {@code >> POOL_SHIFT}, turns
+     * ensures that the lower pool levels also get used.
+     */
+    private static final int POOL_SHIFT = 3;
+    public static final StoreBatchType INSTANCE = new StoreBatchType();
 
-    public StoreBatchType(LevelPool<StoreBatch> pool) {
-        super(StoreBatch.class);
-        this.pool = pool;
-    }
+    public StoreBatchType() {super(StoreBatch.class);}
 
-    @Override public StoreBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        StoreBatch b = pool.getAtLeast(rowsCapacity*cols);
+    @Override public StoreBatch create(int rowsCapacity, int cols, int localBytes) {
+        int capacity = rowsCapacity*cols;
+        StoreBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new StoreBatch(rowsCapacity, cols);
         b.unmarkPooled();
         b.clear(cols);
+        BatchEvent.Unpooled.record(capacity<<POOL_SHIFT);
         return b;
     }
 
     @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
         if (batch == null) return null;
+        int capacity = batch.directBytesCapacity();
         batch.markPooled();
-        if (pool.offer(batch, batch.arr.length) != null) {
+        if (pool.offerToNearest(batch, capacity>>POOL_SHIFT) == null) {
+            BatchEvent.Pooled.record(capacity);
+        } else {
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
-            batch.markGC();
+            BatchEvent.Garbage.record(capacity);
         }
         return null;
     }

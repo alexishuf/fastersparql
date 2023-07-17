@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -15,7 +16,7 @@ import static java.lang.Runtime.getRuntime;
 import static java.lang.Thread.onSpinWait;
 import static org.junit.jupiter.api.Assertions.*;
 
-class StealingLevelPoolTest {
+class AffinityLevelPoolTest {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
     record C(int capacity, int id) {
@@ -24,10 +25,33 @@ class StealingLevelPoolTest {
         }
     }
 
+    @Test
+    void testZero() {
+        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1));
+        C zero = new C(0);
+        assertNull(a.offer(zero, 0));
+        assertSame(zero, a.getAtLeast(0));
+        assertNull(a.getAtLeast(0));
+    }
+
+    @Test
+    void testFloor() {
+        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1));
+
+        C c = new C(7);
+        assertNull(a.offer(c, 7));
+        assertSame(c, a.getAtLeast(4));
+        assertNull(a.getAtLeast(4));
+
+        assertNull(a.offer(c, 7));
+        assertSame(c, a.getAtLeast(3));
+        assertNull(a.getAtLeast(3));
+    }
+
     @ParameterizedTest @ValueSource(ints = {16, 1024, 8192})
     void testConcurrent(int capacity) throws ExecutionException, InterruptedException {
-        LevelPool<C> levelPool = new LevelPool<>(C.class, 4, 2, 1, 1);
-        var lp = new StealingLevelPool<>(levelPool);
+        LevelPool<C> levelPool = new LevelPool<>(C.class, 2, 4, 2, 1, 1);
+        var lp = new AffinityLevelPool<>(levelPool);
         int threads = getRuntime().availableProcessors() * 2;
         int rounds = 100_000, objects = rounds * threads;
         List<C> offers = new ArrayList<>(objects), taken = new ArrayList<>(objects*2);

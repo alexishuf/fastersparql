@@ -54,7 +54,7 @@ import org.openjdk.jcstress.infra.results.L_Result;
 public class RaceLevelPoolCTest {
     private static final int CAPACITY = 32;
     private static final Integer[] INTS = {0, 1, 2};
-    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 1, 1, 1);
+    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 1, 1, 1, 1);
     private final int[] retained = new int[2];
     private final int[] got = new int[2];
 
@@ -82,7 +82,7 @@ public class RaceLevelPoolCTest {
         sb.setLength(sb.length()-1);
 
         boolean dup = false;
-        Integer i0 = pool.getExact(2), i1 = pool.getExact(2);
+        Integer i0 = pool.getAtLeast(2), i1 = pool.getAtLeast(2);
         for (int idx = 1; idx < 3; idx++) {
             Integer iObj = INTS[idx];
             int iVal = iObj;

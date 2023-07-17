@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -13,23 +13,19 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSou
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public final class TermBatchType extends BatchType<TermBatch> {
-    public static final TermBatchType INSTANCE = new TermBatchType(
-            new LevelPool<>(TermBatch.class));
-
-    private final LevelPool<TermBatch> pool;
+    public static final TermBatchType INSTANCE = new TermBatchType();
 
     public static TermBatchType get() { return INSTANCE; }
 
-    public TermBatchType(LevelPool<TermBatch> pool) {
-        super(TermBatch.class);
-        this.pool = pool;
-    }
+    public TermBatchType() {super(TermBatch.class);}
 
-    @Override public TermBatch create(int rowsCapacity, int cols, int bytesCapacity) {
-        TermBatch b = pool.getAtLeast(rowsCapacity);
+    @Override public TermBatch create(int rowsCapacity, int cols, int localBytes) {
+        int capacity = rowsCapacity * cols;
+        TermBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new TermBatch(rowsCapacity, cols);
         b.unmarkPooled();
+        BatchEvent.Unpooled.record(capacity);
         b.clear(cols);
         return b;
     }
@@ -39,8 +35,9 @@ public final class TermBatchType extends BatchType<TermBatch> {
         Arrays.fill(batch.arr, null); // allow collection of Terms
         batch.rows = 0;
         batch.markPooled();
-        if (pool.offer(batch, batch.rowsCapacity()) != null)
-            batch.markGC();
+        int capacity = batch.directBytesCapacity();
+        if (pool.offerToNearest(batch, capacity) == null) BatchEvent. Pooled.record(capacity);
+        else                                              BatchEvent.Garbage.record(capacity);
         return null;
     }
 

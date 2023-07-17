@@ -20,7 +20,7 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     private final Collection<? extends BIt<B>> sources;
     private final Iterator<? extends BIt<B>> sourcesIt;
     protected int sourceIdx = -1;
-    protected BatchProcessor<B> processor;
+    protected @Nullable BatchProcessor<B> processor;
 
     public ConcatBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType, Vars vars) {
         super(vars, EmptyBIt.of(batchType));

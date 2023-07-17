@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -43,6 +44,7 @@ public final class TermBatch extends Batch<TermBatch> {
         this.arr = arr;
         if (arr.length < rows*cols)
             throw new IllegalArgumentException("arr.length < rows*cols");
+        BatchEvent.Created.record(this);
     }
 
     /**
@@ -99,6 +101,10 @@ public final class TermBatch extends Batch<TermBatch> {
         dest.rows = rows;
         dest.cols = cols;
         return dest;
+    }
+
+    @Override public int directBytesCapacity() {
+        return arr.length;
     }
 
     @Override public int rowsCapacity() {

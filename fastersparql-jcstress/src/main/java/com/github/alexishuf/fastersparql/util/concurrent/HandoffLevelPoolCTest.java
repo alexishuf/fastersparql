@@ -40,7 +40,7 @@ public class HandoffLevelPoolCTest {
     private static final int CAPACITY = 32;
     private static final Integer i0 = 0, i11 = 11, i12 = 12;
 
-    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 1, 1, 2);
+    private final LevelPool<Integer> pool = new LevelPool<>(Integer.class, 1, 1, 1, 1, 2);
 
     @Actor public void producer1(IIII_Result r) {
         var retained = pool.offer(i11, CAPACITY);
@@ -52,12 +52,12 @@ public class HandoffLevelPoolCTest {
     }
     @Actor public void consumer1(IIII_Result r) {
         Integer i = null;
-        while (i == null)  i = pool.getExact(1);
-        r.r3 = pool.getExact(1) == null ? i : i0;
+        while (i == null)  i = pool.getAtLeast(1);
+        r.r3 = pool.getAtLeast(1) == null ? i : i0;
     }
     @Actor public void consumer2(IIII_Result r) {
         Integer i = null;
-        while (i == null)  i = pool.getExact(2);
-        r.r4 = pool.getExact(2) == null ? i : i0;
+        while (i == null)  i = pool.getAtLeast(2);
+        r.r4 = pool.getAtLeast(2) == null ? i : i0;
     }
 }

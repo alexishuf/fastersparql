@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -23,9 +24,8 @@ import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
-import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
-import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -36,14 +36,10 @@ import static jdk.incubator.vector.IntVector.fromArray;
 import static jdk.incubator.vector.VectorMask.fromLong;
 
 public class CompressedBatch extends Batch<CompressedBatch> {
-    static final int MIN_LOCALS = 32;
     static final int SH_SUFF_MASK = 0x80000000;
     static final int     LEN_MASK = 0x7fffffff;
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
-
-    private static final int PUT_SLACK = LowLevelHelper.I_LEN;
-    private static final int I_SP_MASK = LowLevelHelper.I_LEN -1;
 
     public static boolean DISABLE_VALIDATE = false;
 
@@ -166,6 +162,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         byte[] locals = this.locals;
         this.locals = locals = grow(locals, required);
         this.localsSeg = MemorySegment.ofArray(locals);
+        BatchEvent.Grown.record(this);
     }
 
     private int slBase(int row, int col) {
@@ -180,18 +177,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return row*slRowInts + (cols<<1);
     }
 
-
-    /** Get a copy of {@code md} that is at least 50% bigger, can contain at least
-     *  {@code additionalInts} more integers and is aligned to {@code I_SP_LEN}. */
-    private static int[] slGrow(int[] slices, int additionalInts) {
-        int ints = slices.length + max(slices.length >> 1, additionalInts); // grow at least 50%
-        return grow(slices, slCeil(ints));
-    }
-
-    /** Align ints to {@code I_SP_LEN}. */
-    private static int slCeil(int ints) {
-        if (ints == 0) return LowLevelHelper.I_LEN; // never return 0
-        return ints + ((LowLevelHelper.I_LEN -ints)&I_SP_MASK); // align size to I_SP_LEN
+    private static final int SL_ALIGN = I_LEN;
+    private static final int SL_FLOOR = -(SL_ALIGN); // ~(SL_ALIGN-1)
+    private static int slAlign(int size) {
+        int withPutVectorSlack = size + I_LEN; // avoids some bounds checking in vectorized put(B)
+        return (withPutVectorSlack&SL_FLOOR) + SL_ALIGN; // branchless roundup to I_LEN
     }
 
     /**
@@ -250,9 +240,11 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         super(0, cols);
         this.locals = bytesAtLeast(Math.max(bytesCapacity, 16));
         this.localsSeg = MemorySegment.ofArray(this.locals);
-        this.slRowInts = (cols+1)<<1;
-        this.slices = intsAtLeast(slCeil(max(1, rowsCapacity)*slRowInts+PUT_SLACK));
-        this.shared = segmentRopesAtLeast(max(1, rowsCapacity)*slRowInts+PUT_SLACK);
+        int slRowInts = (cols + 1) << 1;
+        this.slRowInts = slRowInts;
+        this.slices = intsAtLeast(slAlign(rowsCapacity*slRowInts));
+        this.shared = segmentRopesAtLeast(rowsCapacity*cols);
+        BatchEvent.Created.record(this);
     }
 
     public CompressedBatch copy(@Nullable CompressedBatch dest) {
@@ -272,15 +264,18 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         rows            = 0;
         offerNextLocals = -1;
         offerLastCol    = -1;
-        slices = INT.offer(slices, slices.length);
-        locals = BYTE.offer(locals, locals.length);
-        if (locals == null)
-            localsSeg = null;
-        shared = SEG_ROPE.offer(shared, shared.length);
+        if ((slices = INT.offer(slices, slices.length)) == null)
+            slices = EMPTY_INT;
+        if ((locals = BYTE.offer(locals, locals.length)) == null) {
+            locals = EMPTY.utf8;
+            localsSeg = EMPTY.segment;
+        }
+        if ((shared = SEG_ROPE.offer(shared, shared.length)) == null)
+            shared = EMPTY_SEG_ROPE;
     }
 
-    public void hydrate(int rows, int cols, int bytes) {
-        byte[] locals = bytesAtLeast(Math.max(bytes, MIN_LOCALS), this.locals);
+    void hydrate(int rows, int cols, int bytes) {
+        byte[] locals = bytesAtLeast(bytes, this.locals);
         if (locals != this.locals) {
             this.locals = locals;
             this.localsSeg = MemorySegment.ofArray(this.locals);
@@ -290,9 +285,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         this.slRowInts = (cols+1)<<1;
         this.offerNextLocals = -1;
         this.offerLastCol    = -1;
-        int required = max(1, rows) * slRowInts;
-        this.shared  = segmentRopesAtLeast(required,                   this.shared);
-        this.slices  =         intsAtLeast(slCeil(required+PUT_SLACK), this.slices);
+        this.shared  = segmentRopesAtLeast(rows*cols, this.shared);
+        this.slices  = intsAtLeast(slAlign(rows*slRowInts), this.slices);
     }
 
     /* --- --- --- batch-level accessors --- --- --- */
@@ -303,8 +297,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return slices[base+SL_OFF] + slices[base+SL_LEN];
     }
 
-    public int bytesCapacity() {
+    public int localsFreeCapacity() {
         return locals.length-bytesUsed();
+    }
+
+    @Override public int directBytesCapacity() {
+        return ((slices.length + shared.length)<<2) + locals.length;
     }
 
     @Override public int rowsCapacity() {
@@ -819,15 +817,22 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     /* --- --- --- mutators --- --- --- */
 
     @Override public void reserve(int additionalRows, int additionalBytes) {
-        int required = (rows + additionalRows) * cols;
-        if (required > shared.length)
-            shared = grow(shared, required);
-        required = (rows+additionalRows) * slRowInts + PUT_SLACK;
-        if (required > slices.length)
-            slices = slGrow(slices, required);
-        required = bytesUsed()+additionalBytes;
-        if (required > locals.length)
-            growLocals(required);
+        boolean grown = false;
+        int reqRows = rows+additionalRows, req;
+        if ((req =reqRows*cols) > shared.length) {
+            grown = true;
+            shared = grow(shared, req);
+        }
+        if ((req = slAlign(reqRows*slRowInts)) > slices.length) {
+            grown = true;
+            slices = grow(slices, req);
+        }
+        if ((req = bytesUsed()+additionalBytes) > locals.length)  {
+            grown = false;
+            growLocals(req);
+        }
+        if (grown)
+            BatchEvent.Grown.record(this);
     }
 
     @Override public @Nullable CompressedBatch recycle() {
@@ -839,19 +844,20 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         offerNextLocals = -1;
         offerLastCol    = -1;
         if (slices == null)
-            slices = intsAtLeast(slRowInts);
+            slices = intsAtLeast(slAlign(slRowInts));
         if (shared == null)
             shared = segmentRopesAtLeast(cols);
     }
 
     @Override public void clear(int newColumns) {
-        rows            =  0;
-        offerNextLocals = -1;
-        offerLastCol    = -1;
-        cols      = newColumns;
-        slRowInts = (newColumns+1) << 1;
-        slices    = intsAtLeast(slRowInts, slices);
-        shared    = segmentRopesAtLeast(newColumns, shared);
+        this.rows            =  0;
+        this.offerNextLocals = -1;
+        this.offerLastCol    = -1;
+        this.cols      = newColumns;
+        int slRowInts = (newColumns+1) << 1;
+        this.slRowInts = slRowInts;
+        this.slices    = intsAtLeast(slAlign(slRowInts), slices);
+        this.shared    = segmentRopesAtLeast(newColumns, shared);
     }
 
     @Override public boolean beginOffer() {
@@ -947,15 +953,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         offerLastCol = -1;
         offerNextLocals = bytesUsed();
 
-        int required = (rows+1) * slRowInts;
-        if (required > slices.length)
-            slices = slGrow(slices, slRowInts+PUT_SLACK);
-        fill(slices, required-slRowInts, required, 0);
+        boolean grown = false;
+        int reqRows = rows+1,  req;
+        if ((req = reqRows*cols     ) > shared.length) { grown = true; shared = grow(shared, req); }
+        fill(shared, req-cols, req, null);
 
-        required = (rows+1)*cols;
-        if (required > shared.length)
-            shared = grow(shared, required);
-        fill(shared, required-cols, required, null);
+        if ((req = reqRows*slRowInts) > slices.length) { grown = true; slices = grow(slices, req); }
+        fill(slices, req-slRowInts, req, 0);
+        if (grown) BatchEvent.Grown.record(this);
     }
 
     @Override public void putTerm(int col, Term t) {
@@ -1007,7 +1012,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
 
     /** Mask true for SL_OFF and false for SL_LEN */
-    private static final VectorMask<Integer> PUT_MASK = fromLong(LowLevelHelper.I_SP, 0x5555555555555555L);
+    private static final VectorMask<Integer> PUT_MASK = fromLong(I_SP, 0x5555555555555555L);
     static {
         if (SL_OFF != 0) throw new AssertionError("PUT_MASK misaligned with SL_OFF");
     }
@@ -1021,22 +1026,15 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
         int dst = slRowInts*rows, slLen = oRows*slRowInts;
         int lDst = bytesUsed(), lLen = o.bytesUsed();
-
-        int required = slCeil(dst + slLen + PUT_SLACK);
-        if (required > slices.length)
-            slices = slGrow(slices, required);
-        if ((required >>= 1) > shared.length)
-            shared = grow(shared, required);
-        if ((required=lDst+lLen) > locals.length)
-            growLocals(required);
+        reserve(oRows, lLen);
 
         //vectorized copy of slices, adding lDst to each SL_OFF in slices
         int[] sl = this.slices, osl = o.slices;
         int src = 0;
-        if (LowLevelHelper.ENABLE_VEC && slLen >= LowLevelHelper.I_LEN) {
-            IntVector delta = IntVector.zero(LowLevelHelper.I_SP).blend(lDst, PUT_MASK);
-            for (; src < slLen && src+ LowLevelHelper.I_LEN < osl.length; src += LowLevelHelper.I_LEN, dst += LowLevelHelper.I_LEN)
-                fromArray(LowLevelHelper.I_SP, osl, src).add(delta).intoArray(sl, dst);
+        if (LowLevelHelper.ENABLE_VEC && slLen >= I_LEN) {
+            IntVector delta = IntVector.zero(I_SP).blend(lDst, PUT_MASK);
+            for (; src < slLen && src+ I_LEN < osl.length; src += I_LEN, dst += I_LEN)
+                fromArray(I_SP, osl, src).add(delta).intoArray(sl, dst);
         }
         // copy/offset leftovers. arraycopy()+for is faster than a fused copy/offset loop
         if ((slLen -= src) > 0) {
@@ -1162,7 +1160,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
             //project/compact slices
             var bsl = b.slices;
-            var tsl = intsAtLeast(slCeil(rows*((columns.length+1)<<1)+PUT_SLACK), this.tsl);
+            var tsl = intsAtLeast(slAlign(rows*(columns.length+1)<<1), this.tsl);
             var bsh = b.shared;
             var tsh = segmentRopesAtLeast(rows*columns.length, this.tsh);
             for (int r = 0, slOut = 0, shOut = 0, slBase = 0; r < rows; r++, slBase += bSlWidth) {
@@ -1274,7 +1272,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             // get working arrays
             int tslRowInts = (cols+1)<<1, islRowInts = in.slRowInts, slOut = 0, shOut = 0;
             var isl = in.slices;
-            var tsl = intsAtLeast(rows*tslRowInts + PUT_SLACK, this.tsl);
+            var tsl = intsAtLeast(slAlign(rows*tslRowInts), this.tsl);
             var ish = in.shared;
             var tsh = segmentRopesAtLeast(rows*cols, this.tsh);
 

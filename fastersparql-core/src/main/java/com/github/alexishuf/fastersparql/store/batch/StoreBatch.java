@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
@@ -32,9 +33,10 @@ public class StoreBatch extends IdBatch<StoreBatch> {
 
     /* --- --- --- lifecycle --- --- -- */
 
-    public StoreBatch(int rowsCapacity, int cols) {super(rowsCapacity, cols);}
-    public StoreBatch(long[] arr, int rows, int cols) { super(arr, rows, cols, new int[arr.length]); }
-    public StoreBatch(long[] arr, int rows, int cols, int[] hashes) {super(arr, rows, cols, hashes);}
+    public StoreBatch(int rowsCapacity, int cols) {
+        super(rowsCapacity, cols);
+        BatchEvent.Created.record(this);
+    }
 
     /* --- --- --- batch accessors --- --- --- */
 

@@ -34,10 +34,10 @@ public final class AsyncEmitter<B extends Batch<B>>
     @SuppressWarnings("RedundantCast")
     private static final ArrayPool<Receiver<?>[]> RECV_POOL
             = new ArrayPool<>(new LevelPool<>((Class<Receiver<?>[]>)(Object)Receiver[].class,
-                              POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
+                              POOL_UNIT_CAP, POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
     private static final ArrayPool<Producer   []> PROD_POOL
             = new ArrayPool<>(new LevelPool<>(Producer[].class,
-                              POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
+                              POOL_UNIT_CAP, POOL_SMALL_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP, POOL_UNIT_CAP));
     private static final Receiver<?>[] NO_RECEIVERS = new Receiver[0];
     private static final Producer[] NO_PRODUCERS = new Producer[0];
 

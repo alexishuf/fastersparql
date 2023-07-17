@@ -14,8 +14,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.FIRST_CAPACITY;
-import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.LAST_CAPACITY;
+import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.HUGE_MAX_CAPACITY;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.Runtime.getRuntime;
 import static java.util.concurrent.Executors.newFixedThreadPool;
@@ -32,10 +31,9 @@ class LevelPoolTest {
     private static final int[] INTERESTING_CAPACITIES;
 
     static {
-        int[] capacities = new int[numberOfTrailingZeros(LAST_CAPACITY)- numberOfTrailingZeros(FIRST_CAPACITY)+1];
-        int firstLevel = numberOfTrailingZeros(FIRST_CAPACITY);
-        for (int i = FIRST_CAPACITY; i <= LAST_CAPACITY; i<<=1)
-            capacities[numberOfTrailingZeros(i)-firstLevel] = i;
+        int[] capacities = new int[numberOfTrailingZeros(HUGE_MAX_CAPACITY)+1];
+        for (int i = 1; i <= HUGE_MAX_CAPACITY; i<<=1)
+            capacities[numberOfTrailingZeros(i)] = i;
         int[] interesting = new int[2+(capacities.length-2)*3+2];
         interesting[0] = capacities[0];
         interesting[1] = capacities[1];
@@ -54,9 +52,16 @@ class LevelPoolTest {
 
     @ParameterizedTest @ValueSource(ints = {1, 2, 3, 4, 257})
     void testSingleThread(int n) {
-        LevelPool<C> pool = new LevelPool<>(C.class, n, n, n, n);
+        LevelPool<C> pool = new LevelPool<>(C.class, n, n, n, n, n);
         List<C> objects = new ArrayList<>(n);
         Set<C> taken = new HashSet<>(n);
+
+        C zero = new C(0);
+        assertNull(pool.offer(zero, 0));
+        assertSame(zero, pool.getAtLeast(0));
+        assertNull(pool.getAtLeast(0));
+        assertNull(pool.offerToNearest(zero, 0));
+        assertSame(zero, pool.getAtLeast(0));
 
         for (int capacity : CAPACITIES) {
             objects.clear();
@@ -64,8 +69,8 @@ class LevelPoolTest {
             for (C o : objects)
                 assertNull(pool.offer(o, o.capacity), "capacity="+capacity);
             taken.clear();
-            for (int i = 0; i < n; i++) taken.add(pool.getExact(capacity));
-            assertNull(pool.getExact(capacity));
+            for (int i = 0; i < n; i++) taken.add(pool.getAtLeast(capacity));
+            assertNull(pool.getAtLeast(capacity));
             if (!taken.containsAll(objects))
                 fail("Missing objects.\nExpected: "+objects+"\n Actual  : "+taken);
             if (taken.size() != objects.size())
@@ -75,7 +80,7 @@ class LevelPoolTest {
 
     @Test
     void testGetAtLeast() {
-        LevelPool<C> pool = new LevelPool<>(C.class, 3, 3, 3, 3);
+        LevelPool<C> pool = new LevelPool<>(C.class, 3, 3, 3, 3, 3);
         for (int c : CAPACITIES) {
             assertNull(pool.offer(new C(c), c));
             assertNull(pool.offer(new C(c), c));
@@ -113,7 +118,7 @@ class LevelPoolTest {
         int rounds = 4_000;
         int threadObjects = (levelCapacity+1)*rounds, totalObjects = threads*threadObjects;
 
-        LevelPool<C> pool = new LevelPool<>(C.class, levelCapacity, mediumCap, largeCap, hugeCap);
+        LevelPool<C> pool = new LevelPool<>(C.class, levelCapacity, levelCapacity, mediumCap, largeCap, hugeCap);
         List<C> objects = new ArrayList<>(totalObjects);
         for (int i = 0; i < totalObjects; i++)
             objects.add(new C(capacity));
@@ -136,23 +141,23 @@ class LevelPoolTest {
                 }));
                 tasks.add(exec.submit(() -> {
                     for (int i = thread*threadObjects, e = i+threadObjects; i < e; i++)
-                        taken.set(i, pool.getExact(capacity));
+                        taken.set(i, pool.getAtLeast(capacity));
                 }));
             }
             for (Future<?> t : tasks)
                 t.get();
             tasks.clear();
             for (int threadIdx = 0; threadIdx < threads; threadIdx++)
-                tasks.add(exec.submit(() -> pool.getExact(capacity)));
+                tasks.add(exec.submit(() -> pool.getAtLeast(capacity)));
             for (Future<?> t : tasks) {
                 C o = (C)t.get();
                 if (o != null) taken.add(o);
             }
         }
         // drain objects still in pool. consumers might end before producers, leaving these back
-        for (C c; (c = pool.getExact(capacity)) != null; )
+        for (C c; (c = pool.getAtLeast(capacity)) != null; )
             taken.add(c);
-        assertNull(pool.getExact(capacity), "non-null get() after get() == null without offers");
+        assertNull(pool.getAtLeast(capacity), "non-null get() after get() == null without offers");
 
         List<C> nonNullTaken = new ArrayList<>(totalObjects);
         for (C c : taken) {

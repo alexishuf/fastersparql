@@ -72,6 +72,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public long[] arr() { return arr; }
 
+    @Override public int      directBytesCapacity()                            { return arr.length*8;}
     @Override public int      rowsCapacity()                                   { return arr.length/Math.max(1, cols); }
     @Override public boolean  hasCapacity(int rowsCapacity, int bytesCapacity) { return arr.length >= rowsCapacity*cols; }
     @Override public boolean  hasMoreCapacity(B other)                         { return arr.length > other.arr.length; }

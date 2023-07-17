@@ -334,7 +334,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         if (offer == null) {
             offer = stealRecycled();
             if (offer == null)
-                return batchType().create(rowsCapacity, vars.size(), bytesCapacity);
+                return batchType.create(rowsCapacity, vars.size(), bytesCapacity);
         }
         offer.clear(vars.size());
         return offer;
