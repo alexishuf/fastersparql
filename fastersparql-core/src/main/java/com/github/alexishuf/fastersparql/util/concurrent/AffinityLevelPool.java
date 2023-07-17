@@ -37,10 +37,8 @@ public class AffinityLevelPool<T> {
 
     @SuppressWarnings("unchecked")
     @Nullable T getFromLevel(int level) {
-        int thread = (int)currentThread().threadId();
-        T o = (T)L.getAndSetAcquire(local, (( thread   &threadMask)<<5)+level, null);
-        if (o != null) return o;
-        o =   (T)L.getAndSetAcquire(local, (((thread+1)&threadMask)<<5)+level, null);
+        int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
+        T o = (T)L.getAndSetAcquire(local, bucket, null);
         if (o != null) return o;
         return shared.getFromLevel(level);
     }
@@ -50,10 +48,8 @@ public class AffinityLevelPool<T> {
         // offer directly to pool if level is empty and unlocked. If o would still be offered
         // to local before, a get() could return null even with threadMask items pooled in local
         if (!shared.levelEmptyUnlocked(level)) {
-            int t = (int)currentThread().threadId();
-            if (L.compareAndExchangeRelease(local, (( t   &threadMask)<<5)+level, null, o) == null)
-                return null;
-            if (L.compareAndExchangeRelease(local, (((t-1)&threadMask)<<5)+level, null, o) == null)
+            int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
+            if (L.compareAndExchangeRelease(local, bucket, null, o) == null)
                 return null;
         }
         return shared.offerToLevel(level, o);
@@ -64,10 +60,8 @@ public class AffinityLevelPool<T> {
         // offer directly to pool if level is empty and unlocked. If o would still be offered
         // to local before, a get() could return null even with threadMask items pooled in local
         if (!shared.levelEmptyUnlocked(level)) {
-            int t = (int)currentThread().threadId();
-            if (L.compareAndExchangeRelease(local, (( t   &threadMask)<<5)+level, null, o) == null)
-                return null;
-            if (L.compareAndExchangeRelease(local, (((t-1)&threadMask)<<5)+level, null, o) == null)
+            int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
+            if (L.compareAndExchangeRelease(local, bucket, null, o) == null)
                 return null;
         }
         if (shared.offerToLevel(level, o) == null)
