@@ -1091,7 +1091,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             sl[base+SL_OFF] = osl[oBase+SL_OFF] - lSrc + lDst;
             sl[base+SL_LEN] = osl[oBase+SL_LEN];
         }
-        arraycopy(o.shared, row*cols, shared, rows*cols, cols);
+        SegmentRope[] osh = o.shared;
+        for (int i = 0, b = rows*cols, ob = row*cols; i < cols; i++)
+            shared[b+i] = osh[ob+i];
         arraycopy(o.locals, lSrc, locals, lDst, lLen);
         int slRowBase = (rows+1)*slRowInts - 2;
         slices[slRowBase+SL_OFF] = lDst;
