@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -26,6 +27,13 @@ public final class LeftJoin extends Plan {
         if (right instanceof Query q && q.sparql.isAsk())
             return left().execute(bt, binding, weakDedup);
         return NativeBind.preferNative(bt, this, binding, weakDedup);
+    }
+
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        if (right instanceof Query q && q.sparql.isAsk())
+            return left().emit(type, weakDedup);
+        return NativeBind.preferNativeEmit(type, this, weakDedup);
     }
 
     @Override public boolean equals(Object obj) {

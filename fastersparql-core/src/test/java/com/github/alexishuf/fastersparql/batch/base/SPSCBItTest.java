@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.IntsBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
@@ -48,7 +50,11 @@ class SPSCBItTest extends CallbackBItTest {
         String oldName = Thread.currentThread().getName();
         Thread.currentThread().setName("CallbackBItTest.run-"+id);
         Thread feeder = Thread.ofVirtual().name("feeder-"+id).start(() -> {
-            for (int i = 0; i < s.size(); i++) cb.offer(intsBatch(i));
+            for (int i = 0; i < s.size(); i++) {
+                try {
+                    cb.offer(intsBatch(i));
+                } catch (TerminatedException|CancelledException ignored) {}
+            }
             cb.complete(s.error());
         });
         s.drainer().drainOrdered(cb, s.expectedInts(), s.error());
@@ -61,48 +67,39 @@ class SPSCBItTest extends CallbackBItTest {
         }
     }
 
-    private static final class BoundedScenario extends Scenario {
-        private final int maxReadyBatches, maxReadyItems;
+    protected static final class BoundedScenario extends Scenario {
+        private final int maxReadyItems;
 
-        public BoundedScenario(Scenario base, int maxReadyBatches, int maxReadyItems) {
+        public BoundedScenario(Scenario base, int maxReadyItems) {
             super(base);
-            this.maxReadyBatches = maxReadyBatches;
             this.maxReadyItems = maxReadyItems;
         }
 
-        public int maxReadyBatches() { return maxReadyBatches; }
         public int maxReadyItems() { return maxReadyItems; }
 
         @Override public String toString() {
-            return "BoundedScenario{"+"maxReadyBatches="+maxReadyBatches+", maxReadyElements="
-                    +maxReadyItems+", size="+size+", minBatch="+minBatch+", maxBatch="+maxBatch
-                    +", drainer="+drainer+", error="+error+'}';
+            return "BoundedScenario{maxReadyElements=" +maxReadyItems+", size="+size+", " +
+                    "minBatch="+minBatch+", maxBatch="+maxBatch +", drainer="+drainer+
+                    ", error="+error+'}';
         }
 
         @Override public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof BoundedScenario r)) return false;
             if (!super.equals(o)) return false;
-            return maxReadyBatches == r.maxReadyBatches && maxReadyItems == r.maxReadyItems;
+            return maxReadyItems == r.maxReadyItems;
         }
 
         @Override public int hashCode() {
-            return Objects.hash(super.hashCode(), maxReadyBatches, maxReadyItems);
+            return Objects.hash(super.hashCode(), maxReadyItems);
         }
     }
 
     protected List<BoundedScenario> scenarios() {
         var list = new ArrayList<BoundedScenario>();
         for (Scenario base : baseScenarios()) {
-            for (List<Integer> maxReady : List.of(
-                    List.of(2, Integer.MAX_VALUE),
-                    List.of(2, 8),
-                    List.of(2, 2),
-                    List.of(8, Integer.MAX_VALUE),
-                    List.of(8, 2),
-                    List.of(Integer.MAX_VALUE, base.maxBatch()))
-            ) {
-                list.add(new BoundedScenario(base, maxReady.get(0), maxReady.get(1)));
+            for (int maxReady : List.of(Integer.MAX_VALUE, 8, 2, base.maxBatch())) {
+                list.add(new BoundedScenario(base, maxReady));
             }
         }
         return list;
@@ -115,8 +112,8 @@ class SPSCBItTest extends CallbackBItTest {
             b1.reserve(3, 0);
             assertEquals(5, b1.rowsCapacity());
 
-            assertNull(it.offer(b1));
-            assertNull(it.offer(b2)); // do not offer() to b1, queue is mostly empty
+            assertNull(assertDoesNotThrow(() -> it.offer(b1)));
+            assertNull(assertDoesNotThrow(() -> it.offer(b2))); // do not offer() to b1, queue is mostly empty
         }
     }
 
@@ -126,9 +123,9 @@ class SPSCBItTest extends CallbackBItTest {
             assertEquals(2, b2.rowsCapacity());
             b2.reserve(2, 0);
 
-            assertNull(it.offer(b1));
-            assertNull(it.offer(b2));
-            assertSame(b3, it.offer(b3)); // rows copied to b2, we own b3
+            assertNull(assertDoesNotThrow(() -> it.offer(b1)));
+            assertNull(assertDoesNotThrow(() -> it.offer(b2)));
+            assertSame(b3, assertDoesNotThrow(() -> it.offer(b3))); // rows copied to b2, we own b3
             b3.clear(); b3.putRow(Term.termList("23")); // invalidate b3
 
             assertSame(b1, it.nextBatch(b3));
@@ -150,8 +147,8 @@ class SPSCBItTest extends CallbackBItTest {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 4)) {
             TermBatch fst = tightIntsBatch(1, 2), snd = tightIntsBatch(3);
             assertEquals(2, fst.rowsCapacity());
-            assertNull(it.offer(fst));
-            assertNull(it.offer(snd)); // bcs fst.offer(snd) == false
+            assertNull(assertDoesNotThrow(() -> it.offer(fst)));
+            assertNull(assertDoesNotThrow(() -> it.offer(snd))); // bcs fst.offer(snd) == false
             assertSame(fst, it.nextBatch(null));
             assertSame(snd, it.nextBatch(intsBatch(23)));
             it.complete(null);
@@ -165,10 +162,10 @@ class SPSCBItTest extends CallbackBItTest {
         RuntimeException ex = new RuntimeException("test");
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 4)) {
             TermBatch b1 = intsBatch(1);
-            assertNull(it.offer(b1));
+            assertNull(assertDoesNotThrow(() -> it.offer(b1)));
             it.complete(ex);
             assertSame(b1, it.nextBatch(null));
-            assertThrows(BItCompletedException.class, () -> it.offer(b1));
+            assertThrows(TerminatedException.class, () -> it.offer(b1));
 
             try {
                 it.nextBatch(null);
@@ -192,7 +189,8 @@ class SPSCBItTest extends CallbackBItTest {
             });
             // start a offer(), which will block
             CompletableFuture<TermBatch> f3 = new CompletableFuture<>();
-            Thread.startVirtualThread(() -> f3.complete(it.offer(b3)));
+            Thread.startVirtualThread(
+                    () -> f3.complete(assertDoesNotThrow(() -> it.offer(b3))));
             assertThrows(TimeoutException.class, () -> f3.get(5, MILLISECONDS));
 
             // consuming will unblock offer()
@@ -200,7 +198,8 @@ class SPSCBItTest extends CallbackBItTest {
             assertNull(f3.get()); // offer() was unblocked
 
             // copy() must block() since b3 on filling has 2 items
-            Thread t4 = Thread.startVirtualThread(() -> it.copy(b4));
+            Thread t4 = Thread.startVirtualThread(
+                    () -> assertDoesNotThrow(() -> it.copy(b4)));
             assertFalse(t4.join(ofMillis(5)));
 
             // consuming will unblock() copy
@@ -267,7 +266,7 @@ class SPSCBItTest extends CallbackBItTest {
 
             TermBatch b1 = intsBatch(1); // before nanoTime() to avoid measuring class init
             long start = nanoTime();
-            it.offer(b1);
+            assertDoesNotThrow(() -> it.offer(b1));
             IntsBatch.offerAndInvalidate(it, intsBatch(2));
             IntsBatch.offerAndInvalidate(it, intsBatch(3));
             TermBatch batch = it.nextBatch(null);

@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
 import com.github.alexishuf.fastersparql.batch.Timestamp;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.VarHandle;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.invoke.MethodHandles.lookup;
@@ -22,6 +24,7 @@ public class Watchdog implements AutoCloseable {
     @SuppressWarnings("unused") // access through DEADLINE
     private long deadline;
     private boolean triggered, shutdown;
+    private @MonotonicNonNull ConcurrentLinkedQueue<Runnable> lateActions = null;
     private final Thread thread;
 
     public Watchdog(Runnable action) {
@@ -35,6 +38,10 @@ public class Watchdog implements AutoCloseable {
                     } else if (!triggered) {
                         triggered = true; // only run action at most once per start() call
                         action.run();
+                        if (lateActions != null) {
+                            for (Runnable a : lateActions)
+                                a.run();
+                        }
                     }
                     LockSupport.park(); //wake on start() or close()
                 } else {
@@ -43,6 +50,12 @@ public class Watchdog implements AutoCloseable {
                 }
             }
         });
+    }
+
+    @SuppressWarnings("unused") public @This Watchdog andThen(Runnable action) {
+        if (lateActions == null) lateActions = new ConcurrentLinkedQueue<>();
+        lateActions.add(action);
+        return this;
     }
 
     /**

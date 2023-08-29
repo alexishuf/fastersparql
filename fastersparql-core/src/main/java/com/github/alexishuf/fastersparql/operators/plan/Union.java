@@ -2,10 +2,15 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
@@ -63,14 +68,7 @@ public final class Union extends Plan {
         var sources = new ArrayList<BIt<B>>(opCount());
         for (int i = 0, n = opCount(); i < n; i++)
             sources.add(op(i).execute(bt, binding, weakDedup));
-        Dedup<B> dedup = null;
-        if (weakDedup || crossDedupCapacity > 0) {
-            int cap = sources.size() * (crossDedupCapacity > 0 ? crossDedupCapacity
-                                                               : dedupCapacity());
-            int cols = publicVars().size();
-            dedup = weakDedup ? bt.dedupPool.getWeak(cap, cols)
-                             : bt.dedupPool.getWeakCross(cap, cols);
-        }
+        Dedup<B> dedup = createDedup(bt, weakDedup);
         Metrics m = Metrics.createIf(this);
         if (singleEndpoint()) {//noinspection resource
             var it = dedup == null ? new ConcatBIt<>(sources, bt, publicVars())
@@ -79,6 +77,27 @@ public final class Union extends Plan {
         }
         return dedup == null ? new MergeBIt<>(sources, bt, publicVars(), m)
                              : new DedupMergeBIt<>(sources, publicVars(), m, dedup);
+    }
+
+    private <B extends Batch<B>> @Nullable Dedup<B> createDedup(BatchType<B> bt, boolean weak) {
+        if (weak || crossDedupCapacity > 0) {
+            int cap = crossDedupCapacity > 0 ? crossDedupCapacity : dedupCapacity();
+            int cs = publicVars().size();
+            return weak ? new WeakDedup<>(bt, cap, cs) : new WeakCrossSourceDedup<>(bt, cap, cs);
+        }
+        return null;
+    }
+
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        Vars outVars = publicVars();
+        AsyncEmitter<B> gather = new AsyncEmitter<>(type, outVars);
+        for (int i = 0, n = opCount(); i < n; i++)
+            gather.registerProducer(op(i).emit(type, weakDedup));
+        Dedup<B> dedup = createDedup(type, weakDedup);
+        if (dedup == null)
+            return gather;
+        return type.filter(outVars, dedup).subscribeTo(gather);
     }
 
     @Override public boolean equals(Object o) {

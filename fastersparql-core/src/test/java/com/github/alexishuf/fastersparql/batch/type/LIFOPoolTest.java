@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LIFOPoolTest {
     private static class D {
-        int thread, seq;
+        final int thread, seq;
         boolean valid = true;
 
         public D(int thread, int seq) {

@@ -33,7 +33,7 @@ class VarsTest {
         return list;
     }
 
-    private static abstract class Factory {
+    static abstract class Factory {
         public abstract Vars create(int size, int slack);
         @Override public String toString() { return getClass().getSimpleName(); }
     }
@@ -121,7 +121,7 @@ class VarsTest {
         List<D> mutableData = mutableData().map(D::new).toList();
         int methods = 0;
         try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
-            for (Method m : getClass().getMethods()) {
+            for (Method m : getClass().getDeclaredMethods()) {
                 String name = m.getName();
                 if (!name.matches("test.+") || name.equals("testAll")) continue;
                 ++methods;
@@ -133,7 +133,7 @@ class VarsTest {
     }
 
     @ParameterizedTest @MethodSource("data")
-    public void testQuery(Factory factory, int size, int slack) {
+    void testQuery(Factory factory, int size, int slack) {
         Vars vars = factory.create(size, slack);
         assertEquals(size, vars.size());
         assertEquals(size == 0, vars.isEmpty());
@@ -176,14 +176,14 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testToString(Factory factory, int size, int slack) {
+    void testToString(Factory factory, int size, int slack) {
         assertEquals(list(0, size).toString(),
                      factory.create(size, slack).toString());
     }
 
     @SuppressWarnings("SimplifiableAssertion")
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testEqualsAndHashCode(Factory factory, int size, int slack) {
+    void testEqualsAndHashCode(Factory factory, int size, int slack) {
         Vars a = factory.create(size, slack), b = factory.create(size, slack);
         assertEquals(a, b);
         assertEquals(a.hashCode(), b.hashCode());
@@ -193,7 +193,7 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testAddNoEffect(Factory factory, int size, int slack) {
+    void testAddNoEffect(Factory factory, int size, int slack) {
         Vars vars = factory.create(size, slack);
 
         assertFalse(vars.addAll(list(0, size)));
@@ -207,14 +207,14 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testAdd(Factory factory, int size, int slack) {
+    void testAdd(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         assertTrue(list(size, size * 2 + 1).stream().allMatch(v::add));
         assertEquals(list(0, size * 2 + 1), new ArrayList<>(v));
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testAddReversedDoubled(Factory factory, int size, int slack) {
+    void testAddReversedDoubled(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         for (int i = size*2; i >= size; i--) {
             assertTrue(v.add(SegmentRope.of(i)));
@@ -226,14 +226,14 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testAddAllNoEffect(Factory factory, int size, int slack) {
+    void testAddAllNoEffect(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         assertFalse(v.addAll(list(0, size)));
         assertFalse(v.addAll(revList(0, size)));
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testAddAll(Factory factory, int size, int slack) {
+    void testAddAll(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         var slackList = list(size, size + slack);
         assertEquals(slack > 0, v.addAll(slackList));
@@ -245,7 +245,7 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testPlus(Factory factory, int size, int slack) {
+    void testPlus(Factory factory, int size, int slack) {
         Vars left = factory.create(size, slack);
 
         for (Integer n : List.of(0, slack, slack + 1)) {
@@ -258,7 +258,7 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testMinus(Factory factory, int size, int slack) {
+    void testMinus(Factory factory, int size, int slack) {
         Vars left = factory.create(size, slack);
 
         // remove all
@@ -280,7 +280,7 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testIntersects(Factory factory, int size, int slack) {
+    void testIntersects(Factory factory, int size, int slack) {
         Vars left = factory.create(size, slack);
         if (left.isEmpty()) {
             assertFalse(left.intersects(List.of()));
@@ -305,7 +305,7 @@ class VarsTest {
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
-    public void testIntersection(Factory factory, int size, int slack) {
+    void testIntersection(Factory factory, int size, int slack) {
         Vars left = factory.create(size, slack);
 
         assertSame(left.isEmpty() ? Vars.EMPTY : left,   left.intersection(list(0, size)));

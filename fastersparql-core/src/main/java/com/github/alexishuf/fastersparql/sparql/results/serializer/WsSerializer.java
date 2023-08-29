@@ -39,7 +39,7 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     protected WsSerializer(int bufferHint) {
-        super(SparqlResultFormat.WS, SparqlResultFormat.WS.contentType());
+        super(SparqlResultFormat.WS.contentType());
         (prefixAssigner = new WsPrefixAssigner()).reset();
         rowsBuffer = new ByteRope(bufferHint);
     }

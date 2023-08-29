@@ -622,24 +622,6 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return true;
     }
 
-    /**
-     * Compute a hash value with {@code Math.min(32, end-begin)} bits where bit
-     * {@code i} is {@code get(begin+i)&0x1}.
-     *
-     * @param begin index of the leftmost byte to include in the hash
-     * @param end {@code len()} or index of first byte right of the byte sequence used to hash.
-     * @return an int with the lowest {@code end-begin} bits set as described above.
-     */
-    public int lsbHash(int begin, int end) {
-        if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
-        int h = 0, bit = 0, bits = end-begin;
-        if (bits > 32)
-            begin = end-(bits = 32);
-        while (bit < bits)
-            h |= (get(begin + bit) & 1) << bit++;
-        return h;
-    }
-
     public static final int FNV_PRIME = 0x01000193;
     public static final int FNV_BASIS = 0x811C9DC5;
 
@@ -656,7 +638,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     public abstract int fastHash(int begin, int end);
 
 
-    private Rope convertCase(int[] until, int offset) {
+    private Rope convertCase(int[] until, byte offset) {
         int len = len();
         if (skip(0, len, until) == len)
             return this;
@@ -673,13 +655,13 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Get {@code this} or a copy with all lower-case ASCII bytes replaced with their
      * ASCII upper case counterparts
      */
-    public Rope toAsciiUpperCase() { return convertCase(UNTIL_LOWERCASE, 'A'-'a'); }
+    public Rope toAsciiUpperCase() { return convertCase(UNTIL_LOWERCASE, (byte)('A'-'a')); }
 
     /**
      * Get {@code this} or a copy with all upper-case ASCII bytes replaced with their
      * ASCII lower case counterparts
      */
-    public Rope toAsciiLowerCase() { return convertCase(UNTIL_UPPERCASE, 'a'-'A'); }
+    public Rope toAsciiLowerCase() { return convertCase(UNTIL_UPPERCASE, (byte)('a'-'A')); }
 
     /** Analogous to {@link String#trim()} */
     public Rope trim() {
@@ -745,7 +727,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return i == index ? (char) get(i) : toString().charAt(index);
     }
 
-    @Override public CharSequence subSequence(int start, int end) { return sub(start, end); }
+    @Override public @NonNull CharSequence subSequence(int start, int end) { return sub(start, end); }
 
     public String toString(int begin, int end) {
         byte[] u8 = new byte[end - begin]; // manual-inlining toArray() improves escape analysis

@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 
 /**
- * Object that {@link WsClientParserBIt} and {@link WsServerParserBIt} use to send WebSocket frames.
+ * Object that {@link WsClientParser} and {@link WsServerParser} use to send WebSocket frames.
  */
 public interface WsFrameSender<S extends ByteSink<S, T>, T> {
     /**

@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -8,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
@@ -745,8 +745,14 @@ class BatchTest {
                     projectExpected.accept(size.terms[r], expected);
                     expected.commitPut();
                 }
-                RowFilter<B> rowFilter = (batch, row)
-                        -> survivors.contains(row) ? Decision.KEEP : Decision.DROP;
+                RowFilter<B> rowFilter = new RowFilter<>() {
+                    @Override public Decision drop(B batch, int row) {
+                        return survivors.contains(row) ? Decision.KEEP : Decision.DROP;
+                    }
+
+                    @Override public void rebind(BatchBinding<B> binding) {
+                    }
+                };
                 var filter = out.equals(in) ? type.filter(out, rowFilter)
                                             : type.filter(out, in, rowFilter);
                 B copyFilter = filter.filter(null, full);

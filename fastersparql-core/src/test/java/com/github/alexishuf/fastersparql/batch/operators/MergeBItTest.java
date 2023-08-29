@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.*;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -191,7 +193,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             assertEquals(intsBatch(1, 2), b);
             assertEquals(b0, b);
 
-            Thread.startVirtualThread(() -> s1.offer(b1));
+            Thread.startVirtualThread(() ->  assertDoesNotThrow(() -> s1.offer(b1)));
             b = it.nextBatch(null);
             assertEquals(intsBatch(3), b);
             assertEquals(b1, b);
@@ -264,7 +266,9 @@ class MergeBItTest extends AbstractMergeBItTest {
                     if (cb != null) {
                         for (int i = 0; i < batches.length; i++) {
                             //journal.write("batch i=", i, "rows=", batches[i].rows, "[0][0]=", batches[i].get(0, 0));
-                            batches[i] = cb.offer(batches[i]);
+                            try {
+                                batches[i] = cb.offer(batches[i]);
+                            } catch (TerminatedException|CancelledException ignored) {}
                             //journal.write("old &batch[i]=", old, " curr &batch[i]=", identityHashCode(batches[i]));
                         }
                         cb.complete(null);
@@ -329,7 +333,7 @@ class MergeBItTest extends AbstractMergeBItTest {
              var watchdog = new Watchdog(() -> DebugJournal.SHARED.dump(50) )) {
             for (int round = 0, rounds = 100_000; round < rounds; round++) {
                 if ((round & 1_023) == 0) log.info("round {}/{}", round, rounds);
-                if ((round &    15) == 0) DebugJournal.SHARED.reset();
+                if ((round &    15) == 0) DebugJournal.SHARED.closeAll();
                 watchdog.start(1_000_000_000L);
                 var s0 = new IteratorBIt<>(s0Batches, TERM, X);
                 var s1 = new SPSCBIt<>(TERM, X, 2);

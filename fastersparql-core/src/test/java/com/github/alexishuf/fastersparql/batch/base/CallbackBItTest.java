@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.*;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.adapters.AbstractBItTest;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
@@ -44,7 +46,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     @Test void testSimple() {
         try (var it = create(1)) {
             TermBatch b = intsBatch(1);
-            assertNull(it.offer(b));
+            assertNull(assertDoesNotThrow(() -> it.offer(b)));
             assertSame(b, it.nextBatch(null));
             it.complete(null);
             assertNull(it.nextBatch(b));
@@ -54,7 +56,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     @Test void testCompleteBeforeExhausted() {
         try (var it = create(1)) {
             TermBatch b = intsBatch(1);
-            assertNull(it.offer(b));
+            assertNull(assertDoesNotThrow(() -> it.offer(b)));
             it.complete(null);
             assertSame(b, it.nextBatch(null));
             assertNull(it.nextBatch(b));
@@ -64,7 +66,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     @Test void testFailBeforeExhausted() {
         try (var it = create(1)) {
             TermBatch b = intsBatch(1);
-            assertNull(it.offer(b));
+            assertNull(assertDoesNotThrow(() -> it.offer(b)));
             var ex = new RuntimeException();
             it.complete(ex);
             assertSame(b, it.nextBatch(null));
@@ -94,8 +96,6 @@ public abstract class CallbackBItTest extends AbstractBItTest {
 //                        if (i >= yieldAfter)
 //                            Thread.yield();
                     }
-                    feed.complete(null);
-                } catch (BItCompletedException ignored) {
                     feed.complete(null);
                 } catch (Throwable t) {
                     feed.completeExceptionally(t);
@@ -228,6 +228,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                                         try {
                                             //journal.write("offer b[0][0]=", b.get(0, 0).local[1]-'0', "size=", b.rows);
                                             b = cb.offer(b);
+                                        } catch (CancelledException| TerminatedException ignored) {
                                         } finally { lock.unlock(); }
                                     }
                                     //journal.write("exhausted");

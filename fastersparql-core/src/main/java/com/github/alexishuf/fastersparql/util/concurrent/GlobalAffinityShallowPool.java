@@ -59,8 +59,17 @@ public class GlobalAffinityShallowPool {
         return (T)D.getAndSetAcquire(data, (((threadId-1)&MASK)<<W_SHIFT)+column, null);
     }
 
+    @SuppressWarnings("unused") private static boolean isNovel(Object o) {
+        for (int i = 0; i < data.length; i++) {
+            if (D.getOpaque(data, i) == o)
+                return false;
+        }
+        return true;
+    }
+
     public static <T> @Nullable T offer(int column, @Nullable T o) {
         if (o == null) return null;
+//        assert isNovel(o);
         int id = (int) currentThread().threadId();
         if (D.compareAndExchangeRelease(data, ((id&MASK) <<W_SHIFT)+column, null, o) == null)
             return null;
@@ -71,6 +80,7 @@ public class GlobalAffinityShallowPool {
 
     public static <T> @Nullable T offer(int column, @Nullable T o, int threadId) {
         if (o == null) return null;
+//        assert isNovel(o);
         if (D.compareAndExchangeRelease(data, ((threadId&MASK) <<W_SHIFT)+column, null, o) == null)
             return null;
         if (D.compareAndExchangeRelease(data, (((threadId+1)&MASK)<<W_SHIFT)+column, null, o) == null)

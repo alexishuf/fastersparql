@@ -3,10 +3,12 @@ package com.github.alexishuf.fastersparql.lrb.query;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.ReceiverErrorFuture;
+import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.OutputStreamSink;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -16,6 +18,9 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static java.lang.Thread.ofPlatform;
 
@@ -30,7 +35,7 @@ public final class QueryRunner {
         public final BatchType<?> batchType() { return batchType; }
 
         /** Called when iteration of an iterator starts (before {@link #accept(Batch)}). */
-        public abstract void start(BIt<?> it);
+        public abstract void start(Vars vars);
 
         /** Called for every batch from {@link BIt#nextBatch(Batch)}. Ownership of {@code batch}
          * remains with the caller. Thus, a consumer must either copy the batch or completely
@@ -49,53 +54,13 @@ public final class QueryRunner {
     }
 
     /**
-     * Run {@code query} against {@code client} and consume all batches with {@code consumer}.
-     *
-     * @param client a {@link SparqlClient} to be queried. Ownership remains with caller.
-     * @param query the query to execute
-     * @param consumer {@link BatchConsumer} that will receive start/finish/failed events as well
-     *                                  as all batches.
-     */
-    public static <B extends Batch<B>> void run(SparqlClient client, SparqlQuery query,
-                                                BatchConsumer consumer) {
-        BIt<B> it = createIt(client, query, consumer);
-        if (it != null)
-            drain(it, consumer);
-    }
-
-    /**
-     * {@link #run(SparqlClient, SparqlQuery, BatchConsumer)} enforcing a timeout of
-     * {@code timeoutMs} milliseconds.
-     */
-    public static <B extends Batch<B>> void run(SparqlClient client, SparqlQuery query,
-                                                BatchConsumer consumer, long timeoutMs) {
-        try {
-            BIt<B> it = createIt(client, query, consumer);
-            drain(it, consumer, timeoutMs);
-        } catch (Throwable t) {
-            consumer.finish(t);
-        }
-    }
-
-    private static <B extends Batch<B>> @Nullable BIt<B>
-    createIt(SparqlClient client, SparqlQuery query, BatchConsumer consumer) {
-        BIt<B> it = null;
-        try {//noinspection unchecked
-            it = client.query((BatchType<B>) consumer.batchType(), query);
-        } catch (Throwable cause) {
-            consumer.finish(cause);
-        }
-        return it;
-    }
-
-    /**
      * Calls {@code consumer.start()}, {@code consumer.accept()} for every non-nul
      * {@code it.nextBatch()} and {@code consumer.finish()}.
      */
     public static <B extends Batch<B>> void drain(BIt<B> it, BatchConsumer consumer) {
         boolean finished = false;
         try {
-            consumer.start(it);
+            consumer.start(it.vars());
             for (B b = null; (b = it.nextBatch(b)) != null; )
                 consumer.accept(b);
             finished = true;
@@ -120,12 +85,12 @@ public final class QueryRunner {
      * milliseconds
      */
     public static <B extends Batch<B>> void drain(BIt<B> it, BatchConsumer consumer,
-                                                  long timeoutNs) {
+                                                  long timeoutMs) {
         if (it != null) {
             var thread = ofPlatform().name("QueryRunner").start(() -> drain(it, consumer));
             boolean interrupted = false, kill;
             try {
-                kill = !thread.join(Duration.ofMillis(timeoutNs));
+                kill = !thread.join(Duration.ofMillis(timeoutMs));
             } catch (InterruptedException e) {
                 kill = interrupted = true;
             }
@@ -143,6 +108,58 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Route batches and termination from {@code emitter} to {@code consumer}. This method will
+     * only return after {@link BatchConsumer#finish(Throwable)}.
+     *
+     * @param emitter An unstarted emitter
+     * @param consumer callback that will receive batches and termination from {@code emitter}
+     */
+    public static <B extends Batch<B>> void drain(Emitter<B> emitter, BatchConsumer consumer) {
+        drain(emitter, consumer, Long.MAX_VALUE);
+    }
+
+    /**
+     * Similar to {@link #drain(Emitter, BatchConsumer)}, but will {@link Emitter#cancel()}
+     * {@code emitter} if it does not terminate within {@code timeoutNs} nanoseconds.
+     *
+     * @param emitter An unstarted {@link Emitter}
+     * @param consumer callback for the batches and the termination of {@code emitter}
+     * @param timeoutMs maximum allowed milliseconds for {@code emitter} to terminate
+     */
+    public static <B extends Batch<B>> void drain(Emitter<B> emitter, BatchConsumer consumer,
+                                                  long timeoutMs) {
+        try {
+            consumer.start(emitter.vars());
+        } catch (Throwable t) {
+            consumer.finish(t);
+            emitter.cancel();
+            throw t;
+        }
+        boolean finished = false;
+        ReceiverErrorFuture<B> future = null;
+        try {
+            future = new ReceiverErrorFuture<>() {
+                @Override public @Nullable B onBatch(B batch) {
+                    consumer.accept(batch);
+                    return batch;
+                }
+            };
+            future.subscribeTo(emitter);
+            var error = future.getSimple(timeoutMs, TimeUnit.MILLISECONDS);
+            finished = true;
+            consumer.finish(error);
+        } catch (RuntimeExecutionException e) {
+            if (finished) throw e;
+            else          consumer.finish(e.getCause());
+        } catch (TimeoutException t) {
+            emitter.cancel();
+            consumer.finish(Objects.requireNonNull(future).getSimple());
+        } catch (Throwable t) {
+            if (finished) throw t;
+            else          consumer.finish(t);
+        }
+    }
 
 
     /** Accumulates all rows in a single batch. */
@@ -152,7 +169,7 @@ public final class QueryRunner {
             super(batchType);
             this.batch = batchType.create(64*BIt.PREFERRED_MIN_BATCH, 3, 0);
         }
-        @Override public void start(BIt<?> it) { batch.clear(it.vars().size()); }
+        @Override public void start(Vars vars) { batch.clear(vars.size()); }
         @Override public void accept(Batch<?> batch) {
             //noinspection unchecked
             this.batch.put((B)batch);
@@ -185,8 +202,8 @@ public final class QueryRunner {
             this.close = close;
         }
 
-        @Override public void start(BIt<?> it) {
-            serializer.init(it.vars(), it.vars(), it.vars().isEmpty(), sink);
+        @Override public void start(Vars vars) {
+            serializer.init(vars, vars, vars.isEmpty(), sink);
         }
         @Override public void accept(Batch<?> b) { serializer.serialize(b, sink); }
         @Override public void finish(@Nullable Throwable error) {
@@ -200,6 +217,7 @@ public final class QueryRunner {
     }
 
     /** A {@link BatchConsumer} that simply counts the number of non-null terms. */
+    @SuppressWarnings("unused")
     public static abstract class BoundCounter extends BatchConsumer {
         private final int[] counts = new int[5];
         private int rows;
@@ -213,7 +231,7 @@ public final class QueryRunner {
         public int     vars() { return counts[Term.Type.VAR  .ordinal()]; }
         public int    nulls() { return counts[4]; }
 
-        @Override public void start(BIt<?> it) {
+        @Override public void start(Vars vars) {
             rows = 0;
             counts[0] = 0;
             counts[1] = 0;

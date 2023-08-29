@@ -32,7 +32,7 @@ public class AffinityShallowPool<T> {
         return o;
     }
 
-    public @Nullable T offer(@Nullable T o) {
+    @SuppressWarnings("UnusedReturnValue") public @Nullable T offer(@Nullable T o) {
         int thread = (int) Thread.currentThread().threadId();
         if (P.compareAndExchangeRelease(pool,  thread   &THREAD_MASK, null, o) == null)
             return null;
@@ -41,7 +41,7 @@ public class AffinityShallowPool<T> {
         return o;
     }
 
-    public @Nullable T offer(@Nullable T o, int thread) {
+    @SuppressWarnings("UnusedReturnValue") public @Nullable T offer(@Nullable T o, int thread) {
         if (P.compareAndExchangeRelease(pool,  thread   &THREAD_MASK, null, o) == null)
             return null;
         if (P.compareAndExchangeRelease(pool, (thread+1)&THREAD_MASK, null, o) == null)

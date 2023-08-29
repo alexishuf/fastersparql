@@ -127,14 +127,13 @@ class DedupTest {
 
         List<Arguments> list = new ArrayList<>();
 
-        for (D d : dList) list.add(arguments(d, wFac, false));
-        for (D d : dList) list.add(arguments(d, cFac, false));
-        for (D d : dList) list.add(arguments(d, sFac, true));
+        for (D d : dList) list.add(arguments(d, wFac));
+        for (D d : dList) list.add(arguments(d, cFac));
+        for (D d : dList) list.add(arguments(d, sFac));
         return list.stream();
     }
 
-    private void work(D d, TermBatch batch, int thread, Dedup<TermBatch> dedup,
-                      boolean strict) {
+    private void work(D d, TermBatch batch, int thread, Dedup<TermBatch> dedup) {
         int chunk = batch.rows/d.threads;
         int begin = thread*chunk, end = thread == d.threads-1 ? batch.rows : begin+chunk;
         int twiceFailures = 0;
@@ -152,26 +151,29 @@ class DedupTest {
                 repeatFailures += !dedup.isDuplicate(batch, i - d.repeatEvery, thread) ? 1 : 0;
             }
         }
-        if (strict) {
+        if (dedup.isWeak()) {
+            if (d.threads == 1) {
+                if (dedup instanceof WeakCrossSourceDedup<?>)
+                    assertEquals(d.twice ? end-begin : 0, twiceFailures);
+                else
+                    assertEquals(0, twiceFailures);
+            }
+        } else {
             assertEquals(0, twiceFailures);
-            assertEquals(0, repeatFailures);
-        } else if (d.threads == 1) {
+        }
+        if (d.threads == 1) {
             if (dedup instanceof WeakCrossSourceDedup<?>) {
-                assertEquals(d.twice ? end-begin : 0, twiceFailures);
                 assertEquals(repeatTries, repeatFailures);
-            } else {
-                assertEquals(0, twiceFailures);
-                if (repeatTries > 100) {
-                    double failRatio = repeatFailures / (double) repeatTries;
-                    double maxFailRatio = 1 - (d.capacity / (4.0 * batch.rows));
-                    assertTrue(failRatio < maxFailRatio);
-                }
+            } else if (repeatTries > 100) {
+                double failRatio = repeatFailures / (double) repeatTries;
+                double maxFailRatio = 1 - (d.capacity / (4.0 * batch.rows));
+                assertTrue(failRatio < maxFailRatio);
             }
         }
     }
 
     @ParameterizedTest @MethodSource
-    void test(D d, Function<Integer, Dedup<TermBatch>> factory, boolean strict) throws Exception {
+    void test(D d, Function<Integer, Dedup<TermBatch>> factory) throws Exception {
         TermBatch rows = generateRows(d.uniqueRows);
         Dedup<TermBatch> add = factory.apply(d.capacity);
 //        WeakDedup<TermBatch> dedup = new WeakDedup<>(ArrayRow.STRING, d.capacity);
@@ -179,13 +181,13 @@ class DedupTest {
         if (d.threads > 1) {
             try (var e = Executors.newFixedThreadPool(d.threads)) {
                 var tasks = IntStream.range(0, d.threads)
-                        .mapToObj(i -> e.submit(() -> work(d, rows, i, add, strict)))
+                        .mapToObj(i -> e.submit(() -> work(d, rows, i, add)))
                         .toList();
                 for (Future<?> t : tasks)
                     t.get();
             }
         } else {
-            work(d, rows, 0, add, strict);
+            work(d, rows, 0, add);
         }
     }
 
@@ -226,7 +228,7 @@ class DedupTest {
         int ops = 0;
         while (System.nanoTime() < end) {
             ++ops;
-            test.test(d, sFac, true);
+            test.test(d, sFac);
         }
         System.out.printf("%.3f ops/s\n", ops/secs);
     }

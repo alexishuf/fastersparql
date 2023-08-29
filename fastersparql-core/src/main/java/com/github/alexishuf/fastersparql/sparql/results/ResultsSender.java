@@ -16,6 +16,12 @@ public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements Auto
 
     @Override public void close() { sink.release(); }
 
+    /**
+     * If {@link ByteSink#touch()} for this sender is asynchronous, start a {@code touch()}, else
+     * do nothing.
+     */
+    public abstract void preTouch();
+
     /** Sends the result of {@link ResultsSerializer#init(Vars, Vars, boolean, ByteSink)} */
     public abstract void sendInit(Vars vars, Vars subset, boolean isAsk);
     /** Sends the result of {@link ResultsSerializer#serialize(Batch, ByteSink)} */

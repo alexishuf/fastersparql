@@ -40,17 +40,21 @@ class RowBucketTest {
         bucket.set(1, b12, 0);
         assertTrue(bucket.equals(1, b12, 0));
         assertTrue(bucket.equals(1, b__12, 1));
+        assertEquals(b12.hash(0), bucket.hashCode(1));
 
         bucket.set(0, 1);
         assertTrue(bucket.equals(0, b12, 0));
         assertTrue(bucket.equals(0, b__12, 1));
         assertTrue(bucket.equals(1, b12, 0));
         assertTrue(bucket.equals(1, b__12, 1));
+        assertEquals(bucket.hashCode(1), bucket.hashCode(0));
 
         bucket.set(bucket.capacity()-1, b3412, 0);
         bucket.set(bucket.capacity()-2, b3412, 1);
         assertTrue(bucket.equals(bucket.capacity()-1, b1234, 1));
         assertTrue(bucket.equals(bucket.capacity()-2, b12, 0));
+        assertEquals(b3412.hash(0), bucket.hashCode(bucket.capacity()-1));
+        assertEquals(b3412.hash(1), bucket.hashCode(bucket.capacity()-2));
 
         bucket.set(0, b__12, 1);
         bucket.set(1, b__12, 0);
@@ -59,6 +63,10 @@ class RowBucketTest {
         assertFalse(bucket.equals(0, b__12, 0));
         assertFalse(bucket.equals(31, b__12, 0)); // ambiguous: row of nulls or unset?
         assertFalse(bucket.equals(31, b__12, 0)); // ambiguous: row of nulls or unset?
+        assertEquals(b__12.hash(0), bucket.hashCode(1));
+        assertEquals(b__12.hash(1), bucket.hashCode(0));
+
+        bt.recycleBucket(bucket);
     }
 
 }

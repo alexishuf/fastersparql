@@ -27,7 +27,8 @@ public class TestTaskSet implements AutoCloseable, Consumer<Future<?>> {
     }
 
     public static TestTaskSet platformTaskSet(String name) {
-        return new TestTaskSet(name, Executors.newCachedThreadPool());
+        int n = Math.max(4, Runtime.getRuntime().availableProcessors());
+        return new TestTaskSet(name, Executors.newFixedThreadPool(n));
     }
 
     public static void virtualRepeatAndWait(String name, int count, Function<Integer, ?> runnable)  throws Exception {

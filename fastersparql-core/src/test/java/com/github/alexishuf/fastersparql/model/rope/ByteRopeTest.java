@@ -121,7 +121,7 @@ class ByteRopeTest {
 
         @Override public int read() {
             if (pos == data.length) return -1;
-            return data[pos++];
+            return 0xff&data[pos++];
         }
     }
 

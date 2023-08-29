@@ -1,7 +1,10 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
+import com.github.alexishuf.fastersparql.batch.BatchQueue;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -16,7 +19,7 @@ import java.util.*;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
-import static com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt.createFor;
+import static com.github.alexishuf.fastersparql.sparql.results.ResultsParser.createFor;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public enum QueryName {
@@ -88,18 +91,21 @@ public enum QueryName {
 
         //parse TSV
         try (var is = getClass().getResourceAsStream("results/" + name() + ".tsv");
-             var parser = createFor(TSV, batchType, vars, queueMaxRows())) {
+             var parsed = new SPSCBIt<>(batchType, vars, queueMaxRows())) {
+            var parser = createFor(TSV, parsed);
             assert is != null;
             Thread.startVirtualThread(() -> {
                 try {
                     parser.feedShared(new ByteRope(is.readAllBytes())); // largest TSV has 9_053 results
-                    parser.complete(null);
+                    parser.feedEnd();
                 } catch (IOException e) {
-                    parser.complete(e);
+                    parser.feedError(FSException.wrap(null, e));
+                } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
+                    throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
                 }
             });
             B acc = batchType.create(64, vars.size(), 64*32);
-            for (B b = null; (b = parser.nextBatch(b)) != null; )
+            for (B b = null; (b = parsed.nextBatch(b)) != null; )
                 acc.put(b);
             return acc;
         } catch (IOException e) {
@@ -133,7 +139,7 @@ public enum QueryName {
         if (this != C7 && this != C8 && this != C10)
             return b;
         boolean changed = false;
-        B fixed = type.create(b.rows, b.cols, b.bytesUsed());
+        B fixed = type.create(b.rows, b.cols, b.localBytesUsed());
         var tmp = Term.pooledMutable();
         var trunc = new ByteRope();
         for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {

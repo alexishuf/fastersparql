@@ -6,7 +6,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Objects;
 
 public class BItReadFailedException extends FSException {
-    private final BIt<?> it;
+    public final BIt<?> it;
 
     private static String buildMsg(BIt<?> it, @Nullable Throwable cause) {
         if (cause == null) return "Unknown cause on "+it;
@@ -23,6 +23,4 @@ public class BItReadFailedException extends FSException {
         while (t instanceof BItReadFailedException && t.getCause() != null) t = t.getCause();
         return t;
     }
-
-    public BIt<?> it() { return it; }
 }

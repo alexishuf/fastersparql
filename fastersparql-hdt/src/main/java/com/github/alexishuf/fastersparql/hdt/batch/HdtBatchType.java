@@ -6,6 +6,8 @@ import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -48,6 +50,19 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         return null;
     }
 
+    public static final class Converter implements BatchConverter<HdtBatch> {
+        private final int dictId;
+        public Converter(int dictId) {this.dictId = dictId;}
+        @Override public <I extends Batch<I>> BIt<HdtBatch> convert(BIt<I> in) {
+            return INSTANCE.convert(in, dictId);
+        }
+        @Override public <I extends Batch<I>> Emitter<HdtBatch> convert(Emitter<I> in) {
+            return INSTANCE.convert(in, dictId);
+        }
+    }
+
+    public Converter converter(int dictId) { return new Converter(dictId); }
+
     public <O extends Batch<O>> BIt<HdtBatch> convert(BIt<O> other, int dictId) {
         if (equals(other.batchType())) //noinspection unchecked
             return (BIt<HdtBatch>) other;
@@ -66,6 +81,33 @@ public class HdtBatchType extends BatchType<HdtBatch> {
 
         @Override protected HdtBatch putConverting(HdtBatch out, S in) {
             return out.putConverting(in, dictId);
+        }
+    }
+
+    @Override public <I extends Batch<I>> Emitter<HdtBatch> convert(Emitter<I> emitter) {
+        if (equals(emitter.batchType())) //noinspection unchecked
+            return (Emitter<HdtBatch>) emitter;
+        throw new UnsupportedOperationException("use convert(Emitter emitter, int dictId)");
+    }
+
+    public <I extends Batch<I>> Emitter<HdtBatch>
+    convert(Emitter<I> upstream, int dictId) {
+        if (upstream.batchType() == INSTANCE) //noinspection unchecked
+            return (Emitter<HdtBatch>) upstream;
+        return new HdtConverterStage<>(upstream, dictId);
+    }
+
+    private static final class HdtConverterStage<I extends Batch<I>>
+            extends ConverterStage<I, HdtBatch> {
+        private final int dictId;
+
+        public HdtConverterStage(Emitter<I> upstream, int dictId) {
+            super(INSTANCE, upstream);
+            this.dictId = dictId;
+        }
+
+        @Override public void putConverting(HdtBatch dest, I input) {
+            dest.putConverting(input, dictId);
         }
     }
 

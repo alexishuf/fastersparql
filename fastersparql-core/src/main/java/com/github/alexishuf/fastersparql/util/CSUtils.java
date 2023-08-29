@@ -85,9 +85,4 @@ public class CSUtils {
         }
         return cs.length();
     }
-
-    public static String charName(char c) {
-        String name = Character.getName(c);
-        return name == null ? "code point "+(int)c : name;
-    }
 }

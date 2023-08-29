@@ -5,16 +5,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Arrays;
 import java.util.Iterator;
 
-public class ContentNegotiator {
-    private final MediaType[] supported;
-
-    public ContentNegotiator(MediaType... supported) {
-        this.supported = supported;
-    }
-
-    public MediaType[] supported() {
-        return supported;
-    }
+public record ContentNegotiator(MediaType... supported) {
 
     /**
      * The "most acceptable" {@link MediaType} compatible with {@code this.supported}, or {@code null}.
@@ -35,15 +26,15 @@ public class ContentNegotiator {
      * @param acceptHeaders An iterator to one or more HTTP {@code Accept} header values, each
      *                      value may include one or more media type specs separated by {@code ,}.
      * @return The "most acceptable" {@link MediaType} among {@code this.supported} with
-     *         additional parameters set by the accepting media type spec, or {@code null} if
-     *         none of the supported {@link MediaType}s are accepted.
+     * additional parameters set by the accepting media type spec, or {@code null} if
+     * none of the supported {@link MediaType}s are accepted.
      */
     public @Nullable MediaType select(Iterator<String> acceptHeaders) {
         MediaType matched = null;
         int matchedQ = 0;
         while (acceptHeaders.hasNext()) {
             String value = acceptHeaders.next();
-            for (int i = 0, j, end = value.length(); i < end; i = j+1) {
+            for (int i = 0, j, end = value.length(); i < end; i = j + 1) {
                 j = (j = value.indexOf(',', i)) == -1 ? end : j;
                 for (MediaType offer : supported) {
                     var res = offer.acceptedBy(value, i, j);
@@ -58,11 +49,11 @@ public class ContentNegotiator {
     }
 
     @Override public String toString() {
-        return "ContentNegotiator"+Arrays.toString(supported);
+        return "ContentNegotiator" + Arrays.toString(supported);
     }
 
     @Override public boolean equals(Object obj) {
-        return obj instanceof ContentNegotiator r&& Arrays.equals(supported, r.supported);
+        return obj instanceof ContentNegotiator r && Arrays.equals(supported, r.supported);
     }
 
     @Override public int hashCode() {

@@ -22,12 +22,12 @@ public class UnacceptableSparqlConfiguration extends FSInvalidArgument {
         this.request = request;
     }
 
-    public UnacceptableSparqlConfiguration uri(String uri) {
+    @SuppressWarnings("unused") public UnacceptableSparqlConfiguration uri(String uri) {
         this.uri = uri;
         return this;
     }
 
-    public String uri() { return uri; }
+    @SuppressWarnings("unused") public String uri() { return uri; }
     @SuppressWarnings("unused") public SparqlConfiguration offer() { return offer; }
-    public SparqlConfiguration request() { return request; }
+    @SuppressWarnings("unused") public SparqlConfiguration request() { return request; }
 }

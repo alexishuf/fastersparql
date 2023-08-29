@@ -116,12 +116,12 @@ public class TwoSegmentRope extends PlainRope {
         sndLen = len;
     }
 
-    public MemorySegment firstSegment()  { return fst; }
-    public long          firstOff()      { return fstOff; }
-    public int           firstLen()      { return fstLen; }
-    public MemorySegment secondSegment() { return snd; }
-    public long          secondOff()     { return sndOff; }
-    public int           secondLen()     { return sndLen; }
+    @SuppressWarnings("unused") public MemorySegment firstSegment()  { return fst; }
+    @SuppressWarnings("unused") public long          firstOff()      { return fstOff; }
+    @SuppressWarnings("unused") public int           firstLen()      { return fstLen; }
+    @SuppressWarnings("unused") public MemorySegment secondSegment() { return snd; }
+    @SuppressWarnings("unused") public long          secondOff()     { return sndOff; }
+    @SuppressWarnings("unused") public int           secondLen()     { return sndLen; }
 
     protected void checkRange(int begin, int end) {
         int len = this.len;
@@ -189,7 +189,7 @@ public class TwoSegmentRope extends PlainRope {
         return r;
     }
 
-    @Override public int skipUntil(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0) {
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
         if (begin < fstLen) {
@@ -203,7 +203,7 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @Override public int skipUntil(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0, char c1) {
         checkRange(begin, end);
         int e = Math.min(end, fstLen), i;
         if (begin < fstLen) {
@@ -217,7 +217,7 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @Override public int skipUntilLast(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0) {
         checkRange(begin, end);
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
         if (e > 0) {
@@ -233,7 +233,7 @@ public class TwoSegmentRope extends PlainRope {
     }
 
 
-    @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
         checkRange(begin, end);
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
         if (e > 0) {
@@ -262,7 +262,7 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @Override public int skip(int begin, int end, int[] alphabet) {
+    @SuppressWarnings("unused") @Override public int skip(int begin, int end, int[] alphabet) {
         if (LowLevelHelper.U == null)
             return skipSafe(begin, end, alphabet);
         checkRange(begin, end);
@@ -286,7 +286,7 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @Override public boolean has(int position, byte[] seq) {
+    @SuppressWarnings("unused") @Override public boolean has(int position, byte[] seq) {
         if (!HAS_UNSAFE)
             return super.has(position, seq);
         if (position < 0) throw new IndexOutOfBoundsException(position);
@@ -305,7 +305,7 @@ public class TwoSegmentRope extends PlainRope {
         }
     }
 
-    @Override public boolean has(int pos, Rope rope, int begin, int end) {
+    @SuppressWarnings("unused") @Override public boolean has(int pos, Rope rope, int begin, int end) {
         if (!HAS_UNSAFE)
             return hasNoUnsafe(pos, rope, begin, end);
         int rLen = end - begin;

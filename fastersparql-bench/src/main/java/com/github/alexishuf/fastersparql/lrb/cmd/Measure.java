@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.fed.FedMetrics;
 import com.github.alexishuf.fastersparql.fed.FedMetricsListener;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -26,7 +27,10 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -136,7 +140,7 @@ public class Measure implements Callable<Void>{
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
         try {
-            BIt<?> it;
+            Object results;
             if (plans != null) {
                 Plan plan = requireNonNull(plans.createPlan(task.query()));
                 currentPlan = plan;
@@ -144,11 +148,20 @@ public class Measure implements Callable<Void>{
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
                 //System.out.println(resolveUris(fed, plan.toString()));
-                it = plan.execute(msrOp.batchType);
+                results = switch (msrOp.flowModel) {
+                    case ITERATE -> plan.execute(msrOp.batchType);
+                    case EMIT    -> plan.emit(msrOp.batchType);
+                };
             } else {
-                it = fed.query(msrOp.batchType, task.parsed());
+                results = switch (msrOp.flowModel) {
+                    case ITERATE -> fed.query(msrOp.batchType, task.parsed());
+                    case EMIT    -> fed.emit(msrOp.batchType, task.parsed());
+                };
             }
-            QueryRunner.drain(it, consumer, timeoutMs);
+            switch (msrOp.flowModel) {
+                case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
+                case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
+            }
             //try (var out = new PrintStream("/tmp/dump")) {
             //    NettyChannelDebugger.dumpAndFlushActive(out);
             //}
@@ -261,7 +274,7 @@ public class Measure implements Callable<Void>{
                     log.error("Could not delete {}", file);
             }
         }
-        @Override public void finish(@Nullable Throwable error) {
+        @Override public void doFinish(@Nullable Throwable error) {
             try {
                 if (error == null) {
                     if (isValid()) {
@@ -290,14 +303,16 @@ public class Measure implements Callable<Void>{
                         } catch (Throwable t) {
                             log.error("Failed to write {}", file, t);
                         }
-                        file = taskFile(".unexpected.tsv");
-                        try (var os = new FileOutputStream(file)) {
-                            sink.os = os;
-                            ser.init(vars, vars, false, sink);
-                            ser.serialize(unexpected, sink);
-                            ser.serializeTrailer(sink);
-                        } catch (Throwable t) {
-                            log.error("Failed to write {}", file, t);
+                        if (unexpected != null) {
+                            file = taskFile(".unexpected.tsv");
+                            try (var os = new FileOutputStream(file)) {
+                                sink.os = os;
+                                ser.init(vars, vars, false, sink);
+                                ser.serialize(unexpected, sink);
+                                ser.serializeTrailer(sink);
+                            } catch (Throwable t) {
+                                log.error("Failed to write {}", file, t);
+                            }
                         }
                     }
                 }

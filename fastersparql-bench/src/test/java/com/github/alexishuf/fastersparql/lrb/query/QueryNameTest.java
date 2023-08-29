@@ -1,5 +1,9 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
+import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.BatchQueue;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -9,9 +13,9 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
@@ -44,8 +48,8 @@ class QueryNameTest {
     public void testParseAllQueries(QueryName name) {
         Plan plan = name.parsed();
         assertNotNull(plan);
-        assertTrue(plan.publicVars().size() > 0);
-        assertTrue(plan.allVars().size() > 0);
+        assertFalse(plan.publicVars().isEmpty());
+        assertFalse(plan.allVars().isEmpty());
         assertEquals(plan, name.parsed());
     }
 
@@ -113,13 +117,16 @@ class QueryNameTest {
         serializer.serializeTrailer(sink);
 
         //parse
-        try (var parse = createParser(format, type, vars)) {
-            parse.feedShared(sink);
-            parse.complete(null);
-            B acc = type.create(expected.rows, expected.cols, expected.bytesUsed());
-            for (B b = null; (b = parse.nextBatch(b)) != null; )
+        try (var parsed = new SPSCBIt<>(type, vars, FSProperties.queueMaxRows())) {
+            var parser = createParser(format, parsed);
+            parser.feedShared(sink);
+            parser.feedEnd();
+            B acc = type.create(expected.rows, expected.cols, expected.localBytesUsed());
+            for (B b = null; (b = parsed.nextBatch(b)) != null; )
                 acc.put(b);
             assertEquals(expected, acc);
+        } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
+            throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
         }
     }
 
@@ -147,14 +154,15 @@ class QueryNameTest {
 //        return fix;
 //    }
 
-    private <B extends Batch<B>, S extends ByteSink<S, T>, T> ResultsParserBIt<B>
-    createParser(SparqlResultFormat format, BatchType<B> type, Vars vars) {
+    private <B extends Batch<B>, S extends ByteSink<S, T>, T> ResultsParser<B>
+    createParser(SparqlResultFormat format, CompletableBatchQueue<B> dest) {
         if (format == WS) {
             WsFrameSender<?, ?> frameSender = new WsFrameSender<S, T>() {
                 @Override public void sendFrame(T content) {}
                 @Override public S createSink() {return null;}
                 @Override public ResultsSender<S, T> createSender() {
                     return new ResultsSender<>(WsSerializer.create(), createSink()) {
+                        @Override public void preTouch() {}
                         @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                             serializer.init(vars, subset, isAsk, new ByteRope());
                         }
@@ -172,9 +180,9 @@ class QueryNameTest {
                     };
                 }
             };
-            return new WsClientParserBIt<>(frameSender, type, vars, 1<<16);
+            return new WsClientParser<>(frameSender, dest);
         } else {
-            return ResultsParserBIt.createFor(format, type, vars, 1<<16);
+            return ResultsParser.createFor(format, dest);
         }
     }
 

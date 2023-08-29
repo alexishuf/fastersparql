@@ -22,7 +22,7 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
         if (b == null && state() == State.ACTIVE)
             onTermination(null);
         else if (b != null)
-            onBatch(b);
+            onNextBatch(b);
         return b;
     }
 

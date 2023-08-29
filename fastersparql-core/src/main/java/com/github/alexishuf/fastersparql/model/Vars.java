@@ -9,7 +9,6 @@ import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.NonNull;
 
 import java.util.*;
-import java.util.stream.Stream;
 
 import static java.lang.System.arraycopy;
 
@@ -66,11 +65,6 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     /** Copy a non-distinct collection into a new mutable Vars instance. */
     public static Mutable from(Collection<?> collection) {
         return from(collection, collection.size());
-    }
-
-    /** Collect {@code stream} into a new mutable {@link Vars} set. */
-    public static Mutable from(Stream<?> stream) {
-        return from(stream.toList());
     }
 
     /** Copy a non-distinct collection into a new mutable Vars instance with given capacity. */
@@ -183,15 +177,6 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
 
     /* --- --- --- non-overridden query methods --- --- --- */
 
-    /**
-     * Get a reference to the backing {@code SegmentRope[]}.
-     *
-     * <p>Changes to the array will reflect on {@code this} {@link Vars} even if the instance
-     * is immutable. Likewise, mutations on the {@link Vars} object may cause this method
-     * to return a different reference.</p>
-     */
-    public final SegmentRope[] array() { return array; }
-
     /** Test whether {@code this} and {@code other} share at least one item. */
     @EnsuresNonNullIf(expression = "#1", result = true)
     public boolean intersects(Collection<? extends Rope> other) {
@@ -269,6 +254,8 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
 
     @Override public final boolean isEmpty() { return size == 0; }
 
+    @Override public final @NonNull Iterator<SegmentRope> iterator() { return super.iterator(); }
+
     @Override public final Spliterator<SegmentRope> spliterator() { return super.spliterator(); }
 
     @Override public boolean equals(Object o) {
@@ -285,7 +272,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     /* --- --- --- specialized mutation methods --- --- --- */
 
     public boolean add(Term var) { throw new UnsupportedOperationException(); }
-    public boolean addAll(@NonNull Vars other) {
+    @SuppressWarnings("UnusedReturnValue") public boolean addAll(@NonNull Vars other) {
         throw new UnsupportedOperationException();
     }
 

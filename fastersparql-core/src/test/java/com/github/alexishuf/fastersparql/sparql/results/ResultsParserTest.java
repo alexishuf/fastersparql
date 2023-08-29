@@ -1,10 +1,10 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -88,7 +88,7 @@ class ResultsParserTest {
             new OffsetByteRopeFac()
     );
 
-    protected void doTestSingleFeed(ResultsParserBIt.Factory factory, Results expected,
+    protected void doTestSingleFeed(ResultsParser.Factory factory, Results expected,
                                     SegmentRope input) throws Exception {
         for (RopeFac ropeFac : ROPE_FACTORIES)
             singleFeed(factory, expected, input, ropeFac);
@@ -98,7 +98,7 @@ class ResultsParserTest {
         }
     }
 
-    protected void doTest(ResultsParserBIt.Factory factory, Results expected,
+    protected void doTest(ResultsParser.Factory factory, Results expected,
                           SegmentRope input) throws Exception {
         for (int i = 0; i < 2; i++) {
             for (RopeFac ropeFac : ROPE_FACTORIES) {
@@ -118,25 +118,22 @@ class ResultsParserTest {
         }
     }
 
-    private void singleFeed(ResultsParserBIt.Factory factory, Results ex, SegmentRope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxRows());
-             var parser = factory.create(dst)) {
+    private void singleFeed(ResultsParser.Factory factory, Results ex, SegmentRope input, RopeFac ropeFac) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxRows())) {
+            var parser = factory.create(dst);
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
                 parser.feedShared(input);
                 ropeFac.invalidate(copy);
-            } catch (Throwable ignored) {
-            } finally {
-                if (parser.state() == BIt.State.ACTIVE)
-                    parser.complete(null);
-            }
+                parser.feedEnd();
+            } catch (Throwable ignored) { /* pass */ }
             ex.check(dst);
         }
     }
 
-    private void byteFeed(ResultsParserBIt.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
-             var parser = factory.create(dst)) {
+    private void byteFeed(ResultsParser.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+            var parser = factory.create(dst);
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, len = input.len(); i < len; i++) {
@@ -144,42 +141,38 @@ class ResultsParserTest {
                         parser.feedShared(r);
                         ropeFac.invalidate(r);
                     }
-                } catch (Throwable ignored) {
-                } finally {
-                    if (parser.state() == BIt.State.ACTIVE)
-                        parser.complete(null);
+                    parser.feedEnd();
+                } catch (Throwable ignored) { /* pass */ }
+            });
+            ex.check(dst);
+        }
+    }
+
+    private void wsFeed(ResultsParser.Factory factory, Results ex, Rope input,
+                        RopeFac ropeFac) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+            var parser = factory.create(dst);
+            Thread.startVirtualThread(() -> {
+                try {
+                    for (int i = 0, j, len = input.len(); i < len; i = j) {
+                        j = input.skip(i, len, Rope.UNTIL_WS)+1;
+                        var r = ropeFac.create(input, i, Math.min(j, len));
+                        parser.feedShared(r);
+                        ropeFac.invalidate(r);
+                    }
+                    parser.feedEnd();
+                } catch (Throwable t) {
+                    parser.feedError(FSException.wrap(null, t));
                 }
             });
             ex.check(dst);
         }
     }
 
-    private void wsFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
-                        RopeFac ropeFac) {
-        try (var parser = factory.create(Batch.TERM, ex.vars(), 2)) {
-            Thread.startVirtualThread(() -> {
-                try {
-                    for (int i = 0, j, len = input.len(); i < len; i = j) {
-                        j = input.skip(i, len, Rope.UNTIL_WS)+1;
-                        var r = ropeFac.create(input, i, Math.min(j, len));
-                        parser.feedShared(r);
-                        ropeFac.invalidate(r);
-                    }
-                } catch (Throwable t) {
-                    parser.complete(t);
-                } finally {
-                    if (parser.state() == BIt.State.ACTIVE)
-                        parser.complete(null);
-                }
-            });
-            ex.check(parser);
-        }
-    }
-
-    private void lineFeed(ResultsParserBIt.Factory factory, Results ex, Rope input,
+    private void lineFeed(ResultsParser.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2);
-             var parser = factory.create(dst)) {
+        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+            var parser = factory.create(dst);
             Thread.startVirtualThread(() -> {
                 try {
                     for (int i = 0, j, len = input.len(); i < len; i = j) {
@@ -188,11 +181,8 @@ class ResultsParserTest {
                         parser.feedShared(r);
                         ropeFac.invalidate(r);
                     }
-                } catch (Throwable ignored) {
-                } finally {
-                    if (parser.state() == BIt.State.ACTIVE)
-                        parser.complete(null);
-                }
+                    parser.feedEnd();
+                } catch (Throwable ignored) { /* pass */ }
             });
             ex.check(dst);
         }
@@ -201,6 +191,6 @@ class ResultsParserTest {
     @ParameterizedTest @ValueSource(strings = {"JSON", "TSV", "CSV"})
     void testSupportsFormat(String fmtName) {
         var fmt = SparqlResultFormat.valueOf(fmtName);
-        assertTrue(ResultsParserBIt.supports(fmt));
+        assertTrue(ResultsParser.supports(fmt));
     }
 }

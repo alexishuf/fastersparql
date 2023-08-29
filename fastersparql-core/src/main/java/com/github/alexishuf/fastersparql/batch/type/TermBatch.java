@@ -7,8 +7,8 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
@@ -93,10 +93,10 @@ public final class TermBatch extends Batch<TermBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
+    @Override public TermBatchType type() { return TERM; }
+
     @Override public TermBatch copy(@Nullable TermBatch dest) {
-        if (dest == null)
-            dest = TermBatchType.INSTANCE.create(rows, cols, 0);
-        dest.reserve(rows, 0);
+        dest = TERM.reserved(dest, rows, cols, 0);
         System.arraycopy(arr, 0, dest.arr, 0, rows*cols);
         dest.rows = rows;
         dest.cols = cols;
@@ -180,7 +180,7 @@ public final class TermBatch extends Batch<TermBatch> {
     @Override public boolean offerTerm(int col, Term t) {
         if (offerRowBase < 0) throw new IllegalStateException();
         if (col < 0 || col >= cols) throw new IndexOutOfBoundsException();
-        arr[offerRowBase+col] = t;
+        arr[offerRowBase+col] = t == null ? null : t.asImmutable();
         return true;
     }
 
@@ -189,6 +189,17 @@ public final class TermBatch extends Batch<TermBatch> {
         ++rows;
         offerRowBase = -1;
         return true;
+    }
+
+    @Override public boolean abortOfferOrPut() throws IllegalStateException {
+        if (offerRowBase < 0) return false;
+        offerRowBase = -1;
+        return true;
+    }
+
+
+    @Override public boolean fits(TermBatch other) {
+        return (rows+other.rows)*cols <= arr.length;
     }
 
     @Override public boolean offer(TermBatch other) {
@@ -200,13 +211,47 @@ public final class TermBatch extends Batch<TermBatch> {
         return true;
     }
 
-    @Override public void put(TermBatch other) {
-        if (other.cols != cols)
-            throw new IllegalArgumentException();
-        int oRows = other.rows;
+//    @Override public void put(TermBatch other) {
+//        if (other.cols != cols)
+//            throw new IllegalArgumentException();
+//        int oRows = other.rows;
+//        reserve(oRows, 0);
+//        arraycopy(other.arr, 0, arr, rows*cols, oRows *other.cols);
+//        rows += oRows;
+//    }
+
+    @Override public void putRange(TermBatch other, int begin, int end) {
+        int oRows = end-begin, cols = this.cols;
+        if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
+        if (oRows <= 0) return; // no-op
         reserve(oRows, 0);
-        arraycopy(other.arr, 0, arr, rows*cols, oRows *other.cols);
+        arraycopy(other.arr, begin*cols, arr, rows*cols, oRows*cols);
         rows += oRows;
+    }
+
+    @Override public <O extends Batch<O>> @This TermBatch putConverting(O other) {
+        int cols = this.cols, rows = other.rows;
+        if (other.cols != cols) throw new IllegalArgumentException();
+        reserve(rows, 0);
+        for (int r = 0, i = this.rows*cols; r < rows; r++) {
+            for (int c = 0; c < cols; c++)
+                arr[i++] = other.get(r, c);
+        }
+        this.rows += rows;
+        return this;
+    }
+
+    @Override public <O extends Batch<O>> void putRowConverting(O other, int row) {
+        if (other.type() == TERM) {
+            putRow((TermBatch) other, row);
+        } else {
+            int cols = this.cols, i = rows*cols;
+            if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
+            reserve(1, 0);
+            var arr = this.arr;
+            for (int c = 0; c < cols; c++)
+                arr[i++] = other.get(row, c);
+        }
     }
 
     @Override public void beginPut() {
@@ -224,14 +269,14 @@ public final class TermBatch extends Batch<TermBatch> {
     @Override public void commitPut() { commitOffer(); }
 
     @Override public void putRow(TermBatch other, int row) {
-        if (other.cols != cols) throw new IllegalArgumentException();
-        if (row >= other.rows) throw new IndexOutOfBoundsException();
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+        if (row >= other.rows) throw new IndexOutOfBoundsException("row >= other.rows");
         reserve(1, 0);
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
     }
 
     @Override public void putRow(Term[] row) {
-        if (row.length != cols) throw new IllegalArgumentException();
+        if (row.length != cols) throw new IllegalArgumentException("cols mismatch");
         reserve(1, 0);
         arraycopy(row, 0, arr, cols*rows++, row.length);
     }
@@ -263,10 +308,16 @@ public final class TermBatch extends Batch<TermBatch> {
 
 
     public static final class Merger extends BatchMerger<TermBatch> {
-        private Term @MonotonicNonNull [] tmp;
+        private Term @Nullable [] tmp;
 
         public Merger(BatchType<TermBatch> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
+        }
+
+        @Override protected void doRelease() {
+            if (tmp != null && REC_TMP.compareAndExchangeRelease(null, tmp) == null)
+                tmp = null;
+            super.doRelease();
         }
 
         @Override public TermBatch projectInPlace(TermBatch b) {
@@ -291,12 +342,18 @@ public final class TermBatch extends Batch<TermBatch> {
     }
 
     public static final class Filter extends BatchFilter<TermBatch> {
-        private Term @MonotonicNonNull [] tmp;
+        private Term @Nullable [] tmp;
 
         public Filter(BatchType<TermBatch> batchType, Vars vars,
                       @Nullable BatchMerger<TermBatch> projector,
                       RowFilter<TermBatch> rowFilter, @Nullable BatchFilter<TermBatch> before) {
             super(batchType, vars, projector, rowFilter, before);
+        }
+
+        @Override protected void doRelease() {
+            if (tmp != null && REC_TMP.compareAndExchangeRelease(null, tmp) == null)
+                tmp = null;
+            super.doRelease();
         }
 
         private TermBatch filterInPlaceEmpty(TermBatch b) {
@@ -308,9 +365,9 @@ public final class TermBatch extends Batch<TermBatch> {
                     case TERMINATE -> rows = -1;
                 }
             }
-            if (rows == -1 && survivors == 0) {
-                batchType.recycle(b);
-                return null;
+            if (rows == -1) {
+                cancelUpstream();
+                if (survivors == 0) return batchType.recycle(b);
             }
             if (projector != null)
                 b.cols = requireNonNull(projector.columns).length;
@@ -337,7 +394,7 @@ public final class TermBatch extends Batch<TermBatch> {
                 while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
                 out = r*w; // rows in [0, r) must be kept
                 ++r; // r==rows or must be dropped, do not call drop(b, r) again
-                for (int keep, kTerms; r < rows; out += kTerms) {
+                for (int keep, kTerms; r < rows && decision != TERMINATE; out += kTerms) {
                     // skip over rows to be dropped
                     while (r < rows && (decision = rowFilter.drop(b, r)) != KEEP) ++r;
                     // find keep region [keep, keep+kTerms). ++r because either r==rows or is a keep
@@ -345,8 +402,8 @@ public final class TermBatch extends Batch<TermBatch> {
                     for (; r < rows && (decision = rowFilter.drop(b, r)) == KEEP; ++r) kTerms += w;
                     // copy keep rows
                     arraycopy(arr, keep*w, arr, out, kTerms);
-                    if (decision == TERMINATE) rows = -1;
                 }
+                if (decision == TERMINATE) rows = -1;
                 b.rows = out/w;
             } else {
                 Term[] tmp = this.tmp;
@@ -372,9 +429,9 @@ public final class TermBatch extends Batch<TermBatch> {
                 b.cols = columns.length;
                 b.rows = out/columns.length;
             }
-            if (rows == -1 && out == 0) {
-                batchType.recycle(b);
-                return null;
+            if (rows == -1) {
+                cancelUpstream();
+                if (out == 0) b = batchType.recycle(b);
             }
             return b;
         }

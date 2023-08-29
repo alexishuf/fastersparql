@@ -36,10 +36,17 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     private static final byte   IS_SUFFIX = 0x0000001;
     private static final byte   TYPE_MASK = 0x0000006;
     private static final int     TYPE_BIT = numberOfTrailingZeros(TYPE_MASK);
+    private static final byte    TYPE_LIT = (byte) (Type.LIT.ordinal() << TYPE_BIT);
+    private static final byte    TYPE_VAR = (byte) (Type.VAR.ordinal() << TYPE_BIT);
+    private static final byte  TYPE_BLANK = (byte) (Type.BLANK.ordinal() << TYPE_BIT);
+    private static final byte    TYPE_IRI = (byte) (Type.IRI.ordinal() << TYPE_BIT);
+
 
     public static final Term FALSE = new Term(DT_BOOLEAN, "\"false", true);
     public static final Term TRUE = new Term(DT_BOOLEAN, "\"true", true);
     public static final Term EMPTY_STRING = new Term(EMPTY, "\"\"", true);
+
+    public static final Term GROUND = Term.valueOf("<urn:fastersparql:ground>");
 
     public static final SegmentRope CLOSE_IRI = new SegmentRope(">".getBytes(UTF_8), 0, 1);
     public static final Term EMPTY_IRI = new Term(new SegmentRope(MemorySegment.ofArray("<".getBytes(UTF_8)), 0, 1), CLOSE_IRI, false);
@@ -391,11 +398,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         if (suffixShared) {
             first  = local;
             second = shared;
-            flags  = IS_READONLY|IS_SUFFIX;
+            flags  = (byte)(IS_READONLY|IS_SUFFIX|TYPE_LIT);
         } else {
             first  = shared;
             second = local;
-            flags  = IS_READONLY;
+            flags = (byte) (IS_READONLY | typeFlags(shared, local));
         }
         assert validate();
     }
@@ -411,7 +418,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         SegmentRope f = EMPTY_STRING.first;
         first  = SegmentRope.pooledWrap(f.segment, f.utf8, f.offset, f.len);
         second = EMPTY;
-        flags  = IS_SUFFIX;
+        flags  = (byte)(IS_SUFFIX|TYPE_LIT);
     }
 
     public static Term mutable() { return new Term(); }
@@ -419,6 +426,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     public static Term pooledMutable() {
         Term t = GlobalAffinityShallowPool.get(POOL_COL);
         return t == null ? new Term() : t;
+    }
+
+    public boolean isMutable() { return (flags & IS_READONLY) == 0; }
+
+    public Term asImmutable() {
+        return isMutable() ? new Term(shared(), new ByteRope(local()), sharedSuffixed()) : this;
     }
 
     public void recycle() {
@@ -450,9 +463,19 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         }
         this.hash = 0;
         this.number = null;
-        this.flags = suffixShared ? IS_SUFFIX : 0;
+        this.flags = suffixShared ? (byte)(IS_SUFFIX|TYPE_LIT) : typeFlags(shared, myLocal);
         this.cachedEndLex = 0;
         assert validate();
+    }
+
+    private byte typeFlags(SegmentRope prefix, SegmentRope local) {
+        return switch ((prefix.len == 0 ? local : prefix).get(0)) {
+            case '"' -> TYPE_LIT;
+            case '_' -> TYPE_BLANK;
+            case '<' -> TYPE_IRI;
+            case '?', '$' -> TYPE_VAR;
+            default -> throw new InvalidTermException(toString(), 0, "bad start");
+        };
     }
 
     public void set(@NonNull SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
@@ -464,7 +487,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         set0(shared, myLocal, suffixShared);
     }
 
-    @SuppressWarnings("ConstantValue") private boolean validate() {
+    @SuppressWarnings({"ConstantValue", "SameReturnValue"}) private boolean validate() {
         if (first == null) throw new AssertionError("first is null");
         if (second == null) throw new AssertionError("second is null");
         if (first.len + second.len < 2)
@@ -790,7 +813,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         return dest;
     }
 
-    @Override public int write(OutputStream out) throws IOException {
+    @SuppressWarnings("unused") @Override public int write(OutputStream out) throws IOException {
         first.write(out);
         second.write(out);
         return len;
@@ -836,7 +859,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     }
 
 
-    @Override public int skipUntilLast(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
@@ -849,7 +872,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         return end;
     }
 
-    @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
@@ -875,7 +898,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         return end;
     }
 
-    @Override public boolean has(int pos, Rope rope, int begin, int end) {
+    @SuppressWarnings("unused") @Override public boolean has(int pos, Rope rope, int begin, int end) {
         if (pos < 0 || begin < 0 || pos > len || end > rope.len)
             throw new IndexOutOfBoundsException();
         int rLen = end-begin;
@@ -1104,23 +1127,9 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     }
     private static final Type[] TYPES  = Type.values();
 
-    public boolean isIri() { return type() == Type.IRI; }
-    public boolean isVar() { return type() == Type.VAR; }
-
-    public Type type() {
-        int ordinal = (flags & TYPE_MASK) >>> TYPE_BIT;
-        if (ordinal == 0) {
-            ordinal = (flags & IS_SUFFIX) != 0 ? Type.LIT.ordinal() : switch (get(0)) {
-                case '"'      -> Type.LIT.ordinal();
-                case '_'      -> Type.BLANK.ordinal();
-                case '<'      -> Type.IRI.ordinal();
-                case '?', '$' -> Type.VAR.ordinal();
-                default       -> throw new InvalidTermException(toString(), 0, "bad start");
-            };
-            flags |= (ordinal << TYPE_BIT);
-        }
-        return TYPES[ordinal];
-   }
+    public boolean isIri() { return       (flags & TYPE_MASK) == TYPE_IRI; }
+    public boolean isVar() { return       (flags & TYPE_MASK) == TYPE_VAR; }
+    public Type    type()  { return TYPES[(flags & TYPE_MASK) >>> TYPE_BIT]; }
 
     public SegmentRope          first() { return first; }
     public SegmentRope         second() { return second; }

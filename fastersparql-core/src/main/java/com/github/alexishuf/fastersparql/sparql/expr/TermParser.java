@@ -8,13 +8,10 @@ import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.asOpenLitU8;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Range;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.invert;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -277,7 +274,9 @@ public final class TermParser implements AutoCloseable {
                         shared = sh;
                     }
                 } else {
-                    if (ntBuf == null) ntBuf = ByteRope.pooled(stopped - begin);
+                    ByteRope ntBuf = this.ntBuf;
+                    if (ntBuf == null)
+                        this.ntBuf = ntBuf = ByteRope.pooled(stopped - begin);
                     toNT();
                     localBegin = 0;
                     if (typed) {

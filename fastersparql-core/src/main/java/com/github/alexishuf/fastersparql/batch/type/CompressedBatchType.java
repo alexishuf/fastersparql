@@ -22,7 +22,7 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     private static final int MIN_TERM_LOCAL_SHIFT = 3;
     public static final CompressedBatchType INSTANCE = new CompressedBatchType();
 
-    public CompressedBatchType() {super(CompressedBatch.class);}
+    private CompressedBatchType() {super(CompressedBatch.class);}
 
     public static CompressedBatchType get() { return INSTANCE; }
 
@@ -56,7 +56,7 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
 
     @Override public int localBytesRequired(Batch<?> b) {
         if (b instanceof CompressedBatch cb)
-            return cb.bytesUsed();
+            return cb.localBytesUsed();
         return coldBytesRequired(b);
     }
 

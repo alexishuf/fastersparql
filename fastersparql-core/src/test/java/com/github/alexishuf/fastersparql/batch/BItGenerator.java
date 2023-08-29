@@ -100,8 +100,11 @@ public sealed interface BItGenerator {
                 if (!started) {
                     started = true;
                     Thread.startVirtualThread(() -> {
-                        for (int i : ints)
-                            TERM.recycle(offer(intsBatch(i)));
+                        for (int i : ints) {
+                            try {
+                                TERM.recycle(offer(intsBatch(i)));
+                            } catch (TerminatedException|CancelledException e) { break; }
+                        }
                         complete(err);
                     });
                 }

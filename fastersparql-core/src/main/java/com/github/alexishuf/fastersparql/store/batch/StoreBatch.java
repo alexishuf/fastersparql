@@ -15,6 +15,7 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 
@@ -40,8 +41,10 @@ public class StoreBatch extends IdBatch<StoreBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
+    @Override public StoreBatchType type() { return TYPE; }
+
     @Override public StoreBatch copy(@Nullable StoreBatch offer) {
-        return doCopy(offer == null ? TYPE.create(rows, cols, 0) : offer);
+        return doCopy(TYPE.reserved(offer, rows, cols, 0));
     }
 
     /* --- --- --- term-level accessors --- --- --- */
@@ -331,19 +334,41 @@ public class StoreBatch extends IdBatch<StoreBatch> {
             put((StoreBatch) other);
         } else {
             var lookup = lookup(dictId);
-            TwoSegmentRope tmp = new TwoSegmentRope();
+            var tmp = TwoSegmentRope.pooled();
             int rows = other.rows;
-            reserve(rows, other.bytesUsed());
-            for (int r = 0; r < rows; r++) {
-                beginPut();
-                for (int c = 0; c < cols; c++) {
-                    if (other.getRopeView(r, c, tmp))
-                        putTerm(c, IdTranslator.source(lookup.find(tmp), dictId));
-                }
-                commitPut();
-            }
+            reserve(rows, other.localBytesUsed());
+            for (int r = 0; r < rows; r++)
+                putRowConverting(other, r, dictId, cols, tmp, lookup);
+            tmp.recycle();
         }
         return this;
+    }
+
+    public @This StoreBatch putRowConverting(Batch<?> other, int row, int dictId) {
+        if (type() == other.type()) {
+            putRow((StoreBatch) other, row);
+        } else {
+            int cols = this.cols;
+            if (row > other.rows) throw new IndexOutOfBoundsException(row);
+            if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+
+            var lookup = lookup(dictId);
+            var tmp = TwoSegmentRope.pooled();
+            putRowConverting(other, row, dictId, cols, tmp, lookup);
+            tmp.recycle();
+        }
+        return this;
+    }
+
+    private void putRowConverting(Batch<?> other, int row, int dictId,
+                                  int cols, TwoSegmentRope tmp,
+                                  LocalityCompositeDict.Lookup lookup) {
+        beginPut();
+        for (int c = 0; c < cols; c++) {
+            if (other.getRopeView(row, c, tmp))
+                putTerm(c, IdTranslator.source(lookup.find(tmp), dictId));
+        }
+        commitPut();
     }
 
 }

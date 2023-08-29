@@ -9,11 +9,15 @@ import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -62,6 +66,11 @@ public class ModifierTest {
             expected.check(plan.execute(Batch.TERM));
             expected.check(plan.execute(Batch.TERM));
             expected.check(plan.execute(Batch.COMPRESSED));
+            expected.check(plan.emit(Batch.TERM));
+            expected.check(plan.emit(Batch.TERM));
+            expected.check(plan.emit(Batch.COMPRESSED));
+            expected.check(plan.emit(Batch.TERM));
+            expected.check(plan.emit(Batch.COMPRESSED));
         }
     }
 
@@ -179,7 +188,16 @@ public class ModifierTest {
     }
     
     @ParameterizedTest @MethodSource
-    void test(D c) { c.run(); }
+    void test(D c) {
+        try (var w = ThreadJournal.watchdog(System.out, 100)) {
+            ThreadJournal.closeThreadJournals();
+            w.start(1_000_000_000L);
+            c.run();
+        } catch (Throwable t) {
+            ThreadJournal.dumpAndReset(System.out, 60);
+            throw t;
+        }
+    }
 
     @Test void testRace() throws Exception {
         try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
@@ -192,5 +210,17 @@ public class ModifierTest {
             }
         }
     }
-    
+
+    public static void main(String[] args) throws Exception {
+        ModifierTest test = new ModifierTest();
+        D first = (D) test().findFirst().orElseThrow().get()[0];
+        first.run();
+        try (var rec = new Recording(Configuration.getConfiguration("profile"))) {
+            rec.setDumpOnExit(true);
+            rec.setDestination(Path.of("/tmp/profile.jfr"));
+            rec.start();
+            test.testRace();
+        }
+    }
+
 }

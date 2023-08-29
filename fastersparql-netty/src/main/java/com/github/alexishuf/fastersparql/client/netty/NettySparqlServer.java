@@ -2,9 +2,12 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
-import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
@@ -25,7 +28,7 @@ import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsServerParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.bootstrap.ServerBootstrap;
@@ -116,7 +119,7 @@ public class NettySparqlServer implements AutoCloseable {
     }
 
     /** Get the {@link InetSocketAddress} where the server is listening for connections. */
-    public InetSocketAddress listenAddress() {
+    @SuppressWarnings("unused") public InetSocketAddress listenAddress() {
         return (InetSocketAddress)server.localAddress();
     }
 
@@ -147,7 +150,7 @@ public class NettySparqlServer implements AutoCloseable {
 
     /* --- --- --- handlers --- --- --- */
 
-    private static class VolatileBindQuery extends BindQuery<CompressedBatch> {
+    private static class VolatileBindQuery extends ItBindQuery<CompressedBatch> {
         volatile long nonEmptySeq = -1, emptySeq = -1;
 
         public VolatileBindQuery(SparqlQuery query, BIt<CompressedBatch> bindings, BindType type) {
@@ -177,7 +180,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
             super.channelInactive(ctx);
-            if (it != null)
+            if (query != null)
                 fail(ctx.channel() + " closed before query completed");
         }
 
@@ -227,7 +230,7 @@ public class NettySparqlServer implements AutoCloseable {
          * {@link #onFailure(HttpResponseStatus, CharSequence, boolean)} is called, this will run
          * after its return.</p>
          */
-        public void cleanup() {
+        public void roundCleanup() {
             if (it != null) {
                 try {
                     it.close();
@@ -269,7 +272,8 @@ public class NettySparqlServer implements AutoCloseable {
             try {
                 boolean cancelled = (cause instanceof FSCancelledException ce
                                         && ce.endpoint() == sparqlClient.endpoint())
-                                 || (cause instanceof BItReadClosedException re && re.it() == it);
+                                 || (cause instanceof BItReadClosedException)
+                                 || (cause instanceof CancelledException);
                 ByteRope msg;
                 if (cause == null && errorMsg == null) {
                     msg = null;
@@ -290,14 +294,14 @@ public class NettySparqlServer implements AutoCloseable {
                 }
                 if (status != OK || cause != null || errorMsg != null)
                     onFailure(status, msg, cancelled);
-                cleanup();
+                roundCleanup();
                 return true; // this call ended round
             } finally {
                 this.round = -round;
             }
         }
 
-        protected boolean fail(CharSequence errorMessage) {
+        @SuppressWarnings("SameReturnValue") protected boolean fail(CharSequence errorMessage) {
             endRound(INTERNAL_SERVER_ERROR, errorMessage, null);
             return true;
         }
@@ -423,6 +427,7 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
     }
+
 
     private final class SparqlHandler extends QueryHandler<FullHttpRequest> {
         private @MonotonicNonNull HttpVersion httpVersion;
@@ -632,7 +637,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private final int maxBindings = wsServerBindings();
 
-        private @Nullable WsServerParserBIt<CompressedBatch> bindingsParser;
+        private @Nullable WsServerParser<CompressedBatch> bindingsParser;
         private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
         private int requestBindingsAt;
         private int waitingVarsRound;
@@ -655,13 +660,13 @@ public class NettySparqlServer implements AutoCloseable {
             ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
         }
 
-        @Override public void cleanup() {
-            super.cleanup();
+        @Override public void roundCleanup() {
+            super.roundCleanup();
             waitingVarsRound = 0;
             try {
                 var bindingsParser = this.bindingsParser;
                 if (bindingsParser != null)
-                    bindingsParser.close();
+                    bindingsParser.feedEnd();
             } catch (Throwable t) {
                 log.error("Ignoring {} while closing bindingsParser={}", t, bindingsParser);
             } finally { this.bindingsParser = null; }
@@ -768,9 +773,13 @@ public class NettySparqlServer implements AutoCloseable {
             }
         }
 
-        private void readBindings(WsServerParserBIt<CompressedBatch> bindingsParser,
+        private void readBindings(WsServerParser<CompressedBatch> bindingsParser,
                                   SegmentRope msg) {
-            bindingsParser.feedShared(msg);
+            try {
+                bindingsParser.feedShared(msg);
+            } catch (BatchQueue.TerminatedException|CancelledException ignored) {
+                return;
+            }
             if (bindingsParser.rowsParsed() >= requestBindingsAt) {
                 requestBindingsAt += maxBindings>>1;
                 var bb = ctx.alloc().buffer(32);
@@ -804,14 +813,13 @@ public class NettySparqlServer implements AutoCloseable {
                 j = msg.skipUntil(i, len, '\t',  '\n');
                 bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
             }
-            bindingsParser = new WsServerParserBIt<>(this, COMPRESSED, bindingsVars,
-                                                     wsServerBindings());
+            var bindings = new SPSCBIt<>(COMPRESSED, bindingsVars, Integer.MAX_VALUE);
+            bindingsParser = new WsServerParser<>(this, bindings);
             // do not block if client starts flooding
-            bindingsParser.maxReadyItems(Integer.MAX_VALUE);
             int round = waitingVarsRound;
             waitingVarsRound = 0;
 
-            if (dispatchQuery(bindingsParser, bType)) {
+            if (dispatchQuery(bindings, bType)) {
                 // only send binding seq number and right unbound vars
                 Vars itVars = it.vars();
                 var serializeVars = new Vars.Mutable(itVars.size()+1);
@@ -836,4 +844,5 @@ public class NettySparqlServer implements AutoCloseable {
             return new WsSerializeTask(round);
         }
     }
+
 }

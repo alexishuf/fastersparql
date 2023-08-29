@@ -32,7 +32,7 @@ public final class LIFOPool<T> implements LeakyPool {
         this.cls = cls;
     }
 
-    public Class<T> itemClass() { return cls; }
+    @SuppressWarnings("unused") public Class<T> itemClass() { return cls; }
 
     @Override public void cleanLeakyRefs() {
         int size;

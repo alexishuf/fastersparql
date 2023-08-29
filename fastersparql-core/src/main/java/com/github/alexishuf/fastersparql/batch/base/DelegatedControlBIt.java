@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
@@ -13,7 +14,9 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.base.AbstractBIt.cls2name;
 import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
@@ -42,6 +45,10 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
     }
 
     public BIt<S> delegate() { return delegate; }
+
+    @Override public Stream<? extends StreamNode> upstream() {
+        return Optional.ofNullable(delegate).stream();
+    }
 
     protected abstract void cleanup(boolean cancelled, @Nullable Throwable error);
 

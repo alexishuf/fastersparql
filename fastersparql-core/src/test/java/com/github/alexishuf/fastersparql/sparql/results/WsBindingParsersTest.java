@@ -4,13 +4,13 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
-import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,6 +60,8 @@ public class WsBindingParsersTest {
 
         @Override public ResultsSender<ByteRope, ByteRope> createSender() {
             return new ResultsSender<>(WsSerializer.create(), new ByteRope()) {
+                @Override public void preTouch() { sink.touch(); }
+
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                     serializer.init(vars, subset, isAsk, sink.touch());
                     sendFrame(sink.take());
@@ -147,7 +149,7 @@ public class WsBindingParsersTest {
         return map;
     }
 
-    private static Object feed(ResultsParserBIt<?> parser, Mailbox mailbox) {
+    @SuppressWarnings("SameReturnValue") private static Object feed(ResultsParser<?> parser, Mailbox mailbox) {
         try {
             while (true) {
                 var frame = mailbox.recv();
@@ -156,17 +158,15 @@ public class WsBindingParsersTest {
                 if      (frame instanceof ByteRope     b) b.fill(0);
                 else if (frame instanceof SegmentRope sr) sr.len = 0;
             }
+            parser.feedEnd();
         } catch (Throwable t) {
-            parser.complete(t);
-        } finally {
-            if (parser.state() == BIt.State.ACTIVE)
-                parser.complete(null);
+            parser.feedError(FSException.wrap(null, t));
         }
         return null;
     }
 
-    private @Nullable Object server(Results ex, Map<List<Term>, Results> bRow2Res,
-                                    BIt<TermBatch> bindings, Mailbox clientMBox) {
+    @SuppressWarnings("SameReturnValue") private @Nullable Object server(Results ex, Map<List<Term>, Results> bRow2Res,
+                                                                         BIt<TermBatch> bindings, Mailbox clientMBox) {
         assertTrue(bRow2Res.values().stream().map(Results::vars).distinct().count() <= 1);
         var serverVars = bRow2Res.values().stream().map(Results::vars).distinct().findFirst()
                                  .orElse(ex.vars().minus(ex.bindingsVars()));
@@ -220,13 +220,14 @@ public class WsBindingParsersTest {
 
         Mailbox serverMB = new Mailbox("server"), clientMB = new Mailbox("client");
         Thread serverFeeder = null, clientFeeder = null, server = null;
-        try (var stuff = new AutoCloseableSet<>();
-             var clientCb = stuff.put(new SPSCBIt<>(TERM, ex.vars(), queueMaxRows()));
-             var clientParser = new WsClientParserBIt<>(serverMB, clientCb, ex.asBindQuery(), null);
-             var serverParser = new WsServerParserBIt<>(clientMB, TERM, Vars.of(WsBindingSeq.VAR).union(ex.bindingsVars()), queueMaxRows())) {
+        try (var clientCb = new SPSCBIt<>(TERM, ex.vars(), queueMaxRows());
+             var serverCb = new SPSCBIt<>(TERM, Vars.of(WsBindingSeq.VAR).union(ex.bindingsVars()),
+                                          queueMaxRows())) {
+            var clientParser = new WsClientParser<>(serverMB, clientCb, ex.asBindQuery(), null);
+            var serverParser = new WsServerParser<>(clientMB, serverCb);
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
-            server = startThread("server", () -> server(ex, bRow2Res, serverParser, clientMB));
+            server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));
             ex.check(clientCb);
         } finally {
             serverMB.send(DIE);

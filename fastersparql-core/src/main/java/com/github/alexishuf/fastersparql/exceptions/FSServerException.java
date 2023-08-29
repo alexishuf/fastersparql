@@ -9,17 +9,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public class FSServerException extends FSException {
     private boolean shouldRetry;
 
-    public static FSException wrap(SparqlEndpoint endpoint, Throwable t) {
-        if (t == null) {
-            return null;
-        } else if (t instanceof FSException ce) {
-            ce.offerEndpoint(endpoint);
-            return ce;
-        } else {
-            return new FSServerException(endpoint, t.getMessage(), t);
-        }
-    }
-
     public FSServerException(String message) { this(null, message, null); }
     public FSServerException(@Nullable SparqlEndpoint endpoint, String message) {
         this(endpoint, message, null);

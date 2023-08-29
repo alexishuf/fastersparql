@@ -24,7 +24,7 @@ public class AffinityLevelPool<T> {
         this(shared, Runtime.getRuntime().availableProcessors());
     }
     public AffinityLevelPool(LevelPool<T> shared, int threads) {
-        int safeThreads = 32 - numberOfLeadingZeros(threads - 1);
+        int safeThreads = 1 << (32 - numberOfLeadingZeros(threads - 1));
         this.threadMask = safeThreads-1;
         //noinspection unchecked
         this.local = (T[]) Array.newInstance(shared.itemClass(), safeThreads*32);

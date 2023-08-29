@@ -2,6 +2,10 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.util.Results;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -54,5 +58,34 @@ class PlanTest {
     @ParameterizedTest @MethodSource("varsUnion")
     void testAllVarsUnion(List<Plan> plans, Vars ignored, Vars expected) {
         assertEquals(expected, FS.union(plans.toArray(Plan[]::new)).allVars());
+    }
+
+    @Test void testToAsk() {
+        SparqlQuery s0 = new OpaqueSparqlQuery("SELECT * WHERE { ?x a ?y }");
+        SparqlQuery s1 = new OpaqueSparqlQuery("SELECT ?x WHERE { ?x a ?y }");
+        SparqlQuery s2 = new OpaqueSparqlQuery("SELECT ?y WHERE { ?x a ?y } LIMIT 10");
+
+        assertEquals(new OpaqueSparqlQuery("ASK WHERE { ?x a ?y }"), s0.toAsk());
+        assertEquals(new OpaqueSparqlQuery("ASK WHERE { ?x a ?y }"), s1.toAsk());
+        assertEquals(new OpaqueSparqlQuery("ASK WHERE { ?x a ?y }"), s2.toAsk());
+
+        Query q0 = query("SELECT * WHERE { ?x a ?y }");
+        Query q1 = query("SELECT ?x WHERE { ?x a ?y }");
+        Query q2 = query("SELECT ?y WHERE { ?x a ?y } LIMIT 10");
+
+        assertEquals(query("ASK WHERE { ?x a ?y }"), q0.toAsk());
+        assertEquals(query("ASK WHERE { ?x a ?y }"), q1.toAsk());
+        assertEquals(query("ASK WHERE { ?x a ?y }"), q2.toAsk());
+
+        Plan p0 = Results.parseTP("?x a ?y");
+        Plan p1 = FS.limit(Results.parseTP("?x a ?y"), 1);
+        Plan p2 = FS.distinct(Results.parseTP("?x a ?y"));
+        Plan p3 = FS.project(Results.parseTP("?x a ?y"), Vars.of("?y"));
+
+        var ask = FS.limit(FS.project(Results.parseTP("?x a ?y"), Vars.EMPTY), 1);
+        assertEquals(ask, p0.toAsk());
+        assertEquals(ask, p1.toAsk());
+        assertEquals(ask, p2.toAsk());
+        assertEquals(ask, p3.toAsk());
     }
 }

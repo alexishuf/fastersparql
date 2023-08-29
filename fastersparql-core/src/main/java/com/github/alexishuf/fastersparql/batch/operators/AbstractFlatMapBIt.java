@@ -5,12 +5,14 @@ import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt<B> {
     protected @NonNull BIt<B> inner;
@@ -18,6 +20,10 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
     public AbstractFlatMapBIt(Vars vars, @NonNull BIt<B> inner) {
         super(inner.batchType(), vars);
         this.inner = inner;
+    }
+
+    @Override public Stream<? extends StreamNode> upstream() {
+        return Stream.of(inner);
     }
 
     @Override @This public BIt<B> minWait(long time, TimeUnit unit) {

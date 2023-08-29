@@ -7,6 +7,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.reflect.Array;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.*;
+import static java.lang.Runtime.getRuntime;
 import static java.lang.System.arraycopy;
 
 public class ArrayPool<T> extends AffinityLevelPool<T> {
@@ -39,8 +40,9 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
     private final Class<?> componentType;
 
     public ArrayPool(Class<T> cls) { this(new LevelPool<>(cls)); }
-    public ArrayPool(LevelPool<T> shared) {
-        super(shared);
+    public ArrayPool(LevelPool<T> shared) { this(shared, getRuntime().availableProcessors()); }
+    public ArrayPool(LevelPool<T> shared, int threads) {
+        super(shared, threads);
         this.componentType = shared.itemClass().componentType();
     }
 
@@ -64,7 +66,7 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         return bigger;
     }
 
-    public @NonNull T arrayAtLeast(int capacity) {
+    @SuppressWarnings("unused") public @NonNull T arrayAtLeast(int capacity) {
         T a = getAtLeast(capacity);
         //noinspection unchecked
         return a == null ? (T)Array.newInstance(componentType, capacity) : a;

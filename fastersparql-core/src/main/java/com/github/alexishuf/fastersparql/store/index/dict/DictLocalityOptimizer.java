@@ -15,7 +15,6 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import static com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues.LE_LONG;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.fromConcatChar;

@@ -1,8 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -101,6 +100,7 @@ class WsClientParserBItTest extends ResultsParserTest {
             @Override public ByteRope createSink() { return new ByteRope(); }
             @Override public ResultsSender<ByteRope, ByteRope> createSender() {
                 return new ResultsSender<>(WsSerializer.create(), new ByteRope()) {
+                    @Override public void preTouch() {}
                     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                     @Override public void sendSerialized(Batch<?> batch) {}
                     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
@@ -110,26 +110,20 @@ class WsClientParserBItTest extends ResultsParserTest {
                 };
             }
         };
-        ResultsParserBIt.Factory fac;
+        ResultsParser.Factory fac;
         if (in.contains("!active-binding") || in.contains("!bind-request")) {
-            fac = new ResultsParserBIt.Factory() {
+            fac = new ResultsParser.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-                    return new WsClientParserBIt<>(frameSender, vars, expected.asBindQuery(batchType), null, maxItems);
-                }
                 @Override
-                public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-                    return new WsClientParserBIt<>(frameSender, destination, expected.asBindQuery(destination.batchType()), null);
+                public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
+                    return new WsClientParser<>(frameSender, d, expected.asBindQuery(d.batchType()), null);
                 }
             };
         } else {
-            fac = new ResultsParserBIt.Factory() {
+            fac = new ResultsParser.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-                    return new WsClientParserBIt<>(frameSender, batchType, vars, maxItems);
-                }
-                @Override public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-                    return new WsClientParserBIt<>(frameSender, destination);
+                @Override public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
+                    return new WsClientParser<>(frameSender, d);
                 }
             };
         }

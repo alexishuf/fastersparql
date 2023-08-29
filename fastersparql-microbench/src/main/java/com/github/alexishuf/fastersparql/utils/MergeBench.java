@@ -6,12 +6,14 @@ import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
 import com.github.alexishuf.fastersparql.emit.async.ProducerTask;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -20,9 +22,9 @@ import org.openjdk.jmh.annotations.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TASK_RUNNER;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 @SuppressWarnings("unchecked")
 @State(Scope.Thread)
@@ -112,53 +114,24 @@ public class MergeBench {
     @Benchmark
     public <B extends Batch<B>> int emit() {
         BatchType<B> type = (BatchType<B>) this.type;
-        AsyncEmitter<B> ae = new AsyncEmitter<>(X, TASK_RUNNER);
+        AsyncEmitter<B> ae = new AsyncEmitter<>(type, X);
         for (Batch<?> source : columns) {
             SourceProducer<B> p = new SourceProducer<>(type, (B) source);
             p.registerOn(ae);
         }
-        var receiver = new BenchReceiver<B>();
-        ae.subscribe(receiver);
-        ae.request(Long.MAX_VALUE);
-        return receiver.await();
+        return new BenchReceiver<B>().subscribeTo(ae).getSimple().h;
     }
 
-    private static final class BenchReceiver<B extends Batch<B>> implements Receiver<B> {
-        int h;
-        volatile boolean terminated;
-        Throwable error;
-        Thread waiter = Thread.currentThread();
-
-        public int await() {
-            while (!terminated)
-                LockSupport.parkNanos(this, 1_000_000_000);
-            if (error != null) throw new RuntimeException(error);
-            return h;
-        }
+    private static final class BenchReceiver<B extends Batch<B>>
+            extends ReceiverFuture<BenchReceiver<B>, B> {
+        public int h;
 
         @Override public B onBatch(B batch) {
             for (int r = 0, rows = batch.rows; r < rows; r++)
                 h ^= batch.hash(r);
             return batch;
         }
-
-        @Override public void onComplete() {
-            this.terminated = true;
-            this.error = null;
-            LockSupport.unpark(waiter);
-        }
-
-        @Override public void onCancelled() {
-            this.terminated = true;
-            this.error = AsyncEmitter.CancelledException.INSTANCE;
-            LockSupport.unpark(waiter);
-        }
-
-        @Override public void onError(Throwable cause) {
-            this.terminated = true;
-            this.error = cause;
-            LockSupport.unpark(this.waiter);
-        }
+        @Override public void onComplete() { complete(this); }
     }
 
 
@@ -168,10 +141,12 @@ public class MergeBench {
         private int row;
 
         public SourceProducer(BatchType<B> type, B source) {
-            super(TASK_RUNNER);
+            super(EMITTER_SVC);
             this.type = type;
             this.source = source;
         }
+
+        @Override public Stream<? extends StreamNode> upstream() { return Stream.empty(); }
 
         @Override protected @Nullable B produce(long limit, long deadline, @Nullable B dest) {
 //            int n = (int) Math.min(limit, source.rows - row);
@@ -193,11 +168,13 @@ public class MergeBench {
             return dest;
         }
 
+        @Override public void rebind(BatchBinding<B> binding) {
+            throw new UnsupportedOperationException();
+        }
+
         @Override protected ExhaustReason exhausted() {
             return row >= source.rows ? ExhaustReason.COMPLETED : null;
         }
-
-        @Override protected void cleanup(@Nullable Throwable reason) {}
     }
 
 

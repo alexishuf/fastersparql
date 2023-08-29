@@ -1,24 +1,29 @@
 package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
+import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 
 
-public interface Emitter<B extends Batch<B>> {
+public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable<B> {
     /** Set of vars naming the columns in batches delivered to {@link Receiver#onBatch(Batch)} */
     Vars vars();
 
-    class RegisterAfterStartException extends IllegalStateException {
-        public RegisterAfterStartException() {
-            super("subscribe()/register() after request(long)");
-        }
-    }
+    /**
+     * {@link BatchType} of batches emitted by this {@link Emitter}.
+     */
+    BatchType<B> batchType();
 
-    class MultipleRegistrationUnsupported extends IllegalStateException {
-        public MultipleRegistrationUnsupported() {
-            super("Multiple subscriptions are not supported");
-        }
-    }
+    /**
+     * Whether {@link #subscribe(Receiver)} can be called with multiple receivers and this emitter
+     * will handle delivering copies of every batch to every downstream receiver.
+     *
+     * @return whether {@link #subscribe(Receiver)} accepts multiple receivers
+     */
+    default boolean canScatter() { return false; }
 
     /**
      * Attaches a receiver to this Emitter. This <strong>MUST</strong> be called before
@@ -30,7 +35,8 @@ public interface Emitter<B extends Batch<B>> {
      *         {@link Receiver} would get.
      */
     void subscribe(Receiver<B> receiver)
-            throws RegisterAfterStartException, MultipleRegistrationUnsupported;
+            throws RegisterAfterStartException, MultipleRegistrationUnsupportedException;
+
 
     /**
      * Notifies that the {@link Receiver} wishes to stop receiving batches. Once the

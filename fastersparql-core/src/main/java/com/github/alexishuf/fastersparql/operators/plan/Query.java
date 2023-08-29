@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -33,8 +34,14 @@ public final class Query extends Plan {
     @Override public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, @Nullable Binding binding, boolean weakDedup) {
         var sparql = this.sparql;
         if (binding != null) sparql = sparql.bound(binding);
-        if (weakDedup)        sparql = sparql.toDistinct(WEAK);
+        if (weakDedup)       sparql = sparql.toDistinct(WEAK);
         return client.query(batchType, sparql).metrics(Metrics.createIf(this));
+    }
+
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        var sparql = weakDedup ? this.sparql.toDistinct(WEAK) : this.sparql;
+        return client.emit(type, sparql);
     }
 
     @Override public boolean equals(Object o) {

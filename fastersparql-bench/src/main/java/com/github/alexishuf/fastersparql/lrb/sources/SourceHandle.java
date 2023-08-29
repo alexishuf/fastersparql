@@ -25,9 +25,9 @@ public final class SourceHandle implements AutoCloseable {
 
     @Override public void close() { ExceptionCondenser.closeAll(closeables); }
 
-    public String     specUrl() { return specUrl; }
-    public LrbSource  source()  { return source; }
-    public SourceKind kind()    { return kind; }
+    @SuppressWarnings("unused") public String     specUrl() { return specUrl; }
+    @SuppressWarnings("unused") public LrbSource  source()  { return source; }
+    @SuppressWarnings("unused") public SourceKind kind()    { return kind; }
 
     @Override
     public boolean equals(Object obj) {

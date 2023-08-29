@@ -4,10 +4,12 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQuery;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 
@@ -52,6 +54,35 @@ public interface SparqlClient extends AutoCloseable {
     Guard retain();
 
     /**
+     * For every row of the given bindings, replace use the row to bind a SELECT or ASK query and
+     * return the solutions of that bound query. The solutions to the bound query are returned in
+     * sequence, yielding a single stream of solutions. Solutions to the bound query will include
+     * the values of the row used as binding in its leftmost columns.
+     *
+     * <p>See {@link com.github.alexishuf.fastersparql.model.BindType#resultVars(Vars, Vars)} for
+     * how the set of vars in the returned {@link BIt} is determined.</p>
+     *
+     * <p>All {@link SparqlClient} implementations support this method. Clients for which
+     * {@link #usesBindingAwareProtocol()} is true will, in general, produce more efficient
+     * iterators (i.e., lower garbage collection load and faster wall-clock time when draining
+     * the iterator until its end.</p>
+     *
+     * @param bindQuery A specification of the bind operation and maybe a listener of the
+     *                  {@link ItBindQuery#emptyBinding(long)} and
+     *                  {@link ItBindQuery#nonEmptyBinding(long)} events.
+     * @return a {@link BIt} over the solutions
+     * @throws NullPointerException if only one among {@code bindings} and {@code type}  is null.
+     */
+    <B extends Batch<B>> BIt<B> query(ItBindQuery<B> bindQuery);
+
+    /**
+     * Whether {@link SparqlClient#query(ItBindQuery)} uses a protocol extension that allows more
+     * efficient execution of bind-based joins, {@code OPTIONAL}, {@code FILTER EXISTS}
+     * and {@code MINUS} SPARQL operators.
+     */
+    boolean usesBindingAwareProtocol();
+
+    /**
      * Execute a SELECT or ASK query and retrieve a {@link BIt} over the solutions (rows)
      * of the query.
      *
@@ -69,23 +100,32 @@ public interface SparqlClient extends AutoCloseable {
      *         the intent.</li>
      * </ul>
      *
-     * @param bindQuery A specification of the bind operation and maybe a listener of the
-     *                  {@link BindQuery#emptyBinding(long)} and
-     *                  {@link BindQuery#nonEmptyBinding(long)} events.
-     * @return a {@link BIt} over the solutions
+     * @param batchType the type of batches to be produced
+     * @param sparql The SPARQL query to execute.
+     * @return a {@link BIt} of the requested type over solutions for {@code sparql}.
      * @throws NullPointerException if only one among {@code bindings} and {@code type}  is null.
      */
-    <B extends Batch<B>> BIt<B> query(BindQuery<B> bindQuery);
+    <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql);
 
     /**
-     * Whether {@link SparqlClient#query(BindQuery)} uses a protocol extension that allows more
-     * efficient execution of bind-based joins, {@code OPTIONAL}, {@code FILTER EXISTS}
-     * and {@code MINUS} SPARQL operators.
+     * Create an unstarted {@link Emitter} that will output batches with the solutions for
+     * {@code sparql}.
+     *
+     * @param batchType the type of batches to be produced
+     * @param sparql The SPARQL SELECT or ASK query to execute
+     * @return an {@link Emitter}
+     * @param <B> the batch type
      */
-    boolean usesBindingAwareProtocol();
+    <B extends Batch<B>> Emitter<B> emit(BatchType<B> batchType, SparqlQuery sparql);
 
-    /** Equivalent to {@code query(sparql, null, null)}. */
-    <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql);
+    /**
+     * Analogous to {@link #query(ItBindQuery)} but returns an unstarted {@link Emitter}.
+     *
+     * @param bindQuery the specification fot the bind query.
+     * @return An unstarted {@link Emitter}
+     * @param <B> the batch type
+     */
+    <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> bindQuery);
 
     /**
      * Closes the client, releasing all resources.

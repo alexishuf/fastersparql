@@ -2,22 +2,35 @@ package com.github.alexishuf.fastersparql.batch.dedup;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.ProjectionRowFilter;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 
-public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
+import java.util.concurrent.locks.ReentrantLock;
+
+public abstract class Dedup<B extends Batch<B>> extends ReentrantLock implements RowFilter<B> {
+    protected static final boolean DEBUG = Dedup.class.desiredAssertionStatus();
     protected final BatchType<B> bt;
     protected int cols;
-    protected static final boolean debug = Dedup.class.desiredAssertionStatus();
+    protected short delayRelease;
+    boolean released, pendingRelease;
 
     public Dedup(BatchType<B> batchType, int cols) {
         this.bt = batchType;
         this.cols = cols;
     }
 
+    protected static int enhanceHash(int hash) {
+        return hash ^ (hash>>>24);
+    }
+
+    @Override public final void rebind(BatchBinding<B> binding) throws RebindException {
+        clear(cols);
+    }
+
     protected void checkBatchType(B b) {
-        if (!debug || b == null || b.getClass() == bt.batchClass) return;
+        if (!DEBUG || b == null || b.getClass() == bt.batchClass) return;
         throw new IllegalArgumentException("Unexpected batch of class "+b.getClass()+
                                           ", expected "+bt.batchClass);
     }
@@ -33,12 +46,27 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
      */
     public abstract void clear(int cols);
 
-
-    /**
-     * Recycles all internal components of this object. This should be used when recycling
-     * the {@link Dedup} itself is not possible (e.g., a full pool).
-     */
     public abstract void recycleInternals();
+
+    @Override public void release() {
+        if (delayRelease > 0) {
+            pendingRelease = true;
+        } else if (!released) {
+            released = true;
+            recycleInternals();
+        }
+    }
+
+    @Override public void rebindAcquire() {
+        delayRelease++;
+    }
+
+    @Override public void rebindRelease() {
+        if (--delayRelease <= 0 && pendingRelease) {
+            released = true;
+            recycleInternals();
+        }
+    }
 
     public final BatchType<B> batchType() { return bt; }
 
@@ -49,18 +77,19 @@ public abstract class Dedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
         return isDuplicate(batch, row, 0) ? Decision.DROP : Decision.KEEP;
     }
 
-    @Override public void reset() { clear(cols); }
-
     /**
      * Create a {@link RowFilter} that calls {@link Dedup#isDuplicate(Batch, int, int)}
      * with given {@code sourceIdx}.
      */
     public RowFilter<B> sourcedFilter(int sourceIdx) {
-        return new ProjectionRowFilter<>() {
+        return new RowFilter<>() {
             @Override public Decision drop(B b, int r) {
                 return isDuplicate(b, r, sourceIdx) ? Decision.DROP : Decision.KEEP;
             }
-            @Override public void reset() { clear(cols); }
+            @Override public boolean targetsProjection() {return true;}
+            @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+                clear(cols);
+            }
         };
     }
 

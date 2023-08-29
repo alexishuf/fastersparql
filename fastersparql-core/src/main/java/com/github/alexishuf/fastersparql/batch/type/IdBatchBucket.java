@@ -1,5 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import org.checkerframework.checker.nullness.qual.NonNull;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -8,7 +13,7 @@ import static java.lang.System.arraycopy;
 
 public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
     protected static final long NULL = 0;
-    protected final B b;
+    private B b;
 
     public IdBatchBucket(B b, int rows) {
         this.b = b;
@@ -18,27 +23,43 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
     }
 
     @Override public void grow(int additionalRows) {
-        int oldRows = b.rows, newRows = b.rows + additionalRows;
-        b.rows = 0;
-        b.reserve(newRows, 0);
-        Arrays.fill(b.arr, oldRows*b.cols, b.arr.length, NULL);
+        if (additionalRows <= 0) return;
+        B old = this.b, b = old;
+        int cols = b.cols, oldRows = b.rows, newRows = oldRows+additionalRows;
+        if (b.rowsCapacity() < additionalRows) {
+            b = b.type().create(newRows, cols, 0);
+            b.reserve(newRows, 0);
+            this.b = old.doCopy(b);
+            old.recycle();
+        }
+        Arrays.fill(b.arr, oldRows*cols, b.arr.length, NULL);
+        Arrays.fill(b.hashes, oldRows*cols, b.hashes.length, 0);
         b.rows = newRows;
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
-        b.rows = 0;
+        var b = this.b;
+        int required = rowsCapacity*cols;
+        if (b.arr.length < required) {
+            var old = b;
+            b = b.type().create(rowsCapacity, cols, 0);
+            b.reserve(rowsCapacity, cols);
+            this.b = b;
+            old.recycle();
+        }
+        Arrays.fill(b.arr, 0, required, NULL);
+        Arrays.fill(b.hashes, 0, required, 0);
+        b.rows = rowsCapacity;
         b.cols = cols;
-        grow(rowsCapacity);
     }
 
-    @Override public void recycleInternals() {
-        b.recycleInternals();
-    }
-
-    @Override public int            cols()               { return b.cols; }
-    @Override public int            capacity()            { return b.rowsCapacity(); }
+    @Override public void recycleInternals()        { b = b.recycle(); }
+    @Override public int              cols()        { return b.cols; }
+    @Override public int          capacity()        { return b.rowsCapacity(); }
+    @Override public int hashCode(int row) { return b.hash(row); }
 
     @Override public boolean has(int row) {
+        var b = this.b;
         long[] a = b.arr;
         for (int cols = b.cols, i = row*cols, e = i+cols; i < e; i++)
             if (a[i] != NULL) return true;
@@ -46,6 +67,7 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
     }
 
     @Override public void set(int dst, B batch, int row) {
+        var b = this.b;
         int cols = batch.cols;
         if (cols != b.cols)
             throw new IllegalArgumentException();
@@ -53,6 +75,7 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
     }
 
     @Override public void set(int dst, RowBucket<B> other, int src) {
+        var b = this.b;
         IdBatchBucket<B> bucket = (IdBatchBucket<B>) other;
         int cols = b.cols;
         if (bucket.b.cols != b.cols)
@@ -61,6 +84,7 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
     }
 
     @Override public void set(int dst, int src) {
+        var b = this.b;
         if (src == dst) return;
         long[] a = b.arr;
         int cols = b.cols;
@@ -71,11 +95,37 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
         return b.equals(row, other, otherRow);
     }
 
+    private static final byte[] DUMP_NULL = "null".getBytes(StandardCharsets.UTF_8);
+    @Override public void dump(ByteRope dest, int row) {
+        if (!has(row)) {
+            dest.append(DUMP_NULL);
+        } else {
+            dest.append('[');
+            int cols = cols();
+            SegmentRope local = SegmentRope.pooled();
+            for (int c = 0; c < cols; c++) {
+                if (b.localView(row, c, local)) {
+                    SegmentRope sh = b.shared(row, c);
+                    SegmentRope fst, snd;
+                    if (b.sharedSuffixed(row, c)) { fst = local; snd =    sh; }
+                    else                          { fst =    sh; snd = local; }
+                    dest.append(fst);
+                    dest.append(snd);
+                } else {
+                    dest.append(DUMP_NULL);
+                }
+                dest.append(',').append(' ');
+            }
+            if (cols > 0) dest.len -= 2;
+            dest.append(']');
+        }
+    }
+
     @Override public String toString() {
         return getClass().getSimpleName()+"{capacity="+capacity()+'}';
     }
 
-    @Override public Iterator<B> iterator() {
+    @Override public @NonNull Iterator<B> iterator() {
         return new Iterator<>() {
             boolean has = true;
             @Override public boolean hasNext() { return has; }

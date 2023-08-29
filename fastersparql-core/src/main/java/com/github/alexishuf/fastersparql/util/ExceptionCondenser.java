@@ -50,14 +50,13 @@ public final class ExceptionCondenser<T extends Throwable> {
         return future;
     }
 
-    public @Nullable T get() { return acc; }
-
     public void throwIf() throws T {
         if (acc != null) throw acc;
     }
 
-    public <V> boolean complete(CompletableFuture<V> future, @Nullable V value) {
-        return acc == null ? future.complete(value) : future.completeExceptionally(acc);
+    public <V> void complete(CompletableFuture<V> future, @Nullable V value) {
+        if (acc == null) future.complete(value);
+        else             future.completeExceptionally(acc);
     }
 
     public static void closeAll(Collection<? extends AutoCloseable> list) {

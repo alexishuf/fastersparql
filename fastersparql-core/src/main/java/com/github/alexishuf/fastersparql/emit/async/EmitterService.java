@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,46 +27,50 @@ import static java.lang.Thread.onSpinWait;
  *         the same worker thread to run)</li>
  * </ul>
  */
-public class RecurringTaskRunner {
-    private static final Logger log = LoggerFactory.getLogger(RecurringTaskRunner.class);
-    private static final boolean IS_DEBUG = log.isDebugEnabled();
-
-    public enum TaskResult {
-        DONE,
-        RESCHEDULE
-    }
+public class EmitterService {
+    private static final Logger log = LoggerFactory.getLogger(EmitterService.class);
 
     /**
      * An arbitrary task ({@link #task()}) that can be repeatedly re-scheduled via {@link #awake()}.
      */
-    public abstract static class Task {
-        private static final VarHandle S;
+    public abstract static class Task extends Stateful {
+        private static final VarHandle SCHEDULED;
         static {
             try {
-                S = MethodHandles.lookup().findVarHandle(Task.class, "plainScheduled", int.class);
+                SCHEDULED = MethodHandles.lookup().findVarHandle(Task.class, "plainScheduled", short.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
+        protected static final int RR_WORKER = -1;
+        private static final int IS_RUNNING  = 0x40000000;
+        protected static final Stateful.Flags TASK_FLAGS = Stateful.Flags.DEFAULT.toBuilder()
+                .flag(IS_RUNNING, "RUNNING").build();
 
-        private int worker;
-        private final RecurringTaskRunner runner;
-        @SuppressWarnings("unused") private int plainScheduled;
-        private boolean unloaded;
 
-        public Task(RecurringTaskRunner runner) {
+        protected final EmitterService runner;
+        protected short preferredWorker;
+        @SuppressWarnings("unused") private short plainScheduled;
+
+        /**
+         * Create  a new {@link Task}, optionally  assigned to a preferred worker.
+         *
+         * @param runner the {@link EmitterService} where the task will run.
+         * @param worker if {@code >= 0}, this will be treated as the 0-based index of the worker
+         *               where this task will initially schedule itself on {@link #awake()}. If
+         *               {@code < 0}, a round-robin strategy will select a preferred worker.
+         */
+        protected Task(EmitterService runner, int worker, int initState, Flags flags) {
+            super(initState, flags);
+            assert flags.contains(TASK_FLAGS);
             this.runner = runner;
-            this.worker = (int)MD.getAndAddRelease(runner.runnerMd, RMD_WORKER, 1)
-                        & runner.threadsMask;
+            int unbound = worker >= 0
+                        ? worker : (int) MD.getAndAddRelease(runner.runnerMd, RMD_WORKER, 1);
+            preferredWorker = (short)(unbound&runner.threadsMask);
             MD.getAndAddRelease(runner.runnerMd, RMD_TASKS, 1);
         }
 
-        /**
-         * Notifies that this task will never be {@link #awake()}n again.
-         */
-        public final void unload() {
-            if (unloaded) return;
-            unloaded = true;
+        @Override protected void doRelease() {
             MD.getAndAddRelease(runner.runnerMd, RMD_TASKS, -1);
         }
 
@@ -73,27 +78,67 @@ public class RecurringTaskRunner {
          * Ensures that after this call, {@link #task()} will execute at least once. Such execution
          * may start and complete before the return of this call.
          */
-        public final void awake() {
-            if ((int)S.getAndAddRelease(this, 1) == 0)
+        protected final void awake() {
+            if ((short)SCHEDULED.getAndAddRelease(this, (short)1) == (short)0)
                 runner.add(this,  true);
         }
 
         /**
-         * Arbitrary code that will be executed in a thread other than the one that called
-         * {@link #awake()}. Implementations <strong>MUST NOT</strong> block.
+         * Arbitrary code that does whatever is the purpose of this task. Implementations
+         * must not block and should {@link #awake()} and return instead of running loops. If
+         * this runs in response to an {@link #awake()}, it will run in a worker thread of the
+         * {@link EmitterService} set at construction. If running due to {@link #runNow()}, it
+         * may be called from an external thread. Whatever the trigger, there will be no parallel
+         * executions of this method for a single {@link Task} instance.
          */
-        protected abstract TaskResult task();
+        protected abstract void task();
 
-        protected final void run() {
-            int old = (int) S.getAcquire(this);
-            boolean resched = false;
+        /** Whether the calling thread is an {@link EmitterService} worker thread. */
+        protected boolean inEmitterService() {
+            return Thread.currentThread() instanceof Worker;
+        }
+
+        /**
+         * Execute this task <strong>now</strong>, unless it is already being executed by
+         * another thread. Unlike a direct call to {@link #task()}, this will ensure there are
+         * no concurrent {@link #task()} calls for the same {@link Task} object. If there is a
+         * concurrent execution by another thread on {@link #run()} or {@code runNow()}, this
+         * call will have no effect
+         *
+         * <p>This should be called to solve inversion-of-priority issues. A producer that finds
+         * itself being blocked due to this task not running can call this method to have the
+         * consumer task work instead of spinning or parking.</p>
+         */
+        protected boolean runNow() {
+            if (!compareAndSetFlagRelease(IS_RUNNING))
+                return false; // running elsewhere
             try {
-                resched = task() == TaskResult.RESCHEDULE;
+                task();
+                return true;
             } catch (Throwable t) {
                 handleTaskException(t);
+            } finally {
+                clearFlagsRelease(statePlain(), IS_RUNNING);
             }
-            if (resched || (int)S.compareAndExchange(this, old, 0) != old) {
-                S.setRelease(this, 1);
+            return false;
+        }
+
+        @Async.Execute private void run() {
+            if (!compareAndSetFlagRelease(IS_RUNNING)) {
+                // runNow() active on another thread, return to queue
+                runner.add(this, false);
+                return;
+            }
+            short old = (short)SCHEDULED.getAcquire(this);
+            try {
+                task();
+            } catch (Throwable t) {
+                handleTaskException(t);
+            } finally {
+                clearFlagsRelease(statePlain(), IS_RUNNING);
+            }
+            if ((short)SCHEDULED.compareAndExchange(this, old, (short)0) != old) {
+                SCHEDULED.setRelease(this, (short)1);
                 runner.add(this, false); // do not unpark() itself
             } // else: S == 0 and not enqueued, future awake() can enqueue
         }
@@ -107,7 +152,7 @@ public class RecurringTaskRunner {
     private final class Worker extends Thread {
         private final int id;
         public Worker(ThreadGroup group, int i) {
-            super(group, "RecurringTaskWorker-"+i);
+            super(group, "EmitterService-"+EmitterService.this.id+"-"+i);
             this.id = i;
             setDaemon(true);
             start();
@@ -115,7 +160,7 @@ public class RecurringTaskRunner {
 
         @Override public void run() {
             int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
-            var parent = RecurringTaskRunner.this;
+            var parent = EmitterService.this;
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task task = pollOrSteal(id);
@@ -159,35 +204,35 @@ public class RecurringTaskRunner {
 
     private static final VarHandle MD = MethodHandles.arrayElementVarHandle(int[].class);
     private static final AtomicInteger nextServiceId = new AtomicInteger(1);
-    public static final RecurringTaskRunner TASK_RUNNER
-            = new RecurringTaskRunner(getRuntime().availableProcessors());
+    public static final EmitterService EMITTER_SVC
+            = new EmitterService(getRuntime().availableProcessors());
 
-    private final Thread[] workers;
     private final int[] md;
-    private final Task[] queues;
-    private final ArrayDeque<Task> sharedQueue;
-    private final Thread sharedScheduler;
-    private final int threadsMask, threadMaskBits;
-    private final int id;
+    private final short threadsMask, threadMaskBits;
     private final int[] runnerMd;
+    private final Thread[] workers;
+    private final ArrayDeque<Task> sharedQueue;
+    private final Task[] queues;
+    private final int id;
+    private final Thread sharedScheduler;
 
-    public RecurringTaskRunner(int nThreads) {
-        threadMaskBits = 32-Integer.numberOfLeadingZeros(nThreads-1);
-        nThreads = 1<<threadMaskBits;
-        threadsMask = nThreads-1;
+    public EmitterService(int nWorkers) {
+        threadMaskBits = (short) Math.min(15, 32-Integer.numberOfLeadingZeros(nWorkers-1));
+        nWorkers = 1<<threadMaskBits;
+        threadsMask = (short)(nWorkers-1);
         runnerMd = new int[4];
-        md = new int[nThreads<<MD_BITS];
-        queues = new Task[nThreads*QUEUE_CAP];
-        for (int i = 0; i < nThreads; i++)
+        md = new int[nWorkers<<MD_BITS];
+        queues = new Task[nWorkers*QUEUE_CAP];
+        for (int i = 0; i < nWorkers; i++)
             md[(i<<MD_BITS) + MD_QUEUE_BASE] = i*QUEUE_CAP;
-        workers = new Thread[nThreads];
+        workers = new Thread[nWorkers];
         id = nextServiceId.getAndIncrement();
-        var grp = new ThreadGroup("RecurringTaskRunner-"+id);
-        for (int i = 0; i < nThreads; i++)
+        var grp = new ThreadGroup("EmitterService-"+id);
+        for (int i = 0; i < nWorkers; i++)
             workers[i] = new Worker(grp, i);
         sharedScheduler = Thread.ofPlatform().unstarted(this::sharedScheduler);
-        sharedQueue = new ArrayDeque<>(nThreads*QUEUE_CAP);
-        sharedScheduler.setName("RecurringTaskRunner-"+id+"-Scheduler");
+        sharedQueue = new ArrayDeque<>(nWorkers*QUEUE_CAP);
+        sharedScheduler.setName("EmitterService-"+id+"-Scheduler");
         sharedScheduler.setDaemon(true);
         sharedScheduler.start();
     }
@@ -196,7 +241,7 @@ public class RecurringTaskRunner {
         return "RecurringTaskRunner-"+id;
     }
 
-    public String dump() {
+    @SuppressWarnings("unused") public String dump() {
         var sb = new StringBuilder().append("RecurringTaskRunner-").append(id).append('\n');
         sb.append("  shared queue: ").append(sharedQueue.size()).append(" items\n");
         sb.append(" loaded tasks: ").append(runnerMd[RMD_TASKS]).append('\n');
@@ -305,11 +350,11 @@ public class RecurringTaskRunner {
      *         queue was full or if there was too much contention on the spinlock.
      */
     private boolean tryAdd(Task task, boolean canUnpark) {
-        int mdb = task.worker<<MD_BITS, lockIdx = mdb+MD_LOCK;
+        int mdb = task.preferredWorker <<MD_BITS, lockIdx = mdb+MD_LOCK;
         boolean got = false, unpark;
         for (int i = 0; i < 16; i++) {
             got = (int) MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
-            if (got || i == 7 && md[(((task.worker+1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
+            if (got || i == 7 && md[(((task.preferredWorker +1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
                 break; // got spinlock or next worker has an empty queue
             onSpinWait();
         }
@@ -350,8 +395,8 @@ public class RecurringTaskRunner {
      *                 {@link LockSupport#unpark(Thread)} the preferred worker since the
      *                 preferred worker thread is running this code
      */
-    private void add(Task task, boolean external) {
-        int size = md[(task.worker << MD_BITS) + MD_SIZE];
+    private void add(@Async.Schedule Task task, boolean external) {
+        int size = md[(task.preferredWorker << MD_BITS) + MD_SIZE];
         int overloaded = size < QUEUE_IMBALANCE_CHECK ? QUEUE_IMBALANCE_CHECK
                                                       : 2+(runnerMd[RMD_TASKS]>>threadMaskBits);
         // break affinity if queue is >2 tasks above ideal average, full or under heavy contention
@@ -359,9 +404,9 @@ public class RecurringTaskRunner {
             // before unpark()ing sharedScheduler(), try the right-side worker which is the least
             // likely to steal from this queue
             boolean added = false;
-            int nextWorker = (task.worker+1) & threadsMask;
+            int nextWorker = (task.preferredWorker +1) & threadsMask;
             if (md[(nextWorker<<MD_BITS) + MD_SIZE] < overloaded) {
-                task.worker = nextWorker;
+                task.preferredWorker = (short)nextWorker;
                 added = tryAdd(task, true);
             }
             if (!added)
@@ -422,7 +467,7 @@ public class RecurringTaskRunner {
                     for (int e = w; !added && w <= e; w = (w + 1) & threadsMask) {
                         if ((int) MD.getOpaque(md, (w << MD_BITS) + MD_SIZE) > acceptable)
                             continue; // do not assign to queue above average load
-                        task.worker = w;
+                        task.preferredWorker = (short)w;
                         added = tryAdd(task, true);
                     }
                     if (!added) {

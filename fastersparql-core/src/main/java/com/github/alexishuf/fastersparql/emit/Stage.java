@@ -1,37 +1,27 @@
 package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
-public abstract class Stage<I extends Batch<I>, O extends Batch<O>>
-        implements Emitter<O>, Receiver<I> {
-    protected @MonotonicNonNull Emitter<I> upstream;
-    protected Receiver<O> downstream;
+public interface Stage<I extends Batch<I>, O extends Batch<O>> extends Emitter<O>, Receiver<I> {
 
-    @Override public void subscribe(Receiver<O> receiver)
-            throws RegisterAfterStartException, MultipleRegistrationUnsupported {
-        if (downstream != null)
-            throw new MultipleRegistrationUnsupported();
-        downstream = receiver;
+    /**
+     * Idempotently call {@link Emitter#subscribe(Receiver)} on {@code emitter}, while enforcing
+     * {@code this} {@link AbstractStage} has only one upstream {@link Emitter}.
+     *
+     * @param upstream the {@link Emitter} to subscribe if this stage has not yet done so.
+     * @return {@code this}, for chaining
+     * @throws MultipleRegistrationUnsupportedException if this stage was previously subscribed to an
+     *                                         {@link Emitter} other than {@code emitter}.
+     */
+    @SuppressWarnings("unused") @This Stage<I, O> subscribeTo(Emitter<I> upstream);
+
+    final class NoEmitterException extends IllegalStateException {
+        public NoEmitterException() {
+            super("Stage not yet subscribedTo() an upstream Emitter");
+        }
+
     }
 
-    @Override public void cancel() {
-        upstream.cancel();
-    }
-
-    @Override public void request(long rows) {
-        upstream.request(rows);
-    }
-
-    @Override public void onComplete() {
-        downstream.onComplete();
-    }
-
-    @Override public void onCancelled() {
-        downstream.onCancelled();
-    }
-
-    @Override public void onError(Throwable cause) {
-        downstream.onError(cause);
-    }
 }

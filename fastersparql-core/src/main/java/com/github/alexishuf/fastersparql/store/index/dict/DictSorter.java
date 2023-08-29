@@ -73,7 +73,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
             waitBlockJobs();
             if (residual != null)
                 sorted.add(residual);
-            if (sorted.size() == 0) {
+            if (sorted.isEmpty()) {
                 try (DictBlock empty = new DictBlock(0)) { sorted.add(empty.run()); }
             }
             if (sorted.size() == 1) {

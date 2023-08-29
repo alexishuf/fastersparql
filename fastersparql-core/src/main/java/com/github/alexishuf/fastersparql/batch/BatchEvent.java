@@ -9,6 +9,7 @@ import jdk.jfr.*;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+@SuppressWarnings("unused")
 @Enabled
 @Registered
 @StackTrace

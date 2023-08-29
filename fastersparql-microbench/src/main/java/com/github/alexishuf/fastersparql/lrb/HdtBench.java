@@ -68,7 +68,7 @@ public class HdtBench {
         Workloads.cooldown(250);
     }
 
-    @TearDown(Level.Trial) public void tearDown() throws IOException {
+    @TearDown(Level.Trial) public void tearDown() {
         nyt.close();
     }
 

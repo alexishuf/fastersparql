@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.fed.Spec;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.List;
 
 class TrivialSelectorTest extends SelectorTestBase {

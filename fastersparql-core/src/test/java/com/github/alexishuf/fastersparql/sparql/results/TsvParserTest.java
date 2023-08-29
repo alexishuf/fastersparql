@@ -74,6 +74,6 @@ public class TsvParserTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(CharSequence input, Results expected) throws Exception {
-        doTest(new SVParserBIt.TsvFactory(), expected, SegmentRope.of(input));
+        doTest(new SVParser.TsvFactory(), expected, SegmentRope.of(input));
     }
 }

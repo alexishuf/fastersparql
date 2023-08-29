@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -19,6 +20,7 @@ import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static java.lang.invoke.MethodHandles.lookup;
 
@@ -43,18 +45,22 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected long minWaitNs;
     protected long maxWaitNs;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
-    protected State plainState = State.ACTIVE;
+    @SuppressWarnings("CanBeFinal") protected State plainState = State.ACTIVE;
     protected int rowsCapacity = PREFERRED_MIN_BATCH, bytesCapacity = PREFERRED_MIN_BATCH*32;
     protected boolean needsStartTime = false, eager = false;
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;
-    protected B recycled;
+    @SuppressWarnings("unused") protected B recycled;
     protected @Nullable MetricsFeeder metrics;
     protected final Vars vars;
 
     public AbstractBIt(BatchType<B> batchType, Vars vars) {
         this.batchType = batchType;
         this.vars = vars;
+    }
+
+    @Override public Stream<? extends StreamNode> upstream() {
+        return Stream.empty();
     }
 
     /* --- --- --- abstract methods --- --- --- */
@@ -81,10 +87,6 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected void cleanup(@Nullable Throwable cause) {
         for (B b; (b = stealRecycled()) != null; )
             batchType.recycle(b);
-    }
-
-    protected BItCompletedException mkCompleted() {
-        return new BItCompletedException("Previous complete("+error+") on "+this, this, error);
     }
 
     protected final void checkError() {
@@ -168,15 +170,15 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         if (rowsCapacity  > (bound = maxBatch)   ) rowsCapacity = bound;
     }
 
-    protected void onBatch(@Nullable B b) {
+    protected final void onNextBatch(@Nullable B b) {
         if (b == null) return;
         int delta = b.rows - rowsCapacity;
         if (delta > 0) {
             rowsCapacity += delta; // add missing capacity
-            bytesCapacity = Math.max(b.bytesUsed(), bytesCapacity);
+            bytesCapacity = Math.max(b.localBytesUsed(), bytesCapacity);
         } else if (delta < -64) {
             rowsCapacity += delta>>2; // reduce capacity by 25% of excess capacity
-            delta = b.bytesUsed()-bytesCapacity;
+            delta = b.localBytesUsed()-bytesCapacity;
             if (delta > 0)
                 bytesCapacity += delta;
             else if (delta < -128)
@@ -331,13 +333,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     /** Get an empty batch using {@code offer}, {@link #stealRecycled()} or
      *  {@link BatchType#create(int, int, int)}. */
     protected final B getBatch(@Nullable B offer) {
-        if (offer == null) {
-            offer = stealRecycled();
-            if (offer == null)
-                return batchType.create(rowsCapacity, vars.size(), bytesCapacity);
-        }
-        offer.clear(vars.size());
-        return offer;
+        return batchType.empty(offer == null ? stealRecycled() : offer,
+                               rowsCapacity, vars.size(), bytesCapacity);
     }
 
     @Override public @Nullable B stealRecycled() {

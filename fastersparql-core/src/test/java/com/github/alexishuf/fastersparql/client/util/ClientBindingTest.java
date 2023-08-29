@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.junit.jupiter.api.RepeatedTest;
 
 import java.util.List;
@@ -12,14 +13,15 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 
-class ClientBindingBItTest {
+class ClientBindingTest {
     private final OpaqueSparqlQuery SPARQL = new OpaqueSparqlQuery("SELECT * WHERE { ?x a ?y } ");
 
     private ResultsSparqlClient.BoundAnswersStage1 client(Results expected) {
         //noinspection resource
-        return new ResultsSparqlClient(false)
-                .answerWith(SPARQL, expected)
-                .forBindings(SPARQL, Vars.of("x"), Vars.of("y"));
+        var client = new ResultsSparqlClient(false).answerWith(SPARQL, expected);
+        if (!expected.bindType().isJoin())
+            client.answerWith(SPARQL.toAsk(), expected);
+        return client.forBindings(SPARQL, Vars.of("x"), Vars.of("y"));
     }
 
     @RepeatedTest(10)
@@ -29,11 +31,16 @@ class ClientBindingBItTest {
                 "3", "31",
                 "3", "32"
         ).query(SPARQL).bindings("?x", "1", "2", "3");
-        try (var client = client(expected)
+        try (var w = ThreadJournal.watchdog(System.err, 60);
+             var client = client(expected)
                 .answer("1").with("11")
                 .answer("2").with()
                 .answer("3").with("31", "32").end()) {
+            w.start(1_000_000_000L);
             expected.check(client);
+        } catch (Throwable t) {
+            ThreadJournal.dumpAndReset(System.err, 60);
+            throw t;
         }
     }
 
@@ -44,18 +51,19 @@ class ClientBindingBItTest {
                 "2", "21",
                 "2", "22",
                 "3", "31"
-        ).query(SPARQL).bindType(LEFT_JOIN);
+        ).query(SPARQL).bindings("?x", 1, 2, 3).bindType(LEFT_JOIN);
         try (var client = client(expected)
-                .answer("1").with()
+                .answer("1").with(new Object[]{null})
                 .answer("2").with("21", "22")
-                .answer("3").with("31").end()) {
+               .answer("3").with("31").end()) {
             expected.check(client);
         }
     }
 
     @RepeatedTest(10)
     void testExists() {
-        var expected = results("?x", "1", "3").query(SPARQL).bindType(EXISTS);
+        var expected = results("?x", "1", "3")
+                .query(SPARQL).bindings("?x", 1, 2, 3).bindType(EXISTS);
         try (var client = client(expected)
                 .answer("1").with("11")
                 .answer("2").with()
@@ -67,7 +75,8 @@ class ClientBindingBItTest {
     @RepeatedTest(10)
     void testNotExistsAndMinus() {
         for (BindType type : List.of(NOT_EXISTS, MINUS)) {
-            var expected = results("?x", "2").query(SPARQL).bindType(type);
+            var expected = results("?x", "2")
+                    .query(SPARQL).bindings("?x", 1, 2, 3).bindType(type);
             try (var client = client(expected)
                     .answer("1").with("11")
                     .answer("2").with()

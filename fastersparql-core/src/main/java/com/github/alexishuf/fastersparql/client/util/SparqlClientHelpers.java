@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.value.qual.MinLen;
 
@@ -157,7 +157,7 @@ public class SparqlClientHelpers {
         boolean changed = false;
         SparqlConfiguration request = endpoint.configuration();
         for (SparqlResultFormat fmt : request.resultsAccepts()) {
-            if (ResultsParserBIt.supports(fmt))
+            if (ResultsParser.supports(fmt))
                 supportedFormats.add(fmt);
             else
                 changed = true;
@@ -165,7 +165,7 @@ public class SparqlClientHelpers {
         if (supportedFormats.isEmpty()) {
             SparqlConfiguration offer = request.toBuilder().clearResultsAccepts()
                     .resultsAccepts(SparqlResultFormat.VALUES.stream()
-                            .filter(ResultsParserBIt::supports).collect(toList()))
+                            .filter(ResultsParser::supports).collect(toList()))
                     .build();
             String msg = "None of the given SparqlResultFormats " + request.resultsAccepts() +
                          " has a ResultsParser in ResultsParserRegistry.get()";

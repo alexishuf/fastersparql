@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 
 @Command
 public class QueryOptions {
-    public QueryOptions() { this(new ArrayList<>()); }
+    @SuppressWarnings("unused") public QueryOptions() { this(new ArrayList<>()); }
     public QueryOptions(List<String> selectors) { this.selectors = selectors; }
 
     @Option(names = {"-q", "--queries"}, arity = "0..*",

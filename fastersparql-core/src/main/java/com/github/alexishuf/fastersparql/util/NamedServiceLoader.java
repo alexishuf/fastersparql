@@ -19,7 +19,7 @@ public class NamedServiceLoader<T extends NamedService<N>, N> {
         return required.equals(offer);
     }
 
-    protected T fallback(N name) {
+    @SuppressWarnings("SameReturnValue") protected T fallback(N name) {
         throw new NoSuchElementException("No service provider named "+name);
     }
 

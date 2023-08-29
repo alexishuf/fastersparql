@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import static com.github.alexishuf.fastersparql.lrb.Workloads.fromName;
 import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
 
-@SuppressWarnings({"rawtypes", "unchecked"})
+@SuppressWarnings("rawtypes")
 @State(Scope.Thread)
 @Threads(1)
 @Fork(value = 1, warmups = 0, jvmArgsPrepend = {

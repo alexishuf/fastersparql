@@ -21,7 +21,7 @@ public final class PrefixMap {
 
 
     /** Remove all prefix -> uri mappings from this {@link PrefixMap} */
-    public void clear() { map.clear(); }
+    @SuppressWarnings("unused") public void clear() { map.clear(); }
 
     /** Get the number of prefix -> URI mappings in this {@link PrefixMap} */
     public int size() { return map.size(); }
@@ -36,10 +36,10 @@ public final class PrefixMap {
 
     @SuppressWarnings("unused")
     public Rope key(int i) { return map.key(i); }
-    public Rope value(int i) { return map.value(i); }
+    @SuppressWarnings("unused") public Rope value(int i) { return map.value(i); }
 
     /** Tests whether {@code name} is mapped to some IRI in this {@link PrefixMap}. */
-    public boolean contains(Rope name) { return map.get(name) != null; }
+    @SuppressWarnings("unused") public boolean contains(Rope name) { return map.get(name) != null; }
 
     /**
      * Maps {@code name} to {@code iri} so that {@code name:} expands to {@code iri}.

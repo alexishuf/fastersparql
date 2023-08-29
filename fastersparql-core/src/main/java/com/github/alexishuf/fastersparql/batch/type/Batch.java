@@ -53,7 +53,7 @@ public abstract class Batch<B extends Batch<B>> {
             poolTraces = new PoolEvent[] {null, new UnpooledEvent(null)};
     }
 
-    /* --- --- --- pooling lifecycle --- --- ---  */
+    /* --- --- --- lifecycle --- --- ---  */
 
     protected static sealed class PoolEvent extends Exception {
         public PoolEvent(String message, PoolEvent cause) {super(message, cause);}
@@ -84,7 +84,7 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
-    public void markGarbage() {
+    @SuppressWarnings("unused") public void markGarbage() {
         if (MARK_POOLED) {
             byte old = (byte) P.getAndSetRelease(this, P_GARBAGE);
             if (old == P_GARBAGE)
@@ -110,11 +110,44 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
-    public void requirePooled() {
+    @SuppressWarnings("unused") public void unmarkGarbage() {
+        if (MARK_POOLED) {
+            if ((byte)P.compareAndExchangeAcquire(this, P_GARBAGE, P_UNPOOLED) != P_GARBAGE)
+                throw new IllegalStateException("batch not marked as garbage");
+        }
+    }
+
+    public static <B extends Batch<B>> @Nullable B asUnpooled(@Nullable B b) {
+        if (b != null) b.unmarkPooled();
+        return b;
+    }
+
+    public static <B extends Batch<B>> @Nullable B asPooled(@Nullable B b) {
+        if (b != null) b.markPooled();
+        return b;
+    }
+
+    @SuppressWarnings("SameReturnValue")
+    public static <B extends Batch<B>> @Nullable B recyclePooled(@Nullable B b) {
+        if (b != null) {
+            b.unmarkPooled();
+            b.recycle();
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unused") public void requirePooled() {
         if (MARK_POOLED && (byte)P.getOpaque(this) != P_POOLED) {
             throw new IllegalStateException("batch is not pooled",
                                             poolTraces == null ? null : poolTraces[1]);
         }
+    }
+
+    /** Throws as {@link #requireUnpooled()} would but returns {@code true} otherwise,
+     *  allowing use in {@code assert}s */
+    @SuppressWarnings("SameReturnValue") public boolean assertUnpooled() {
+        requireUnpooled();
+        return true;
     }
 
     public void requireUnpooled() {
@@ -146,6 +179,8 @@ public abstract class Batch<B extends Batch<B>> {
 
     /* --- --- --- batch-level accessors --- --- --- */
 
+    public abstract BatchType<B> type();
+
     /** Number of rows in this batch. This is not capacity, rather number of actual rows. */
     public final int rows() { return rows; }
 
@@ -164,7 +199,7 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @return how many bytes are being currently used.
      */
-    public int bytesUsed() { return (rows*cols)<<3; }
+    public int localBytesUsed() { return 0; }
 
     /**
      * Total number of bytes that this batch directly holds.
@@ -188,7 +223,7 @@ public abstract class Batch<B extends Batch<B>> {
 
     public abstract int rowsCapacity();
 
-    /** Whether this batch can reach {@code rowsCapacity} and  a {@link #bytesUsed()} value
+    /** Whether this batch can reach {@code rowsCapacity} and  a {@link #localBytesUsed()} value
      *  of {@code bytes} before requiring a new allocation. */
     public abstract boolean hasCapacity(int rowsCapacity, int bytesCapacity);
 
@@ -278,7 +313,7 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @param row the row index
      */
-    public int bytesUsed(int row) { return cols<<3; }
+    public int localBytesUsed(int row) { return cols<<3; }
 
     /** Whether rows {@code row} in {@code this} and {@code oRow} in {@code other} have the
      *  same number of columns with equal {@link Term}s in them. */
@@ -661,7 +696,7 @@ public abstract class Batch<B extends Batch<B>> {
      *                               {@link #offerTerm(int, Term)} after
      *                               {@link #beginOffer()} returned {@code false}.
      */
-    public abstract boolean commitOffer();
+    @SuppressWarnings("SameReturnValue") public abstract boolean commitOffer();
 
     /** Equivalent to
      * <pre>{@code
@@ -796,11 +831,20 @@ public abstract class Batch<B extends Batch<B>> {
      *  {@link #beginPut()} and {@link #putTerm(int, Term)} */
     public abstract void commitPut();
 
+    /**
+     * Aborts the previous {@link #beginPut()}/{@link #beginOffer()} if
+     * {@link #commitPut()}/{@link #commitOffer()} has not yet been called.
+     *
+     * @return {@code true} if a {@link #beginPut()}/{@link #beginOffer()} was aborted,
+     *         {@code false} if there is no uncommitted offer/put underway.
+     */
+    public abstract boolean abortOfferOrPut() throws IllegalStateException;
+
     /** Version of {@link #offerRow(Batch, int)} that always add the row. */
     public void putRow(B other, int row) {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
-        reserve(1, other.bytesUsed(row));
+        reserve(1, other.localBytesUsed(row));
         beginPut();
         for (int c = 0; c < cols; c++) putTerm(c, other, row, c);
         commitPut();
@@ -853,6 +897,13 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /**
+     * Tests whether {@link #offer(Batch)} would return true for the given {@code other} batch.
+     * @param other hypothetical argument to {@link #offer(Batch)}
+     * @return {@code true} iff {@code offer(other)}
+     */
+    public abstract boolean fits(B other);
+
+    /**
      * Tries to add all rows of {@code other} into {@code this}. Either no rows will be
      * added or all rows will be added.
      *
@@ -867,7 +918,17 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @param other batch that will have all its rows added to {@code this}.
      */
-    public abstract void put(B other) ;
+    public final void put(B other) { putRange(other, 0, other.rows); }
+
+    /**
+     * Copy rows {@code [begin, end)} of {@code other} into {@code this}, growing capacity
+     * if required.
+     *
+     * @param other the origin for the values
+     * @param begin first row of {@code other} to be copied
+     * @param end {@code other.rows} or first row to NOT be copied
+     */
+    public abstract void putRange(B other, int begin, int end);
 
     /**
      * Equivalent to {@link #put(Batch)} but accepts {@link Batch} implementations
@@ -876,21 +937,16 @@ public abstract class Batch<B extends Batch<B>> {
      * @param other source of rows
      * @param <O> {@link Batch} concrete class
      */
-    public <O extends Batch<O>> @This B putConverting(O other) {
-        int cols = other.cols;
-        if (cols != this.cols) throw new IllegalArgumentException();
-        if (other.getClass() == getClass()) {//noinspection unchecked
-            put((B) other);
-        } else {
-            int rows = other.rows;
-            reserve(rows, other.bytesUsed());
-            for (int r = 0; r < rows; r++) {
-                beginPut();
-                for (int c = 0; c < cols; c++) putTerm(c, other.get(r, c));
-                commitPut();
-            }
-        }
-        //noinspection unchecked
-        return (B)this;
-    }
+    public abstract <O extends Batch<O>> @This B putConverting(O other);
+
+    /**
+     * Equivalent to {@link #putRow(Batch, int)}, but accepts a batch of another type.
+     *
+     * @param other a batch of which terms in the {@code row}-th row will be copied as a new row
+     *              in {@code this}
+     * @param row   index of the source row in {@code other}
+     * @throws IllegalArgumentException  if {@code other.cols != cols}
+     * @throws IndexOutOfBoundsException if {@code row < 0 || row >= other.rows}
+     */
+    public abstract <O extends Batch<O>> void putRowConverting(O other, int row);
 }

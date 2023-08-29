@@ -165,6 +165,6 @@ public class JsonParserTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(String in, Results expected) throws Exception {
-        doTest(new JsonParserBIt.JsonFactory(), expected, SegmentRope.of(in));
+        doTest(new JsonParser.JsonFactory(), expected, SegmentRope.of(in));
     }
 }

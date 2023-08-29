@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
@@ -20,6 +21,8 @@ import java.util.regex.Pattern;
 public class FSProperties {
 
     /* --- --- --- property names --- --- --- */
+    public static final String USE_VECTORIZATION         = "fastersparql.vectorization";
+    public static final String USE_UNSAFE                = "fastersparql.unsafe";
     public static final String CLIENT_MAX_QUERY_GET      = "fastersparql.client.max-query-get";
     public static final String CLIENT_CONN_RETRIES       = "fastersparql.client.conn.retries";
     public static final String CLIENT_CONN_TIMEOUT_MS    = "fastersparql.client.conn.timeout-ms";
@@ -43,7 +46,9 @@ public class FSProperties {
     public static final String OP_JOIN_REORDER_WCO       = "fastersparql.op.join.reorder.wco";
     public static final String FED_ASK_POS_CAP           = "fastersparql.fed.ask.pos.cap";
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
+    public static final String EMIT_LOG_STATS            = "fastersparql.emit.log-stats";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
+    public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
 
     /* --- --- --- default values --- --- --- */
     public static final int     DEF_CLIENT_MAX_QUERY_GET      = 1024;
@@ -62,6 +67,8 @@ public class FSProperties {
     public static final int     DEF_OP_CROSS_DEDUP_CAPACITY   = 1<<8;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
+    public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
+    public static final boolean DEF_EMIT_LOG_STATS            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final Boolean DEF_BATCH_POOLED_TRACE        = false;
 
@@ -82,6 +89,10 @@ public class FSProperties {
     private static int CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
+    private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
+    private static Boolean CACHE_USE_VECTORIZATION     = null;
+    private static Boolean CACHE_USE_UNSAFE            = null;
+    private static Boolean CACHE_EMIT_LOG_STATS        = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE = null;
     private static Boolean CACHE_BATCH_POOLED_MARK     = null;
     private static Boolean CACHE_BATCH_POOLED_TRACE    = null;
@@ -121,7 +132,7 @@ public class FSProperties {
         });
     }
 
-    protected static @Positive int readNonNegativeInteger(String propertyName, int defaultValue) {
+    protected static @NonNegative int readNonNegativeInteger(String propertyName, int defaultValue) {
         return readProperty(propertyName, defaultValue, (src, val) -> {
             int i = -1;
             try { i = Integer.parseInt(val); } catch (NumberFormatException ignored) {}
@@ -175,6 +186,10 @@ public class FSProperties {
         CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
+        CACHE_NETTY_EVLOOP_THREADS      = -1;
+        CACHE_USE_VECTORIZATION         = null;
+        CACHE_USE_UNSAFE                = null;
+        CACHE_EMIT_LOG_STATS            = null;
         CACHE_BATCH_POOLED_MARK         = null;
         CACHE_BATCH_POOLED_TRACE        = null;
         CACHE_OP_JOIN_REORDER           = null;
@@ -185,6 +200,63 @@ public class FSProperties {
     }
 
     /* --- --- --- accessors --- --- --- */
+
+    /** Whether we are running in GraalVM JDK or in a GraalVM antive image. */
+    @SuppressWarnings({"BooleanMethodIsAlwaysInverted", "SpellCheckingInspection"})
+    public static boolean onGraal() {
+        return System.getProperty("org.graalvm.home") != null
+                || System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+    }
+
+    /**
+     * Whether fastersparql code should use the incubating vectorization API. The
+     * <strong>default</strong> is to not use if running in GraalVM (native or not) since it
+     * (currently) does not implement the intrinsics, causing the vectorization API to
+     * emulate vectorization which is worse than doing scalar loops.
+     *
+     * <p>Changing this setting might have no effect at runtime if relevant {@code static final}
+     * fields that query this have already been initialized.</p>
+     */
+    public static boolean useVectorization() {
+        Boolean v = CACHE_USE_VECTORIZATION;
+        if (v == null)
+            CACHE_USE_VECTORIZATION = v = readBoolean(USE_VECTORIZATION, !onGraal());
+        return v == Boolean.TRUE;
+    }
+
+    /**
+     * Whether fastersparql code should use {@link sun.misc.Unsafe}. Changed to this property
+     * might not have any effect if set at runtime due to {@code static final} fields having
+     * already been initialized. <strong>The default is</strong> to use unsafe if available
+     * and not running in GraalVM (native or not)
+     *
+     * <p>This setting will not affect netty. Use {@code io.netty.noUnsafe=true} to forbid Netty from using {@link sun.misc.Unsafe} even if available.</p>
+     */
+    public static boolean useUnsafe() {
+        Boolean v = CACHE_USE_UNSAFE;
+        if (v == null)
+            CACHE_USE_UNSAFE = v = readBoolean(USE_UNSAFE, !onGraal());
+        return v == Boolean.TRUE;
+    }
+
+    /**
+     * If {@code true} {@link Emitter}s will log statistics when terminated if there is no
+     * {@link Emitter#rebindAcquire()} in effect. This is disabled by default and should only be
+     * enabled for debugging.
+     *
+     * <p>Note that {@link Emitter} implementations query this via a {@code static final}
+     * field, so that code pertaining to this logging (including the check) is eliminated by the
+     * JIT compiler. Therefore changes at runtime may be ignored and this should be set with
+     * {@code -D} on the command-line. </p>
+     *
+     * @return {@code true} if {@link Emitter} should log statistics upon termination.
+     */
+    public static boolean emitLogStats() {
+        Boolean v = CACHE_EMIT_LOG_STATS;
+        if (v == null)
+            CACHE_EMIT_LOG_STATS = v = readBoolean(EMIT_LOG_STATS, DEF_EMIT_LOG_STATS);
+        return v;
+    }
 
     /**
      * If no SparqlMethod is set, for queries sized below this value,
@@ -561,5 +633,25 @@ public class FSProperties {
         if (v == null)
             CACHE_STORE_CLIENT_VALIDATE = v = readBoolean(STORE_CLIENT_VALIDATE, DEF_STORE_CLIENT_VALIDATE);
         return v;
+    }
+
+    /**
+     * How many threads a netty event loop should have by default. This is controlled by the
+     * same property used by netty itself ({@code io.netty.eventLoopThreads}). If the property
+     * is unset the default will be {@link Runtime#availableProcessors()} instead of the actual
+     * netty default that would be double that. If the property is set to 0, the netty default
+     * behavior will remain.
+     *
+     * @return How many threads should a netty {@code EventLoopGroup} have.
+     */
+    public static int nettyEventLoopThreads() {
+        int i = CACHE_NETTY_EVLOOP_THREADS;
+        if (i < 0) {
+            i = readNonNegativeInteger(NETTY_EVLOOP_THREADS, Integer.MAX_VALUE);
+            if (i == Integer.MAX_VALUE)
+                i = Runtime.getRuntime().availableProcessors();
+            CACHE_NETTY_EVLOOP_THREADS = i;
+        }
+        return i;
     }
 }

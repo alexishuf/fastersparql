@@ -20,7 +20,6 @@ import java.util.regex.PatternSyntaxException;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static com.github.alexishuf.fastersparql.model.rope.Rope.of;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -53,7 +52,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         return this instanceof Term t && t.type() != Type.VAR;
     }
 
-    default boolean isVar() {
+    @SuppressWarnings("unused") default boolean isVar() {
         return this instanceof Term t && t.type() == Type.VAR;
     }
 
@@ -628,7 +627,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             }
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term key = evals[0].evaluate(batch, row);
-                if (key == null) throw new InvalidExprTypeException(args[0], key, "bound");
+                if (key == null) throw new InvalidExprTypeException(args[0], null, "bound");
                 for (int i = 1; i < evals.length; i++)
                     if (key.equals(evals[i].evaluate(batch, row))) return onMatch;
                 return onMismatch;

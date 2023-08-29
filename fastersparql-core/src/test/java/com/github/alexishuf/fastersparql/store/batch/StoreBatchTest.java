@@ -1,8 +1,10 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
+import com.github.alexishuf.fastersparql.batch.type.RowFilter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.store.index.dict.CompositeDictBuilder;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
@@ -197,7 +199,15 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveOdd() {
-        var filter = TYPE.filter(X, (batch, row) -> (row & 1) == 1 ? DROP : KEEP);
+        var filter = TYPE.filter(X,
+                new RowFilter<>() {
+                    @Override public Decision drop(StoreBatch batch, int row) {
+                        return (row & 1) == 1 ? DROP : KEEP;
+                    }
+
+                    @Override public void rebind(BatchBinding<StoreBatch> binding) {
+                    }
+                });
         assertNotNull(filter);
         StoreBatch b = mk(1, 0, 1, 2, 3);
         assertSame(b, filter.filterInPlace(b));
@@ -207,7 +217,12 @@ class StoreBatchTest {
 
     @Test public void testRemoveEvenAndMidCol() {
         var filter = TYPE.filter(Vars.of("x", "z"), Vars.of("x", "y", "z"),
-                                 (batch, row) -> (row & 1) == 0 ? DROP : KEEP);
+                new RowFilter<>() {
+                    @Override public Decision drop(StoreBatch batch, int row) {
+                        return (row & 1) == 0 ? DROP : KEEP;
+                    }
+                    @Override public void rebind(BatchBinding<StoreBatch> binding) {}
+                });
         assertNotNull(filter);
         StoreBatch b = mk(3,
                 1, 2, 3,

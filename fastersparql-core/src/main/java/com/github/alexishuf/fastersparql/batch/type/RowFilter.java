@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-public interface RowFilter<B extends Batch<B>> {
+import com.github.alexishuf.fastersparql.emit.Rebindable;
+
+public interface RowFilter<B extends Batch<B>> extends Rebindable<B> {
     enum Decision {
         /** Do not drop the evaluated row. */
         KEEP,
@@ -15,6 +17,8 @@ public interface RowFilter<B extends Batch<B>> {
 
     Decision drop(B batch, int row);
 
+    default long upstreamRequestLimit() { return Long.MAX_VALUE; }
+
     /**
      * Whether {@link RowFilter#drop(Batch, int)} must be evaluated on the projected
      * batch rather than the input batch if there is a projection being executed
@@ -23,8 +27,19 @@ public interface RowFilter<B extends Batch<B>> {
     default boolean targetsProjection() { return false; }
 
     /**
-     * Clears any state that is mutated by calls to {@link #drop(Batch, int)}, reverting to the
-     * state this filter was when constructuted (before first {@code drop()} call);
+     * Notifies that this {@link RowFilter} will not receive any subsequent calls and it
+     * should release resources it holds.
      */
-    default void reset() {}
+    default void release() { }
+
+    @Override default void rebindAcquire() {
+        // Nearly all RowFilter implementations hold no resources or are extremely heavy and
+        // thus require pooling (Dedup). For the former, this and rebindRelease() can safely
+        // be a no-op. For the latter, the pooled object cannot pool itself due to the risk
+        // that other object keeps a reference, which can lead to 2+ concurrent random users
+        // of the object.
+    }
+
+    @Override default void rebindRelease() {}
+
 }

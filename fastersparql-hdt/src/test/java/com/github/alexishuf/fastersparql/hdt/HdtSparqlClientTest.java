@@ -93,7 +93,7 @@ class HdtSparqlClientTest {
             results("?s ?n", ":n0", ":n1")
                     .query("SELECT DISTINCT ?n WHERE { ?s :next ?n }")
                     .bindings("?s", ":n0")
-                    .check(client, TYPE, b -> TYPE.convert(b, client.dictId));
+                    .check(client, TYPE, TYPE.converter(client.dictId));
         }
     }
 
@@ -168,7 +168,7 @@ class HdtSparqlClientTest {
             if (r.query() instanceof Plan p)
                 list.add(r.query(new OpaqueSparqlQuery(p.sparql())));
             else
-                list.add(r.query(new SparqlParser().parse(r.query())));
+                list.add(r.query(SparqlParser.parse(r.query())));
         }
     }
 
@@ -228,7 +228,7 @@ class HdtSparqlClientTest {
     @ParameterizedTest @MethodSource public void testBinding(Results r) {
         try (var client = FS.clientFor(endpoint)) {
             r.check(client);
-            r.check(client, TYPE, it -> TYPE.convert(it, ((HdtSparqlClient) client).dictId));
+            r.check(client, TYPE, TYPE.converter(((HdtSparqlClient) client).dictId));
         }
     }
 }

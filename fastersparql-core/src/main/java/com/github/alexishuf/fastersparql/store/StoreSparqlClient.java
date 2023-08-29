@@ -10,9 +10,16 @@ import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
-import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.EmitBindQuery;
+import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
+import com.github.alexishuf.fastersparql.emit.async.SelfEmitter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
+import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
+import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.fed.CardinalityEstimator;
@@ -28,6 +35,7 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -38,8 +46,10 @@ import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,13 +58,17 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
-import static com.github.alexishuf.fastersparql.model.TripleRoleSet.PRE;
+import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
@@ -159,7 +173,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     public int estimate(TriplePattern tp) { return federator.estimate(tp, null); }
 
-    private static final class StoreSingletonFederator extends SingletonFederator {
+    private final class StoreSingletonFederator extends SingletonFederator {
         private final int dictId;
         private final Triples spo, pso, ops;
         private final int avgS, avgP, avgO, avgSP, avgSO, avgPO;
@@ -201,7 +215,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             long s = t.s.type() == VAR ? 0 : l.find(t.s);
             long p = t.p.type() == VAR ? 0 : l.find(t.p);
             long o = t.o.type() == VAR ? 0 : l.find(t.o);
-            var vars = binding == null ? t.varRoles() : t.varRoles(binding);
+            var vars = binding == null ? t.freeRoles() : t.freeRoles(binding);
             if (vars == EMPTY)
                 return 1; // short circuit for ask queries
 
@@ -270,8 +284,18 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return (int)Math.min(Integer.MAX_VALUE, estimate);
         }
 
-        @Override protected Plan bind(Plan plan) {
-            return supportedQueryMeat(plan) == null ? bindInner(plan) : new Query(plan, client);
+        @Override
+        protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {
+            //noinspection unchecked
+            return new FromStoreConverter<>(dest, (Emitter<StoreBatch>)in);
+        }
+
+        @Override protected Plan bind2client(Plan plan, QueryMode mode) {
+            boolean supported = switch (mode) {
+                case ITERATOR -> supportedQueryMeat(plan) != null;
+                case EMIT -> (plan.type == MODIFIER ? plan.left() : plan).type == TRIPLE;
+            };
+            return supported ? new Query(plan, client) : bindInner(plan, mode);
         }
     }
 
@@ -311,35 +335,28 @@ public class StoreSparqlClient extends AbstractSparqlClient
         };
     }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        acquireRef();
-        try {
-            Plan plan = SparqlParser.parse(sparql);
-            Plan meat = supportedQueryMeat(plan);
-            BIt<StoreBatch> storeIt = null;
-            var l = meat == null ? null : lookup(dictId);
-            if (meat instanceof TriplePattern tp) {
-                Modifier m = plan instanceof Modifier mod ? mod : null;
-                // if possible, push projection to when turning Triple.* iterators into batches
-                Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-                storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
-                        tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
-                        tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
-                        tp.varRoles());
-                if (m != null) // apply the modifier. executeFor() detects a no-op
-                    storeIt = m.executeFor(storeIt, null, false);
-                storeIt.metrics(Metrics.createIf(plan));
-            } else if (meat != null) {
-                storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
-            }
-            if (meat == null || storeIt == null)
-                return federator.execute(batchType, plan);
-            return batchType.convert(storeIt);
-        } catch (Throwable t) {
-            throw FSException.wrap(endpoint, t);
-        } finally {
-            releaseRef();
+    @Override public <B extends Batch<B>> BIt<B> doQuery(BatchType<B> batchType, SparqlQuery sparql) {
+        Plan plan = SparqlParser.parse(sparql);
+        Plan meat = supportedQueryMeat(plan);
+        BIt<StoreBatch> storeIt = null;
+        var l = meat == null ? null : lookup(dictId);
+        if (meat instanceof TriplePattern tp) {
+            Modifier m = plan instanceof Modifier mod ? mod : null;
+            // if possible, push projection to when turning Triple.* iterators into batches
+            Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+            storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
+                    tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
+                    tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
+                    tp.freeRoles());
+            if (m != null) // apply the modifier. executeFor() detects a no-op
+                storeIt = m.executeFor(storeIt, null, false);
+            storeIt.metrics(Metrics.createIf(plan));
+        } else if (meat != null) {
+            storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
         }
+        if (meat == null || storeIt == null)
+            return federator.execute(batchType, plan);
+        return batchType.convert(storeIt);
     }
 
     private BIt<StoreBatch> queryBGP(Plan joinOrMod, LocalityCompositeDict.Lookup lookup) {
@@ -370,7 +387,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                        : new Join(copyOfRange(join.operandsArray, 1, n));
         }
         var metrics = Metrics.createIf(join);
-        var bq = new BindQuery<>(r, query(TYPE, join.left), join.type.bindType(),
+        var bq = new ItBindQuery<>(r, query(TYPE, join.left()), join.type.bindType(),
                                  metrics == null ? null : metrics.joinMetrics[1]);
         BIt<StoreBatch> it;
         var tp = (r.type == MODIFIER ? r.left : r) instanceof TriplePattern t ? t : null;
@@ -391,6 +408,54 @@ public class StoreSparqlClient extends AbstractSparqlClient
             it = m.executeFor(it, null, false);
         return it;
     }
+
+//    private Emitter<StoreBatch> emitBGP(Plan joinOrMod) {
+//        Vars outVars = joinOrMod.publicVars();
+//        joinOrMod = federator.shallowOptimize(joinOrMod);
+//        Plan join = joinOrMod.type == MODIFIER ? joinOrMod.left() : joinOrMod;
+//        Plan rightJoin = join;
+//        int rIdx = 1, n = join.opCount();
+//        if (n == 2) {
+//            Plan r = join.right();
+//            if (r.type == MODIFIER)
+//                r = (join.right = federator.shallowOptimize(r)).left();
+//            switch (r.type) {
+//                case JOIN   -> {
+//                    if (join.type != JOIN)
+//                        return null; // can't handle LeftJoin|Exists|Minus(L, Join(...))
+//                    rightJoin = r; rIdx = 0;
+//                }
+//                case TRIPLE ->   rIdx = 2; // accept even if wrapped in Modifier
+//                default     -> { return null; }
+//            }
+//        }
+//        if (!canExecuteRightBGP(rightJoin, rIdx))
+//            return null;
+//        Plan r = join.right();
+//        if (rightJoin == join && n > 2) { //noinspection DataFlowIssue
+//            r = n == 3 ? new Join(r, join.op(2))
+//                    : new Join(copyOfRange(join.operandsArray, 1, n));
+//        }
+//        var bq = new EmitBindQuery<>(r, doEmit(TYPE, join.left()), join.type.bindType());
+//        Emitter<StoreBatch> em;
+//        var tp = (r.type == MODIFIER ? r.left : r) instanceof TriplePattern t ? t : null;
+//        var lookup = dict.lookup();
+//        if (tp != null) {
+//            long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+//            boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
+//                         || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
+//                         || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
+//            if (empty)
+//                return Emitters.empty(TYPE, outVars);
+//            em = new StoreBindingEmitter<>(bq.bindings, bq.type, r, tp, s, p, o,
+//                                           outVars, lookup, bq);
+//        } else {
+//            em = bindWithModifiedBGP(bq, r, outVars, lookup);
+//        }
+//        if (joinOrMod instanceof Modifier m)
+//            em = m.processed(em);
+//        return em;
+//    }
 
     private BIt<StoreBatch> queryTP(Vars vars, TriplePattern t, long si, long pi, long oi,
                                     TripleRoleSet varRoles) {
@@ -414,60 +479,88 @@ public class StoreSparqlClient extends AbstractSparqlClient
         };
     }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
-        acquireRef();
-        try {
-            Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
-            if (bq.query.isGraph())
-                throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
-            Vars outVars = bq.resultVars();
-            BIt<B> it;
-            var l = lookup(dictId);
-            var tp = (right.type == MODIFIER ? right.left : right) instanceof TriplePattern t
-                   ? t : null;
-            if (tp != null) {
-                long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
-                boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
-                             || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
-                             || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
-                if (empty) {
-                    it = new EmptyBIt<>(bq.bindings.batchType(), outVars);
-                } else {
-                    var notifier = new BindingNotifier(bq);
-                    if (right instanceof Modifier m && !m.filters.isEmpty()) {
-                        var split = Optimizer.splitFilters(m.filters);
-                        if (split != m.filters) {
-                            var m2 = m == bq.query ? (Modifier)m.copy() : m;
-                            m2.filters = split;
-                            right = m2;
-                        }
-                    }
-                    it = new StoreBindingBIt<>(bq.bindings, bq.type, right, tp, s, p, o,
-                                               outVars, notifier, notifier, l);
-                }
-            } else {
-                Plan rightJoin = right.type == MODIFIER ? right.left() : right;
-                if (bq.type == BindType.JOIN && rightJoin.type == JOIN
-                                             && canExecuteRightBGP(rightJoin, 0)) {
-                    if (right == bq.query) {
-                        right = right.copy();
-                        if (right.type == MODIFIER)
-                            right.left = rightJoin.copy();
-                    }
-                    right = federator.shallowOptimize(right, bq.bindings.vars());
-                    it = bindWithModifiedBGP(bq, right, outVars, l);
-                } else {
-                    it = null;
-                }
-                if (it == null)
-                    it = new ClientBindingBIt<>(bq, this);
-            }
-            return it;
-        } catch (Throwable t) {
-            throw FSException.wrap(endpoint, t);
-        } finally {
-            releaseRef();
+    @Override public <B extends Batch<B>> Emitter<B>
+    doEmit(BatchType<B> bt, SparqlQuery sparql) {
+        Plan plan = SparqlParser.parse(sparql);
+        var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
+        Emitter<StoreBatch> storeEm;
+        if (tp != null) {
+            Modifier m = plan instanceof Modifier mod ? mod : null;
+            Vars tpVars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
+            storeEm = new TPEmitter(tp, tpVars);
+            if (m != null) // apply any modification required (projection may be done already)
+                storeEm = m.processed(storeEm);
+        } else {
+            storeEm = federator.emit(TYPE, plan);
         }
+        //noinspection unchecked
+        return bt == TYPE ? (Emitter<B>) storeEm : new FromStoreConverter<>(bt, storeEm);
+    }
+
+    @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
+        Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
+        if (bq.query.isGraph())
+            throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+        Vars outVars = bq.resultVars();
+        BIt<B> it;
+        var l = lookup(dictId);
+        var tp = (right.type == MODIFIER ? right.left : right) instanceof TriplePattern t
+               ? t : null;
+        if (tp != null) {
+            long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+            boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
+                         || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
+                         || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
+            if (empty) {
+                it = new EmptyBIt<>(bq.bindings.batchType(), outVars);
+            } else {
+                var notifier = new BindingNotifier(bq);
+                if (right instanceof Modifier m && !m.filters.isEmpty()) {
+                    var split = Optimizer.splitFilters(m.filters);
+                    if (split != m.filters) {
+                        var m2 = m == bq.query ? (Modifier)m.copy() : m;
+                        m2.filters = split;
+                        right = m2;
+                    }
+                }
+                it = new StoreBindingBIt<>(bq.bindings, bq.type, right, tp, s, p, o,
+                                           outVars, notifier, notifier, l);
+            }
+        } else {
+            Plan rightJoin = right.type == MODIFIER ? right.left() : right;
+            if (bq.type == BindType.JOIN && rightJoin.type == JOIN
+                                         && canExecuteRightBGP(rightJoin, 0)) {
+                if (right == bq.query) {
+                    right = right.copy();
+                    if (right.type == MODIFIER)
+                        right.left = rightJoin.copy();
+                }
+                right = federator.shallowOptimize(right, bq.bindings.vars());
+                it = bindWithModifiedBGP(bq, right, outVars, l);
+            } else {
+                it = null;
+            }
+            if (it == null)
+                it = new ClientBindingBIt<>(bq, this);
+        }
+        return it;
+    }
+
+    @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq) {
+        Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
+        if (right instanceof Modifier m && !m.filters.isEmpty())
+            right = splitFiltersForLexicalJoin(m, m == bq.query);
+        return new StoreBindingEmitter<>(bq, right);
+    }
+
+    private Modifier splitFiltersForLexicalJoin(Modifier m, boolean copyOnChange) {
+        var split = Optimizer.splitFilters(m.filters);
+        if (split != m.filters) {
+            var m2 = copyOnChange ? (Modifier)m.copy() : m;
+            m2.filters = split;
+            return m2;
+        }
+        return m;
     }
 
     private static boolean canExecuteRightBGP(Plan right, int rIdx) {
@@ -479,7 +572,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     private <B extends Batch<B>>
-    BIt<B> bindWithModifiedBGP(BindQuery<B> bq, Plan modOrJoin, Vars outVars,
+    BIt<B> bindWithModifiedBGP(ItBindQuery<B> bq, Plan modOrJoin, Vars outVars,
                                LocalityCompositeDict.Lookup lookup) {
         Modifier outerMod;
         Plan join;
@@ -531,6 +624,58 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return left;
     }
 
+//    private <B extends Batch<B>>
+//    Emitter<B> bindWithModifiedBGP(EmitBindQuery<B> bq, Plan modOrJoin, Vars outVars,
+//                                   LocalityCompositeDict.Lookup lookup) {
+//        Modifier outerMod;
+//        Plan join;
+//        if (modOrJoin instanceof Modifier m) {
+//            outerMod = m;
+//            join = modOrJoin.left();
+//        } else {
+//            outerMod = null;
+//            join = modOrJoin;
+//        }
+//        int n            = join.opCount();
+//        var left         = bq.bindings;
+//        int weakDedupCap = outerMod != null && outerMod.distinctCapacity > 0
+//                && outerMod.offset == 0
+//                ? dedupCapacity() : 0;
+//        for (int i = 0; i < n; i++) {
+//            var op = join.op(i);
+//            var tp = op instanceof TriplePattern t ? t : (TriplePattern)op.left();
+//            long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+//            boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
+//                    || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
+//                    || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
+//            if (empty)
+//                return Emitters.empty(left.batchType(), outVars);
+//            Vars vars = BindType.JOIN.resultVars(left.vars(), tp.publicVars());
+//            EmitBindQuery<B> opBindListener = null;
+//            if (i == n -1) {
+//                if (outerMod != null)
+//                    op = modifyLastOperand(outerMod.filters, weakDedupCap, op);
+//                vars = outVars;
+//                opBindListener = bq;
+//            } else if (weakDedupCap > 0) {
+//                op = FS.distinct(op, weakDedupCap);
+//            }
+//            left = new StoreBindingEmitter<>(left, BindType.JOIN, op, tp, s, p, o, vars,
+//                                             lookup, opBindListener);
+//        }
+//        if (outerMod != null && (outerMod.limit != Long.MAX_VALUE || outerMod.offset > 0
+//                || outerMod.distinctCapacity > weakDedupCap)) {
+//            if (!outerMod.filters.isEmpty() || outerMod.projection != null) {
+//                var m2 = (Modifier) outerMod.copy();
+//                m2.filters = List.of();
+//                m2.projection = null;
+//                outerMod = m2;
+//            }
+//            outerMod.processed(left);
+//        }
+//        return left;
+//    }
+
     private Plan modifyLastOperand(List<Expr> filters, int dedupCap, Plan op) {
         if (filters.isEmpty())
             return op; // no op
@@ -545,6 +690,775 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
         return new Modifier(op, null, dedupCap, 0, Long.MAX_VALUE, filters);
     }
+
+    /* --- --- --- emitters --- --- --- */
+
+    private final class TPEmitter extends SelfEmitter<StoreBatch> {
+        private static final int LIMIT_TICKS = 4;
+        private static final int DEADLINE_CHK = 0xf;
+        private static final int MAX_BATCH = BIt.DEF_MAX_BATCH;
+        private static final int MIN_ROWS = 64;
+        private static final int HAS_UNSET_OUT    = 0x01000000;
+        private static final Flags FLAGS = SELF_EMITTER_FLAGS.toBuilder()
+                .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
+                .build();
+
+        private @Nullable StoreBatch recycled;
+        private final byte cols;
+        private byte outCol0, outCol1, outCol2;
+        private final short dictId = (short)StoreSparqlClient.this.dictId;
+        private byte freeRoles;
+        private Object it;
+        private final long[] rowSkel;
+        // ---------- fields below this line are accessed only on construction/rebind()
+        private byte sInCol = -1, pInCol = -1, oInCol = -1;
+        private final TriplePattern tp;
+        private final LocalityCompositeDict.Lookup lookup = dict.lookup();
+        private @MonotonicNonNull Vars lastBindingsVars;
+        private final long sId, pId, oId;
+        private Term view = Term.pooledMutable();
+
+        public TPEmitter(TriplePattern tp, Vars outVars) {
+            super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+            int cols = outVars.size();
+            if (cols > 127)
+                throw new IllegalArgumentException("Too many output columns");
+            this.cols = (byte) cols;
+            this.tp = tp;
+            Arrays.fill(rowSkel = ArrayPool.longsAtLeast(cols), 0L);
+            sId = lookup.find(tp.s);
+            pId = lookup.find(tp.p);
+            oId = lookup.find(tp.o);
+            rebind(BatchBinding.ofEmpty(TYPE));
+            acquireRef();
+        }
+
+        @Override protected void doRelease() {
+            try {
+                recycled = Batch.recyclePooled(recycled);
+                ArrayPool.LONG.offer(rowSkel, rowSkel.length);
+                view.recycle();
+                view = Term.EMPTY_STRING;
+                releaseRef();
+            } finally {
+                super.doRelease();
+            }
+        }
+
+        private int bindingVarsChanged(int state, Vars bindingVars) {
+            lastBindingsVars = bindingVars;
+            freeRoles = 0;
+            int sInCol = -1, pInCol = -1, oInCol = -1;
+            if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
+            if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
+            if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
+            if (sInCol > 0x7f || pInCol > 0x7f || oInCol > 0x7f)
+                throw new IllegalArgumentException("Too many input columns");
+            this.sInCol = (byte)sInCol;
+            this.pInCol = (byte)pInCol;
+            this.oInCol = (byte)oInCol;
+            byte sc = (byte)vars.indexOf(tp.s);
+            byte pc = (byte)vars.indexOf(tp.p);
+            byte oc = (byte)vars.indexOf(tp.o);
+            byte o0 = -1, o1 = -1, o2 = -1;
+            switch (freeRoles) {
+                case       EMPTY_BITS ->   it = FALSE;
+                case         OBJ_BITS -> { it = spo.makeValuesIt(); o0 = oc; }
+                case         PRE_BITS -> { it = spo.makeSubKeyIt(); o0 = pc; }
+                case     PRE_OBJ_BITS -> { it = spo.makePairIt();   o0 = pc; o1 = oc; }
+                case         SUB_BITS -> { it = ops.makeValuesIt(); o0 = sc; }
+                case     SUB_OBJ_BITS -> { it = pso.makePairIt();   o0 = sc; o1 = oc; }
+                case     SUB_PRE_BITS -> { it = ops.makePairIt();   o0 = pc; o1 = sc; }
+                case SUB_PRE_OBJ_BITS -> { it = spo.scan();         o0 = sc; o1 = pc; o2 = oc; }
+            }
+            outCol0 = o0;
+            outCol1 = o1;
+            outCol2 = o2;
+            int colsSet = 0;
+            if (o0 != -1                        ) ++colsSet;
+            if (o1 != -1 && o1 != o0            ) ++colsSet;
+            if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
+            return colsSet < cols ?   setFlagsRelease(state, HAS_UNSET_OUT)
+                                  : clearFlagsRelease(state, HAS_UNSET_OUT);
+        }
+
+        @Override public void rebind(BatchBinding<StoreBatch> binding) throws RebindException {
+            Vars bVars = binding.vars;
+            int st = resetForRebind(0, LOCKED_MASK);
+            try {
+                if (EmitterStats.ENABLED && stats != null)
+                    stats.onRebind(binding);
+                if (!bVars.equals(lastBindingsVars))
+                    st = bindingVarsChanged(st, bVars);
+                long s = sInCol >=0 && binding.get(sInCol, view) ? lookup.find(view) : sId;
+                long p = pInCol >=0 && binding.get(pInCol, view) ? lookup.find(view) : pId;
+                long o = oInCol >=0 && binding.get(oInCol, view) ? lookup.find(view) : oId;
+                if ((st&HAS_UNSET_OUT) != 0) {
+                    StoreBatch bBatch = binding.batch;
+                    if (bBatch == null || binding.row >= bBatch.rows)
+                        throw new IllegalArgumentException("bad binding batch/row");
+                    int bBase = binding.row*bBatch.cols;
+                    long[] bIds = bBatch.arr;
+                    for (int c = 0, bCol; c < cols; c++) {
+                        var v = vars.get(c);
+                        rowSkel[c] = (bCol = bVars.indexOf(v)) < 0 ? 0 : bIds[bBase+bCol];
+                    }
+                }
+                switch (freeRoles) {
+                    case       EMPTY_BITS -> it = spo.contains(s, p, o);
+                    case         OBJ_BITS -> spo.values (s, p, (Triples.ValueIt )it);
+                    case         PRE_BITS -> spo.subKeys(s, o, (Triples.SubKeyIt)it);
+                    case     PRE_OBJ_BITS -> spo.pairs  (s,    (Triples.PairIt  )it);
+                    case         SUB_BITS -> ops.values (o, p, (Triples.ValueIt )it);
+                    case     SUB_OBJ_BITS -> pso.pairs  (p,    (Triples.PairIt  )it);
+                    case     SUB_PRE_BITS -> ops.pairs  (o,    (Triples.PairIt  )it);
+                    case SUB_PRE_OBJ_BITS -> spo.scan   (      (Triples.ScanIt  )it);
+                }
+            } finally {
+                unlock(st);
+            }
+        }
+
+        @Override protected int produceAndDeliver(int state) {
+            long limit = (long)REQUESTED.getOpaque(this);
+            if (limit <= 0)
+                return state;
+            int termState = state;
+            StoreBatch b = TYPE.empty(asUnpooled(recycled), MIN_ROWS, cols, 0);
+            recycled = null;
+            int iLimit = (int)Math.min(MAX_BATCH, limit);
+            boolean retry = switch (freeRoles) {
+                case                             EMPTY_BITS ->    fillAsk(b);
+                case                      OBJ_BITS,SUB_BITS ->  fillValue(b, iLimit);
+                case                               PRE_BITS -> fillSubKey(b, iLimit);
+                case PRE_OBJ_BITS,SUB_OBJ_BITS,SUB_PRE_BITS ->   fillPair(b, iLimit);
+                case                       SUB_PRE_OBJ_BITS ->   fillScan(b, iLimit);
+                default                                     -> true; // unreachable
+            };
+            if (!retry)
+                termState = COMPLETED;
+            int rows = b.rows;
+            if (rows > 0) {
+                if ((long)REQUESTED.getAndAddRelease(this, -rows) > rows)
+                    termState |= MUST_AWAKE;
+                b = deliver(b);
+            }
+            recycled = Batch.asPooled(b);
+            return termState;
+        }
+
+        @SuppressWarnings("SameReturnValue") private boolean fillAsk(StoreBatch b) {
+            if (it == TRUE) {
+                b.reserve(1, 0);
+                ++b.rows;
+                if ((statePlain()&HAS_UNSET_OUT) != 0)
+                    fillSkel(b.arr, b.rows*cols);
+                b.dropCachedHashes();
+            }
+            return false;
+        }
+
+        private boolean fillValue(StoreBatch b, int limit) {
+            int rows = b.rows;
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
+            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            byte outCol0 = this.outCol0;
+            var it = (Triples.ValueIt)this.it;
+            for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
+                b.reserve(rows+1, 0);
+                long[] a = b.arr;
+                if (hasUnset) fillSkel(a, base);
+                if (outCol0 >= 0) a[cols*rows + outCol0] = source(it.valueId, dictId);
+                ++rows;
+                if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
+            }
+            b.rows = rows;
+            b.dropCachedHashes();
+            return retry;
+        }
+
+        private boolean fillPair(StoreBatch b, int limit) {
+            int rows = b.rows;
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
+            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            byte outCol0 = this.outCol0, outCol1 = this.outCol1;
+            var it = (Triples.PairIt) this.it;
+            for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
+                b.reserve(rows+1, 0);
+                long[] a = b.arr;
+                if (hasUnset) fillSkel(a, base);
+                if (outCol0 >= 0) a[base + outCol0] = source(it.subKeyId, dictId);
+                if (outCol1 >= 0) a[base + outCol1] = source(it.valueId,  dictId);
+                ++rows;
+                if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
+            }
+            b.rows = rows;
+            b.dropCachedHashes();
+            return retry;
+        }
+
+        private boolean fillSubKey(StoreBatch b, int limit) {
+            int rows = b.rows;
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
+            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            byte outCol0 = this.outCol0;
+            var it = (Triples.SubKeyIt)this.it;
+            for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
+                b.reserve(rows+1, 0);
+                long[] a = b.arr;
+                if (hasUnset) fillSkel(a, base);
+                if (outCol0 >= 0) a[base + outCol0] = source(it.subKeyId, dictId);
+                ++rows;
+                if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
+            }
+            b.rows = rows;
+            b.dropCachedHashes();
+            return retry;
+        }
+
+        private boolean fillScan(StoreBatch b, int limit) {
+            int rows = b.rows;
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
+            boolean retry = false, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            byte outCol0 = this.outCol0, outCol1 = this.outCol1, outCol2 = this.outCol2;
+            var it = (Triples.ScanIt) this.it;
+            for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
+                b.reserve(rows+1, 0);
+                long[] a = b.arr;
+                if (hasUnset) fillSkel(a, base);
+                if (outCol0 >= 0) a[base + outCol0] = source(it.keyId,    dictId);
+                if (outCol1 >= 0) a[base + outCol1] = source(it.subKeyId, dictId);
+                if (outCol2 >= 0) a[base + outCol2] = source(it.valueId,  dictId);
+                ++rows;
+                if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
+            }
+            b.rows = rows;
+            b.dropCachedHashes();
+            return retry;
+        }
+
+        private void fillSkel(long[] dest, int base) {
+            //noinspection ManualArrayCopy
+            for (int i = 0; i < cols; i++)
+                dest[base+i] = rowSkel[i];
+        }
+    }
+
+    private final class FromStoreConverter<B extends Batch<B>> extends ConverterStage<StoreBatch, B> {
+        private final LocalityCompositeDict.Lookup lookup;
+        private final short dictId;
+
+        public FromStoreConverter(BatchType<B> type, Emitter<StoreBatch> upstream) {
+            super(type, upstream);
+            this.dictId = (short)StoreSparqlClient.this.dictId;
+            this.lookup = dict.lookup();
+        }
+
+        @Override protected BatchBinding<StoreBatch> convertBinding(BatchBinding<B> binding) {
+            B b = binding.batch;
+            StoreBatch conv = b == null ? null
+                     : TYPE.create(1, b.cols, 0)
+                           .putRowConverting(b, binding.row, dictId);
+            BatchBinding<StoreBatch> bb = new BatchBinding<>(binding.vars);
+            bb.setRow(conv, 0);
+            return bb;
+        }
+
+        @Override public void putConverting(B dst, StoreBatch src) {
+            int cols = src.cols, rows = src.rows;
+            if (dst.cols != cols) throw new IllegalArgumentException("cols mismatch");
+            long[] ids = src.arr;
+            dst.reserve(rows, 8*rows);
+            for (int base = 0, end = rows*cols; base < end; base += cols) {
+                dst.beginPut();
+                for (int c = 0; c < cols; c++) {
+                    TwoSegmentRope t = lookup.get(unsource(ids[base + c]));
+                    if (t == null) continue;
+                    byte fst = t.get(0);
+                    SegmentRope sh = switch (fst) {
+                        case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+                        case '<' -> {
+                            if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                            int slot = (int)(t.fstOff & PREFIXES_MASK);
+                            var cached = prefixes[slot];
+                            if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
+                                prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                            yield cached;
+                        }
+                        case '_' -> ByteRope.EMPTY;
+                        default -> throw new IllegalArgumentException("Not an RDF term");
+                    };
+                    int localOff = fst == '<' ? sh.len : 0;
+                    dst.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
+                }
+                dst.commitPut();
+            }
+        }
+    }
+
+//    final class StoreBindingEmitter<B extends Batch<B>> extends BindingStage<B> {
+//        private final StoreEmitter tpEmitter;
+//        private final Emitter<B> convTpEmitter;
+//        private final @Nullable Modifier mustRebindModifier;
+//        private final Plan right;
+//        private Emitter<B> rightEmitter;
+//        private final LocalityCompositeDict.Lookup lookup;
+//        private final short dictId;
+//        private final long s, p, o;
+//        private final byte sLeftCol, pLeftCol, oLeftCol;
+//        private final TripleRoleSet tpFreeRoles;
+//        private long sNotLex, pNotLex, oNotLex;
+//        private final LocalityCompositeDict.@Nullable LocalityLexIt sLexIt, pLexIt, oLexIt;
+//        private final boolean hasLexicalJoin;
+//        private @MonotonicNonNull B lb;
+//        private int lr;
+//        private final TwoSegmentRope view = new TwoSegmentRope();
+//
+//        public StoreBindingEmitter(Emitter<B> left, BindType type, Plan right, TriplePattern tp,
+//                                   long s, long p, long o, Vars outVars,
+//                                   LocalityCompositeDict.Lookup lookup,
+//                                   @Nullable BindListener listener) {
+//            super(left, type, listener, outVars, right.publicVars().minus(left.vars()));
+//            this.dictId = (short)StoreSparqlClient.this.dictId;
+//            this.lookup = lookup;
+//            this.right = right;
+//            Vars leftVars = left.vars();
+//
+//            // detect and setup lexical joins: FILTER(str(?right) = str(?left))
+//            var m = right instanceof Modifier mod ? mod : null;
+//            List<Expr> mFilters = m == null ? List.of() : m.filters;
+//            Term sTerm, pTerm, oTerm;
+//            if (!mFilters.isEmpty()) {
+//                sTerm = leftLexJoinVar(mFilters, tp.s, leftVars);
+//                pTerm = tp.p == tp.s ? sTerm : leftLexJoinVar(mFilters, tp.p, leftVars);
+//                if (tp.o.equals(tp.s)) oTerm = sTerm;
+//                else if (tp.o.equals(tp.p)) oTerm = pTerm;
+//                else oTerm = leftLexJoinVar(mFilters, tp.o, leftVars);
+//                LocalityCompositeDict.LocalityLexIt sLexIt = null, pLexIt = null, oLexIt = null;
+//                if (sTerm != tp.s) {
+//                    if (sTerm.isVar()) {
+//                        s = 0;
+//                        sLexIt = dict.lexIt();
+//                    } else {
+//                        s = lookup.find(sTerm);
+//                    }
+//                }
+//                if (pTerm != tp.p) {
+//                    if (pTerm.isVar()) {
+//                        p = 0;
+//                        pLexIt = dict.lexIt();
+//                    } else {
+//                        p = lookup.find(pTerm);
+//                    }
+//                }
+//                if (oTerm != tp.o) {
+//                    if (oTerm.isVar()) {
+//                        o = 0;
+//                        oLexIt = dict.lexIt();
+//                    } else {
+//                        o = lookup.find(oTerm);
+//                    }
+//                }
+//                this.sLexIt = sLexIt;
+//                this.pLexIt = pLexIt;
+//                this.oLexIt = oLexIt;
+//                this.hasLexicalJoin = sLexIt != null || pLexIt != null || oLexIt != null;
+//            } else {
+//                sTerm = tp.s;
+//                pTerm = tp.p;
+//                oTerm = tp.o;
+//                sLexIt = null;
+//                pLexIt = null;
+//                oLexIt = null;
+//                hasLexicalJoin = false;
+//            }
+//
+//            // setup join
+//            this.s = this.sNotLex = s;
+//            this.p = this.pNotLex = p;
+//            this.o = this.oNotLex = o;
+//            int sLeftCol = leftVars.indexOf(sTerm);
+//            int pLeftCol = leftVars.indexOf(pTerm);
+//            int oLeftCol = leftVars.indexOf(oTerm);
+//            if ((sLeftCol | pLeftCol | oLeftCol) > 127)
+//                throw new IllegalArgumentException("binding column >127");
+//            this.sLeftCol = (byte) sLeftCol;
+//            this.pLeftCol = (byte) pLeftCol;
+//            this.oLeftCol = (byte) oLeftCol;
+//
+//            // setup tpEmitter
+//            Vars tUseful = new Vars.Mutable(3);
+//            TripleRoleSet tFreeRoles = EMPTY;
+//            if (sLeftCol < 0 && tp.s.isVar()) {
+//                tFreeRoles = tFreeRoles.withSub();
+//                addIfUseful(tUseful, tp.s, mFilters);
+//            }
+//            if (pLeftCol < 0 && tp.p.isVar()) {
+//                tFreeRoles = tFreeRoles.withPre();
+//                addIfUseful(tUseful, tp.p, mFilters);
+//            }
+//            if (oLeftCol < 0 && tp.o.isVar()) {
+//                tFreeRoles = tFreeRoles.withObj();
+//                addIfUseful(tUseful, tp.o, mFilters);
+//            }
+//
+//            tpEmitter = switch (this.tpFreeRoles = tFreeRoles) {
+//                case EMPTY       -> new StoreAskEmitter   (tUseful, true);
+//                case SUB         -> new StoreValueEmitter (tUseful, sTerm,        ops.makeValuesIt());
+//                case OBJ         -> new StoreValueEmitter (tUseful, oTerm,        spo.makeValuesIt());
+//                case PRE         -> new StoreSubKeyEmitter(tUseful, pTerm,        spo.makeSubKeyIt());
+//                case PRE_OBJ     -> new StorePairEmitter  (tUseful, pTerm, oTerm, spo.makePairIt());
+//                case SUB_OBJ     -> new StorePairEmitter  (tUseful, sTerm, oTerm, pso.makePairIt());
+//                case SUB_PRE     -> new StorePairEmitter  (tUseful, pTerm, sTerm, ops.makePairIt());
+//                case SUB_PRE_OBJ -> new StoreScanEmitter  (tUseful, sTerm, pTerm, oTerm);
+//            };
+//
+//            // create emitter for modified tp
+//            boolean atMostProjecting = m == null
+//                    || (mFilters.isEmpty()        && m.distinctCapacity == 0 &&
+//                        m.limit == Long.MAX_VALUE && m.offset == 0);
+//            //noinspection unchecked
+//            convTpEmitter = batchType == TYPE
+//                    ? (Emitter<B>)tpEmitter : new StoreConverterStage<>(batchType, tpEmitter);
+//            rightEmitter = atMostProjecting ? convTpEmitter : m.processed(convTpEmitter);
+//            boolean mustRebindFilters = false;
+//            for (int i = 0, n = mFilters.size(); i < n && !mustRebindFilters; i++)
+//                mustRebindFilters = mFilters.get(i).vars().intersects(leftVars);
+//            this.mustRebindModifier = mustRebindFilters ? m : null;
+//            acquireRef();
+//        }
+//
+//        private void addIfUseful(Vars dest, Term var, List<Expr> filters) {
+//            boolean is = expectedRightVars.contains(var);
+//            if (!is && !filters.isEmpty()) {
+//                for (Expr e : filters) {
+//                    is = e.vars().contains(var);
+//                    if (is) break;
+//                }
+//            }
+//            if (is)
+//                dest.add(var);
+//        }
+//
+//        @Override protected Object rightDisplay() {
+//            return sparqlDisplay(right.sparql().toString());
+//        }
+//
+//        @Override protected void cleanup() { releaseRef(); }
+//
+//        @Override protected Emitter<B> bind(BatchBinding<B> binding) {
+//            B lb = this.lb = binding.batch;
+//            int lr = this.lr = binding.row;
+//            assert lb != null;
+//            long s = this.s, p = this.p, o = this.o;
+//            if (hasLexicalJoin) {
+//                sNotLex = s = lexRebindCol(sLexIt, sLeftCol, s, lb, lr);
+//                pNotLex = p = lexRebindCol(pLexIt, pLeftCol, p, lb, lr);
+//                oNotLex = o = lexRebindCol(oLexIt, oLeftCol, o, lb, lr);
+//            } else if (lb instanceof StoreBatch sb) {
+//                s = sLeftCol < 0 ? s : translate(sb.id(lr, sLeftCol), dictId, lookup);
+//                p = pLeftCol < 0 ? p : translate(sb.id(lr, pLeftCol), dictId, lookup);
+//                o = oLeftCol < 0 ? o : translate(sb.id(lr, oLeftCol), dictId, lookup);
+//            } else {
+//                s = sLeftCol >= 0 && lb.getRopeView(lr, sLeftCol, view) ? lookup.find(view) : s;
+//                p = pLeftCol >= 0 && lb.getRopeView(lr, pLeftCol, view) ? lookup.find(view) : p;
+//                o = oLeftCol >= 0 && lb.getRopeView(lr, oLeftCol, view) ? lookup.find(view) : o;
+//            }
+//            rebind(s, p, o);
+//            try {
+//                if (mustRebindModifier != null) {
+//                    convTpEmitter.reset();
+//                    rightEmitter = mustRebindModifier.processed(convTpEmitter, binding, false);
+//                } else {
+//                    rightEmitter.reset();
+//                }
+//            } catch (RebindUnsupportedException e) {
+//                return Emitters.error(batchType, vars, e);
+//            }
+//            return rightEmitter;
+//        }
+//
+//        private void rebind(long s, long p, long o) {
+//            var e = tpEmitter;
+//            switch (tpFreeRoles) {
+//                case EMPTY       -> ((StoreAskEmitter)e).result = spo.contains(s, p, o);
+//                case OBJ         -> spo.values (s, p, ((StoreValueEmitter) e).vit);
+//                case PRE         -> spo.subKeys(s, o, ((StoreSubKeyEmitter)e).sit);
+//                case PRE_OBJ     -> spo.pairs  (s,    ((StorePairEmitter)  e).pit);
+//                case SUB         -> ops.values (o, p, ((StoreValueEmitter) e).vit);
+//                case SUB_OBJ     -> pso.pairs  (p,    ((StorePairEmitter)  e).pit);
+//                case SUB_PRE     -> ops.pairs  (o,    ((StorePairEmitter)  e).pit);
+//                case SUB_PRE_OBJ -> spo.scan   (      ((StoreScanEmitter)  e).sit);
+//            }
+//        }
+//
+//        @Override protected @Nullable Emitter<B> continueRight() {
+//            if (!hasLexicalJoin)
+//                return null;
+//            long s, p, o;
+//            if (nextLexical(lb, lr)) {
+//                s = sLexIt == null ? sNotLex : sLexIt.id;
+//                p = pLexIt == null ? pNotLex : pLexIt.id;
+//                o = oLexIt == null ? oNotLex : oLexIt.id;
+//                rebind(s, p, o);
+//                try {
+//                    rightEmitter.reset();
+//                } catch (RebindUnsupportedException e) {
+//                    return Emitters.error(batchType, vars, e);
+//                }
+//                return rightEmitter;
+//            } else {
+//                lb = null;
+//                return null;
+//            }
+//        }
+//        private long lexRebindCol(LexIt lexIt, byte leftCol, long fallback, B lb, int lr) {
+//            if (leftCol < 0) return fallback;
+//            if (lexIt == null && lb instanceof StoreBatch sb) {
+//                long sourced = sb.id(lr, leftCol);
+//                if (IdTranslator.dictId(sourced) == dictId)
+//                    return unsource(sourced);
+//            }
+//            if (!lb.getRopeView(lr, leftCol, view))
+//                return fallback;
+//            if (lexIt == null)
+//                return lookup.find(view);
+//            lexIt.find(view);
+//            return lexIt.advance() ? lexIt.id : fallback;
+//        }
+//
+//        private boolean resetLexIt(LexIt lexIt, byte leftCol, B lb, int lr) {
+//            if (!lb.getRopeView(lr, leftCol, view)) return false;
+//            lexIt.find(view);
+//            return lexIt.advance();
+//        }
+//
+//        private boolean nextLexical(B lb, int lr) {
+//            if (oLexIt != null && oLexIt.advance())
+//                return true;
+//            if (pLexIt != null) {
+//                while (pLexIt.advance()) {
+//                    if (oLexIt == null || resetLexIt(oLexIt, oLeftCol, lb, lr)) return true;
+//                }
+//            }
+//            if (sLexIt != null) {
+//                while (sLexIt.advance()) {
+//                    if (pLexIt != null) {
+//                        if (!resetLexIt(pLexIt, pLeftCol, lb, lr)) continue; // next s
+//                        if (oLexIt == null) return true;
+//                        do {
+//                            if (resetLexIt(oLexIt, oLeftCol, lb, lr)) return true;
+//                        } while (pLexIt.advance());
+//                    } else if (resetLexIt(oLexIt, oLeftCol, lb, lr)) {
+//                        return true;
+//                    }
+//                }
+//            }
+//            return false;
+//        }
+//
+//        private void endLexical() {
+//            if (sLexIt != null) sLexIt.end();
+//            if (pLexIt != null) pLexIt.end();
+//            if (oLexIt != null) oLexIt.end();
+//        }
+//
+//    }
+
+    private final class StoreBindingEmitter<B extends Batch<B>> extends BindingStage<B> {
+        private static final LocalityCompositeDict.LocalityLexIt [] EMPTY_LEX_ITS
+                = new LocalityCompositeDict.LocalityLexIt[0];
+
+        private final Plan right;
+        /** If a lexical join hold lexical variants of the left-provided binding using the
+         *  var names of the right operand instead of the left-side binding var name. */
+        private final @Nullable BatchBinding<B> lexJoinBinding;
+        /** Next values for {@code lexJoinBinding}, continuously swapped with
+         * {@code lexJoinBinding.batch} */
+        private @Nullable B nextLexBatch;
+        /** The i-th lexIt iterates over variants of the {@code lexItCols[i]}-th binding var */
+        private final int[] lexItsCols;
+        /** array of non-null lexical variant iterators or null if there is no lexical join */
+        private final LocalityCompositeDict.LocalityLexIt [] lexIts;
+        /** used to convert ids from {@code lexIts} into values for {@code nextLexJoinBatch}. */
+        private final LocalityCompositeDict.@Nullable Lookup lookup;
+        /** shortcut bitset for checking if a column of {@code nextLexJoinBatch} should be
+         * filled with a value from a {@code lexIt} instead of just copied from
+         * {@code lexJoinBinding.batch}*/
+        private final long lexBindingCols;
+        private final @Nullable TwoSegmentRope lexView;
+
+        public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right) {
+            super(bq.bindings, bq.type, bq, bq.resultVars(),
+                  emit(bq.bindings.batchType(), right));
+            Vars leftVars = bq.bindingsVars();
+            this.right = right;
+
+            var m = right instanceof Modifier mod ? mod : null;
+            List<Expr> mFilters = m == null ? List.of() : m.filters;
+            lexJoinBinding = mFilters.isEmpty() ? null
+                                : createLexJoinBinding(right, mFilters, leftVars);
+            if (lexJoinBinding == null) {
+                lexIts = EMPTY_LEX_ITS;
+                lexItsCols = ArrayPool.EMPTY_INT;
+                nextLexBatch = null;
+                lookup = null;
+                lexBindingCols = 0;
+                lexView = null;
+            } else { // fill lexIts & lexItsCols
+                Vars rightBindingVars = lexJoinBinding.vars;
+                int nVars = leftVars.size();
+                assert rightBindingVars.size() == nVars;
+                nextLexBatch = batchType.create(1, nVars, 0);
+                lookup = dict.lookup();
+                int lexJoins = 0;
+                for (int i = 0; i < nVars; i++) {
+                    if (leftVars.get(i) != rightBindingVars.get(i)) lexJoins++;
+                }
+                lexItsCols = new int[lexJoins];
+                lexIts = new LocalityCompositeDict.LocalityLexIt[lexJoins];
+                long lexBindingCols = 0;
+                lexJoins = 0;
+                for (int i = 0; i < nVars; i++) {
+                    if (leftVars.get(i) == rightBindingVars.get(i)) continue;
+                    if (i < 64) lexBindingCols |= 1L << i;
+                    lexItsCols[lexJoins]   = i;
+                    lexIts    [lexJoins++] = dict.lexIt();
+                }
+                this.lexBindingCols = lexBindingCols;
+                lexView = new TwoSegmentRope();
+            }
+        }
+
+        private BatchBinding<B> createLexJoinBinding(Plan right, List<Expr> mFilters,
+                                                     Vars leftVars) {
+            Vars rightBindingVars = null;
+            var term = Term.pooledMutable();
+            var varRope = ByteRope.pooled(16);
+            for (SegmentRope name : right.allVars()) {
+                varRope.len = 1;
+                varRope.append(name).u8()[0] = '?';
+                term.set(ByteRope.EMPTY, varRope, false);
+                Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
+                if (leftVar != term) {
+                    if (rightBindingVars == null)
+                        rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
+                    int i = rightBindingVars.indexOf(leftVar);
+                    if (i >= 0)
+                        rightBindingVars.set(i, name);
+                }
+            }
+            varRope.recycle();
+            term.recycle();
+            if (rightBindingVars != null) {
+                BatchBinding<B> lexJoinBinding = new BatchBinding<>(rightBindingVars);
+                B b = batchType().create(1, rightBindingVars.size(), 0);
+                b.beginPut();
+                b.commitPut();
+                lexJoinBinding.setRow(b, 0);
+                return lexJoinBinding;
+            }
+            return null;
+        }
+
+        @Override protected Object rightDisplay() {
+            return sparqlDisplay(right.sparql().toString());
+        }
+
+        @Override protected void doRelease() {
+            super.doRelease();
+            if (lexJoinBinding != null)
+                lexJoinBinding.batch = batchType.recycle(lexJoinBinding.batch);
+            nextLexBatch = batchType.recycle(nextLexBatch);
+        }
+
+        @Override protected boolean lexContinueRight(B leftBatch, int leftRow,
+                                                     Emitter<B> rightEmitter) {
+            if (lexJoinBinding == null)
+                return false;
+            int nIts = lexIts.length, i = nIts-1;
+            while (i >= 0 && !lexIts[i].advance())
+                --i;
+            if (i < 0)
+                return false;
+
+            B lexBatch = lexJoinBinding.batch, nextLexBatch = this.nextLexBatch;
+            assert nextLexBatch != null && lookup != null && lexView != null && lexBatch != null;
+            int nVars = lexBatch.cols;
+
+            clearAndCopyNonLexBindings(lexBatch, 0, nextLexBatch);
+            if (nVars > 64)
+                copyNonLexBindingsExtra(nextLexBatch, lexBatch);
+            putLex(nextLexBatch, i, lookup);
+
+            while (++i < nIts) {
+                if (!leftBatch.getRopeView(leftRow, lexItsCols[i], lexView))
+                    return false;
+                var it = lexIts[i];
+                it.find(lexView);
+                if (!it.advance())
+                    return false;
+                putLex(nextLexBatch, i, lookup);
+            }
+            nextLexBatch.commitPut();
+            this.nextLexBatch = lexBatch;
+            lexJoinBinding.batch = nextLexBatch;
+            rightEmitter.rebind(lexJoinBinding);
+            return true;
+        }
+
+        private void clearAndCopyNonLexBindings(B src, int srcRow, B dst) {
+            dst.clear();
+            dst.beginPut();
+            for (int c = 0, n = Math.min(64, dst.cols); c < n; c++) {
+                if ((lexBindingCols & (1L << c)) == 0)
+                    dst.putTerm(c, src, srcRow, c);
+            }
+        }
+
+        private void copyNonLexBindingsExtra(B src, B dst) {
+            outer:
+            for (int c = 64, n = src.cols; c < n; c++) {
+                for (int lexCol : lexItsCols) {
+                    if (lexCol == c) continue outer;
+                }
+                dst.putTerm(c, src, 0, c);
+            }
+        }
+
+        private void putLex(B nextLexBatch, int lexIdx, LocalityCompositeDict.Lookup lookup) {
+            long id = lexIts[lexIdx].id;
+            SegmentRope local = lookup.getLocal(id);
+            if (local == null)
+                return;
+            nextLexBatch.putTerm(lexItsCols[lexIdx], lookup.getShared(id), local,
+                                 0, local.len, lookup.sharedSuffixed(id));
+        }
+
+        @Override protected void rebind(BatchBinding<B> binding, Emitter<B> rightEmitter) {
+            if (lexJoinBinding != null) {
+                B leftBatch = binding.batch, lexBatch = lexJoinBinding.batch;
+                assert leftBatch != null && lexBatch != null && lexView != null && lookup != null;
+                int leftRow = binding.row, nVars = leftBatch.cols;
+                clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
+                if (nVars > 64)
+                    copyNonLexBindingsExtra(leftBatch, lexBatch);
+                for (int i = 0; i < lexIts.length; i++) {
+                    if (leftBatch.getRopeView(leftRow, lexItsCols[i], lexView)) {
+                        var it = lexIts[i];
+                        it.find(lexView);
+                        if (it.advance())
+                            putLex(lexBatch, i, lookup);
+                        else
+                            lexBatch.putTerm(lexItsCols[i], leftBatch, leftRow, lexItsCols[i]);
+                    }
+                }
+                binding = lexJoinBinding;
+            }
+            rightEmitter.rebind(binding);
+        }
+    }
+
 
     /* --- --- --- iterators --- --- --- */
 
@@ -663,11 +1577,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     private static final class BindingNotifier {
-        private final BindQuery<?> bindQuery;
+        private final ItBindQuery<?> bindQuery;
         private long seq = -1;
         private boolean notified = false;
 
-        private BindingNotifier(BindQuery<?> bindQuery) {
+        private BindingNotifier(ItBindQuery<?> bindQuery) {
             this.bindQuery = bindQuery;
         }
 
@@ -687,7 +1601,37 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
     }
 
-    final class StoreBindingBIt<B extends Batch<B>> extends AbstractBIt<B> {
+    /**
+     * Get the var {@code v} in {@code bindings} for which there is a lexical join (i.e., a
+     * {@code FILTER(str(term) = str(v))}), or return {@code term} itself if there is no such
+     * {@code v}.
+     *
+     * @param filters set of filters, post-{@link Optimizer#splitFilters(List)} to scan for a
+     *                lexical join.
+     * @param term A term from the right-side operand of the join
+     * @param bindings The set of vars in the left-side operand of the join.
+     * @return the aforementioned {@code v}, if it exists, else, {@code term}.
+     */
+    private static Term leftLexJoinVar(List<Expr> filters, Term term, Vars bindings) {
+        if (!term.isVar() || filters.isEmpty()) return term;
+        for (var it = filters.iterator(); it.hasNext(); ) {
+            Expr expr = it.next();
+            if (expr instanceof Expr.Eq eq
+                    && eq.l instanceof Expr.Str sl && eq.r instanceof Expr.Str sr
+                    && sl.in instanceof Term l && sr.in instanceof Term r) {
+                Term selected;
+                if      (term.equals(l) && (r.isVar() || bindings.contains(r))) selected = r;
+                else if (term.equals(r) && (l.isVar() || bindings.contains(l))) selected = l;
+                else                                                            continue;
+
+                it.remove();
+                return selected;
+            }
+        }
+        return term;
+    }
+
+    private final class StoreBindingBIt<B extends Batch<B>> extends AbstractBIt<B> {
         private final @Nullable BindingNotifier startBindingNotifier;
         private final @Nullable BindingNotifier bindingNotifier;
         private final BIt<B> left;
@@ -844,6 +1788,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     preFilterMerger = null;
                 }
                 rightFilter = (BatchFilter<B>) m.processorFor(batchType, procRightFree, null, false);
+                rightFilter.rebindAcquire();
             } else {
                 procRightFree = tpFree;
                 m = null;
@@ -866,36 +1811,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             acquireRef();
         }
 
-        /**
-         * Get the var {@code v} in {@code bindings} for which there is a lexical join (i.e., a
-         * {@code FILTER(str(term) = str(v))}), or return {@code term} itself if there is no such
-         * {@code v}.
-         *
-         * @param filters set of filters, post-{@link Optimizer#splitFilters(List)} to scan for a
-         *                lexical join.
-         * @param term A term from the right-side operand of the join
-         * @param bindings The set of vars in the left-side operand of the join.
-         * @return the aforementioned {@code v}, if it exists, else, {@code term}.
-         */
-        private static Term leftLexJoinVar(List<Expr> filters, Term term, Vars bindings) {
-            if (!term.isVar() || filters.isEmpty()) return term;
-            for (var it = filters.iterator(); it.hasNext(); ) {
-                Expr expr = it.next();
-                if (expr instanceof Expr.Eq eq
-                        && eq.l instanceof Expr.Str sl && eq.r instanceof Expr.Str sr
-                        && sl.in instanceof Term l && sr.in instanceof Term r) {
-                    Term selected;
-                    if      (term.equals(l) && (r.isVar() || bindings.contains(r))) selected = r;
-                    else if (term.equals(r) && (l.isVar() || bindings.contains(l))) selected = l;
-                    else                                                            continue;
-
-                    it.remove();
-                    return selected;
-                }
-            }
-            return term;
-        }
-
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
                 // close() and failures from nextBatch() are rare. Rarely generating garbage is
@@ -909,6 +1824,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (!(cause instanceof BItClosedAtException)) {
                     rb = batchType.recycle(rb);
                     fb = batchType.recycle(fb);
+                }
+                if (rightFilter != null) {
+                    rightFilter.rebindRelease();
+                    rightFilter.release();
                 }
             } finally {
                 try {
@@ -1004,7 +1923,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.rows);
                 if (b.rows == 0) b = handleEmptyBatch(b);
-                else             onBatch(b);
+                else             onNextBatch(b);
             } catch (Throwable t) {
                 if (state() == State.ACTIVE)
                     onTermination(t);
@@ -1014,7 +1933,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return b;
         }
 
-        private B handleEmptyBatch(B batch) {
+        @SuppressWarnings("SameReturnValue") private B handleEmptyBatch(B batch) {
             batchType.recycle(recycle(batch));
             onTermination(null);
             return null;
@@ -1164,15 +2083,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private void rebind(long s, long p, long o) {
             switch (tpFreeRoles) {
                 case EMPTY       -> rIt = spo.contains(s, p, o);
-                case SUB_PRE_OBJ ->    spo.scan(      (Triples.ScanIt)  rIt);
-                case OBJ         ->  spo.values(s, p, (Triples.ValueIt) rIt);
+                case SUB_PRE_OBJ -> spo.scan   (      (Triples.ScanIt)  rIt);
+                case OBJ         -> spo.values (s, p, (Triples.ValueIt) rIt);
                 case PRE         -> spo.subKeys(s, o, (Triples.SubKeyIt)rIt);
-                case PRE_OBJ     ->   spo.pairs(s,    (Triples.PairIt)  rIt);
-                case SUB         ->  ops.values(o, p, (Triples.ValueIt) rIt);
-                case SUB_OBJ     ->   pso.pairs(p,    (Triples.PairIt)  rIt);
-                case SUB_PRE     ->   ops.pairs(o,    (Triples.PairIt)  rIt);
+                case PRE_OBJ     -> spo.pairs  (s,    (Triples.PairIt)  rIt);
+                case SUB         -> ops.values (o, p, (Triples.ValueIt) rIt);
+                case SUB_OBJ     -> pso.pairs  (p,    (Triples.PairIt)  rIt);
+                case SUB_PRE     -> ops.pairs  (o,    (Triples.PairIt)  rIt);
             }
-            if (rightFilter != null) rightFilter.reset();
+            if (rightFilter != null)
+                rightFilter.rebind(BatchBinding.ofEmpty(batchType));
             if (metrics instanceof Metrics.JoinMetrics jm) jm.beginBinding();
         }
     }

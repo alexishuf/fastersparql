@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_SEGMENT;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_UTF8;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
@@ -141,15 +142,6 @@ public class SegmentRope extends PlainRope {
         this.len     = len;
     }
 
-    public void wrapBuffer(ByteBuffer buffer) {
-        segment = MemorySegment.ofBuffer(buffer);
-        utf8 = buffer.isDirect() ? null : (byte[]) segment.array().orElse(null);
-        offset = 0;
-        long size = segment.byteSize();
-        if (size > Integer.MAX_VALUE) throw new IllegalArgumentException("buffer is too big");
-        len = (int) size;
-    }
-
     public void wrapEmptyBuffer() {
         segment = EMPTY_SEGMENT;
         utf8 = EMPTY_UTF8;
@@ -161,7 +153,7 @@ public class SegmentRope extends PlainRope {
         if (i < 0 || i >= len) throw new IndexOutOfBoundsException(i);
         if (U == null)
             return segment.get(JAVA_BYTE, offset+i);
-        return U.getByte(utf8, segment.address()+offset+i+(utf8 == null ? 0 : LowLevelHelper.U8_BASE));
+        return U.getByte(utf8, segment.address()+offset+i+(utf8 == null ? 0 : U8_BASE));
     }
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
@@ -170,8 +162,8 @@ public class SegmentRope extends PlainRope {
             return copySafe(begin, rLen, dest, offset);
         if (offset+rLen > dest.length)
             throw new IndexOutOfBoundsException("Copying [begin, end) to dest at offset overflows");
-        U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : LowLevelHelper.U8_BASE),
-                     dest, LowLevelHelper.U8_BASE+offset, rLen);
+        U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : U8_BASE),
+                     dest, U8_BASE+offset, rLen);
         return dest;
     }
 
@@ -217,7 +209,7 @@ public class SegmentRope extends PlainRope {
                 if (lane < LowLevelHelper.B_LEN) return (int) (i + lane);
             }
         }
-        long address = segment.address() + (utf8 == null ? 0 : LowLevelHelper.U8_BASE);
+        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
         i += address;
         e += address;
         while (i < e && U.getByte(utf8, i) != c0) ++i;
@@ -257,7 +249,7 @@ public class SegmentRope extends PlainRope {
                 if (lane < LowLevelHelper.B_LEN) return i + lane;
             }
         }
-        long address = segment.address() + (utf8 == null ? 0 : LowLevelHelper.U8_BASE);
+        long address = segment.address() + (utf8 == null ? 0 : U8_BASE);
         i += address;
         e += address;
         for (byte c; i < e && (c= U.getByte(utf8, i)) != c0 && c != c1;) ++i;
@@ -382,7 +374,7 @@ public class SegmentRope extends PlainRope {
             offset += segment.address();
             byte[] u8 = utf8;
             if (u8 != null)
-                offset += LowLevelHelper.U8_BASE;
+                offset += U8_BASE;
             i = skipUnsafe(u8, begin+offset, end+offset, alphabet);
         }
         return (int)(i-offset);
@@ -439,8 +431,8 @@ public class SegmentRope extends PlainRope {
         } else {
             Object lBase =  left.isNative() ? null :  left.array().orElse(null);
             Object rBase = right.isNative() ? null : right.array().orElse(null);
-            pos += left.address() + (lBase == null ? 0 : LowLevelHelper.U8_BASE);
-            begin += right.address() + (rBase == null ? 0 : LowLevelHelper.U8_BASE);
+            pos += left.address() + (lBase == null ? 0 : U8_BASE);
+            begin += right.address() + (rBase == null ? 0 : U8_BASE);
             end = begin + rLen;
             for (; begin < end && U.getByte(lBase, pos) == U.getByte(rBase, begin); ++begin)
                 ++pos;
@@ -544,25 +536,6 @@ public class SegmentRope extends PlainRope {
         return true;
     }
 
-    @Override public int lsbHash(int begin, int end) {
-        int bits = rangeLen(begin, end), h = 0, bit = 0;
-        if (bits > 32)
-            begin = end - (bits = 32);
-        long physBegin = begin + offset;
-        MemorySegment s = this.segment;
-        if (U != null) {
-            byte[] base = utf8; //(byte[]) s.array().orElse(null);
-            physBegin += s.address() + (base == null ? 0 : LowLevelHelper.U8_BASE);
-            while (bit < bits)
-                h |= (U.getByte(base, physBegin++)&1) << bit++;
-        } else {
-            while (bit < bits)
-                h |= (s.get(JAVA_BYTE, physBegin + bit) & 1) << bit++;
-        }
-        return h;
-    }
-
-
     @Override public int fastHash(int begin, int end) {
         int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
         long phys = offset+begin;
@@ -579,7 +552,7 @@ public class SegmentRope extends PlainRope {
     }
 
     public static int hashCode(int h, byte[] base, long offset, int len) {
-        if (base != null) offset += LowLevelHelper.U8_BASE;
+        if (base != null) offset += U8_BASE;
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff& U.getByte(base, offset+i)));
         return h;
@@ -601,14 +574,6 @@ public class SegmentRope extends PlainRope {
             return hashCode(FNV_BASIS, segment, offset, len);
         else
             return hashCode(FNV_BASIS, utf8, segment.address()+offset, len);
-    }
-
-
-    public int hashCode(int hash) {
-        if (U == null)
-            return hashCode(hash, segment, offset, len);
-        else
-            return hashCode(hash, utf8, segment.address()+offset, len);
     }
 
     @Override public @NonNull String toString() {
@@ -768,9 +733,9 @@ public class SegmentRope extends PlainRope {
         if (lOff == rOff && lBase == rBase && lLen == rLen)
             return 0;
         if (lBase != null)
-            lOff += LowLevelHelper.U8_BASE;
+            lOff += U8_BASE;
         if (rBase != null)
-            rOff += LowLevelHelper.U8_BASE;
+            rOff += U8_BASE;
         long lEnd = lOff + Math.min(lLen, rLen);
         int diff = (int)((lOff|rOff)&7);
         if (diff == 0) {

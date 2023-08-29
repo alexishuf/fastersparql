@@ -315,14 +315,14 @@ class StoreSparqlClientTest {
         try (var client = d.createClient()) {
             r.check(client);
             r.check(client, COMPRESSED);
-            r.check(client, TYPE, it -> TYPE.convert(it, client.dictId()));
+            r.check(client, TYPE, TYPE.converter(client.dictId()));
             if (innerConcurrency) {
                 try {
                     platformRepeatAndWait(CLS_NAME + ".testBinding", REPS,
                             () -> {
                                 d.results.check(client);
                                 d.results.check(client, COMPRESSED);
-                                d.results.check(client, TYPE, it -> TYPE.convert(it, client.dictId()));
+                                d.results.check(client, TYPE, TYPE.converter(client.dictId()));
                             });
                 } catch (Throwable t) {fail(t);}
             }

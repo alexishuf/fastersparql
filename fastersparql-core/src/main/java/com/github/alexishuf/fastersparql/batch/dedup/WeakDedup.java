@@ -5,35 +5,19 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowBucket;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
+import static com.github.alexishuf.fastersparql.batch.dedup.HashBitset.HASH_MASK;
 import static java.lang.Integer.numberOfLeadingZeros;
 
 public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
-    static VarHandle LOCK;
-    static {
-        try {
-            LOCK = MethodHandles.lookup().findVarHandle(WeakDedup.class, "plainLock", int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-
     /** Rows in the set. This works as a list of buckets of size 1. */
     private final RowBucket<B> rows;
     /** Value such that {@code hash & mask} yields the bucket index for a given hash value */
-    private final int mask, bitsetWords;
+    private final int mask;
     /** If bit {@code hash(r) & bitsetMask} is set, r MAY be present, else it certainly is not. */
-    private int[] bitset;
-    /** {@code hash & bitsetMask} yields a <strong>bit</strong> index in {@code bitset} */
-    private final int bitsetMask;
-
-    @SuppressWarnings("unused") private int plainLock;
+    private long[] bitset = HashBitset.get();
 
     public WeakDedup(BatchType<B> batchType, int capacity, int cols) {
         super(batchType, cols);
@@ -41,21 +25,16 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         capacity = 1+(mask = capacity < 8 ? 7 : -1 >>> numberOfLeadingZeros(capacity-1));
         // allocated bucket above capacity to avoid range checking of bucket+1 accesses
         rows = batchType.createBucket(capacity+1, cols);
-        // since we do not store hashes, we can use the (capacity/2)*32 bits to create a bitset
-        // such bitset allows faster non-membership detection than calling rt.equalsSameVars()
-        bitset = new int[bitsetWords = capacity>>1];
-        bitsetMask = (capacity<<4)-1;
     }
 
     @Override public void clear(int cols) {
-        bitset = ArrayPool.intsAtLeast(bitsetWords, bitset);
-        Arrays.fill(bitset, 0);
+        Arrays.fill(bitset, 0L);
         rows.clear(rows.capacity(), cols);
     }
 
     @Override public void recycleInternals() {
-        rows.recycleInternals();
-        bitset = ArrayPool.INT.offer(bitset, bitset.length);
+        bt.recycleBucket(rows);
+        bitset = HashBitset.recycle(bitset);
     }
 
     @Override public int capacity() { return rows.capacity(); }
@@ -75,11 +54,11 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * @return whether row is a duplicate.
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
-        if (debug) checkBatchType(batch);
-        int hash = batch.hash(row), bucket = hash&mask;
-        int bitIdx = hash&bitsetMask, wordIdx = bitIdx >> 5, bit = 1 << bitIdx;
-        while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) == 1)
-            Thread.yield();
+        if (DEBUG) checkBatchType(batch);
+        int hash = enhanceHash(batch.hash(row));
+        int bucket = hash&mask, wordIdx = (hash&HASH_MASK)>>6;
+        long bit = 1L << hash;
+        lock();
         try {
             if ((bitset[wordIdx] & bit) != 0) { //row may be in set, we must compare
                 // bucket+1 may have received an evicted row
@@ -91,7 +70,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
             if (rows.has(bucket) && !rows.has(bucket + 1))
                 rows.set(bucket + 1, bucket); // if possible, delay eviction of old row at bucket
             rows.set(bucket, batch, row);
-        } finally { LOCK.setRelease(this, 0); }
+        } finally { unlock(); }
         return false;
     }
 
@@ -101,11 +80,12 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * in the set.
      */
     @Override public boolean contains(B batch, int row) {
-        if (debug) checkBatchType(batch);
-        int hash = batch.hash(row), bucket = hash&mask;
-        int bitIdx = hash&bitsetMask, wordIdx = bitIdx >> 5, bit = 1 << bitIdx;
-        return (bitset[wordIdx] & bit) != 0
-                && rows.equals(bucket, batch, row) || rows.equals(bucket+1, batch, row);
+        if (DEBUG) checkBatchType(batch);
+        int hash = enhanceHash(batch.hash(row));
+        if ((bitset[(hash&HASH_MASK) >> 6] & (1L << hash)) == 0)
+            return false;
+        int bucket = hash&mask;
+        return rows.equals(bucket, batch, row) || rows.equals(bucket+1, batch, row);
     }
 
     /** Execute {@code consumer.accept(r)} for every row in this set. */

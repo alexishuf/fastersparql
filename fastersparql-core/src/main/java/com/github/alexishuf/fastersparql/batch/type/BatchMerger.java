@@ -23,9 +23,34 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     public BatchMerger(BatchType<B> batchType, Vars outVars, int[] sources) {
-        super(batchType, outVars);
+        super(batchType, outVars, CREATED, Flags.DEFAULT);
         this.sources = sources;
         this.columns = makeColumns(sources);
+    }
+
+    @Override public String toString() {
+        String inner = nodeLabel();
+        if (upstream != null)
+            return "<-"+inner+"- "+upstream;
+        return (columns == null ? "Merge(" : "Project") + inner + (columns == null ? ")" : "");
+    }
+
+    @Override public String nodeLabel() {
+        if (columns != null) {
+            return vars.toString();
+        } else {
+            var sb = new StringBuilder().append("[");
+            for (int i = 0, n = vars.size(); i < n; i++) {
+                if (sources[i] > 0) sb.append(vars.get(i)).append(", ");
+            }
+            if (sb.charAt(sb.length()-1) == ' ') sb.setLength(sb.length()-2);
+            sb.append("], [");
+            for (int i = 0, n = vars.size(); i < n; i++) {
+                if (sources[i] < 0) sb.append(vars.get(i)).append(", ");
+            }
+            if (sb.charAt(sb.length()-1) == ' ') sb.setLength(sb.length()-2);
+            return sb.append("]").toString();
+        }
     }
 
     protected int[] makeColumns(int[] sources) {
@@ -43,8 +68,6 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
 
     @Override public final B processInPlace(B b) { return projectInPlace(b); }
 
-    @Override public final B process(B b) { return project(null, b); }
-
     public abstract B projectInPlace(B batch);
 
     /**
@@ -59,7 +82,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         if (columns == null) throw new UnsupportedOperationException();
         int rows = in.rows;
         if (dest == null)
-            dest = getBatch(rows, sources.length, in.bytesUsed());
+            dest = getBatch(rows, sources.length, in.localBytesUsed());
         for (int r = 0; r < rows; r++) {
             dest.beginPut();
             for (int c = 0; c < columns.length; c++) {
@@ -86,7 +109,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     public B merge(@Nullable B dest, B left, int leftRow, @Nullable B right) {
         if (right == null || right.rows == 0)
             return mergeWithMissing(dest, left, leftRow);
-        int rows = right.rows, bytesCapacity = right.bytesUsed() + left.bytesUsed(leftRow);
+        int rows = right.rows, bytesCapacity = right.localBytesUsed() + left.localBytesUsed(leftRow);
         if (dest == null)
             dest = getBatch(rows, sources.length, bytesCapacity);
         else if (dest.cols != sources.length)
@@ -114,7 +137,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      */
     public B mergeWithMissing(@Nullable B dest, B left, int leftRow) {
         if (dest == null)
-            dest = getBatch(1, sources.length, left.bytesUsed(leftRow));
+            dest = getBatch(1, sources.length, left.localBytesUsed(leftRow));
         dest.beginPut();
         for (int c = 0; c < sources.length; c++) {
             int s = sources[c];

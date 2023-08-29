@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 
+import java.lang.invoke.VarHandle;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -15,7 +16,7 @@ public class Async {
         T result;
         Throwable error;
         volatile boolean completed;
-        Thread waiter = Thread.currentThread();
+        final Thread waiter = Thread.currentThread();
 
         @Override public void accept(T value, Throwable cause) {
             result = value;
@@ -33,15 +34,6 @@ public class Async {
             throw new RuntimeExecutionException(sync.error);
         return sync.result;
     }
-
-    public static <T> void completeWhenWith(CompletableFuture<? super T> completable,
-                                            CompletionStage<?> stage, T value) {
-        stage.whenComplete((ignored, err) -> {
-            if (err == null) completable.complete(value);
-            else             completable.completeExceptionally(err);
-        });
-    }
-
 
     public static <T> CompletionStage<T> async(Callable<T> task) {
         CompletableFuture<T> future = new CompletableFuture<>();
@@ -132,4 +124,22 @@ public class Async {
             Thread.currentThread().interrupt();
     }
 
+    /**
+     * Adds {@code add} to the field wrapped by {@code varHandle} in {@code holder} capping
+     * the resulting value at {@link Long#MAX_VALUE} in case of overflow.
+     *
+     * @param varHandle A {@link VarHandle} for a {@code long} field in {@code holder}
+     * @param holder object instance that has the {@code long} field accessed via {@code varHandle}
+     * @param add value to atomically aff to the field in {@code holder}
+     * @return the updated value
+     */
+    public static long safeAddAndGetRelease(VarHandle varHandle, Object holder, long add) {
+        long curr = (long)varHandle.get(holder), next, ex;
+        do {
+            next = curr + add;
+            if (curr > 0 && next < 0) // overflow detected
+                next = Long.MAX_VALUE;
+        } while ((curr=(long)varHandle.compareAndExchangeRelease(holder, ex=curr, next)) != ex);
+        return next;
+    }
 }

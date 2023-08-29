@@ -1,13 +1,20 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
+import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,9 +31,13 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.EMIT;
+import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.ITERATE;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.lrb.sources.SourceKind.*;
+import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -36,9 +47,11 @@ class MeasureTest {
     private static File dataDir;
     private static boolean hasHDT, hasStore;
     private static boolean hasAllHDT, hasAllStore;
+    private static boolean oldDisableValidate;
 
     @BeforeAll
     static void beforeAll() {
+        oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
         CompressedBatch.DISABLE_VALIDATE = true;
         String prop = System.getProperty(DATA_DIR_PROP);
         dataDir = prop != null && !prop.isEmpty() ? new File(prop) : new File("");
@@ -50,13 +63,13 @@ class MeasureTest {
                 .allMatch(s -> new File(dataDir, s.filename(HDT_FILE)).isFile());
         hasAllStore = LrbSource.all().stream()
                 .allMatch(s -> new File(dataDir, s.filename(FS_STORE)).isDirectory());
-        log.info("Loading expected results, this will take ~30s (due to CompressedBatch.validate())...");
+        log.info("Loading expected results...");
         if (hasAllStore || hasAllHDT)
-            Arrays.stream(QueryName.values()).parallel().forEach(n -> n.expected(Batch.COMPRESSED));
+            Arrays.stream(QueryName.values()).parallel().forEach(n -> n.expected(COMPRESSED));
     }
 
     @AfterAll static void afterAll() {
-        CompressedBatch.DISABLE_VALIDATE = false;
+        CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
         System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY,
                            String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY));
         FSProperties.refresh();
@@ -98,7 +111,8 @@ class MeasureTest {
 
     private void doTest(SourceKind sourceKind, boolean jsonPlans, String queries,
                         SelectorKind selectorKind,
-                        MeasureOptions.ResultsConsumer consumer) throws IOException {
+                        MeasureOptions.ResultsConsumer consumer,
+                        MeasureOptions.FlowModel flowModel) throws IOException {
         int nReps = 2;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
@@ -126,7 +140,8 @@ class MeasureTest {
                 "--cool-ms", "600",
                 "--reps", Integer.toString(nReps),
                 "--seed", "728305461",
-                "--consumer", consumer.name()
+                "--consumer", consumer.name(),
+                "--flow", flowModel.name()
         ));
         if (isS2)
             args.addAll(List.of("--lrb-source", "nyt", "--lrb-source",  "dbpedia-subset"));
@@ -148,12 +163,62 @@ class MeasureTest {
             if (exRows == -1)
                 expectedRows.put(m.task().query(), rows);
             else
-                assertEquals(exRows, rows, "unstable row count"+ctx);
+                assertEquals(exRows, rows, "unstable row count "+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
             log.debug("{}, rep {} rows={}, allRows={}us", m.task().query(), m.rep(),
                       m.rows(),
                       String.format("%.3f", m.allRowsNs()/1_000.0));
+        }
+    }
+
+    public static void main(String[] args) {
+        beforeAll();
+        String uri = "file://" + dataDir + "/DBPedia-Subset";
+        try (var client = new StoreSparqlClient(SparqlEndpoint.parse(uri))) {
+            List<CompressedBatch> results = new ArrayList<>();
+            for (int i = 0; i < 10_000; i++) {
+                var emitter = client.emit(COMPRESSED, new OpaqueSparqlQuery("""
+                    SELECT ?predicate ?object WHERE {
+                      <http://dbpedia.org/resource/Barack_Obama> ?predicate ?object
+                    }"""));
+                results.add(new ReceiverFuture<CompressedBatch, CompressedBatch>() {
+                    private final CompressedBatch acc = COMPRESSED.create(90, 2, 0);
+                    @Override public @Nullable CompressedBatch onBatch(CompressedBatch batch) {
+                        acc.put(batch);
+                        return batch;
+                    }
+                    @Override public void onComplete() { complete(acc); }
+                }.subscribeTo(emitter).getSimple());
+            }
+            var expected = results.get(0);
+            for (int i = 0; i < expected.rows; i++) {
+                for (int resIdx = 1; resIdx < results.size(); resIdx++) {
+                    var b = results.get(resIdx);
+                    boolean missing = true;
+                    for (int j = 0; missing && j < b.rows; j++)
+                        missing = !expected.equals(i, b, j);
+                    if (missing)
+                        System.out.printf("Row %d missing from results set %d: %s\n", i, resIdx, expected.toString(i));
+                }
+            }
+            for (int resIdx = 1; resIdx < results.size(); resIdx++) {
+                var b = results.get(resIdx);
+                for (int i = 0; i < b.rows; i++) {
+                    boolean missing = true;
+                    for (int j = 0; missing && j < expected.rows; j++) 
+                        missing = !expected.equals(j, b, i);
+                    if (missing)
+                        System.out.printf("results %d has unexpected %s\n", resIdx, b.toString(i));
+                }
+            }
+
+            var serializer = ResultsSerializer.create(TSV);
+            var tsv = new ByteRope();
+            serializer.init(Vars.of("p", "o"), Vars.of("p", "o"), false, tsv);
+            serializer.serialize(expected, tsv);
+            serializer.serializeTrailer(tsv);
+            System.out.println(tsv);
         }
     }
 
@@ -165,23 +230,26 @@ class MeasureTest {
 
     @ParameterizedTest @MethodSource("test")
     void testS2(boolean jsonPlans, SourceKind sourceKind) throws Exception {
-        doTest(sourceKind, jsonPlans, "S2", SelectorKind.DICT, COUNT);
+        doTest(sourceKind, jsonPlans, "S2", SelectorKind.DICT, COUNT, ITERATE);
+        doTest(sourceKind, jsonPlans, "S2", SelectorKind.DICT, COUNT, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
     void testSQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
-        doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK);
+        doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, ITERATE);
+        doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
     void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        doTest(sourceKind, jsonPlans, "C.*", sel, CHECK);
+        doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
     void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        doTest(sourceKind, jsonPlans, "B1", sel, COUNT);
+        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, ITERATE);
+        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, EMIT);
     }
 }

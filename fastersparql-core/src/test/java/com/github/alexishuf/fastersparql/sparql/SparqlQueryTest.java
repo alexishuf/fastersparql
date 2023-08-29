@@ -44,7 +44,7 @@ class SparqlQueryTest {
     private static SparqlQuery
     parseFull(SparqlParser parser, String sparql) throws SilentSkip {
         try {
-            return parser.parse(SegmentRope.of(sparql));
+            return parser.parse(SegmentRope.of(sparql), 0);
         } catch (InvalidSparqlException e) {
             if (e.getMessage().startsWith("binding vars to expressions"))
                 throw new SilentSkip();
@@ -460,9 +460,9 @@ class SparqlQueryTest {
                 new A("select ?s ?o { ?s ?p ?o }", "ASK { ?s ?p ?o }"),
                 new A("select ?o ?p { ?s ?p ?o }", "ASK { ?s ?p ?o }"),
                 // glue { to last var
-                new A("SELECT ?s{ ?s ?p ?o }", "ASK{ ?s ?p ?o }"),
-                new A("SELECT ?s ?o{ ?s ?p ?o }", "ASK{ ?s ?p ?o }"),
-                new A("SELECT ?o ?p{ ?s ?p ?o }", "ASK{ ?s ?p ?o }"),
+                new A("SELECT ?s{ ?s ?p ?o }", "ASK { ?s ?p ?o }"),
+                new A("SELECT ?s ?o{ ?s ?p ?o }", "ASK { ?s ?p ?o }"),
+                new A("SELECT ?o ?p{ ?s ?p ?o }", "ASK { ?s ?p ?o }"),
 
                 // implicit projection clause
                 new A("SELECT * WHERE { ?s ?p ?o }", "ASK WHERE { ?s ?p ?o }"),
@@ -481,8 +481,8 @@ class SparqlQueryTest {
                         "ASK WHERE { ?s ?p ?o }"),
 
                 // AS with no WHERE and glued {
-                new A("SELECT (LCASE(?o) AS ?nm){ ?s ?p ?o }", "ASK{ ?s ?p ?o }"),
-                new A("SELECT ?p (LCASE(?o) AS ?nm){ ?s ?p ?o }", "ASK{ ?s ?p ?o }"),
+                new A("SELECT (LCASE(?o) AS ?nm){ ?s ?p ?o }", "ASK { ?s ?p ?o }"),
+                new A("SELECT ?p (LCASE(?o) AS ?nm){ ?s ?p ?o }", "ASK { ?s ?p ?o }"),
 
                 //FROM
                 new A("SELECT * FROM <a> WHERE { ?s ?p ?o }", "ASK FROM <a> WHERE { ?s ?p ?o }")

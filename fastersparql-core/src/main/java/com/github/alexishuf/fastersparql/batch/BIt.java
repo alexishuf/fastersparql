@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -12,7 +13,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-public interface BIt<B extends Batch<B>> extends AutoCloseable {
+public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
     /**
      * Preferred {@link BIt#minBatch(int)} value if values above 1 (the default) are possible.
      *
@@ -207,7 +208,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable {
      * iterators representing inner nodes of the plan.</p>
      * @return {@code this}, for chaining.
      */
-    BIt<B> quickWait();
+    @SuppressWarnings("UnusedReturnValue") BIt<B> quickWait();
 
     /**
      * Sets min/max batch size and wait time so that {@link BIt#nextBatch(B)} delay is minimal.

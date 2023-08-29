@@ -29,7 +29,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
      * @return {@code true} iff a row was added and {@code false} iff the iterator has reached
      *         its end.
      */
-    protected abstract boolean fetch(B dest) throws Exception;
+    protected abstract boolean fetch(B dest);
 
     @RequiresNonNull("pendingError")
     private void throwPending() {
@@ -66,7 +66,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             else                      onTermination(null);
             return null;
         }
-        onBatch(b);
+        onNextBatch(b);
         //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
         return b;
     }

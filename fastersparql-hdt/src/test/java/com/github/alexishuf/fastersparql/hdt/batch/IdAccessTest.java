@@ -37,13 +37,13 @@ class IdAccessTest {
     public static long Alice(Dictionary dictionary) {
         return dictionary.stringToId(ALICE_S, OBJECT);
     }
-    public static long Bob(Dictionary dictionary) {
+    @SuppressWarnings("unused") public static long Bob(Dictionary dictionary) {
         return dictionary.stringToId(BOB_S, SUBJECT);
     }
-    public static long charlie(Dictionary dictionary) {
+    @SuppressWarnings("unused") public static long charlie(Dictionary dictionary) {
         return dictionary.stringToId(CHARLIE_S, OBJECT);
     }
-    public static long knows(Dictionary dictionary) {
+    @SuppressWarnings("unused") public static long knows(Dictionary dictionary) {
         return dictionary.stringToId(KNOWS_S, PREDICATE);
     }
 

@@ -31,6 +31,13 @@ public class MeasureOptions {
     @Option(names = "--consumer", description = "What to do with results from queries.")
     public ResultsConsumer consumer = COUNT;
 
+    public enum FlowModel {
+        ITERATE,
+        EMIT,
+    }
+    @Option(names = {"--flow"}, description = "Whether to iterate over results (pull model) or react to results (push model)")
+    public FlowModel flowModel = FlowModel.ITERATE;
+
     public enum BatchKind {
         TERM,
         COMPRESSED;

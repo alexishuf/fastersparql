@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 
 import java.util.Arrays;
@@ -34,8 +35,10 @@ public class HdtBatch extends IdBatch<HdtBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
+    @Override public HdtBatchType type() { return TYPE; }
+
     @Override public HdtBatch copy(@Nullable HdtBatch offer) {
-        return doCopy(offer == null ? TYPE.create(rows, cols, 0) : offer);
+        return doCopy(TYPE.reserved(offer, rows, cols, 0));
     }
 
     /* --- --- --- term-level accessors --- --- --- */
@@ -147,14 +150,37 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         } else {
             var dict = IdAccess.dict(dictId);
             int rows = other.rows;
-            reserve(rows, other.bytesUsed());
-            for (int r = 0; r < rows; r++) {
-                beginPut();
-                for (int c = 0; c < cols; c++)
-                    putTerm(c, IdAccess.encode(dictId, dict, other.get(r, c)));
-                commitPut();
-            }
+            var tmp = Term.pooledMutable();
+            reserve(rows, 0);
+            for (int r = 0; r < rows; r++)
+                putRowConverting(other, r, dictId, cols, tmp, dict);
+            tmp.recycle();
         }
         return this;
+    }
+
+    public @This HdtBatch putRowConverting(Batch<?> other, int row, int dictId) {
+        if (other.type() == TYPE) {
+            putRow((HdtBatch)other, row);
+        } else {
+            int cols = this.cols;
+            if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+            if (row < 0 || row > other.rows) throw new IndexOutOfBoundsException(row);
+            Dictionary dict = IdAccess.dict(dictId);
+            Term tmp = Term.pooledMutable();
+            putRowConverting(other, row, dictId, cols, tmp, dict);
+            tmp.recycle();
+        }
+        return this;
+    }
+
+    private void putRowConverting(Batch<?> other, int row, int dictId, int cols,
+                                  Term tmp, Dictionary dict) {
+        beginPut();
+        for (int c = 0; c < cols; c++) {
+            if (other.getView(row, c, tmp))
+                putTerm(c, IdAccess.encode(dictId, dict, tmp));
+        }
+        commitPut();
     }
 }

@@ -106,8 +106,6 @@ public abstract class Selector implements AutoCloseable {
 
     @Override public void close() { }
 
-    public SparqlEndpoint endpoint() { return endpoint; }
-
     @Override public String toString() { return getClass().getSimpleName()+"("+endpoint+")"; }
 
     /**

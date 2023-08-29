@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -92,7 +94,10 @@ public class IntsBatch {
     }
 
     public static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
-        var retained = it.offer(b);
+        TermBatch retained = b;
+        try {
+            retained = it.offer(b);
+        } catch (TerminatedException|CancelledException ignored) {}
         if (retained != null) {
             retained.clear(1 + (retained.cols&1));
             retained.beginPut();

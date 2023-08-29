@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch;
 
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,16 +57,35 @@ public class Timestamp {
     public static long nanoTime() { return (long)NOW.getOpaque(); }
 
     /**
-     * Estimated next value to be returned by {@link #nanoTime()}.
-     *
-     * <p>Keep in mind that the length of a {@link Timestamp} tick is not constant. The nominal
-     * increment on {@link #nanoTime()} is regularly updated to approximate the average wall-clock
-     * tick in nanoseconds, which is not tracked precisely due to performance requirements.</p>
-     *
-     * @return Estimated smalleest future value of {@link #nanoTime()} that is larger than the
-     *         current {@link #nanoTime()} value.
+     * {@link #nanoTime()}+{@link #tickDelta()}
      */
     public static long nextTick() { return (long)NOW.getOpaque()+delta; }
+
+    /**
+     * Equivalent to {@link #nanoTime()}{@code + ticks*}{@link #tickDelta()}
+     * @param ticks How many ticks in the future. {@code 1} makes the result the same as
+     *              {@link #nextTick()}
+     * @return The estimated value of the {@code ticks}-th {@link #nanoTime()} value
+     *         after the current one.
+     */
+    public static long nextTick(@NonNegative int ticks) {
+        return (long)NOW.getOpaque() + ticks*delta;
+    }
+
+    /**
+     * Length of the current tick: the next lowest possible value to be observed in
+     * {@link #nanoTime()} will be the current value plus the delta reported by this method.
+     *
+     * <p>This delta is correlated with the wall-clock time delta in nanoseconds between the
+     * precise instants when {@link #nanoTime()} got its current value and when it will receive
+     * its next value. However, <strong>both the delta value and its deviation from wall-clock
+     * time</strong> change frequently. The deviation from wall-clock time suffers from
+     * unpredictable jitter. The delta itself changes periodically, but the periods of change
+     * are affected by the wall-clock deviation jitter.</p>
+     *
+     * @return the expected difference between the current and the next {@link #nanoTime()} values.
+     */
+    @SuppressWarnings("unused") public static long tickDelta() { return delta; }
 
     /* --- --- --- internal --- --- --- */
 

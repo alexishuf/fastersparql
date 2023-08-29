@@ -21,8 +21,6 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     public static final long NKEYS_MASK = 0x00ffffffffffffffL;
     public static final long OFF_W_MASK = 0x0100000000000000L;
     public static final long  ID_W_MASK = 0x0200000000000000L;
-    public static final int OFF_W_BIT = Long.numberOfTrailingZeros(OFF_W_MASK);
-    public static final int  ID_W_BIT = Long.numberOfTrailingZeros( ID_W_MASK);
     public static final int KEYS_AND_FLAGS_OFF = 0;
     public static final int      FIRST_KEY_OFF = 8;
     public static final int           OFFS_OFF = 16;

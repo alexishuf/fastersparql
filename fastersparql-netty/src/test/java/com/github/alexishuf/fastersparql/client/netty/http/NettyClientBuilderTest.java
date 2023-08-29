@@ -157,7 +157,7 @@ class NettyClientBuilderTest {
                 assertTrue(string.length() <= 16,
                         "chunk is too long (" + string.length() + ")");
                 assertTrue(string.matches("^[0-9a-f]+$"), "Invalid chars in " + string);
-                if (responseBuilder.length() > 0) {
+                if (!responseBuilder.isEmpty()) {
                     char lastChar = responseBuilder.charAt(responseBuilder.length() - 1);
                     int lastValue = Integer.parseInt(String.valueOf(lastChar), 16);
                     int first = Integer.parseInt(String.valueOf(string.charAt(0)), 16);

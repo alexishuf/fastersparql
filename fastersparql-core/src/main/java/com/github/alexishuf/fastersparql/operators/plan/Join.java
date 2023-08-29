@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -42,6 +43,12 @@ public final class Join extends Plan {
     BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         return NativeBind.preferNative(bt, this, binding, weakDedup);
     }
+
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        return NativeBind.preferNativeEmit(type, this, weakDedup);
+    }
+
 
     @Override public boolean equals(Object o) {
         return o instanceof Join r && Objects.equals(projection, r.projection) && super.equals(r);

@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -18,12 +19,13 @@ import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_RO
 import static java.lang.String.format;
 import static java.lang.String.join;
 
-public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B> {
+public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
     private @Nullable ByteRope partial = null, allocPartial = null;
     private final ArrayDeque<JsonState> jsonStack = new ArrayDeque<>();
     private final ArrayDeque<SparqlState> sparqlStack = new ArrayDeque<>();
     private boolean hadSparqlProperties = false;
     private int column;
+    private final Vars vars;
     private final ByteRope value = new ByteRope(), lang = new ByteRope();
     private final ByteRope dtSuffix = new ByteRope();
     private final SegmentRope varName = new SegmentRope();
@@ -32,28 +34,20 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
     public static final class JsonFactory implements Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.JSON; }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-            return new JsonParserBIt<>(batchType, vars, maxItems);
-        }
-        @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-            return new JsonParserBIt<>(destination);
+        public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
+            return new JsonParser<>(d);
         }
     }
 
-    public JsonParserBIt(BatchType<B> batchType, Vars vars, int maxItems) {
-        super(batchType, vars, maxItems);
+    public JsonParser(CompletableBatchQueue<B> destination) {
+        super(destination);
         push(SparqlState.ROOT);
-    }
-
-    public JsonParserBIt(CallbackBIt<B> destination) {
-        super(destination.batchType(), destination);
-        push(SparqlState.ROOT);
+        this.vars = destination.vars();
     }
 
     /* --- --- --- implement/override ResultsParserBIt methods --- --- --- */
 
-    @Override protected void doFeedShared(SegmentRope rope) {
+    @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
         if (partial != null) {
             rope = partial.append(rope);
             partial = null;
@@ -65,10 +59,10 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             begin = jsonStack.getFirst().parse(this, rope, begin, end);
     }
 
-    @Override public void complete(@Nullable Throwable error) {
-        if (error == null && state() == State.ACTIVE && !hadSparqlProperties)
-            error = new InvalidSparqlResultsException("No \"results\" object nor \"boolean\" value in JSON");
-        super.complete(error);
+    @Override protected @Nullable Throwable doFeedEnd() {
+        if (!hadSparqlProperties)
+            return new InvalidSparqlResultsException("No \"results\" object nor \"boolean\" value in JSON");
+        return null;
     }
 
     /* --- --- --- constants --- --- --- */
@@ -187,7 +181,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             };
         }
 
-        public SparqlState forProperty(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
+        public SparqlState forProperty(JsonParser<?> p, SegmentRope r, int b, int e) {
             int l = e - b;
              SparqlState next = switch (this) {
                 case ROOT -> {
@@ -232,7 +226,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             };
         }
 
-        public SparqlState forArrayItem(JsonParserBIt<?> p) {
+        public SparqlState forArrayItem(JsonParser<?> p) {
             return switch (this) {
                 case ROOT -> ROOT;
                 case IGNORE, VARS -> IGNORE;
@@ -244,9 +238,9 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             };
         }
 
-        public void onObjectEnd(JsonParserBIt<?> p) {
+        public void onObjectEnd(JsonParser<?> p) throws CancelledException, TerminatedException {
             switch (this) {
-                case ROOT -> p.complete(null);
+                case ROOT -> p.feedEnd();
                 case IGNORE, HEAD, RESULTS -> {}
                 case BINDING_VALUE -> {
                     final ByteRope v = p.value;
@@ -296,14 +290,14 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onArrayEnd(JsonParserBIt<?> ignored) {
+        public void onArrayEnd(JsonParser<?> ignored) {
             switch (this) {
                 case ROOT, IGNORE, VARS, BINDINGS  -> { }
                 default -> throw ex(this, L_BRACKET, 0, 1);
             }
         }
 
-        public void onNull(JsonParserBIt<?> parser) {
+        public void onNull(JsonParser<?> parser) throws CancelledException, TerminatedException {
             switch (this) {
                 case BINDING_VALUE_VALUE, ROOT -> throw ex(this, NULL, 0, NULL.len);
                 case IGNORE -> { }
@@ -311,12 +305,12 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onBool(JsonParserBIt<?> p, boolean value) {
+        public void onBool(JsonParser<?> p, boolean value) throws CancelledException, TerminatedException {
             var r = value ? TRUE : FALSE;
             switch (this) {
                 case BOOLEAN -> {
                     if (value) {
-                        if (!p.rowStarted) p.beginRow();
+                        if (!p.incompleteRow) p.beginRow();
                         p.commitRow();
                     }
                 }
@@ -327,7 +321,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onNumber(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
+        public void onNumber(JsonParser<?> p, SegmentRope r, int b, int e) throws CancelledException, TerminatedException {
             switch (this) {
                 case BINDING_VALUE_VALUE -> p.value.clear().append('<').append(r, b, e).append('>');
                 case BOOLEAN -> {
@@ -342,7 +336,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
             }
         }
 
-        public void onString(JsonParserBIt<?> p, SegmentRope r, int b, int e) {
+        public void onString(JsonParser<?> p, SegmentRope r, int b, int e) throws CancelledException, TerminatedException {
             switch (this) {
                 case IGNORE -> {}
                 case BOOLEAN -> {
@@ -381,7 +375,7 @@ public final class JsonParserBIt<B extends Batch<B>> extends ResultsParserBIt<B>
         OBJECT,
         ARRAY;
 
-        public int parse(JsonParserBIt<?> parser, SegmentRope r, int b, int e) {
+        public int parse(JsonParser<?> parser, SegmentRope r, int b, int e) throws CancelledException, TerminatedException {
             byte c = r.get(b);
             if (c == ',' && this != VALUE) {
                 if ((b = r.skipWS(b+1, e)) == e) return parser.suspend(r, b, e);

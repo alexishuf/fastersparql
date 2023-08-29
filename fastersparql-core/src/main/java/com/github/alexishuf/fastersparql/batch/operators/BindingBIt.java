@@ -5,7 +5,7 @@ import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
-import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -22,19 +22,18 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private static final int GUARDS_POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
     protected final BatchMerger<B> merger;
-    protected final BindQuery<B> bindQuery;
+    protected final ItBindQuery<B> bindQuery;
     private @Nullable B lb, rb;
     private int leftRow = -1;
     private final BIt<B> empty;
     private final BatchBinding<B> tempBinding;
     private long bindingSeq;
-    private boolean bindingEmpty = false;
     private @Nullable List<SparqlClient.Guard> guards;
     private @Nullable Thread safeCleanupThread;
 
     /* --- --- --- lifecycle --- --- --- */
 
-    public BindingBIt(BindQuery<B> bindQuery, @Nullable Vars projection) {
+    public BindingBIt(ItBindQuery<B> bindQuery, @Nullable Vars projection) {
         super(projection != null ? projection : bindQuery.resultVars(),
               EmptyBIt.of(bindQuery.bindings.batchType()));
         this.guards = GlobalAffinityShallowPool.get(GUARDS_POOL_COL);
@@ -91,45 +90,52 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     /* --- --- --- binding behavior --- --- --- */
     protected abstract BIt<B> bind(BatchBinding<B> binding);
 
+    private static final byte PUB_MERGE           = 0x1;
+    private static final byte PUB_LEFT            = 0x2;
+    private static final byte PUB_MASK            = PUB_MERGE|PUB_LEFT;
+    private static final byte CANCEL              = 0x4;
+    private static final byte PUB_LEFT_AND_CANCEL = PUB_LEFT|CANCEL;
+
     @Override public B nextBatch(@Nullable B b) {
-        boolean re = false;
         if (lb == null) return null; // already exhausted
         try {
             long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
+            boolean rightEmpty = false, bindingEmpty = false;
             b = getBatch(b);
             do {
                 if (inner == empty) {
-                    bindingEmpty = true;
                     if (++leftRow >= lb.rows) {
                         leftRow = 0;
                         lb = bindQuery.bindings.nextBatch(lb);
                         if (lb == null) break; // reached end
                     }
                     inner = bind(tempBinding.setRow(lb, leftRow));
-                    re = true;
+                    rightEmpty = true;
+                    bindingEmpty = true;
                 }
-                if ((rb = inner.nextBatch(rb)) == null) {
+                if      ((rb = inner.nextBatch(rb)) == null) inner = empty;
+                else if ( rb.rows                   >     0) rightEmpty = false;
+                byte action = switch (bindQuery.type) {
+                    case JOIN             -> rb != null               ? PUB_MERGE : 0;
+                    case LEFT_JOIN        -> rb != null || rightEmpty ? PUB_MERGE : 0;
+                    case EXISTS           -> rb != null ? PUB_LEFT_AND_CANCEL : CANCEL;
+                    case NOT_EXISTS,MINUS -> rb == null ? PUB_LEFT_AND_CANCEL : CANCEL;
+                };
+                bindingEmpty &= (action&PUB_MASK) == 0;
+                if      ((action&PUB_MERGE) != 0) b = merger.merge(b, lb, leftRow, rb);
+                else if ((action&PUB_LEFT)  != 0) b.putRow(lb, leftRow);
+                if ((action&CANCEL) != 0) {
+                    inner.close();
                     inner = empty;
                 }
-                boolean pub = switch (bindQuery.type) {
-                    case JOIN,EXISTS      -> rb != null;
-                    case NOT_EXISTS,MINUS -> rb == null;
-                    case LEFT_JOIN        -> { re &= rb == null; yield rb != null || re; }
-                };
-                if (pub) {
-                    bindingEmpty = false;
-                    switch (bindQuery.type) {
-                        case JOIN,LEFT_JOIN          ->   b = merger.merge(b, lb, leftRow, rb);
-                        case EXISTS,NOT_EXISTS,MINUS -> { b.putRow(lb, leftRow); inner = empty; }
-                    }
-                }
                 if (inner == empty) {
-                    if (bindingEmpty) bindQuery.emptyBinding(bindingSeq++);
-                    else              bindQuery.nonEmptyBinding(bindingSeq++);
+                    long seq = bindingSeq++;
+                    if (bindingEmpty) bindQuery.   emptyBinding(seq);
+                    else    bindQuery.nonEmptyBinding(seq);
                 }
             } while (readyInNanos(b.rows, startNs) > 0);
             if (b.rows == 0) b = handleEmptyBatch(b);
-            else             onBatch(b);
+            else             onNextBatch(b);
         } catch (Throwable t) {
             lb = null; // signal exhaustion
             onTermination(t);
@@ -138,7 +144,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         return b;
     }
 
-    private B handleEmptyBatch(B batch) {
+    @SuppressWarnings("SameReturnValue") private B handleEmptyBatch(B batch) {
         batchType.recycle(recycle(batch));
         safeCleanupThread = Thread.currentThread();
         onTermination(null);

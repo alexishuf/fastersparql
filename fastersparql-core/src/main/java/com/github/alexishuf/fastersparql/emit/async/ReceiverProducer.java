@@ -1,148 +1,137 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.batch.BatchQueue;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import com.github.alexishuf.fastersparql.emit.exceptions.NoDownstreamException;
+import com.github.alexishuf.fastersparql.emit.exceptions.NoUpstreamException;
+import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.stream.Stream;
+
+import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 /**
  * A Producer that gets its batches from another {@link Emitter}.
  */
-public class ReceiverProducer<B extends Batch<B>> implements Producer, Receiver<B> {
-    private static final Logger log = LoggerFactory.getLogger(ReceiverProducer.class);
-    private static final int STEP_REQUEST = 64;
-    private static final VarHandle STATE, REQUESTED;
+public class ReceiverProducer<B extends Batch<B>> extends Stateful implements Producer<B>, Receiver<B> {
+    private static final int MAX_REQUESTED = 64, MIN_REQUEST = MAX_REQUESTED>>3;
+    private static final VarHandle REQUESTED;
     static {
         try {
-            STATE = MethodHandles.lookup().findVarHandle(ReceiverProducer.class, "plainState", State.class);
             REQUESTED = MethodHandles.lookup().findVarHandle(ReceiverProducer.class, "plainRequested", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
-    @SuppressWarnings({"FieldMayBeFinal"}) private State plainState = State.ACTIVE;
     @SuppressWarnings("unused") private int plainRequested;
-    private @MonotonicNonNull AsyncEmitter<B> downstream;
+    private AsyncEmitter<B> downstream;
     private final Emitter<B> upstream;
-    private @MonotonicNonNull Throwable error;
+    private Throwable error = UNSET_ERROR;
 
-    private enum State {
-        ACTIVE,
-        PAUSED,
-        CANCEL_REQUESTED,
-        COMPLETED,
-        CANCELLED,
-        FAILED
-    }
 
-    public ReceiverProducer(Emitter<B> upstream) {
+    public ReceiverProducer(Emitter<B> upstream, AsyncEmitter<B> downstream) {
+        super(CREATED, Flags.DEFAULT);
+        this.downstream = downstream;
         this.upstream = upstream;
         try {
             upstream.subscribe(this);
-        } catch (Emitter.RegisterAfterStartException e) { // revert downstream.registerProducer
-            plainState = State.FAILED;
+        } catch (RegisterAfterStartException e) { // revert downstream.registerProducer
             error = e;
-            downstream.producerTerminated();
+            if (moveStateRelease(CREATED, FAILED)) {
+                if (downstream != null)
+                    downstream.producerTerminated();
+                markDelivered(FAILED);
+            }
             throw e;
         }
     }
 
-    public void registerDownstream(AsyncEmitter<B> emitter) {
-        if (downstream != null) {
-            if (downstream == emitter) return;
+    @Override public Stream<? extends StreamNode> upstream() {
+        return Stream.of(upstream);
+    }
+
+    @Override public void registerOn(AsyncEmitter<B> emitter) {
+        if (downstream != emitter)
             throw new IllegalStateException("Already registered with another emitter");
-        }
-        downstream = emitter;
-        emitter.registerProducer(this);
+    }
+
+    @Override public void forceRegisterOn(AsyncEmitter<B> ae) throws IllegalStateException {
+        if ((state()&STATE_MASK) != CREATED)
+            throw new IllegalStateException("Already started");
+        this.downstream = ae;
+        ae.registerProducer(this);
     }
 
     @Override public String toString() {
         return "ReceiverProducer("+upstream+")";
     }
 
-    /* --- --- -- internals --- -- --- */
-
-    private boolean moveState(State dest) {
-        while (true) {
-            State s = (State) STATE.getOpaque(this);
-            boolean allow = switch (s) {
-                case ACTIVE, PAUSED               -> true;
-                case COMPLETED, CANCELLED, FAILED -> false;
-                case CANCEL_REQUESTED -> switch (dest) {
-                    case CANCEL_REQUESTED, ACTIVE, PAUSED -> false;
-                    case COMPLETED, CANCELLED, FAILED     -> true;
-                };
-            };
-            if (allow) {
-                if ((State)STATE.compareAndExchangeRelease(this, s, dest) == s)
-                    return true;
-                Thread.onSpinWait();
-            } else {
-                return false;
-            }
-        }
-    }
-
     /* --- --- -- producer --- -- --- */
 
     @Override public void resume() {
-        if (moveState(State.ACTIVE)) {
-            int add = STEP_REQUEST - Math.max(0, (int)REQUESTED.getOpaque(this));
-            if (add > 0) {
+        if (downstream == null) throw new NoDownstreamException(this);
+        if (moveStateRelease(statePlain(), ACTIVE)) {
+            int add = MAX_REQUESTED - Math.max(0, (int)REQUESTED.getOpaque(this));
+            if (add > MIN_REQUEST) {
                 REQUESTED.getAndAddRelease(this, add);
                 upstream.request(add);
             }
         }
     }
-    @Override public void cancel() { upstream.cancel(); }
-
-    @Override public boolean isTerminated() {
-        return switch ((State)STATE.getAcquire(this)) {
-            case COMPLETED,CANCELLED,FAILED -> true;
-            case ACTIVE,PAUSED,CANCEL_REQUESTED -> false;
-        };
+    @Override public void cancel() {
+        if (upstream == null)
+            throw new NoUpstreamException(this);
+        moveStateRelease(statePlain(), CANCEL_REQUESTED);
+        upstream.cancel();
     }
 
-    @Override public boolean isComplete() {
-        return (State)STATE.getAcquire(this) == State.COMPLETED;
+    @Override public void rebindAcquire() {
+        if (upstream == null) throw new NoUpstreamException(this);
+        upstream.rebindAcquire();
+    }
+    @Override public void rebindRelease() {
+        if (upstream == null) throw new NoUpstreamException(this);
+        upstream.rebindRelease();
+    }
+    @Override public void rebind(BatchBinding<B> binding) {
+        if (upstream == null) throw new NoUpstreamException(this);
+        upstream.rebind(binding);
     }
 
-    @Override public boolean isCancelled() {
-        return (State)STATE.getAcquire(this) == State.FAILED;
-    }
-
-    @Override public @Nullable Throwable error() {
-        return (State)STATE.getAcquire(this) == State.FAILED ? error : null;
-    }
+    @Override public boolean      isTerminated() { return (state()&IS_TERM) != 0; }
+    @Override public boolean        isComplete() { return isCompleted(state()); }
+    @Override public boolean       isCancelled() { return isCancelled(state()); }
+    @Override public @Nullable Throwable error() { return isFailed(stateAcquire()) ? error : null; }
 
     /* --- --- --- receiver --- --- --- */
 
     @Override public @Nullable B onBatch(B batch) {
         if (batch == null) return null;
-        if (plainState != State.CANCEL_REQUESTED) {
+        int state = state();
+        if ((state&STATE_MASK) != CANCEL_REQUESTED) {
             int requested = (int)REQUESTED.getAndAddRelease(this, -batch.rows)-batch.rows;
             try {
                 batch = downstream.offer(batch);
-            } catch (AsyncEmitter.CancelledException e) {
+            } catch (BatchQueue.QueueStateException e) {
                 cancel();
-            } catch (AsyncEmitter.TerminatedException e) {
-                cancel();
-                log.warn("{} terminated before {}", downstream, this);
-                assert false : "downstream terminated before this ReceiverProducer";
+                state = (state&FLAGS_MASK) | CANCEL_REQUESTED;
+                assert !(e instanceof TerminatedException) : "downstream terminated before this";
             }
-            if ((State)STATE.getOpaque(this) == State.ACTIVE) {
+            if ((state&STATE_MASK) == ACTIVE) {
                 if (downstream.requested() <= 0) {
-                    moveState(State.PAUSED);
+                    moveStateRelease(state, PAUSED);
                 } else {
-                    int add = STEP_REQUEST - Math.max(0, requested);
-                    if (add > 0) {
+                    int add = MAX_REQUESTED - Math.max(0, requested);
+                    if (add > MIN_REQUEST) {
                         REQUESTED.getAndAddRelease(this, add);
                         upstream.request(add);
                     }
@@ -153,18 +142,25 @@ public class ReceiverProducer<B extends Batch<B>> implements Producer, Receiver<
     }
 
     @Override public void onComplete() {
-        var s = (State)STATE.compareAndExchangeRelease(this, State.ACTIVE, State.COMPLETED);
-        assert s == State.ACTIVE : "onComplete() after termination";
+        if  (moveStateRelease(statePlain(), COMPLETED)) {
+            downstream.producerTerminated();
+            markDelivered(COMPLETED);
+        }
     }
 
     @Override public void onCancelled() {
-        var s = (State)STATE.compareAndExchangeRelease(this, State.ACTIVE, State.CANCELLED);
-        assert s == State.ACTIVE : "onCancelled() after termination";
+        if  (moveStateRelease(statePlain(), CANCELLED)) {
+            downstream.producerTerminated();
+            markDelivered(CANCELLED);
+        }
     }
 
     @Override public void onError(Throwable cause) {
-        this.error = cause;
-        var s = (State)STATE.compareAndExchangeRelease(this, State.ACTIVE, State.FAILED);
-        assert s == State.ACTIVE : "onError() after termination";
+        if (this.error == UNSET_ERROR)
+            this.error = cause;
+        if  (moveStateRelease(statePlain(), FAILED)) {
+            downstream.producerTerminated();
+            markDelivered(FAILED);
+        }
     }
 }

@@ -2,9 +2,6 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
@@ -26,11 +23,7 @@ public final class DedupConcatBIt<B extends Batch<B>> extends ConcatBIt<B> {
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        DedupPool<B> pool = batchType.dedupPool;
-        if (dedup instanceof WeakCrossSourceDedup<B> cd)
-            pool.recycleWeakCross(cd);
-        else if (dedup instanceof WeakDedup<B> wd)
-            pool.recycleWeak(wd);
+        dedup.release();
     }
 
     @Override protected @Nullable BatchProcessor<B> createProcessor(BIt<B> source, int sourceIdx) {

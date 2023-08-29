@@ -81,7 +81,7 @@ public final class SortedCompositeDict extends Dict {
     }
 
     /** Get the shared strings {@link Dict} or {@code null} if this is a standalone dict. */
-    public @Nullable Dict shared() { return sharedDict; }
+    @SuppressWarnings("unused") public @Nullable Dict shared() { return sharedDict; }
 
     @Override public AbstractLookup polymorphicLookup() { return lookup(); }
 

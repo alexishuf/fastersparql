@@ -9,6 +9,8 @@ import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -25,7 +27,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
-import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TASK_RUNNER;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.lang.Thread.currentThread;
 import static java.util.concurrent.Executors.newFixedThreadPool;
@@ -60,7 +62,7 @@ class AsyncEmitterTest {
             private int next;
             private boolean cleaned;
 
-            public P(RecurringTaskRunner runner,
+            public P(EmitterService runner,
                      int id, int begin, int failAt) {
                 super(runner);
                 this.id     = id;
@@ -68,6 +70,8 @@ class AsyncEmitterTest {
                 this.end    = begin+height;
                 this.failAt = failAt;
             }
+
+            @Override public Stream<? extends StreamNode> upstream() { return Stream.empty(); }
 
             @Override public String toString() { return "P("+id+")"; }
 
@@ -100,7 +104,11 @@ class AsyncEmitterTest {
                 return next >= end ? ExhaustReason.COMPLETED : null;
             }
 
-            @Override protected void cleanup(@Nullable Throwable reason) {
+            @Override public void rebind(BatchBinding<B> binding) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override protected void doRelease() {
                 cleaned = true;
             }
         }
@@ -208,11 +216,13 @@ class AsyncEmitterTest {
 
         @Override public void run() { genericRun(); }
         private <B extends Batch<B>> void genericRun() {
-            AsyncEmitter<B> ae = new AsyncEmitter<>(X, TASK_RUNNER);
+            //noinspection unchecked
+            BatchType<B> batchType = (BatchType<B>) this.batchType;
+            AsyncEmitter<B> ae = new AsyncEmitter<>(batchType, X);
             List<P<B>> producers = new ArrayList<>();
             for (int i = 0, begin = 0; i < nProducers; i++, begin += height) {
                 int failAt = i == failingProducer ? begin+this.failAtRow : -1;
-                P<B> p = new P<>(TASK_RUNNER, i, begin, failAt);
+                P<B> p = new P<>(EMITTER_SVC, i, begin, failAt);
                 p.registerOn(ae);
                 producers.add(p);
             }
@@ -230,9 +240,9 @@ class AsyncEmitterTest {
                 CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
             }
             assertTerminationStatus(consumerBarrier);
-            assertCleanProducers(producers);
             assertHistory(consumers.iterator().next());
             assertSameHistory(consumers);
+            assertCleanProducers(producers);
         }
 
         private <B extends Batch<B>> void assertTerminationStatus(ConsumerBarrier<B> barrier) {
@@ -258,8 +268,11 @@ class AsyncEmitterTest {
         }
 
         private <B extends Batch<B>> void assertCleanProducers(List<P<B>> producers) {
-            for (int i = 0; i < producers.size(); i++)
-                assertTrue(producers.get(i).cleaned, i+"-th producer not clean for "+this);
+            long deadline = System.nanoTime()+10_000_000_000L;
+            int clean = 0, nProducers = producers.size();
+            while (clean != nProducers && System.nanoTime() < deadline)
+                clean = (int)producers.stream().filter(p -> p.cleaned).count();
+            assertEquals(nProducers, clean, "doRelease not called for some producers");
         }
 
         private <B extends Batch<B>> void assertHistory(C<B> consumer) {
@@ -397,7 +410,7 @@ class AsyncEmitterTest {
     void test(D d) throws Exception {
         d.run();
         TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, d);
-}
+    }
 
     @RepeatedTest(4)
     void testConcurrent() throws Exception {
@@ -408,6 +421,4 @@ class AsyncEmitterTest {
             test().map(a -> (D) a.get()[0]).forEach(tasks::add);
         }
     }
-
-
 }

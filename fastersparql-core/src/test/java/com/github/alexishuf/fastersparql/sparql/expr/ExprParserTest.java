@@ -33,8 +33,8 @@ public class ExprParserTest {
     }
     private record TestRow(List<Term> values, Term expected) { }
 
-    public static TestRow yes(String... terms) { return new TestRow(termList(terms), TRUE); }
-    public static TestRow  no(String... terms) { return new TestRow(termList(terms), FALSE); }
+    static TestRow yes(String... terms) { return new TestRow(termList(terms), TRUE); }
+    static TestRow  no(String... terms) { return new TestRow(termList(terms), FALSE); }
 
     @SuppressWarnings("unused") static Stream<Arguments> test() {
         var i1 = typed("1", DT_integer);

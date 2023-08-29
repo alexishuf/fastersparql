@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -25,13 +27,14 @@ import java.util.List;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
+import static com.github.alexishuf.fastersparql.batch.dedup.StrongDedup.strongUntil;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 
 @SuppressWarnings("unused")
 public final class Modifier extends Plan {
     private static final Logger log = LoggerFactory.getLogger(Modifier.class);
 
-    public  @Nullable Vars projection;
+    public @Nullable Vars projection;
     public int distinctCapacity;
     public long offset, limit;
     public List<Expr> filters;
@@ -156,11 +159,30 @@ public final class Modifier extends Plan {
                 (weakDedup && offset <= 0) || distinctCapacity > 0);
         return executeFor(in, binding, weakDedup && distinctCapacity == 0);
     }
+
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        return processed(left().emit(type, weakDedup), weakDedup);
+    }
+
     public <B extends Batch<B>>
     BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean weakDedup) {
         var processor = processorFor(in.batchType(), in.vars(), binding, weakDedup);
         if (processor == null) return in;
         return new ProcessorBIt<>(in, processor, Metrics.createIf(this));
+    }
+
+    public <B extends Batch<B>> Emitter<B> processed(Emitter<B> in) {
+        return processed(in, false);
+    }
+
+    public <B extends Batch<B>> Emitter<B>
+    processed(Emitter<B> in, boolean weakDedup) {
+        var proc = processorFor(in.batchType(), in.vars(), null, weakDedup);
+        if (proc == null)
+            return in;
+        proc.subscribeTo(in);
+        return proc;
     }
 
     public <B extends Batch<B>>
@@ -174,16 +196,9 @@ public final class Modifier extends Plan {
         long limit = this.limit;
 
         Dedup<B> dedup = null;
-        if (cols == 0) {
-            limit = dCap > 0 || weakDedup ? 1 : limit;
-        } else if (dCap > 0) {
-            if (dCap < FSProperties.reducedCapacity() || weakDedup)
-                dedup = bt.dedupPool.getWeak(dCap, cols);
-            else if (dCap >= FSProperties.distinctCapacity())
-                dedup = bt.dedupPool.getDistinct(dCap, cols);
-            else
-                dedup = bt.dedupPool.getReduced(dCap, cols);
-        }
+        if      (cols == 0)                               limit = dCap > 0 || weakDedup ? 1 : limit;
+        else if (dCap >= reducedCapacity() && !weakDedup) dedup = strongUntil(bt, dCap, cols);
+        else if (dCap > 0)                                dedup = new WeakDedup<>(bt, dCap, cols);
 
         BatchProcessor<B> processor;
         boolean slice = limit < Long.MAX_VALUE || offset > 0;
@@ -208,6 +223,11 @@ public final class Modifier extends Plan {
 
     /* --- --- --- RowFilter implementations --- --- --- */
 
+    private static long upstreamRequestLimit(long offset, long limit) {
+        long sum = offset + limit;
+        return sum < 0 ? Long.MAX_VALUE : sum;
+    }
+
     private static class Slicing<B extends Batch<B>> implements RowFilter<B> {
         private final long offset, limit;
         private long skip, allowed;
@@ -216,8 +236,10 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
-        @Override public void reset() {
+        @Override public long upstreamRequestLimit() {
+            return Modifier.upstreamRequestLimit(skip, allowed);
+        }
+        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
             skip = offset;
             allowed = limit;
         }
@@ -234,7 +256,7 @@ public final class Modifier extends Plan {
         }
     }
 
-    private static class SlicingDedup<B extends Batch<B>> extends ProjectionRowFilter<B> {
+    private static class SlicingDedup<B extends Batch<B>> implements RowFilter<B> {
         private final Dedup<B> dedup;
         private final long offset, limit;
         private long skip, allowed;
@@ -244,11 +266,11 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
-        @Override public void reset() {
+        @Override public boolean targetsProjection() {return true;}
+        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
             skip = offset;
             allowed = limit;
-            dedup.clear(dedup.cols());
+            dedup.rebind(binding);
         }
 
         @Override public Decision drop(B batch, int row) {
@@ -267,15 +289,16 @@ public final class Modifier extends Plan {
         private final long offset, limit;
         private long skip, allowed;
 
-        public SlicingFiltering(long offset, long limit, BatchType<B> bt, Vars inVars, List<Expr> filters) {
+        public SlicingFiltering(long offset, long limit, BatchType<B> bt, Vars inVars,
+                                List<Expr> filters) {
             super(bt, inVars, filters);
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
-        @Override public void reset() {
+        @Override public void rebind(BatchBinding<B> binding) {
             skip = offset;
             allowed = limit;
+            super.rebind(binding);
         }
 
         @Override public Decision drop(B batch, int row) {
@@ -292,13 +315,13 @@ public final class Modifier extends Plan {
     }
 
     private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
-        private final BatchBinding<B> binding;
+        private final BatchBinding<B> tmpBinding;
         private final List<Expr> filters;
         private final ExprEvaluator[] evaluators;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
-            this.binding = new BatchBinding<>(bt, inVars);
+            this.tmpBinding = new BatchBinding<>(bt, inVars);
             this.filters = filters;
             this.evaluators = new ExprEvaluator[filters.size()];
             for (int i = 0; i < evaluators.length; i++)
@@ -308,11 +331,20 @@ public final class Modifier extends Plan {
         private void logFailure(Throwable t) {
             if (failures > 2) return;
             String stop = ++failures == 2 ? "Will stop reporting for this BIt" : "";
-            log.info("Filter evaluation failed for {}. filters={}", binding, filters, t);
+            log.info("Filter evaluation failed for {}. filters={}", tmpBinding, filters, t);
+        }
+
+        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+            int n = evaluators.length;
+            for (int i = 0; i < n; i++) {
+                Expr e = filters.get(i), bound;
+                if (e.vars().intersects(binding.vars) && (bound = e.bound(binding)) != e)
+                    evaluators[i] = bound.evaluator(tmpBinding.vars);
+            }
         }
 
         @Override public Decision drop(B batch, int row) {
-            var binding = this.binding.setRow(batch, row);
+            var binding = this.tmpBinding.setRow(batch, row);
             try {
                 for (ExprEvaluator e : evaluators) {
                     if (!e.evaluate(batch, row).asBool()) return Decision.DROP;

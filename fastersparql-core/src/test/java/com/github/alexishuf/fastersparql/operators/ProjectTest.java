@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -49,6 +50,14 @@ public class ProjectTest {
     @ParameterizedTest @MethodSource
     void test(Results in, Results expected) {
         expected.check(FS.project(in.asPlan(), expected.vars()).execute(Batch.TERM));
+        ThreadJournal.closeThreadJournals();
+        try {
+            expected.check(FS.project(in.asPlan(), expected.vars()).emit(Batch.TERM));
+        } catch (Throwable t ) {
+            ThreadJournal.dumpAndReset(System.err, 80);
+            throw t;
+        }
+        expected.check(FS.project(in.asPlan(), expected.vars()).emit(Batch.COMPRESSED));
     }
 
 }

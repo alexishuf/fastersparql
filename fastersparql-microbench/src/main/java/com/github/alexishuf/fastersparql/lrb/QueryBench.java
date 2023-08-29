@@ -2,10 +2,10 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
+import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
 import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.lrb.sources.FederationHandle;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
@@ -59,6 +60,7 @@ public class QueryBench {
     @Param({"true"}) boolean builtinPlans;
     @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
+    @Param({"ITERATE", "EMIT"}) MeasureOptions.FlowModel flowModel;
 //    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
@@ -86,8 +88,8 @@ public class QueryBench {
                 case COMPRESSED -> Batch.COMPRESSED;
                 case TERM -> Batch.TERM;
                 case NATIVE -> switch (src) {
-                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS -> HdtBatch.TYPE;
-                    case FS_STORE,FS_TSV, FS_JSON, FS_WS  -> StoreBatch.TYPE;
+                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS,HDT_TSV_EMIT,HDT_JSON_EMIT,HDT_WS_EMIT -> HdtBatch.TYPE;
+                    case FS_STORE,FS_TSV,FS_JSON,FS_WS,FS_TSV_EMIT,FS_JSON_EMIT,FS_WS_EMIT  -> StoreBatch.TYPE;
                 };
             };
         }
@@ -117,7 +119,7 @@ public class QueryBench {
         public int rows;
         public RowCounter(BatchType<?> batchType) {super(batchType);}
         public int rows() { return rows; }
-        @Override public void start(BIt<?> it)                  { rows = 0; }
+        @Override public void start(Vars vars)                  { rows = 0; }
         @Override public void accept(Batch<?> batch)            { rows += batch.rows; }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
     }
@@ -129,7 +131,7 @@ public class QueryBench {
         public RopeLenCounter(BatchType<?> batchType) {super(batchType);}
         public int len() { return acc; }
 
-        @Override public void start(BIt<?> it) { acc = 0; }
+        @Override public void start(Vars vars) { acc = 0; }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
         @Override public void accept(Batch<?> batch) {
             for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
@@ -148,7 +150,7 @@ public class QueryBench {
         public TermLenCounter(BatchType<?> batchType) {super(batchType);}
         public int len() { return acc; }
 
-        @Override public void start(BIt<?> it) {
+        @Override public void start(Vars vars) {
             acc = 0;
         }
         @Override public void finish(@Nullable Throwable error) {
@@ -255,8 +257,12 @@ public class QueryBench {
 
     private int execute(Blackhole bh, BatchConsumer consumer, IntSupplier resultGetter) {
         this.bh = bh;
-        for (Plan plan : plans)
-            QueryRunner.drain(plan.execute(batchType), consumer);
+        for (Plan plan : plans) {
+            switch (flowModel) {
+                case ITERATE -> QueryRunner.drain(plan.execute(batchType), consumer);
+                case EMIT    -> QueryRunner.drain(plan.emit(batchType),    consumer);
+            }
+        }
         return checkResult(resultGetter.getAsInt());
     }
 

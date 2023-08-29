@@ -101,7 +101,7 @@ public class Hdt2Store implements Callable<Void> {
                 return fail("Could not mkdir --temp-dir {}", file);
         }
         handleSameDirOpt();
-        if (params.size() == 0 || (params.size() & 1) == 1)
+        if (params.isEmpty() || (params.size() & 1) == 1)
             return fail("Expected pairs of HDT and dest dir as parameters, got {}", params.size());
         for (int i = 0, n = params.size(); i < n; i += 2) {
             File hdt = params.get(i), dest = params.get(i+1);

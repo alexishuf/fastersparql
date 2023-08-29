@@ -15,9 +15,9 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projector
 public final class TermBatchType extends BatchType<TermBatch> {
     public static final TermBatchType INSTANCE = new TermBatchType();
 
-    public static TermBatchType get() { return INSTANCE; }
+    @SuppressWarnings("SameReturnValue") public static TermBatchType get() { return INSTANCE; }
 
-    public TermBatchType() {super(TermBatch.class);}
+    private TermBatchType() {super(TermBatch.class);}
 
     @Override public TermBatch create(int rowsCapacity, int cols, int localBytes) {
         int capacity = rowsCapacity * cols;

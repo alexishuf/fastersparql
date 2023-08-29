@@ -14,7 +14,6 @@ import java.util.Map;
 
 public abstract class ResultsSerializer {
     protected int[] columns = null;
-    protected final SparqlResultFormat format;
     protected final String contentType;
     protected boolean ask = false, empty = true;
     protected Vars vars = Vars.EMPTY;
@@ -76,14 +75,12 @@ public abstract class ResultsSerializer {
         return NSL.get(SparqlResultFormat.fromMediaType(mediaType)).create(mediaType.params());
     }
 
-    public ResultsSerializer(SparqlResultFormat format, String contentType) {
-        this.format = format;
+    public ResultsSerializer(String contentType) {
         this.contentType = contentType;
     }
 
     protected abstract void init(Vars subset, ByteSink<?, ?> dest);
 
-    public final SparqlResultFormat format() { return format; }
     public final String contentType() { return contentType; }
 
     /**

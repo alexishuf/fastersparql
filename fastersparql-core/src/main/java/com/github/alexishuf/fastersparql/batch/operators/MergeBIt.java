@@ -3,14 +3,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
-import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.DedupPool;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -42,7 +36,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     protected final List<? extends BIt<B>> sources;
     private final Thread[] feedWaiters;
-    @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through VarHandles
+    @SuppressWarnings("unused") // accessed through VarHandles
     private int nWaiters, activeSources;
     //private DebugJournal.RoleJournal journals[];
 
@@ -62,7 +56,6 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         int n = (this.sources = sources instanceof List<?> list
                 ? (List<? extends BIt<B>>) list : new ArrayList<>(sources)).size();
         feedWaiters      = new Thread[n];
-        activeSources    = 0;
         N_WAITERS.setRelease(this, 0); // also publishes other fields
         //journals = new DebugJournal.RoleJournal[n];
         if (autoStart)
@@ -97,7 +90,8 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     /* --- --- helper methods --- --- --- */
 
-    protected final @Nullable B syncOffer(int source, B batch) {
+    protected final @Nullable B syncOffer(int source, B batch)
+            throws CancelledException, TerminatedException {
         //var journal = journals[source];
         //journal.write("syncOffer: WAIT source=", source, "[0][0]=", batch.get(0, 0));
         feedWaiters[source] = Thread.currentThread();
@@ -108,6 +102,9 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             //journal.write("syncOffer: EXCL source=", source, "rows=", batch.rows);
             feedWaiters[source] = null;
             return offer(batch);
+        } catch (CancelledException|TerminatedException e) {
+            batchType.recycle(batch);
+            throw e;
         } finally {
             //journal.write("syncOffer: RLS source=", source);
             N_WAITERS.setVolatile(this, 0); // release mutex
@@ -137,32 +134,24 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             for (B b = stealRecycled(); (b = source.nextBatch(b)) != null;) {
                 if (processor != null) {
                     b = processor.processInPlace(b);
-                    if (b      == null) break;
+                    if (b == null) break;
                 }
-                if (b.rows >     0) b = syncOffer(i, b);
+                if (b.rows > 0) b = syncOffer(i, b);
             }
             //journal.write("drainTask src=", i, "exhausted");
-        } catch (BItCompletedException e) {
-            if (e.it() != this) // ignore if another drainer or close() completed us
-                complete(e);
         } catch (BItReadClosedException e) {
             if (e.it() != sources.get(i)) // ignore if caused by cleanup() calling source.close()
                 complete(e);
+        } catch (TerminatedException|CancelledException e) {
+            if (!isTerminated())
+                complete(new Exception("Unexpected "+e.getClass().getSimpleName()));
         } catch (Throwable t) {
             complete(t);
         } finally {
             if ((int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1 && state() == State.ACTIVE)
                 complete(null);
-            if (processor != null) {
-                if (processor instanceof BatchFilter<B> bf && bf.rowFilter instanceof Dedup<B> d) {
-                    DedupPool<B> pool = batchType.dedupPool;
-                    if (d instanceof WeakCrossSourceDedup<B> cd)
-                        pool.recycleWeakCross(cd);
-                    else if (d instanceof WeakDedup<B> wd)
-                        pool.recycleWeak(wd);
-                }
+            if (processor != null)
                 processor.release();
-            }
         }
     }
 

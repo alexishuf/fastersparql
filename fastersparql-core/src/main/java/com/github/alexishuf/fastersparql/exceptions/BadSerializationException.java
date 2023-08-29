@@ -22,14 +22,12 @@ public class BadSerializationException extends FSInvalidArgument {
     }
 
     public static class SelectorTypeMismatch extends BadSerializationException {
-        private final String expected, actual;
+        public final String expected, actual;
         public SelectorTypeMismatch(String expected, String actual) {
             super("Expected state for a "+expected+" selector, but state is for a "+actual+" selector");
             this.expected = expected;
             this.actual = actual;
         }
-        public String expected() { return expected; }
-        public String actual() { return actual; }
     }
 
     public static class UnknownSource extends BadSerializationException {

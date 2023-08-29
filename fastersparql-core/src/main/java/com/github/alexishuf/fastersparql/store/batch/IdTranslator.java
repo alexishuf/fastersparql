@@ -42,11 +42,12 @@ public class IdTranslator {
      * @throws NotSourcedIdException if {@code sourcedId} has no {@code dictId}
      */
     public static long unsource(long sourcedId) {
+        if (sourcedId == NOT_FOUND) return NOT_FOUND;
         if ((sourcedId & DICT_MASK) == 0) throw new NotSourcedIdException(sourcedId);
         return sourcedId & ID_MASK;
     }
 
-    /**
+    /***
      * Get an unsourced id {@code i} that represents the same string in {@code targetDictId}
      * as {@code sourcedId} represents in its embedded dict. If the string is not present
      * in the target dict, or if {@code sourcedId == NOT_FOUND}, {@link Dict#NOT_FOUND}
@@ -56,6 +57,8 @@ public class IdTranslator {
      *                  (see {@link #source(long, int)})
      * @param targetDictId The id from {@link #register(LocalityCompositeDict)} for the
      *                     destination dict where an identical string will be looked up.
+     * @param targetLookup {@link Lookup} for {@code targetDictId}, to avoid a
+     *                     {@link #lookup(int)} call
      * @return If the target dict does not contain the string or if {@code sourcedId == NOT_FOUND},
      *         {@link Dict#NOT_FOUND}. Else the unsourced id {@code i} such that
      *         {@code lookup(targetDictId).get(i).equals(lookup(dictId).get(unsource(sourcedId)))}.
@@ -63,18 +66,6 @@ public class IdTranslator {
      *                            invalid or points to a {@link #deregister(int, Dict)}ed dict.
      * @throws NotSourcedIdException if {@code sourcedId != } {@link Dict#NOT_FOUND} and does not
      *                               embed a dict id.
-     */
-    public static long translate(long sourcedId, int targetDictId) {
-        if (sourcedId == NOT_FOUND) return NOT_FOUND;
-        int sourceDictId = (int) ((sourcedId&DICT_MASK) >>> DICT_BIT);
-        if (sourceDictId == 0) throw new NotSourcedIdException(sourcedId);
-        if (sourceDictId == targetDictId) return sourcedId & ID_MASK;
-        return lookup(targetDictId).find(lookup(sourceDictId).get(sourcedId&ID_MASK));
-    }
-
-    /***
-     * Equivalent to {@link #translate(long, int)}, but takes
-     * {@code targetLookup = lookup(targetDictId)} instead of fetching it internally.
      */
     public static long translate(long sourcedId, int targetDictId, Lookup targetLookup) {
         if (sourcedId == NOT_FOUND) return NOT_FOUND;

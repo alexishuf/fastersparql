@@ -1,11 +1,9 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -15,7 +13,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBIt.Tsv<B> {
+public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
     @SuppressWarnings("rawtypes") protected final WsFrameSender frameSender;
     protected boolean serverSentTermination = false;
 
@@ -36,14 +34,8 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
 
     /* --- --- --- constructors --- --- --- */
 
-    public AbstractWsParserBIt(WsFrameSender<?, ?> frameSender, BatchType<B> batchType, Vars vars,
-                               int maxItems) {
-        super(batchType, vars, maxItems);
-        this.frameSender = frameSender;
-    }
-
-    public AbstractWsParserBIt(WsFrameSender<?, ?> frameSender, CallbackBIt<B> destination) {
-        super(destination);
+    public AbstractWsParser(WsFrameSender<?, ?> frameSender, CompletableBatchQueue<B> dst) {
+        super(dst);
         this.frameSender = frameSender;
     }
 
@@ -146,7 +138,7 @@ public abstract class AbstractWsParserBIt<B extends Batch<B>> extends SVParserBI
             throw new InvalidSparqlResultsException(msg);
         }
         serverSentTermination = true;
-        complete(null);
+        feedEnd();
     }
 
     private InvalidSparqlResultsException badPrefix(Rope rope, int begin, int colon) {

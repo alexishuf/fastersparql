@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
@@ -18,8 +17,10 @@ import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
+
+
 public abstract class CardinalityEstimator {
-    public static final Term GROUND = Term.valueOf("<http://example.org/ground>");
     public static final String TYPE = "type";
     public static final String PREFER_NATIVE = "prefer-native";
 
@@ -33,7 +34,7 @@ public abstract class CardinalityEstimator {
     }
 
     public interface Loader extends NamedService<String> {
-        CardinalityEstimator load(SparqlClient client, Spec spec) throws IOException, BadSerializationException;
+        CardinalityEstimator load(SparqlClient client, Spec spec) throws BadSerializationException;
     }
 
     private static final NamedServiceLoader<Loader, String> NSL = new NamedServiceLoader<>(Loader.class) {

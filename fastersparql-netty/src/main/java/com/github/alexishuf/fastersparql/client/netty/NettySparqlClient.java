@@ -2,6 +2,9 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
@@ -11,17 +14,23 @@ import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackProducer;
 import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -59,17 +68,13 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
     @Override protected void doClose() { netty.close(); }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sp) {
-        if (sp.isGraph())
-            throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
-        acquireRef();
-        try {
-            return new QueryBIt<>(batchType, sp) ;
-        } catch (Throwable t) {
-            throw FSException.wrap(endpoint, t);
-        } finally {
-            releaseRef();
-        }
+    @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sp) {
+        return new QueryBIt<>(bt, sp) ;
+    }
+
+    @Override
+    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+        return Emitters.fromProducer(bt, sparql.publicVars(), new QueryProducer<>(sparql));
     }
 
     /* --- --- --- helper methods  --- --- ---  */
@@ -111,110 +116,147 @@ public class NettySparqlClient extends AbstractSparqlClient {
      */
     private class QueryBIt<B extends Batch<B>> extends NettySPSCBIt<B> {
         private final FullHttpRequest request;
-        private @Nullable Charset decodeCharset;
-        private @MonotonicNonNull ResultsParserBIt<B> parser;
-        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), FSProperties.queueMaxRows());
+            super(batchType, query.publicVars(), FSProperties.queueMaxRows(),
+                  NettySparqlClient.this);
             this.request = createRequest(query);
             request();
         }
 
-        /* --- --- --- NettySPSCBIt and request methods --- --- --- */
-
-        @Override public SparqlClient client() { return NettySparqlClient.this; }
         @Override protected void request() {
-            // netty will release() after request is written. We must retain() for retries
-            request.retain();
+            request.retain(); // retain for retries, Nett will release() on write()
             netty.request(request, this::connected, this::complete);
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             super.cleanup(cause);
             request.release();
-            bbRopeView.recycle();
         }
 
         private void connected(Channel ch, NettyHandler handler) {
             this.channel = ch;
             handler.setup(this);
         }
+    }
 
-        /* --- --- --- BIt methods --- --- --- */
+    private final class QueryProducer<B extends Batch<B>> extends NettyCallbackProducer<B> {
+        private final SparqlQuery originalQuery;
+        private SparqlQuery boundQuery;
+        private @Nullable FullHttpRequest boundRequest;
 
-        @Override public void complete(@Nullable Throwable error) {
-            if (state().isTerminated()) return;
-            if (parser != null) parser.complete(error);
-            super.complete(error);
+        public QueryProducer(SparqlQuery query) {
+            super(NettySparqlClient.this);
+            this.originalQuery = query;
+            this.boundQuery    = query;
+            acquireRef();
         }
 
-        /* --- --- --- parsing methods called from NettyHandler --- --- --- */
-
-        /**
-         * Called once for the {@link HttpResponse}, before the
-         * {@link #readContent(HttpContent)} calls start.
-         */
-        public void startResponse(MediaType mt, Charset cs) {
-            if (!cs.equals(UTF_8) && !cs.equals(US_ASCII))
-                decodeCharset = cs;
-            parser = ResultsParserBIt.createFor(fromMediaType(mt), this);
+        @Override protected void doRelease() {
+            var request = this.boundRequest;
+            if (request != null) {
+                request.release();
+                this.boundRequest = null;
+            }
+            releaseRef();
         }
 
-        /** Called for every {@link HttpContent}, which includes a {@link FullHttpResponse} */
-        public void readContent(HttpContent httpContent) {
-            SegmentRope r;
-            if (decodeCharset == null)
-                r = bbRopeView.wrapAsSingle(httpContent.content());
-            else
-                r = new ByteRope(httpContent.content().toString(decodeCharset));
-            parser.feedShared(r);
+        @Override protected void request() {
+            var request = this.boundRequest;
+            if (request == null)
+                this.boundRequest = request = createRequest(boundQuery);
+            request.retain(); // retain for retries, Nett will release() on write()
+            netty.request(request, this::connected, this::complete);
+        }
+
+        private void connected(Channel ch, NettyHandler handler) {
+            setChannel(ch);
+            handler.setup(this);
+        }
+
+        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+            int st = resetForRebind(0, LOCKED_MASK);
+            try {
+                boundQuery = originalQuery.bound(binding);
+                var boundRequest = this.boundRequest;
+                if (boundRequest != null) {
+                    boundRequest.release();
+                    this.boundRequest = null;
+                }
+            } finally {
+                unlock(st);
+            }
         }
     }
 
 
     private final class NettyHandler extends NettyHttpHandler {
-        private @Nullable NettySparqlClient.QueryBIt<?> it;
-        private int responseBytes = 0;
+        private CompletableBatchQueue<?> downstream;
+        private @MonotonicNonNull ResultsParser<?> parser;
+        private @Nullable Charset decodeCS;
+        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
+        private int resBytes = 0;
 
         @Override public String toString() {
             return NettySparqlClient.this+(ctx == null ? "[UNREGISTERED]"
                                                        : ctx.channel().toString());
         }
 
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+            bbRopeView.recycle();
+            super.channelUnregistered(ctx);
+        }
+
+        public void setup(CompletableBatchQueue<?> downstream) {
+            resBytes = 0;
+            this.downstream = downstream;
+            expectResponse();
+        }
+
         @Override protected void successResponse(HttpResponse resp) {
-            if (it == null)
+            if (downstream == null)
                 throw new FSException(endpoint, "HttpResponse received before setup()");
             var mt = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
             if (mt == null)
                 throw new InvalidSparqlResultsException(endpoint, "No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
-            it.startResponse(mt, cs);
+            decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
+            parser = ResultsParser.createFor(fromMediaType(mt), downstream);
         }
 
         @Override protected void error(Throwable cause) {
-            if (it == null)
-                log.error("{}: error() before setup()", this, cause);
-            it.complete(cause);
+            FSException ex = FSException.wrap(endpoint, cause);
+            if (parser != null)
+                parser.feedError(ex);
+            if (downstream == null)
+                log.error("{}: error({}) before setup", this, cause, cause);
+            downstream.complete(ex);
         }
 
-        public void setup(QueryBIt<?> it) {
-            responseBytes = 0;
-            this.it = it;
-            expectResponse();
+        private void end() {
+            if (parser != null)
+                parser.feedEnd();
+            if (downstream == null)
+                log.error("{}: end() before setup()", this);
+            downstream.complete(null);
         }
 
         @Override protected void content(HttpContent content) {
-            if (it == null) {
+            if (downstream == null) {
                 log.error("{}: content({}) before setup()", this, content);
-            } else {
-                responseBytes += content.content().readableBytes();
-                it.readContent(content);
+                return;
+            }
+            ByteBuf bb = content.content();
+            resBytes += bb.readableBytes();
+            try {
+                parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
+                                                   : new ByteRope(bb.toString(decodeCS)));
                 if (content instanceof LastHttpContent) {
-                    if (responseBytes == 0)
-                        it.complete(new InvalidSparqlResultsException("Zero-byte results"));
-                    it.complete(null);
+                    if (resBytes == 0) error(new InvalidSparqlResultsException("Zero-byte results"));
+                    else               end();
                 }
+            } catch (TerminatedException|CancelledException e) {
+                ctx.close();
             }
         }
     }

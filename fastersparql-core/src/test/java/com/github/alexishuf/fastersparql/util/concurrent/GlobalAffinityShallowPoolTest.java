@@ -23,7 +23,7 @@ class GlobalAffinityShallowPoolTest {
         assertSame(A, GlobalAffinityShallowPool.get(COL));
         assertNull(GlobalAffinityShallowPool.get(COL));
 
-        Thread.startVirtualThread(() -> GlobalAffinityShallowPool.offer(COL, B, 10)).join();
+        Thread.startVirtualThread(() -> assertNull(GlobalAffinityShallowPool.offer(COL, B, 10))).join();
         assertSame(B, GlobalAffinityShallowPool.get(COL, 11));
     }
 

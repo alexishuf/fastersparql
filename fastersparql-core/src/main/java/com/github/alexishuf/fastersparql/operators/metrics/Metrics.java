@@ -13,13 +13,13 @@ import java.util.concurrent.TimeUnit;
 @SuppressWarnings("unused")
 public class Metrics implements MetricsFeeder {
     /** {@link Plan} for which these metrics apply */
-    public Plan plan;
+    public final Plan plan;
     /** Total number of rows emitted until a cancel or completion */
     public long rows;
     /** Total number of non-empty batches of rows emitted until a cancel or completion */
     public long batches;
     /** {@link System#nanoTime()} when execution started */
-    public long startNanos;
+    public final long startNanos;
     /** Nanoseconds elapsed between {@link #startNanos} and the termination (by exhaustion or
      *  failure) of the {@link BIt}.*/
     public long allRowsNanos;
@@ -177,6 +177,7 @@ public class Metrics implements MetricsFeeder {
 
     @Override public void completeAndDeliver(@Nullable Throwable t, boolean cancelled) {
         if (delivered) return;
+        delivered = true;
         long now = Timestamp.nanoTime();
         allRowsNanos = now-startNanos;
         terminalNanos = now -lastEmit;

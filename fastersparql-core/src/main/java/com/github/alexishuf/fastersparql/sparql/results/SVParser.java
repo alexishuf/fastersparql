@@ -1,8 +1,10 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.CallbackBIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -22,8 +24,8 @@ import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.UNTIL_LIT
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B> {
-    private static final Logger log = LoggerFactory.getLogger(SVParserBIt.class);
+public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
+    private static final Logger log = LoggerFactory.getLogger(SVParser.class);
 
     protected final int nVars;
     protected final ByteRope eol;
@@ -32,15 +34,9 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     protected int inputColumns = -1, column, line;
     protected int[] inVar2outVar;
 
-    private SVParserBIt(BatchType<B> batchType, ByteRope eol, Vars vars, int maxItems) {
-        super(batchType, vars, maxItems);
-        this.nVars = vars.size();
-        this.eol = eol;
-    }
-
-    private SVParserBIt(BatchType<B> batchType, ByteRope eol, CallbackBIt<B> destination) {
-        super(batchType, destination);
-        this.nVars = vars.size();
+    private SVParser(ByteRope eol, CompletableBatchQueue<B> destination) {
+        super(destination);
+        this.nVars = destination.vars().size();
         this.eol = eol;
     }
 
@@ -49,58 +45,48 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         termParser.close();
     }
 
-    @Override public void complete(@Nullable Throwable error) {
+    @Override protected @Nullable Throwable doFeedEnd() {
         try {
-            if (error == null && (column > 0 || partialLine != null && partialLine.len > 0))
-                feedCompletion();
+            if (partialLine != null && partialLine.len > 0) {
+                boolean hasEOL = findEOL(partialLine, 0, partialLine.len) < partialLine.len;
+                handlePartialLine(hasEOL ? ByteRope.EMPTY : eol);
+                if (partialLine != null && partialLine.len > 0) //
+                    return unclosedQuote();
+            } else if (column > 0) {
+                try {
+                    commitRow();
+                } catch (CancelledException | TerminatedException ignored) {
+                }
+            }
+        } catch (FSException e) {
+            return e;
         } catch (Throwable t) {
-            error = t;
+            return new InvalidSparqlResultsException(t);
         }
-        super.complete(error);
+        return null;
     }
 
-    private void feedCompletion() {
-        if (partialLine != null && partialLine.len > 0) {
-            boolean hasEOL = findEOL(partialLine, 0, partialLine.len) < partialLine.len;
-            handlePartialLine(hasEOL ? ByteRope.EMPTY : eol);
-            if (partialLine != null && partialLine.len > 0) //
-                throw unclosedQuote();
-        } else if (column > 0) {
-            commitRow();
-        }
-    }
-
-    public final static class TsvFactory implements ResultsParserBIt.Factory {
+    public final static class TsvFactory implements ResultsParser.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.TSV; }
-        @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-            return new Tsv<>(batchType, vars, maxItems);
-        }
-        @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-            return new Tsv<>(destination);
+        @Override public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
+            return new Tsv<>(d);
         }
     }
 
-    public final static class CsvFactory implements ResultsParserBIt.Factory {
+    public final static class CsvFactory implements ResultsParser.Factory {
         @Override public SparqlResultFormat name() { return SparqlResultFormat.CSV; }
         @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(BatchType<B> batchType, Vars vars, int maxItems) {
-            return new Csv<>(batchType, vars, maxItems);
-        }
-        @Override
-        public <B extends Batch<B>> ResultsParserBIt<B> create(CallbackBIt<B> destination) {
-            return new Csv<>(destination);
+        public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
+            return new Csv<>(d);
         }
     }
 
-    public static class Tsv<B extends Batch<B>> extends SVParserBIt<B> {
+    public static class Tsv<B extends Batch<B>> extends SVParser<B> {
         private static final ByteRope EOL = new ByteRope("\n");
 
-        public Tsv(BatchType<B> batchType, Vars vars, int maxItems) { super(batchType, EOL, vars, maxItems); }
-        public Tsv(CallbackBIt<B> destination) { super(destination.batchType(), EOL, destination); }
+        public Tsv(CompletableBatchQueue<B> destination) { super(EOL, destination); }
 
-        @Override protected final void doFeedShared(SegmentRope rope) {
+        @Override protected final void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
             int begin = 0, end = rope.len();
             if (partialLine != null && partialLine.len > 0) {
                 handlePartialLine(rope);
@@ -142,7 +128,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                     if (column   != lastCol) throw missingColumns();
                     column = 0;
                     ++line;
-                    if (!rowStarted)
+                    if (!incompleteRow)
                         beginRow();
                     commitRow();
                 } else if (c != 0) {
@@ -159,7 +145,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         }
 
 
-        private int parseAsk(SegmentRope rope, int begin, int end) {
+        private int parseAsk(SegmentRope rope, int begin, int end) throws CancelledException, TerminatedException {
             if (begin < end && rope.get(begin) == '!')
                 begin = handleControl(rope, begin);
             if (findEOL(rope, begin, end) >= end)
@@ -185,19 +171,15 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         protected int handleControl(SegmentRope rope, int begin) { return begin; }
     }
 
-    public final static class Csv<B extends Batch<B>> extends SVParserBIt<B> {
+    public final static class Csv<B extends Batch<B>> extends SVParser<B> {
         private static final ByteRope EOL = new ByteRope("\r\n");
 
-        public Csv(BatchType<B> batchType, Vars vars, int maxItems) {
-            super(batchType, EOL, vars, maxItems);
-            termParser.eager();
-        }
-        public Csv(CallbackBIt<B> destination) {
-            super(destination.batchType(), EOL, destination);
+        public Csv(CompletableBatchQueue<B> destination) {
+            super(EOL, destination);
             termParser.eager();
         }
 
-        @Override protected void doFeedShared(SegmentRope rope) {
+        @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
             if (partialLine != null && partialLine.len != 0) {
                 handlePartialLine(rope);
                 return;
@@ -223,7 +205,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                         column = 0;
                         ++line;
                         begin += eol.len;
-                        if (!rowStarted)
+                        if (!incompleteRow)
                             beginRow();
                         commitRow();
                     } else {
@@ -256,7 +238,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         /**
          * Try to parse a Term from a CSV column starting at {@code begin} in {@code rope} reading up
          * to index {@code end}. A term ends when the parser meets a ',' or a "\r\n" sequence outside
-         * a "-quoted segment (where {@code "} itself is used as the escape char (see RFC 4180).
+         * a "-quoted segment (where {@code "} itself is used as the escape char (see RFC 4180)).
          *
          * <p>The Term (if found) will be passed to {@code builder.set(column, term)}. If there is no
          *    complete term, {@code rope.sub(begin,end)} will be appended to {@code partialTerm}.</p>
@@ -308,7 +290,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         }
 
         private static final byte[] FALSE = "false".getBytes(UTF_8);
-        private int parseAsk(Rope rope, int begin, int end) {
+        private int parseAsk(Rope rope, int begin, int end) throws CancelledException, TerminatedException {
             if (findEOL(rope, begin, end) >= end)
                 return suspend(rope, begin, end);
             if (line > 1) {
@@ -331,7 +313,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
                 beginRow();
                 commitRow();
             }
-            complete(null);
+            feedEnd();
             return end;
         }
 
@@ -355,7 +337,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         int eol = findEOL(rope, begin, end);
         if (eol >= end)
             return suspend(rope, begin, end);
-        var offer = new Vars.Mutable(Math.max(10, vars.size()));
+        var offer = new Vars.Mutable(10);
         for (int termEnd, next; begin < eol; begin = next) {
             byte c = rope.get(begin = rope.skipWS(begin, eol));
             if (c == '"') {// quoted var name, termEnd is at closing quote
@@ -381,20 +363,22 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         inVar2outVar = new int[this.inputColumns = offer.size()];
         if (nVars == 0 && offer.size() > (offer.contains(WsBindingSeq.VAR) ? 1 : 0))
             checkAskVars(offer);
+        Vars vars = vars();
         for (int i = 0; i < offer.size(); i++)
             inVar2outVar[i] = vars.indexOf(offer.get(i));
         ++line;
         return eol+this.eol.len; // return index of first not consumed byte
     }
 
-    protected void handlePartialLine(Rope rope) {
+    protected void handlePartialLine(Rope rope) throws CancelledException, TerminatedException {
         if (partialLine == null) partialLine = new ByteRope(rope);
         else                     partialLine.append(rope);
 
         if (findEOL(partialLine, 0, partialLine.len) < partialLine.len) {
-            ByteRope copy = partialLine;
-            partialLine = fedPartialLine == null ? new ByteRope() : fedPartialLine.clear();
-            doFeedShared(fedPartialLine = copy);
+            ByteRope tmp = partialLine;
+            if ((partialLine = fedPartialLine) != null)
+                partialLine.clear();
+            doFeedShared(fedPartialLine = tmp);
         }
     }
 
@@ -421,7 +405,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
     protected void setTerm() {
         int dest = inVar2outVar[column];
         if (dest >= 0) {
-            if (!rowStarted)
+            if (!incompleteRow)
                 beginRow();
             batch.putTerm(dest, termParser);
         }
@@ -449,6 +433,7 @@ public abstract class SVParserBIt<B extends Batch<B>> extends ResultsParserBIt<B
         int termEnd = rope.skipUntil(begin, rope.len(), eoc, '\n');
         String actual = rope.sub(begin, termEnd).toString().replace("\r", "\\r")
                             .replace("\n", "\\n").replace("\t", "\\t").replace("\\", "\\\\");
+        Vars vars = vars();
         var msg = format("Bad value starting at column %d (%s) of line %d. Cause: %s. Input: %s",
                          column, column < vars.size() ? vars.get(column) : "no var",
                          line, t.getMessage(), actual);

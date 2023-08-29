@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 import com.github.alexishuf.fastersparql.batch.IntsBatch;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
 import java.util.*;
@@ -39,6 +40,9 @@ public sealed abstract class BItDrainer {
     }
     public void drainUnordered(BIt<TermBatch> it, int[] expected, Throwable expectedError) {
         drain(it, expected, expectedError, false);
+    }
+    public <B extends Batch<B>> void drainOrdered(Emitter<B> em, Collection<List<Term>> expected, Throwable expectedError) {
+        drain(new EmitterBIt<>(em), expected, expectedError, true);
     }
 
     private <B extends Batch<B>> void

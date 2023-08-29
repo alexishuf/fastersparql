@@ -1,16 +1,24 @@
 package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItClosedAtException;
-import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.client.BindQuery;
+import com.github.alexishuf.fastersparql.client.EmitBindQuery;
+import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
+import com.github.alexishuf.fastersparql.emit.stages.BindingStage.ForPlan;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
@@ -85,22 +93,23 @@ public class NativeBind {
                         var q = it.next();
                         try {
                             q.copy(b);
+                        } catch (TerminatedException|CancelledException e) {
+                            if (!q.isTerminated())
+                                q.complete(new FSException("Unexpected Terminated|CancelledException"));
+                            it.remove();
                         } catch (Throwable t) {
-                            if (!(t instanceof BItCompletedException e)
-                                    || !(e.getCause() instanceof BItClosedAtException)) {
-                                String bStr = "batch with " + b.rows + " rows";
-                                try {
-                                    if (b.rows < 10) bStr = b.toString();
-                                } catch (Throwable t2) {
-                                    log.error("Ignoring b.toString() failure", t2);
-                                }
-                                log.warn("{}.copy({}) failed", q, bStr, t);
-                                try {
-                                    if (q.state() == BIt.State.ACTIVE)
-                                        q.close();
-                                } catch (Throwable t2) {
-                                    log.error("Ignoring q.close() failure", t2);
-                                }
+                            String bStr = "batch with " + b.rows + " rows";
+                            try {
+                                if (b.rows < 10) bStr = b.toString();
+                            } catch (Throwable t2) {
+                                log.error("Ignoring b.toString() failure", t2);
+                            }
+                            log.warn("{}.copy({}) failed", q, bStr, t);
+                            try {
+                                if (q.state() == BIt.State.ACTIVE)
+                                    q.close();
+                            } catch (Throwable t2) {
+                                log.error("Ignoring q.close() failure", t2);
                             }
                             it.remove();
                         }
@@ -133,7 +142,7 @@ public class NativeBind {
             }
             if (weakDedup)        sparql = sparql.toDistinct(WEAK);
             if (binding != null) sparql = sparql.bound(binding);
-            boundIts.add(client.query(new BindQuery<>(sparql, queue, type)));
+            boundIts.add(client.query(new ItBindQuery<>(sparql, queue, type)));
         }
         // If something goes wrong really fast, scatter could remove items from queues while
         // this tread is iterating it to fill boundIts.
@@ -141,8 +150,8 @@ public class NativeBind {
         int cdc = right.crossDedupCapacity;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      (weakDedup) dedup = bt.dedupPool.getWeak(nOps*dedupCapacity(), dedupCols);
-        else if (cdc >  0) dedup = bt.dedupPool.getWeakCross(nOps*cdc, dedupCols);
+        if      (weakDedup) dedup = new WeakDedup<>(bt, nOps*dedupCapacity(), dedupCols);
+        else if (cdc >  0) dedup = new WeakDedup<>(bt, nOps*cdc, dedupCols);
         else               return new MergeBIt<>(boundIts, bt, outVars, metrics);
         return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
     }
@@ -156,6 +165,7 @@ public class NativeBind {
         BIt<B> left = join.op(0).execute(batchType, binding, weakDedup);
         for (int i = 1, n = join.opCount(); i < n; i++) {
             var r = join.op(i);
+            if (r instanceof Union u && u.right == null) r = u.left();
             var jm = metrics == null ? null : metrics.joinMetrics[i];
             var projection = i == n-1 ? join.publicVars()
                     : type.resultVars(left.vars(), r.publicVars());
@@ -163,12 +173,12 @@ public class NativeBind {
                 var sparql = q.query();
                 if (binding != null) sparql = sparql.bound(binding);
                 if (weakDedup)        sparql = sparql.toDistinct(WEAK);
-                left = q.client.query(new BindQuery<>(sparql, left, type, jm));
+                left = q.client.query(new ItBindQuery<>(sparql, left, type, jm));
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
                 left = multiBind(left, type, projection, rUnion, binding, weakDedup, jm, null);
             } else {
                 if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(new BindQuery<>(r, left, type, jm), weakDedup, projection);
+                left = new PlanBindingBIt<>(new ItBindQuery<>(r, left, type, jm), weakDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)
@@ -176,4 +186,68 @@ public class NativeBind {
         // for non-native joins, the last join already honors Join.projection.
         return ProcessorBIt.project(join.publicVars(), left);
     }
+
+    public static <B extends Batch<B>> Emitter<B>
+    multiBindEmit(Emitter<B> left, BindType type, Vars outVars, Union right,
+                  boolean weakDedup, SparqlClient clientForAlgebra) {
+        var bt = left.batchType();
+        Emitter<B> scatter;
+        if (left.canScatter())
+            scatter = left;
+        else {
+            var ae = new AsyncEmitter<>(bt, left.vars());
+            ae.registerProducer(left);
+            scatter = ae;
+        }
+        var gather = new AsyncEmitter<>(bt, outVars);
+        for (int i = 0, n = right.opCount(); i < n; i++) {
+            Plan operand = right.op(i);
+            SparqlClient client;
+            SparqlQuery sparql;
+            if (operand instanceof Query query) {
+                sparql = query.sparql;
+                client = query.client;
+            } else {
+                sparql = operand;
+                client = clientForAlgebra;
+            }
+            if (weakDedup)        sparql = sparql.toDistinct(WEAK);
+            gather.registerProducer(client.emit(new EmitBindQuery<>(sparql, scatter, type)));
+        }
+
+        int cdc = right.crossDedupCapacity;
+        int dedupCols = outVars.size();
+        Dedup<B> dedup;
+        if      (weakDedup) dedup = new WeakDedup<>(bt, dedupCapacity(), dedupCols);
+        else if (cdc >   0) dedup = new WeakCrossSourceDedup<>(bt, cdc, dedupCols);
+        else                return gather;
+        return bt.filter(outVars, dedup).subscribeTo(gather);
+    }
+
+    public static <B extends Batch<B>> Emitter<B>
+    preferNativeEmit(BatchType<B> bType, Plan join, boolean weakDedup) {
+        BindType type = join.type.bindType();
+        if (type == null) throw new IllegalArgumentException("Unsupported: Plan type");
+        Emitter<B> left = join.op(0).emit(bType, weakDedup);
+        for (int i = 1, n = join.opCount(); i < n; i++) {
+            var r = join.op(i);
+            if (r instanceof Union u && u.right == null) r = u.left();
+            var projection = i == n-1 ? join.publicVars()
+                    : type.resultVars(left.vars(), r.publicVars());
+            if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
+                var sparql = q.query();
+                if (weakDedup)        sparql = sparql.toDistinct(WEAK);
+                left = q.client.emit(new EmitBindQuery<>(sparql, left, type));
+            } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
+                left = multiBindEmit(left, type, projection, rUnion, weakDedup, null);
+            } else {
+                left = new ForPlan<>(new EmitBindQuery<>(r, left, type), weakDedup, projection);
+            }
+        }
+        // if the join has a projection (due to reordering, not due to outer Modifier)
+        // a sequence of native joins might not match that projection, thus we must project.
+        // for non-native joins, the last join already honors Join.projection.
+        return Emitters.withVars(join.publicVars(), left);
+    }
+
 }

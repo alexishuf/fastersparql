@@ -43,6 +43,9 @@ class ValuesTest {
             drainer.drainOrdered(plan.execute(TERM), rows, null);
             // iterate again, but converting the batch type
             drainer.drainOrdered(plan.execute(COMPRESSED), rows, null);
+            // test Emitter
+            drainer.drainOrdered(plan.emit(TERM), rows, null);
+            drainer.drainOrdered(plan.emit(COMPRESSED), rows, null);
             if (rows.isEmpty()) return;
 
             // iterate again but write garbage to batch

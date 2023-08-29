@@ -72,6 +72,6 @@ public class CsvParserTest  extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(String in, Results expected) throws Exception {
-        doTest(new SVParserBIt.CsvFactory(), expected, SegmentRope.of(in));
+        doTest(new SVParser.CsvFactory(), expected, SegmentRope.of(in));
     }
 }

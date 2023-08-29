@@ -256,12 +256,12 @@ public final class SparqlEndpoint {
             sb.setLength(sb.length()-1);
         }
         if (configuration.hasResultsAccepts()) {
-            if (sb.length() > 0) sb.append(',');
+            if (!sb.isEmpty()) sb.append(',');
             for (SparqlResultFormat fmt : configuration.resultsAccepts())
                 sb.append(fmt.lowercase()).append(',');
             sb.setLength(sb.length()-1);
         }
-        assert sb.length() > 0 : "Unexpected empty StringBuilder";
+        assert !sb.isEmpty() : "Unexpected empty StringBuilder";
         return sb.append('@').append(uri()).toString();
     }
 

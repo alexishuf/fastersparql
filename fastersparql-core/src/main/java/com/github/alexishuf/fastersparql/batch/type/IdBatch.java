@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -122,6 +123,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         cacheTerm(-1, null);
     }
 
+    public void dropCachedHashes() {
+        Arrays.fill(hashes, 0, rows*cols, 0);
+    }
+
     @Override public boolean beginOffer() {
         int base = rows * cols, required = base + cols;
         if (arr.length < required) return false;
@@ -164,6 +169,12 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return true;
     }
 
+    @Override public boolean abortOfferOrPut() throws IllegalStateException {
+        if (offerRowBase < 0) return false;
+        offerRowBase = -1;
+        return true;
+    }
+
     @Override public boolean offerRow(B other, int row) {
         int cols = other.cols;
         if (cols != this.cols) throw new IllegalArgumentException();
@@ -177,6 +188,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return false;
     }
 
+    @Override public boolean fits(B other) {
+        return (rows+other.rows)*cols <= arr.length;
+    }
+
     @Override public boolean offer(B other) {
         int out = rows * cols, nTerms = other.rows*other.cols;
         if (nTerms > arr.length-out) return false;
@@ -184,16 +199,28 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return true;
     }
 
-    @Override public void put(B other) {
-        int cols = other.cols;
-        if (cols != this.cols)
-            throw new IllegalArgumentException();
-        int oRows = other.rows;
+//    @Override public void put(B other) {
+//        int cols = other.cols;
+//        if (cols != this.cols)
+//            throw new IllegalArgumentException();
+//        int oRows = other.rows;
+//        reserve(oRows, 0);
+//        int items = oRows * cols;
+//        arraycopy(other.arr, 0, arr, rows*cols, items);
+//        arraycopy(other.hashes, 0, hashes, rows*cols,
+//                Math.min(other.hashes.length, items));
+//        rows += oRows;
+//    }
+
+    @Override public void putRange(B other, int begin, int end) {
+        int oRows = end-begin, cols = this.cols;
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+        if (oRows <= 0) return; // no-op
+
         reserve(oRows, 0);
-        int items = oRows * cols;
-        arraycopy(other.arr, 0, arr, rows*cols, items);
-        arraycopy(other.hashes, 0, hashes, rows*cols,
-                Math.min(other.hashes.length, items));
+        int src = begin*cols, dst = rows*cols, terms = oRows*cols;
+        arraycopy(other.arr,    src, arr,    dst, terms);
+        arraycopy(other.hashes, src, hashes, dst, terms);
         rows += oRows;
     }
 
@@ -217,6 +244,39 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
     }
 
+    @SuppressWarnings("unchecked") @Override
+    public <O extends Batch<O>> @This B putConverting(O other) {
+        if (other.type() == type()) {
+            put((B)other);
+        } else {
+            int cols = this.cols, rows = other.rows;
+            if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+            reserve(rows, 0);
+            Term t = Term.pooledMutable();
+            for (int r = 0; r < rows; r++)
+                putRowConverting(other, r, cols, t);
+            t.recycle();
+        }
+        return (B) this;
+    }
+
+    private <O extends Batch<O>> void putRowConverting(O other, int row, int cols, Term tmp) {
+        beginPut();
+        for (int c = 0; c < cols; c++) {
+            if (other.getView(row, c, tmp))
+                putTerm(c, tmp);
+        }
+        commitPut();
+    }
+
+    @Override public <O extends Batch<O>> void putRowConverting(O other, int row) {
+        int cols = this.cols;
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+        Term tmp = Term.pooledMutable();
+        putRowConverting(other, row, cols, tmp);
+        tmp.recycle();
+    }
+
     /* --- --- --- operation objects --- --- --- */
 
     public static final class Merger<B extends IdBatch<B>> extends BatchMerger<B> {
@@ -227,10 +287,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             super(batchType, outVars, sources);
         }
 
-        @Override public void release() {
+        @Override public void doRelease() {
             if (tmpIds    != null) tmpIds    = LONG.offer(tmpIds,       tmpIds.length);
             if (tmpHashes != null) tmpHashes =  INT.offer(tmpHashes, tmpHashes.length);
-            super.release();
+            super.doRelease();
         }
 
         @Override public B projectInPlace(B b) {
@@ -269,10 +329,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             super(batchType, vars, projector, rowFilter, before);
         }
 
-        @Override public void release() {
+        @Override public void doRelease() {
             if (tmpIds    != null) tmpIds    = LONG.offer(tmpIds,       tmpIds.length);
             if (tmpHashes != null) tmpHashes =  INT.offer(tmpHashes, tmpHashes.length);
-            super.release();
+            super.doRelease();
         }
 
         private B filterInPlaceEmpty(B b) {
@@ -284,9 +344,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                     case TERMINATE -> rows = -1;
                 }
             }
-            if (rows == -1 && survivors == 0) {
-                batchType.recycle(b);
-                return null;
+            if (rows == -1) {
+                cancelUpstream();
+                if (survivors == 0) return batchType.recycle(b);
             }
             if (projector != null)
                 b.cols = requireNonNull(projector.columns).length;
@@ -359,9 +419,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 b.cols = columns.length;
                 b.rows = out/columns.length;
             }
-            if (rows == -1 && out == 0) {
-                batchType.recycle(b);
-                return null;
+            if (rows == -1) {
+                cancelUpstream();
+                if (out == 0) return batchType.recycle(b);
             }
             return b;
         }

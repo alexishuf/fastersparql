@@ -1,0 +1,3 @@
+com.github.alexishuf.fastersparql.sparql.results.SVParser$CsvFactory
+com.github.alexishuf.fastersparql.sparql.results.SVParser$TsvFactory
+com.github.alexishuf.fastersparql.sparql.results.JsonParser$JsonFactory

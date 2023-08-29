@@ -7,7 +7,6 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 
 public class PatternCardinalityEstimator extends CardinalityEstimator {
@@ -38,7 +37,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
 
     public static class PatternLoader implements Loader {
         @Override
-        public CardinalityEstimator load(SparqlClient client, Spec spec) throws IOException, BadSerializationException {
+        public CardinalityEstimator load(SparqlClient client, Spec spec) throws BadSerializationException {
             return new PatternCardinalityEstimator(spec.getOr(PENALTY, DEFAULT_PENALTY));
         }
 
@@ -48,7 +47,7 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- estimation --- --- --- */
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
-        return switch (binding == null ? tp.varRoles() : tp.varRoles(binding)) {
+        return switch (binding == null ? tp.freeRoles() : tp.freeRoles(binding)) {
             //                              groundRoles
             case EMPTY       -> 1;       // SUB_PRE_OBJ
             case OBJ         -> 20;      // SUB_PRE

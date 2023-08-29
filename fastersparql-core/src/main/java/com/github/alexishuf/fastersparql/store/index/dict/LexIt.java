@@ -27,5 +27,5 @@ public abstract class LexIt {
      * Move the iterator to its end, causing the next {@link #advance()} call to
      * return {@code false}.
      */
-    public abstract void end();
+    @SuppressWarnings("unused") public abstract void end();
 }

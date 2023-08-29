@@ -56,7 +56,7 @@ public class WsBindingSeqBench {
         }
         batches.clear();
         for (int i = 0; i < N_BATCHES; i++) {
-            var b = COMPRESSED.create(seedBatch.rows, seedBatch.cols, seedBatch.bytesUsed());
+            var b = COMPRESSED.create(seedBatch.rows, seedBatch.cols, seedBatch.localBytesUsed());
             b.put(seedBatch);
             batches.add(b);
         }

@@ -6,6 +6,8 @@ import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -48,6 +50,23 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         return null;
     }
 
+    public static final class Converter implements BatchConverter<StoreBatch> {
+        private final int dictId;
+
+        private Converter(int dictId) {this.dictId = dictId;}
+
+        @Override public <I extends Batch<I>> BIt<StoreBatch> convert(BIt<I> in) {
+            return INSTANCE.convert(in, dictId);
+        }
+
+        @Override public <I extends Batch<I>> Emitter<StoreBatch> convert(Emitter<I> in) {
+            return INSTANCE.convert(in, dictId);
+        }
+
+    }
+
+    public Converter converter(int dictId) { return new Converter(dictId); }
+
     public <O extends Batch<O>> BIt<StoreBatch> convert(BIt<O> other, int dictId) {
         if (equals(other.batchType())) //noinspection unchecked
             return (BIt<StoreBatch>) other;
@@ -69,9 +88,37 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         }
     }
 
+    @Override public <I extends Batch<I>> Emitter<StoreBatch> convert(Emitter<I> emitter) {
+        if (equals(emitter.batchType())) //noinspection unchecked
+            return (Emitter<StoreBatch>) emitter;
+        throw new UnsupportedOperationException("use convert(Emitter emitter, int dictId)");
+    }
+
+    public <I extends Batch<I>> Emitter<StoreBatch>
+    convert(Emitter<I> emitter, int dictId) {
+        if (emitter.batchType() == this) //noinspection unchecked
+            return (Emitter<StoreBatch>) emitter;
+        return new StoreConverterStage<>(emitter, dictId);
+    }
+
+    private static final class StoreConverterStage<I extends Batch<I>>
+            extends ConverterStage<I, StoreBatch> {
+        private final int dictId;
+
+        public StoreConverterStage(Emitter<I> upstream, int dictId) {
+            super(INSTANCE, upstream);
+            this.dictId = dictId;
+        }
+
+        @Override public void putConverting(StoreBatch dest, I input) {
+            dest.putConverting(input, dictId);
+        }
+    }
+
     @Override public RowBucket<StoreBatch> createBucket(int rowsCapacity, int cols) {
         return new StoreBatchBucket(rowsCapacity, cols);
     }
+
 
     @Override public @Nullable Merger<StoreBatch> projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);

@@ -1,32 +1,38 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
-import com.github.alexishuf.fastersparql.client.BindQuery;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.*;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
+import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
@@ -41,16 +47,15 @@ import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
-import static com.github.alexishuf.fastersparql.model.BindType.MINUS;
+import static com.github.alexishuf.fastersparql.emit.Emitters.fromProducer;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(NettyWsSparqlClient.class);
-    private static int bindingsSerializerSizeHint = WsSerializer.DEF_BUFFER_HINT;
 
     private final NettyWsClient netty;
+    private int bindingsSizeHint = WsSerializer.DEF_BUFFER_HINT;
 
     private static SparqlEndpoint restrictConfig(SparqlEndpoint endpoint) {
         SparqlConfiguration request = endpoint.configuration();
@@ -90,36 +95,24 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     @Override protected void doClose() { netty.close(); }
 
-    @Override
-    public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        if (sparql.isGraph())
-            throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
-        acquireRef();
-        try {
-            return new WsBIt<>(batchType, sparql);
-        } catch (Throwable t) {
-            throw FSException.wrap(endpoint, t);
-        } finally {
-            releaseRef();
-        }
+    @Override public <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
+        ByteRope msg = createRequest(QUERY_VERB, sparql.sparql(), null);
+        return new WsBIt<>(msg, bt, sparql.publicVars(), null);
     }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
-        acquireRef();
-        try {
-            var sp = bq.query;
-            var bindings = bq.bindings;
-            var type = bq.type;
-            if (sp.isGraph())
-                throw new FSInvalidArgument("query() method only takes SELECT/ASK queries");
-            if (type == MINUS && !bindings.vars().intersects(sp.allVars()))
-                return bindings;
-            return new WsBIt<>(bq);
-        } catch (Throwable t) {
-            throw FSException.wrap(endpoint, t);
-        } finally {
-            releaseRef();
+    @Override
+    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+        return fromProducer(bt, sparql.publicVars(), new WsProducer<>(bt, sparql, null));
         }
+
+    @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
+        ByteRope msg = createRequest(BIND_VERB[bq.type.ordinal()], bq.query.sparql(), null);
+        return new WsBIt<>(msg, bq.batchType(), bq.resultVars(), bq);
+    }
+
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
+        BatchType<B> bt = query.bindings.batchType();
+        return fromProducer(bt, query.resultVars(), new WsProducer<>(bt, query.query, query));
     }
 
     /* --- --- --- helper methods --- --- --- */
@@ -132,150 +125,216 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             "!not-exists ".getBytes(UTF_8),
             "!minus "     .getBytes(UTF_8),
     };
-    private static Rope createRequest(byte[] verb, Rope sparql) {
-        int lfCount = sparql.get(sparql.len()-1) != '\n' ? 1 : 0;
-        ByteRope r = new ByteRope(verb.length + sparql.len() + lfCount);
-        r.append(verb).append(sparql);
-        if (lfCount > 0) r.append('\n');
-        return r;
+
+    private static ByteRope createRequest(byte[] verb, Rope sparql, @Nullable ByteRope offer) {
+        int addLF = sparql.get(sparql.len()-1) != '\n' ? 1 : 0;
+        int required = verb.length + sparql.len() + addLF;
+        if (offer == null) offer = new ByteRope(required);
+        else               offer.clear().ensureFreeCapacity(required);
+
+        offer.append(verb).append(sparql);
+        if (addLF != 0) offer.append('\n');
+        return offer;
     }
 
-    /* --- --- --- BIt implementations --- --- --- */
+    private void adjustBindingsSizeHint(int observed) {
+        bindingsSizeHint = adjustSizeHint(bindingsSizeHint, observed);
+    }
 
-    private class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B>
+    /* --- --- --- BIt/Emitter implementations --- --- --- */
+
+    private final class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> {
+        private final WsHandler<B> handler;
+
+        public WsBIt(ByteRope requestMsg, BatchType<B> batchType, Vars vars,
+                     @Nullable BindQuery<B> bindQuery) {
+            super(batchType, vars, FSProperties.queueMaxRows(), NettyWsSparqlClient.this);
+            this.handler = new WsHandler<>(requestMsg, this, bindQuery);
+            acquireRef();
+        }
+
+        @Override protected void cleanup(@Nullable Throwable e) { releaseRef(); }
+        @Override protected void request()                      { netty.open(handler); }
+    }
+
+    private final class WsProducer<B extends Batch<B>> extends NettyCallbackProducer<B> {
+        private final BatchType<B> batchType;
+        private final SparqlQuery query;
+        private final @Nullable EmitBindQuery<B> bindQuery;
+        private @Nullable ByteRope request;
+        private @Nullable WsHandler<B> handler;
+        private @Nullable BatchBinding<B> binding;
+
+        public WsProducer(BatchType<B> bt, SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
+           super(NettyWsSparqlClient.this);
+           this.batchType = bt;
+           this.query = query;
+           this.bindQuery = bindQuery;
+           acquireRef();
+        }
+
+        private WsHandler<B> makeHandler() {
+            var query    = binding   == null ? this.query : this.query.bound(binding);
+            var verb     = bindQuery == null ? QUERY_VERB : BIND_VERB[bindQuery.type.ordinal()];
+            this.request = createRequest(verb, query.sparql(), this.request);
+            return new WsHandler<>(request, this, bindQuery);
+        }
+
+        @Override protected void doRelease() {
+            if (binding != null) binding.batch = batchType.recycle(binding.batch);
+            releaseRef();
+        }
+        @Override protected void request()   {
+            if (handler == null)
+                handler = makeHandler();
+            netty.open(handler);
+        }
+
+        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+            int st = resetForRebind(0, LOCKED_MASK);
+            try {
+                assert binding.batch != null && binding.row < binding.batch.rows;
+                if (this.binding != null)
+                    this.binding.batch = batchType.recycle(this.binding.batch);
+                this.binding = new BatchBinding<>(binding);
+                WsHandler<B> h = handler;
+                if (h != null)
+                    h.parser.feedEnd();
+                handler = null;
+            } finally {
+                unlock(st);
+            }
+        }
+    }
+
+    private final class WsHandler<B extends Batch<B>>
             implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf> {
-        private final Rope requestMessage;
-        private final WsClientParserBIt<B> parser;
-        private boolean gotFrames = false;
-        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
-        protected @MonotonicNonNull ChannelRecycler recycler;
+        private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
+        private final ByteRope requestMsg;
+        private boolean gotFrames;
+        private @Nullable ByteBufRopeView bbRopeView;
+        private final WsClientParser<B> parser;
+        private @MonotonicNonNull ChannelHandlerContext ctx;
+        private @MonotonicNonNull ChannelRecycler recycler;
 
-        public WsBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), queueMaxRows());
-            this.requestMessage = createRequest(QUERY_VERB, query.sparql());
-            this.parser = new WsClientParserBIt<>(this, this);
-            request();
+        public WsHandler(ByteRope requestMsg, CompletableBatchQueue<B> destination,
+                         @Nullable BindQuery<B> bq) {
+            this.requestMsg = requestMsg;
+            if (bq == null) {
+                this.parser = new WsClientParser<>(this, destination);
+            } else {
+                var useful = bq.bindingsVars().intersection(bq.query.publicVars());
+                this.parser = new WsClientParser<>(this, destination, bq, useful);
+            }
         }
 
-        public WsBIt(BindQuery<B> bindQuery) {
-            super(bindQuery.bindings.batchType(), bindQuery.resultVars(), queueMaxRows());
-            SparqlQuery query = bindQuery.query;
-            this.requestMessage = createRequest(BIND_VERB[bindQuery.type.ordinal()], query.sparql());
-            var usefulBindingVars = bindQuery.bindings.vars().intersection(query.allVars());
-            this.parser = new WsClientParserBIt<>(this, this,
-                                                  bindQuery, usefulBindingVars);
-            request();
+        /* --- --- --- NettyWsClientHandler methods --- --- --- */
+
+        @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
+            assert this.ctx == null : "previous attach()";
+            this.recycler = recycler;
+            if (parser.isDestinationTerminated()) { // cancel()ed before WebSocket established
+                recycler.recycle(ctx.channel());
+            } else {
+                this.ctx = ctx;
+                this.bbRopeView = ByteBufRopeView.create();
+                var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
+                                                requestMsg.backingArrayOffset(), requestMsg.len);
+                ctx.writeAndFlush(new TextWebSocketFrame(bb));
+            }
         }
 
-        @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            bbRopeView.recycle();
-            parser.close();
+        @Override public void detach(@Nullable Throwable error) { complete(error); }
+
+        @Override public void frame(WebSocketFrame frame) {
+            if (frame instanceof TextWebSocketFrame f) {
+                if (bbRopeView == null)
+                    return; // ignore frame after complete
+                gotFrames = true;
+                try {
+                    parser.feedShared(bbRopeView.wrapAsSingle(f.content()));
+                } catch (TerminatedException|CancelledException e) {
+                    sendCancel();
+                }
+            } else if (frame instanceof CloseWebSocketFrame) {
+                complete(null);
+            } else {
+                complete(new FSServerException("Unexpected frame type: "));
+            }
+        }
+
+        /* --- --- --- private helpers --- --- --- */
+
+        private void complete(@Nullable Throwable error) {
+            if (error instanceof FSServerException serverError && gotFrames)
+                serverError.shouldRetry(false);
+            if (error == null && !gotFrames)
+                error = new InvalidSparqlResultsException("Empty response").shouldRetry(true);
+            if (error == null) parser.feedEnd();
+            else               parser.feedError(FSException.wrap(endpoint, error));
+
+            if (bbRopeView != null) {
+                bbRopeView.recycle();
+                bbRopeView = null;
+                recycler.recycle(ctx.channel());
+            }
+        }
+
+        private void sendCancel() {
+            if (bbRopeView == null || ctx == null || !ctx.channel().isActive())
+                return; // do not send frame after complete() or before attach()
+            ctx.writeAndFlush(new TextWebSocketFrame(Unpooled.wrappedBuffer(CANCEL_MSG)));
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
 
         @Override public void sendFrame(ByteBuf content) {
-            State state = state();
-            if (state != State.ACTIVE) {
-                log.debug("{}: ignoring sendFrame({}): {}", this, content, state);
-                content.release();
-                return;
-            }
-            final Channel ch = this.channel;
-            if (ch == null)
+            if (ctx == null) {
                 throw new IllegalStateException("sendFrame() before attach()");
-            ch.writeAndFlush(new TextWebSocketFrame(content));
+            } else if (bbRopeView == null) {
+                log.debug("{}.sendFrame() after complete(), dropping {}", this, content);
+                content.release();
+            } else {
+                ctx.writeAndFlush(new TextWebSocketFrame(content));
+            }
         }
 
         @Override public ByteBufSink createSink() {
-            if (channel == null)
-                throw new IllegalStateException("createSink before attach()");
-            return new ByteBufSink(channel.alloc());
+            return new ByteBufSink(ctx == null ? UnpooledByteBufAllocator.DEFAULT : ctx.alloc());
         }
 
-        private final class BindingSerializerTask extends NettyResultsSender<TextWebSocketFrame> {
-            private static final byte[] CANCEL_MSG = "!cancel unknown reason\n".getBytes(UTF_8);
-            public BindingSerializerTask(ChannelHandlerContext ctx) {
-                super(WsSerializer.create(bindingsSerializerSizeHint), ctx);
-                sink.sizeHint(bindingsSerializerSizeHint);
-            }
+        /* --- --- --- ResultsSender --- --- --- */
 
-            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
-                return new TextWebSocketFrame(bb);
+        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
+            if (ctx == null)
+                throw new IllegalStateException("createSender() before attach()");
+            return new BindingsSender(ctx);
+        }
+
+        private final class BindingsSender extends NettyResultsSender<TextWebSocketFrame> {
+            public BindingsSender(ChannelHandlerContext ctx) {
+                super(WsSerializer.create(bindingsSizeHint), ctx);
+                sink.sizeHint(bindingsSizeHint);
             }
-            @Override protected void onError(Throwable t) { complete(t); }
 
             @Override protected void onRelease() {
                 super.onRelease();
                 ((WsSerializer)serializer).recycle();
             }
 
-            @Override public void sendError(Throwable t) {
-                execute(Unpooled.copiedBuffer("!error "+t.toString().replace("\n", "\\n")+"\n", UTF_8));
-            }
-
             @Override public void sendTrailer() {
-                bindingsSerializerSizeHint = adjustSizeHint(bindingsSerializerSizeHint,
-                                                            sink.sizeHint());
+                adjustBindingsSizeHint(sink.sizeHint());
                 super.sendTrailer();
             }
 
-            @Override public void sendCancel() {
-                if (channel != null && channel.isActive()) {
-                    touch();
-                    execute(new TextWebSocketFrame(sink.append(CANCEL_MSG).take()));
-                }
+            @Override public void sendError(Throwable t) {
+                var escaped = t.toString().replace("\n", "\\n");
+                execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8));
             }
-        }
 
-        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
-            if (channel == null)
-                throw new IllegalStateException("createSender before attach()");
-            return new BindingSerializerTask(channel.pipeline().lastContext());
-        }
-
-        /* --- --- --- NettySPSCBIt methods --- --- --- */
-
-        @Override public    SparqlClient      client() { return NettyWsSparqlClient.this; }
-        @Override protected void             request() { netty.open(this); }
-        @Override protected void afterNormalComplete() { recycler.recycle(channel); }
-
-        /* --- --- --- WsClientHandler methods --- --- --- */
-
-        @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
-            assert channel == null : "previous attach()";
-            this.recycler = recycler;
-            if (state() != State.ACTIVE) {
-                this.recycler.recycle(ctx.channel());
-                return;
-            }
-            this.channel = ctx.channel();
-            ctx.writeAndFlush(new TextWebSocketFrame(NettyRopeUtils.wrap(requestMessage, UTF_8)));
-        }
-
-        @Override public void detach(Throwable cause) {
-            if (state() == State.ACTIVE) { // flush parser, which may call end() or onError(String)
-                parser.complete(null);
-                if (state() == State.ACTIVE) {
-                    if (cause == null) {
-                        cause = new FSServerException("Connection closed before "
-                                + (gotFrames ? "!end but after " : "") + "starting a response"
-                        ).shouldRetry(!gotFrames);
-                    }
-                    complete(cause);
-                }
-            }
-        }
-
-        @Override public void frame(WebSocketFrame frame) {
-            gotFrames = true;
-            if (frame instanceof TextWebSocketFrame t) {
-                parser.feedShared(bbRopeView.wrapAsSingle(t.content()));
-            } else if (state() == State.ACTIVE && !(frame instanceof CloseWebSocketFrame)) {
-                var suffix = frame == null ? "null frame" : frame.getClass().getSimpleName();
-                complete(new FSServerException("Unexpected "+suffix));
-            }
+            @Override protected void               onError(Throwable t) { complete(t); }
+            @Override public    void               sendCancel()         { WsHandler.this.sendCancel(); }
+            @Override protected TextWebSocketFrame wrap(ByteBuf bb)     { return new TextWebSocketFrame(bb); }
         }
     }
 }

@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -11,9 +13,9 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
@@ -25,7 +27,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-import static com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt.createFor;
+import static com.github.alexishuf.fastersparql.sparql.results.ResultsParser.createFor;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
 @State(Scope.Thread)
@@ -112,6 +114,7 @@ public class ResultsParserBench {
 
         @Override public ResultsSender<S, T> createSender() {
             return new ResultsSender<>(WsSerializer.create(), null) {
+                @Override public void preTouch() {}
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                 @Override public void sendSerialized(Batch<?> batch) {}
                 @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
@@ -147,36 +150,26 @@ public class ResultsParserBench {
         return drainedRows;
     }
 
-    private int parse(ResultsParserBIt parser, BIt it) {
+    private int parse(ResultsParser parser, BIt it) {
         this.drainedRows = -1;
         this.it = it;
         LockSupport.unpark(drainer);
         List<SegmentRope> fragments = fragmentsLists.get(nextFragmentList);
         nextFragmentList = (nextFragmentList+1) % fragmentsLists.size();
-        try (parser) {
+        try {
             for (var fragment : fragments)
                 parser.feedShared(fragment);
-            parser.complete(null);
-        }
+            parser.feedEnd();
+        } catch (TerminatedException|CancelledException ignored) {}
         return waitDrainer();
     }
 
-    private ResultsParserBIt createParser() {
-        return format != SparqlResultFormat.WS ? createFor(format, bt, vars, maxItems)
-                : new WsClientParserBIt(wsFrameSender, bt, vars, maxItems);
-    }
-    private ResultsParserBIt createParser(CallbackBIt delegate) {
+    private ResultsParser createParser(CallbackBIt delegate) {
         return format != SparqlResultFormat.WS ? createFor(format, delegate)
-                : new WsClientParserBIt(wsFrameSender, delegate);
+                : new WsClientParser(wsFrameSender, delegate);
     }
 
     @Benchmark public int parse(Blackhole blackhole) {
-        this.blackhole = blackhole;
-        var parser = createParser();
-        return parse(parser, parser);
-    }
-
-    @Benchmark public int parseDelegate(Blackhole blackhole) {
         this.blackhole = blackhole;
         SPSCBIt delegate = new SPSCBIt<>(bt, vars, maxItems);
         var parser = createParser(delegate);

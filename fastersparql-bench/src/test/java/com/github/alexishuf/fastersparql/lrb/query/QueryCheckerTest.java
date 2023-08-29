@@ -43,7 +43,7 @@ class QueryCheckerTest {
         B ex = qry.expected(bt);
         assertNotNull(ex);
         var consumer = new QueryChecker<>(bt, qry) {
-            @Override public void finish(@Nullable Throwable error) {
+            @Override public void doFinish(@Nullable Throwable error) {
                 if (error == null ) finish.complete(null);
                 else                finish.completeExceptionally(error);
             }

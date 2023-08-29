@@ -95,7 +95,7 @@ public final class PlanRegistry {
 
     /* --- --- --- implementation --- --- --- */
 
-    @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+    @SuppressWarnings({"MismatchedQueryAndUpdateOfCollection", "unused"})
     private static class Node {
         String operator;
         Map<Object, Object> params;

@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
@@ -63,7 +64,7 @@ public class Federation extends AbstractSparqlClient {
         this.specPathsRelativeTo = specPathsRelativeTo;
     }
 
-    @Override public RefGuard retain() { return new RefGuard(); }
+    @Override public Guard retain() { return new RefGuard(); }
 
     @Override protected void doClose() { closeAll(sources); }
 
@@ -251,27 +252,34 @@ public class Federation extends AbstractSparqlClient {
 
     /* --- --- --- querying --- --- --- */
 
-    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
-        acquireRef();
-        try {
-            long entryNs = Timestamp.nanoTime();
-            var m = new FedMetrics(this, sparql);
-            var it = plan(sparql, m).execute(batchType);
-            m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
+    @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
+        long entryNs = Timestamp.nanoTime();
+        var m = new FedMetrics(this, sparql);
+        var it = plan(sparql, m).execute(bt);
+        m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
-            // deliver metrics
-            for (var l : fedListeners)
-                l.accept(m);
-            return it;
-        } finally {
-            releaseRef();
-        }
+        // deliver metrics
+        for (var l : fedListeners)
+            l.accept(m);
+        return it;
+    }
+
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+        long entryNs = Timestamp.nanoTime();
+        var m = new FedMetrics(this, sparql);
+        var it = plan(sparql, m).emit(bt);
+        m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
+
+        // deliver metrics
+        for (var l : fedListeners)
+            l.accept(m);
+        return it;
     }
 
     public <B extends Batch<B>> Plan plan(SparqlQuery sparql) {
         acquireRef();
+        long entryNs = Timestamp.nanoTime();
         try {
-            long entryNs = Timestamp.nanoTime();
             var m = new FedMetrics(this, sparql);
 
             Plan root = plan(sparql, m);
@@ -560,7 +568,7 @@ public class Federation extends AbstractSparqlClient {
     }
 
     private Plan trivialPlan(Plan plan) {
-        if (sources.size() == 0) return new Empty(plan);
+        if (sources.isEmpty()) return new Empty(plan);
         return switch (plan.type) {
             case JOIN -> {
                 var cli = sources.get(0).client;

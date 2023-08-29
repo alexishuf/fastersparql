@@ -2,7 +2,9 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.RepeatedTest;
@@ -141,6 +143,7 @@ class HdtBatchTest {
         var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, null, new RowFilter<>() {
             int calls = 0;
             @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
+            @Override public void rebind(BatchBinding<HdtBatch> binding) throws RebindException {}
         }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie}, 3, 1);
@@ -153,6 +156,7 @@ class HdtBatchTest {
         var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, projector, new RowFilter<>() {
             int calls = 0;
             @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
+            @Override public void rebind(BatchBinding<HdtBatch> binding) throws RebindException {}
         }, null);
 
         var b = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);

@@ -2,11 +2,16 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
+import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,7 +31,6 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     protected final SparqlEndpoint endpoint;
     protected boolean bindingAwareProtocol;
     private boolean closeCalled;
-    protected boolean closed;
     @SuppressWarnings("unused") private int plainRefs;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -51,24 +55,28 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         }
     }
 
-    protected final void acquireRef() {
-        int old = (int)REFS.getAndAddAcquire(this, 1);
-        if (old <= 0) {
-            REFS.getAndAddRelease(this, -1);
-            throw mkClosed();
-        }
+    protected final void acquireRef() throws FSIllegalStateException {
+        if ((int)REFS.getAndAddAcquire(this, 1) <= 0)
+            badAcquireRef();
+    }
+
+    private void badAcquireRef() {
+        REFS.getAndAddRelease(this, -1);
+        throw new FSIllegalStateException(endpoint, this + ": already closed");
     }
 
     protected final void releaseRef() {
         int old = (int) REFS.getAndAddRelease(this, -1);
-        if (old == 1) {
-            closed = true;
+        if (old == 1)
             doClose();
-        } else if (old <= 0) {
-            REFS.getAndAddAcquire(this, 1);
-            log.error("Ignoring release without matching acquire",
-                      new IllegalStateException(this + ": release without matching acquire"));
-        }
+        else if (old <= 0)
+            badReleaseRef();
+    }
+
+    private void badReleaseRef() {
+        REFS.getAndAddAcquire(this, 1);
+        log.error("Ignoring release without matching acquire",
+                  new IllegalStateException(this + ": release without matching acquire"));
     }
 
     protected abstract void doClose();
@@ -79,23 +87,79 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         releaseRef();
     }
 
-    protected FSIllegalStateException mkClosed() {
-        return new FSIllegalStateException(endpoint, this+": already closed");
+    /* --- --- --- query implementations --- --- --- */
+
+    protected abstract <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql);
+    protected abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql);
+
+    protected <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
+        return new ClientBindingBIt<>(bq, this);
+    }
+
+    protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
+        return new BindingStage.ForSparql<>(query, this);
     }
 
     /* --- --- --- interface implementations --- --- --- */
 
     @Override public SparqlEndpoint endpoint() { return endpoint; }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> q) {
-        if (q.query.isGraph())
+    @Override public final <B extends Batch<B>> BIt<B> query(BatchType<B> bt, SparqlQuery sparql) {
+        if (sparql.isGraph())
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
-        if (closed)
-            throw mkClosed();
+        acquireRef();
         try {
-            return new ClientBindingBIt<>(q, this);
+            return doQuery(bt, sparql);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
+    }
+
+    @Override
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> bt, SparqlQuery sparql) {
+        if (sparql.isGraph())
+            throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+        acquireRef();
+        try {
+            return doEmit(bt, sparql);
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
+    }
+
+    @Override public final <B extends Batch<B>> BIt<B> query(ItBindQuery<B> q) {
+        if (q.query.isGraph())
+            throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
+        acquireRef();
+        try {
+            BIt<B> bindings = q.bindings;
+            if (q.type == BindType.MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
+                return bindings;
+            return doQuery(q);
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
+        }
+    }
+
+    @Override public final <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> q) {
+        if (q.query.isGraph())
+            throw new InvalidSparqlQueryType("emit() method only takes SELECT/ASK queries");
+        acquireRef();
+        try {
+            var bindings = q.bindings;
+            if (q.type == BindType.MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
+                return bindings;
+            return doEmit(q);
+        } catch (Throwable t) {
+            throw FSException.wrap(endpoint, t);
+        } finally {
+            releaseRef();
         }
     }
 

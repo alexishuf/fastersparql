@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
@@ -10,8 +11,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 
 public class LowLevelHelper {
-    public static final boolean ENABLE_VEC = System.getProperty("org.graalvm.home") == null;
-    public static final boolean ENABLE_UNSAFE = System.getProperty("org.graalvm.home") == null;
+    public static final boolean ENABLE_VEC = FSProperties.useVectorization();
+    public static final boolean ENABLE_UNSAFE = FSProperties.useUnsafe();
     public static final int U8_BASE;
     public static final boolean HAS_UNSAFE;
     public static final Unsafe U;

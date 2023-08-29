@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -36,6 +38,12 @@ public final class Empty extends Plan {
             vars = vars.minus(binding.vars);
         //noinspection resource
         return new EmptyBIt<>(bt, vars).metrics(Metrics.createIf(this));
+    }
+
+    @Override
+    public <B extends Batch<B>>
+    Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        return Emitters.empty(type, publicVars);
     }
 
     @Override public boolean equals(Object obj) {

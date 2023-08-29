@@ -107,7 +107,7 @@ public class LocalityCompositeDict extends Dict {
         SortedCompositeDict.validateNtStrings(lookup());
     }
 
-    public LocalityStandaloneDict shared() { return sharedDict; }
+    @SuppressWarnings("unused") public LocalityStandaloneDict shared() { return sharedDict; }
 
     @Override public AbstractLookup polymorphicLookup() { return lookup(); }
 
@@ -230,10 +230,13 @@ public class LocalityCompositeDict extends Dict {
             while (id <= nStrings) {
                 long off = readOff(id - 1);
                 int len = (int)(readOff(id)-off);
-                tmp.slice(off, len);
                 int diff = compare1_1(b64, 0, 5, seg, off, 5);
-                if (diff == 0)
-                    diff =  local.compareTo(tmp, 5, len);
+                if (diff == 0) {
+                    tmp.slice(off, len);
+                    diff = local.compareTo(tmp, 5, len);
+                    if (diff == 0)
+                        return id;
+                }
                 id = (id << 1) + (~diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
             }
             return NOT_FOUND;

@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.plain;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static java.lang.Integer.MAX_VALUE;
 import static org.rdfhdt.hdt.enums.ResultEstimationType.EXACT;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;

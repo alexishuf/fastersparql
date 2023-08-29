@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 
 public class UnboundSparqlClient extends AbstractSparqlClient {
@@ -19,11 +20,19 @@ public class UnboundSparqlClient extends AbstractSparqlClient {
 
     @Override protected void doClose() {}
 
-    @Override public <B extends Batch<B>> BIt<B> query(BatchType<B> batchType, SparqlQuery sparql) {
+    @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> batchType, SparqlQuery sparql) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
 
-    @Override public <B extends Batch<B>> BIt<B> query(BindQuery<B> bq) {
+    @Override protected <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
+        throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
+    }
+
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+        throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
+    }
+
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
 }

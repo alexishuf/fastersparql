@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -18,7 +17,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.FSProperties.distinctCapacity;
 import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
 
 public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.BatchConsumer {
@@ -27,7 +25,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     private final QueryName queryName;
     private final @Nullable StrongDedup<B> expected;
     private final @Nullable StrongDedup<B> observed;
-    public final B unexpected;
+    public B unexpected;
     private int rows;
     private @Nullable String explanation;
 
@@ -40,14 +38,23 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             expected = observed = null;
             unexpected = batchType.createSingleton(vars.size());
         } else {
-            expected = batchType.dedupPool.getDistinct(distinctCapacity(), b.cols);
+            expected = StrongDedup.strongForever(batchType, b.rows, b.cols);
             for (int r = 0; r < b.rows; r++)
                 expected.add(b, r);
-            observed = batchType.dedupPool.getDistinct(distinctCapacity(), b.cols);
+            observed = StrongDedup.strongForever(batchType, b.rows, b.cols);
             unexpected = batchType.create(PREFERRED_MIN_BATCH, b.cols, PREFERRED_MIN_BATCH*32);
         }
-        unexpected.markGarbage();
     }
+
+    @Override public final void finish(@Nullable Throwable error) {
+        try {
+            doFinish(error);
+        } finally {
+            unexpected = unexpected.recycle();
+        }
+    }
+
+    protected abstract void doFinish(@Nullable Throwable error);
 
     public boolean isValid() { return OK.equals(explanation()); }
 
@@ -66,11 +73,13 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
                 if (!stop) sb.append("\n  ").append(b.toString(r));
                 return stop;
             });
+            if (missing[0] == 0)
+                sb.append(" 0");
             if (missing[0] == 0 && unexpected.rows == 0)
                 return OK;
             if (missing[0] >= 10)
                 sb.append("\n  +").append(missing[0]-9);
-            sb.append("\n Unexpected rows: ").append(unexpected.rows);
+            sb.append("\nUnexpected rows: ").append(unexpected.rows);
             for (int r = 0, n = Math.min(unexpected.rows, 9); r < n; r++)
                 sb.append("\n  ").append(unexpected.toString(r));
             if (unexpected.rows > 9)
@@ -131,12 +140,17 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         });
     }
 
-    @Override public void start(BIt<?> it) {
-        rows = 0;
-        unexpected.clear();
-        if (observed != null)
-            observed.clear(observed.cols());
+    @Override public void start(Vars vars) {
+        rows        = 0;
         explanation = null;
+        if (observed != null) {
+            if (unexpected == null)//noinspection unchecked
+                unexpected = (B)batchType.create(PREFERRED_MIN_BATCH, vars.size(), 0);
+            else
+                unexpected.clear();
+            observed.clear(observed.cols());
+            assert observed.cols() == vars.size();
+        }
     }
 
     @Override public void accept(Batch<?> genericBatch) {

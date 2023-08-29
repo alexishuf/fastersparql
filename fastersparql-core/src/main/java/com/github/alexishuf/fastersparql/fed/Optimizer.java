@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static java.lang.Long.*;
 
 public class Optimizer extends CardinalityEstimator {
@@ -491,13 +492,6 @@ public class Optimizer extends CardinalityEstimator {
         }
     }
 
-    /** Equivalent to {@link #optimize(Plan, Vars)} with {@link Vars#EMPTY} */
-    public Plan optimize(Plan plan) {
-        State state = getState(plan);
-        Plan out = state.optimize(plan, true);
-        state.release();
-        return out;
-    }
     /**
      * Recursively performs filter-pushing and join-reordering on the plan rooted at {@code plan}.
      *
@@ -505,14 +499,8 @@ public class Optimizer extends CardinalityEstimator {
      * @return plan itself, with possibly mutated tree or a {@link Modifier} wrapping a
      *         possibly mutated tree.
      */
-    public Plan optimize(Plan plan, Vars boundVars) {
+    public Plan optimize(Plan plan) {
         State state = getState(plan);
-        var grounded = state.grounded;
-        for (var name : boundVars) {
-            int i = grounded.vars.indexOf(name);
-            if (i >= 0)
-                grounded.set(i, GROUND);
-        }
         Plan out = state.optimize(plan, true);
         state.release();
         return out;

@@ -769,40 +769,6 @@ class RopeTest {
         }
     }
     @ParameterizedTest @MethodSource("factories")
-    void testLsbHash(Factory fac) {
-        record D(String in, int expected) {
-            void test(Factory f, int row) {
-                String ctx = "at data[" + row + "]=" + this;
-                for (Rope r : f.create(in))
-                    assertEquals(expected, r.lsbHash(0, r.len()), ctx);
-                for (Rope r : f.create(" "+in+" "))
-                    assertEquals(expected, r.lsbHash(1, r.len()-1), ctx);
-                for (Rope r : f.create("!"+in+"!"))
-                    assertEquals(expected, r.lsbHash(1, r.len()-1), ctx);
-            }
-        }
-        List<D> data = List.of(
-                new D("", 0),
-                new D("a", 1),
-                new D("b", 0),
-                new D("ba", 2),
-                new D("ab", 1),
-                new D("!ab", 1|2),
-                new D("b!a", 2|4),
-                new D("a!!a    ", 0x0f),
-                new D("a!!a    a!!a", 0xf0f),
-                new D("a!!a    a!!a    a!!a    a!!a    ", 0x0f0f0f0f),
-                new D("\"   a!!a   \"", 0x0f0),
-                new D("\"   a!!aa!!a   \"", 0x0ff0),
-                new D("\"   a!!aa!!aa!!aa!!a   \"", 0x0ffff0),
-                new D("\"   a!!aa!!aa!!aa!!aa!!aa!!a   \"", 0x0ffffff0),
-                new D("\"   a!!a    a!!a    a!!aa!!a   \"", 0x0ff0f0f0)
-        );
-        for (int i = 0; i < data.size(); i++)
-            data.get(i).test(fac, i);
-    }
-
-    @ParameterizedTest @MethodSource("factories")
     void testReverseSkipUntil(Factory fac) {
         record D(String in, int ex) {
             void test(Factory f, int row) {

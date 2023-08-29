@@ -2,9 +2,12 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
@@ -42,10 +45,21 @@ public final class Values extends Plan {
         return new ValuesBIt<>(batchType, values == null ? null : batchType.convert(values));
     }
 
+    @Override
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+        TermBatch values = this.values;
+        if (weakDedup && values != null && values.rows > 1)
+            values = dedupValues();
+        if (values == null)
+            return Emitters.empty(type, publicVars);
+        values = values.copy(null);
+        return type.convert(Emitters.ofBatch(publicVars, values));
+    }
+
     private TermBatch dedupValues() {
         TermBatch dedupValues = this.dedupValues;
         if (dedupValues == null && values != null) {
-            var filter = TERM.filter(publicVars, TERM.dedupPool.getWeak(values.rows, values.cols));
+            var filter = TERM.filter(publicVars, new WeakDedup<>(TERM, values.rows, values.cols));
             this.dedupValues = dedupValues = filter.filter(null, values);
             filter.release();
         }

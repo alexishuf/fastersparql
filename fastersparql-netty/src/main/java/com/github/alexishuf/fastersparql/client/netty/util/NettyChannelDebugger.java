@@ -40,7 +40,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    public static void dumpActive(PrintStream dest) {
+    @SuppressWarnings("unused") public static void dumpActive(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
@@ -58,7 +58,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    public static void dumpAndFlushActive(PrintStream dest) {
+    @SuppressWarnings("unused") public static void dumpAndFlushActive(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
@@ -110,7 +110,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
                 }
             }
         }
-        if (str.length() > 0 && str.charAt(str.length()-1) == '\n')
+        if (!str.isEmpty() && str.charAt(str.length()-1) == '\n')
             history.setLength(history.length()-MSG_LF.length());
     }
 
@@ -150,7 +150,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
     }
 
     @Override
-    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
         writeMessage(OUT_SIGN, msg);
         ctx.write(msg, promise);
     }

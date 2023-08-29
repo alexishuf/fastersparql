@@ -43,7 +43,7 @@ public class FSNettyProperties extends FSProperties {
      *                                  readable or if the file does not contain syntactically
      *                                  correct X.509 certificates in PEM format
      */
-    public static @Nullable File trustCertCollectionFile() {
+    @SuppressWarnings("unused") public static @Nullable File trustCertCollectionFile() {
         return readProperty(TRUST_CERT_COLLECTION_FILE, DEF_TRUST_CERT_COLLECTION_FILE, (src, val) -> {
             File file = new File(val);
             String expected = ", expected a file with X.509 certificates in PEM format";
@@ -67,14 +67,14 @@ public class FSNettyProperties extends FSProperties {
      *
      * @return A bool. If not set, will return false, the default.
      */
-    public static boolean startTls() { return readBoolean(START_TLS, DEF_START_TLS); }
+    @SuppressWarnings("unused") public static boolean startTls() { return readBoolean(START_TLS, DEF_START_TLS); }
 
     /**
      * Value for {@link SslContextBuilder#enableOcsp(boolean)} for use by {@link NettySparqlClient}s.
      *
      * @return A bool. If not set, will return false, the default.
      */
-    public static boolean ocsp() { return readBoolean(OCSP, DEF_OCSP); }
+    @SuppressWarnings("unused") public static boolean ocsp() { return readBoolean(OCSP, DEF_OCSP); }
 
     /**
      * Whether connections to an SPARQL endpoint should be pooled (if the server allows it).
@@ -87,7 +87,7 @@ public class FSNettyProperties extends FSProperties {
      *
      * @return whether a {@link NettySparqlClient} should pool its TCP connections.
      */
-    public static boolean pool() { return readBoolean(POOL_ENABLE, DEF_POOL_ENABLE); }
+    @SuppressWarnings("unused") public static boolean pool() { return readBoolean(POOL_ENABLE, DEF_POOL_ENABLE); }
 
     /**
      * If true, connection pools (see {@link FSNettyProperties#pool()}) will operate
@@ -99,7 +99,7 @@ public class FSNettyProperties extends FSProperties {
      *
      * @return whether connections on pools should be reused on a FIFO regime.
      */
-    public static boolean poolFIFO() { return readBoolean(POOL_FIFO, DEF_POOL_FIFO); }
+    @SuppressWarnings("unused") public static boolean poolFIFO() { return readBoolean(POOL_FIFO, DEF_POOL_FIFO); }
 
     /**
      * If {@code true} (the default), all {@link NettySparqlClient}s will share one single
@@ -118,7 +118,7 @@ public class FSNettyProperties extends FSProperties {
      * @return Whether {@link NettySparqlClient}s should share a single reference-counted
      *         {@link EventLoopGroup}. The default is {@code true}.
      */
-    public static boolean shareEventLoopGroup() {
+    @SuppressWarnings("unused") public static boolean shareEventLoopGroup() {
         return readBoolean(ELG_SHARED, DEF_ELG_SHARED);
     }
 

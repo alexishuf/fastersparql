@@ -8,8 +8,6 @@ import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 
-import java.io.IOException;
-
 public class FSStoreSelector extends Selector {
     public static final String NAME = "store";
     private final StoreSparqlClient.Guard client;
@@ -22,7 +20,7 @@ public class FSStoreSelector extends Selector {
 
     public static class FSStoreLoader implements Loader {
         @Override
-        public Selector load(SparqlClient client, Spec spec) throws IOException, BadSerializationException {
+        public Selector load(SparqlClient client, Spec spec) throws BadSerializationException {
             if (!(client instanceof StoreSparqlClient ssc))
                 throw new SelectorTypeMismatch("StoreSparqlClient", client.getClass().toString());
             return new FSStoreSelector(ssc, spec);

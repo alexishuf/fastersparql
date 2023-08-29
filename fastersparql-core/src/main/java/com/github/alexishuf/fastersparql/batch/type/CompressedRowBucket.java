@@ -3,8 +3,10 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
+import org.checkerframework.checker.nullness.qual.NonNull;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
@@ -14,8 +16,10 @@ import java.util.NoSuchElementException;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.LEN_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.SH_SUFF_MASK;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
 import static java.lang.System.arraycopy;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private static final int SL_OFF = 0;
@@ -31,7 +35,9 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     public CompressedRowBucket(int rowsCapacity, int cols) {
         if ((this.rowsData = DATA_POOL.getAtLeast(rowsCapacity)) == null)
             this.rowsData = new byte[rowsCapacity][];
-        this.shared = segmentRopesAtLeast(rowsCapacity*cols);
+        else
+            Arrays.fill(this.rowsData, null);
+        this.shared = segmentRopesAtLeast(rowsData.length*cols);
         this.cols = cols;
     }
 
@@ -73,11 +79,14 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         byte[][] newData = DATA_POOL.getAtLeast(required);
         if (newData == null)
             newData = new byte[required][];
+        else
+            Arrays.fill(newData, oldData.length, newData.length, null);
         arraycopy(oldData, 0, newData, 0, oldData.length);
         rowsData = newData;
-        shared = ArrayPool.grow(shared, required*cols);
-        clearRowsData(oldData);
         DATA_POOL.offer(oldData, oldData.length);
+        required = rowsData.length * cols;
+        if (shared.length < required)
+            shared = ArrayPool.grow(shared, required);
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
@@ -85,8 +94,12 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         if (rowsData.length < rowsCapacity) {
             DATA_POOL.offer(rowsData, rowsData.length);
             rowsData = DATA_POOL.getAtLeast(rowsCapacity);
+            if (rowsData == null)
+                rowsData = new byte[rowsCapacity][];
+            else
+                Arrays.fill(rowsData, null);
         }
-        int required = rowsCapacity * cols;
+        int required = rowsData.length * cols;
         if (shared.length < required)
             shared = segmentRopesAtLeast(required, shared);
         Arrays.fill(shared, 0, required, null);
@@ -95,6 +108,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
 
     @Override public void recycleInternals() {
         clearRowsData(rowsData);
+        DATA_POOL.offer(rowsData, rowsData.length);
         rowsData = EMPTY_ROWS_DATA;
         SEG_ROPE.offer(shared, shared.length);
         shared = EMPTY_SEG_ROPE;
@@ -130,7 +144,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         }
     }
 
-    @Override public Iterator<CompressedBatch> iterator() {
+    @Override public @NonNull Iterator<CompressedBatch> iterator() {
         return new It();
     }
 
@@ -160,7 +174,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     @Override public void set(int dst, CompressedBatch batch, int row) {
         byte[] d = rowsData[dst];
         int out = cols * 8, shOut = dst * cols;
-        d = bytesAtLeast(batch.bytesUsed(row) + out, d);
+        d = bytesAtLeast(batch.localBytesUsed(row) + out, d);
         for (int c = 0, c2, cols = this.cols; c < cols; c++) {
             shared[shOut++] = batch.sharedUnchecked(row, c);
             write(d, (c2=c<<1)+SL_OFF, out);
@@ -231,5 +245,100 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         return eq;
     }
 
+    @Override public int hashCode(int row) {
+        if (!LowLevelHelper.HAS_UNSAFE)
+            return safeHashCode(row);
+        int h = 0;
+        var shared = this.shared;
+        byte[] d = rowsData[row];
+        MemorySegment dSeg = null;
+        Term tmp = null;
+        for (int c = 0, c2 = 0, cols = this.cols, si = cols*row; c < cols; c++, c2=c<<1, si++) {
+            SegmentRope sh = shared[si];
+            int flLen = read(d, c2+SL_LEN), fstLen, sndLen = flLen&LEN_MASK;
+            long fstOff, sndOff = read(d, c2+SL_OFF);
+            if (sh == null) {
+                sh = ByteRope.EMPTY;
+            } else if (Term.isNumericDatatype(sh)) {
+                if (tmp == null) {
+                    tmp = Term.pooledMutable();
+                    dSeg = MemorySegment.ofArray(d);
+                }
+                tmp.set(sh, dSeg, d, sndOff, sndLen, true);
+                h ^= tmp.hashCode();
+                continue;
+            }
+            fstLen = sh.len;
+            fstOff = sh.offset;
+            byte[] fst = sh.utf8, snd = d;
+            if ((flLen & SH_SUFF_MASK) != 0) {
+                fst = d;       fstOff = sndOff;    fstLen = sndLen;
+                snd = sh.utf8; sndOff = sh.offset; sndLen = sh.len;
+            }
+            int termHash = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
+            h ^=           SegmentRope.hashCode(termHash, snd, sndOff, sndLen);
+        }
+        return h;
+    }
 
+    private int safeHashCode(int row) {
+        int h = 0;
+        var shared = this.shared;
+        byte[] d = rowsData[row];
+        var dSeg = MemorySegment.ofArray(d);
+        Term tmp = null;
+        for (int c = 0, c2 = 0, cols = this.cols, si = cols*row; c < cols; c++, c2=c<<1, si++) {
+            SegmentRope sh = shared[si];
+            int flLen = read(d, c2+SL_LEN), fstLen, sndLen = flLen&LEN_MASK;
+            long fstOff, sndOff = read(d, c2+SL_OFF);
+            if (sh == null) {
+                sh = ByteRope.EMPTY;
+            } else if (Term.isNumericDatatype(sh)) {
+                if (tmp == null)
+                    tmp = Term.pooledMutable();
+                tmp.set(sh, dSeg, d, sndOff, sndLen, true);
+                h ^= tmp.hashCode();
+                continue;
+            }
+            fstLen = sh.len;
+            fstOff = sh.offset;
+            MemorySegment fst = sh.segment, snd = dSeg;
+            if ((flLen & SH_SUFF_MASK) != 0) {
+                fst = dSeg;       fstOff = sndOff;    fstLen = sndLen;
+                snd = sh.segment; sndOff = sh.offset; sndLen = sh.len;
+            }
+            int termHash = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
+            h ^=           SegmentRope.hashCode(termHash,  snd, sndOff, sndLen);
+        }
+        return h;
+    }
+
+    private static final byte[] DUMP_NULL = "null".getBytes(UTF_8);
+    @Override public void dump(ByteRope dest, int row) {
+        byte[] d = rowsData[row];
+        if (d == null) {
+            dest.append(DUMP_NULL);
+            return;
+        }
+        dest.append('[');
+        for (int c = 0, shBase=row*cols, c2; c < cols; c++) {
+            int flagLen = read(d, (c2=c<<1)+SL_LEN);
+            int off = read(d, c2+SL_OFF);
+            SegmentRope sh = shared[shBase + c];
+            if ((flagLen&SH_SUFF_MASK) == 0) {
+                if (sh == null) {
+                    dest.append(DUMP_NULL);
+                } else {
+                    dest.append(sh);
+                    dest.append(d, off, flagLen & LEN_MASK);
+                }
+            } else {
+                dest.append(d, off, flagLen & LEN_MASK);
+                dest.append(sh);
+            }
+            dest.append(',').append(' ');
+        }
+        if (cols > 0) dest.len -=2 ;
+        dest.append(']');
+    }
 }

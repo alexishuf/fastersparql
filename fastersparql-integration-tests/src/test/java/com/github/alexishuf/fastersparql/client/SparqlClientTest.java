@@ -14,7 +14,7 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsParserBIt;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
@@ -171,7 +171,7 @@ public class SparqlClientTest {
                     tasks.add(() -> testUnreachable(tag, uri));
                 } else {
                     for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
-                        if (ResultsParserBIt.supports(fmt)) {
+                        if (ResultsParser.supports(fmt)) {
                             String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
                             tasks.add(() -> testUnreachable(tag, uri));
                         }
@@ -228,7 +228,7 @@ public class SparqlClientTest {
                         tasks.add(() -> testServerEarlyClose(tag, uri));
                     } else {
                         for (SparqlResultFormat fmt : SparqlResultFormat.values()) {
-                            if (ResultsParserBIt.supports(fmt)) {
+                            if (ResultsParser.supports(fmt)) {
                                 String uri = meth + "," + fmt + "@http://127.0.0.1:" + port + "/sparql";
                                 tasks.add(() -> testServerEarlyClose(tag, uri));
                             }

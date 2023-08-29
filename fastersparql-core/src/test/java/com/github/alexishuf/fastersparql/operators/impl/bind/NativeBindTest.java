@@ -1,25 +1,28 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.operators.bit.PlanBindingBIt;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.api.Test;
-import org.opentest4j.AssertionFailedError;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
+import static com.github.alexishuf.fastersparql.operators.bit.NativeBind.preferNative;
+import static com.github.alexishuf.fastersparql.operators.bit.NativeBind.preferNativeEmit;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.STRONG;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
 import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.ALLOW_DEDUP;
@@ -31,27 +34,31 @@ import static org.junit.jupiter.api.Assertions.fail;
 class NativeBindTest {
     private static final AtomicInteger nextClientId = new AtomicInteger(1);
 
-    private static ResultsSparqlClient client(SparqlQuery query, Results expected) {
+    private static ResultsSparqlClient client() {
         String uri = "http://" + nextClientId.getAndIncrement() + ".example.org/sparql";
-        //noinspection resource
-        return new ResultsSparqlClient(true, uri).answerWith(query, expected);
+        return new ResultsSparqlClient(true, uri);
+
     }
 
     record D(int operands, boolean dedup, boolean crossDedup,
              Results results) implements Runnable {
-        @Override public void run() {
+        @SuppressWarnings("resource") @Override public void run() {
             var leftSparql = new OpaqueSparqlQuery("SELECT ?x WHERE { ?x a <http://example.org/L> }");
             if (dedup)
                 leftSparql = leftSparql.toDistinct(STRONG);
-            try (var leftClient = client(leftSparql, results.bindingsAsResults());
+            try (var leftClient = client().answerWith(leftSparql, results.bindingsAsResults());
                  var clients = new AutoCloseableSet<ResultsSparqlClient>()) {
                 var left = FS.query(leftClient, leftSparql);
 
-                var rightSparqlTmp = new OpaqueSparqlQuery("SELECT ?y WHERE { ?x <http://example.org/p> ?y }");
-                var rightSparql = dedup ? rightSparqlTmp.toDistinct(WEAK) : rightSparqlTmp;
+                var rSparqlTmp = new OpaqueSparqlQuery("SELECT * WHERE { ?x <http://example.org/p> ?y }");
+                var rSparql = switch (results.bindType()) {
+                    case EXISTS,NOT_EXISTS -> rSparqlTmp.toAsk();
+                    default -> dedup ? rSparqlTmp.toDistinct(WEAK) : rSparqlTmp;
+                };
+                var exRightSparql = results.bindType() == MINUS ? rSparql.toAsk() : rSparql;
                 for (int i = 0; i < operands; i++)
-                    clients.add(client(rightSparql, results));
-                var rightOperands = clients.stream().map(c -> FS.query(c, rightSparql)).toArray(Plan[]::new);
+                    clients.add(client().answerWith(exRightSparql, results));
+                var rightOperands = clients.stream().map(c -> FS.query(c, rSparql)).toArray(Plan[]::new);
                 var right = crossDedup ? FS.crossDedupUnion(rightOperands) : FS.union(rightOperands);
 
                 var join = switch (results.bindType()) {
@@ -69,10 +76,13 @@ class NativeBindTest {
                 var finalResults = Results.results(results.vars(), finalRows)
                                           .duplicates(dedup || crossDedup ? ALLOW_DEDUP : EXACT);
 
-                try (var it = NativeBind.preferNative(Batch.TERM, join, null, false)) {
+                try (var it = preferNative(TERM, join, null, false)) {
                     assertFalse(it instanceof PlanBindingBIt, "not using native joins");
                     finalResults.check(it);
                 }
+
+                // check Emitter variant
+                finalResults.check(preferNativeEmit(TERM, join, false));
 
                 for (var client : clients)
                     client.assertNoErrors();
@@ -109,19 +119,14 @@ class NativeBindTest {
         return list;
     }
 
+    static Stream<Arguments> test() { return data().stream().map(Arguments::arguments); }
+
+    @ParameterizedTest @MethodSource
+    void test(D d) { d.run(); }
+
     @Test
-    void test() throws Exception {
+    void testConcurrent() throws Exception {
         List<D> data = data();
-        for (int i = 0, n = data.size(); i < n; i++) {
-            D d = data.get(i);
-            try {
-                d.run();
-            } catch (AssertionError e) {
-                throw new AssertionFailedError(e.getMessage()+" at data["+i+"]", e.getCause());
-            } catch (Throwable t) {
-                fail("Unexpected exception at data["+i+"]", t);
-            }
-        }
         int threads = Runtime.getRuntime().availableProcessors();
         try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
             for (int i = 0; i < data.size(); i++) {

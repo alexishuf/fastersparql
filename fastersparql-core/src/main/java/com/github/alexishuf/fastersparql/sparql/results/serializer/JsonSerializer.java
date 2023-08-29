@@ -22,7 +22,7 @@ public class JsonSerializer extends ResultsSerializer {
     }
 
     public JsonSerializer() {
-        super(JSON, JSON.contentType());
+        super(JSON.contentType());
     }
 
     private static final byte[] HDR_BFR = "{\"head\":{\"vars\":[".getBytes(UTF_8);

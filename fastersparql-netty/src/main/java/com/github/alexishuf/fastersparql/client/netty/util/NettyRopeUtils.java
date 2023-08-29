@@ -88,7 +88,7 @@ public class NettyRopeUtils {
     }
 
     /** {@code bb.writeBytes(source.copy())}, but faster */
-    public static ByteBuf write(ByteBuf bb, Rope rope) {
+    @SuppressWarnings("UnusedReturnValue") public static ByteBuf write(ByteBuf bb, Rope rope) {
         if (rope == null || rope.len == 0) {
             return bb;
         } else if (rope instanceof SegmentRope sr) {

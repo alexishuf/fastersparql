@@ -100,6 +100,12 @@
         <artifactId>reactive-streams</artifactId>
         <version>1.0.3</version>
       </dependency>
+      <dependency> <!-- Used to annotate capture/insertion of Async stack traces -->
+        <groupId>org.jetbrains</groupId>
+        <artifactId>annotations</artifactId>
+        <version>24.0.1</version>
+        <scope>provided</scope>
+      </dependency>
 
 
       <!-- Pull BOMs for libraries -->

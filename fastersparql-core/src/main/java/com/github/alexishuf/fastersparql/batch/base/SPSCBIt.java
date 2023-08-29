@@ -46,9 +46,25 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- properties --- --- --- */
 
-    @Override public int                maxReadyBatches()      { return 2; }
-    @Override public int                  maxReadyItems()      { return maxItems; }
+    @SuppressWarnings("unused") @Override public int                  maxReadyItems()      { return maxItems; }
     @Override public @This CallbackBIt<B> maxReadyItems(int n) { maxItems = n; return this; }
+
+    @Override public boolean isTerminated() {
+        return state().isTerminated();
+    }
+
+    @Override public boolean isComplete() {
+        return state() == State.COMPLETED;
+    }
+
+    @Override public boolean isCancelled() {
+        return state() == State.CANCELLED;
+    }
+
+    @Override public @Nullable Throwable error() {
+        if (state() != State.FAILED) return null;
+        return error == null ? new RuntimeException("unknown error") :  error;
+    }
 
     /* --- --- --- helper methods --- --- --- */
 
@@ -107,6 +123,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         unpark(consumer);
     }
 
+    @Override public void cancel() { complete(CancelledException.INSTANCE); }
+
     @Override public void close() {
         lock();
         try {
@@ -133,7 +151,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- producer methods --- --- --- */
 
-    @Override public @Nullable B offer(B b) throws BItCompletedException {
+    @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
         lock();
         Thread delayedWake = null;
         boolean locked = true;
@@ -141,7 +159,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             while (true) {
                 B f = this.filling;
                 if (plainState.isTerminated()) {
-                    throw mkCompleted();
+                    if (plainState == State.CANCELLED)
+                        throw CancelledException.INSTANCE;
+                    else
+                        throw TerminatedException.INSTANCE;
                 } else if (f == null) { // no filling batch
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                     if (READY.getOpaque(this) == null && readyInNanos(b.rows, fillingStart) == 0) {
@@ -188,12 +209,16 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         return b;
     }
 
-    @Override public void copy(B b) throws BItCompletedException {
+    @Override public void copy(B b) throws TerminatedException, CancelledException {
         lock();
         boolean locked = true;
         Thread delayedWake = null;
         try {
-            if (plainState.isTerminated()) throw mkCompleted();
+            if (plainState.isTerminated()) {
+                if (plainState == State.CANCELLED)
+                    throw CancelledException.INSTANCE;
+                throw TerminatedException.INSTANCE;
+            }
             while (true) {
                 B dst = this.filling;
                 // try publishing filling as READY since put() might take > 1us
@@ -294,12 +319,12 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
         if (b == null)   // terminal batch
             return onTerminal(); // throw if failed
-        onBatch(b); // guides getBatch() allocations
+        onNextBatch(b); // guides getBatch() allocations
         //dbg.write("nextBatch RET &b=", System.identityHashCode(b), "rows=", b.rows);
         return b;
     }
 
-    private @Nullable B onTerminal() {
+    @SuppressWarnings("SameReturnValue") private @Nullable B onTerminal() {
         lock();
         try {
             batchType.recycle(stealRecycled());

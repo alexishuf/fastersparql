@@ -8,11 +8,13 @@ import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -28,7 +30,6 @@ import static com.github.alexishuf.fastersparql.batch.BItGenerator.IT_GEN;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
-import static com.github.alexishuf.fastersparql.emit.async.RecurringTaskRunner.TASK_RUNNER;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -39,19 +40,22 @@ public class BItProducerTest {
     private static final class DummyException extends RuntimeException { }
 
     private record D(Supplier<BIt<TermBatch>> itSupplier, int[] expected, boolean ordered,
-                     Class<? extends Throwable> expectedErrCls) implements Runnable {
+                     Class<? extends Throwable> expectedErrCls) {
         public D(Supplier<BIt<TermBatch>> itSupplier, int[] expected) {
             this(itSupplier, expected, true, null);
         }
 
-        @Override public void run() {
-            AsyncEmitter<TermBatch> ae = new AsyncEmitter<>(X, TASK_RUNNER);
-            BItProducer<TermBatch> prod = new BItProducer<>(itSupplier.get(), TASK_RUNNER);
-            prod.registerOn(ae);
-            var receiver = new IntsReceiver(ae);
-            ae.request(Long.MAX_VALUE);
+        public void testProducer() {
+            check(new IntsReceiver(Emitters.fromBIt(itSupplier.get())));
+        }
+
+        public void testEmitter() {
+            check(new IntsReceiver(new BItEmitter<>(itSupplier.get())));
+        }
+
+        private void check(IntsReceiver receiver) {
             try {
-                receiver.getUnchecked();
+                receiver.getSimple();
                 if (expectedErrCls != null)
                     fail("Expected "+expectedErrCls.getSimpleName());
             } catch (RuntimeExecutionException e) {
@@ -75,7 +79,7 @@ public class BItProducerTest {
             private int[] ints = ArrayPool.intsAtLeast(16);
             private int size;
 
-            public IntsReceiver(Emitter<TermBatch> emitter) { super(emitter); }
+            public IntsReceiver(Emitter<TermBatch> emitter) { subscribeTo(emitter); }
 
             @Override public TermBatch onBatch(TermBatch batch) {
                 Term view = Term.pooledMutable();
@@ -94,7 +98,7 @@ public class BItProducerTest {
         }
     }
 
-    static Stream<Arguments> test() {
+    static Stream<Arguments> data() {
         List<D> list = new ArrayList<>();
         for (int[] ints : List.of(
                 new int[0],
@@ -128,16 +132,31 @@ public class BItProducerTest {
         return list.stream().map(Arguments::arguments);
     }
 
-    @ParameterizedTest @MethodSource
-    void test(D data) throws Exception {
-        data.run();
-        TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, data);
+    @ParameterizedTest @MethodSource("data")
+    void testProducer(D data) throws Exception {
+        data.testProducer();
+        TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, data::testProducer);
     }
 
     @Test
-    void testConcurrent() throws Exception {
+    void testConcurrentProducer() throws Exception {
         try (var tasks = new TestTaskSet(getClass().getSimpleName(), newFixedThreadPool(THREADS))) {
-            test().map(a -> (D)a.get()[0]).forEach(d -> tasks.repeat(THREADS, d));
+            data().map(a -> (D)a.get()[0]).forEach(d -> tasks.repeat(THREADS, d::testProducer));
+        }
+    }
+
+    @ParameterizedTest @MethodSource("data")
+    void testEmitter(D data) throws Exception {
+        try (var ignored = ThreadJournal.watchdog(System.out, 50).start(2_000_000_000L)) {
+            data.testEmitter();
+        }
+        TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, data::testEmitter);
+    }
+
+    @Test
+    void testConcurrentEmitter() throws Exception {
+        try (var tasks = new TestTaskSet(getClass().getSimpleName(), newFixedThreadPool(THREADS))) {
+            data().map(a -> (D)a.get()[0]).forEach(d -> tasks.repeat(THREADS, d::testEmitter));
         }
     }
 }

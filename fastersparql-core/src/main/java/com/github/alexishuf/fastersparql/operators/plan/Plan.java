@@ -4,11 +4,14 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.stages.MetricsStage;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -389,6 +392,9 @@ public abstract sealed class Plan implements SparqlQuery
             if (m.limit == 1 && m.projection == Vars.EMPTY)
                 return this;
             return new Modifier(m.left, Vars.EMPTY, 0, m.offset, 1, m.filters);
+        } else if (this instanceof Query q) {
+            if (q.sparql.isAsk()) return this;
+            return new Query(q.sparql.toAsk(), q.client);
         }
         return new Modifier(this, Vars.EMPTY, 0, 0, 1, null);
     }
@@ -531,9 +537,31 @@ public abstract sealed class Plan implements SparqlQuery
     /** Create a {@link BIt} over the results from this plan execution. */
     public abstract <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup);
 
+    /** See {@link #execute(BatchType, Binding, boolean)} */
     public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, boolean canDedup) { return execute(bt, null, canDedup); }
+    /** See {@link #execute(BatchType, Binding, boolean)} */
     public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt) { return execute(bt, false); }
-    public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, Binding binding) { return execute(bt, binding, false); }
+    /** See {@link #execute(BatchType, Binding, boolean)} */
+    @SuppressWarnings("unused") public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, Binding binding) { return execute(bt, binding, false); }
+
+    public abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup);
+
+    /**
+     * Create a unstarted {@link Emitter} that will produce the solutions for this plan.
+     *
+     * @param type The {@link BatchType} of batches to be emitted
+     * @param weakDedup Allows speculative early de-duplication of rows in all execution steps.
+     * @return an unstarted {@link Emitter}
+     * @param <B> the batch type to be emitted
+     */
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, boolean weakDedup) {
+        Emitter<B> em = doEmit(type, weakDedup);
+        if (this.listeners.isEmpty()) return em;
+        return new MetricsStage<>(em, new Metrics(this));
+    }
+
+    /** See {@link #emit(BatchType, boolean)} */
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type) {return emit(type, false);}
 
     /* --- --- --- helpers --- --- --- */
 

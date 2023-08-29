@@ -18,6 +18,7 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll;
 
+@SuppressWarnings("ClassCanBeRecord")
 public final class Source implements AutoCloseable {
     /* --- --- --- keys dictionary --- --- --- */
     public static final String TYPE = "type";

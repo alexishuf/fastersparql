@@ -24,11 +24,6 @@ public class AutoCloseableSet<T extends AutoCloseable> extends ArrayList<T>
         return new AutoCloseableSet<>(asList(instances));
     }
 
-    public <U extends T> U put(U object) {
-        add(object);
-        return object;
-    }
-
     public @This AutoCloseableSet<T> parallelClose(boolean value) {
         this.parallelClose = value;
         return this;

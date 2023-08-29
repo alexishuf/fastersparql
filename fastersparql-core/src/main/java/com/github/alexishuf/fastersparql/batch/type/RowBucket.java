@@ -1,7 +1,9 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+
 public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
-    BatchType<B> batchType();
+    @SuppressWarnings("unused") BatchType<B> batchType();
 
     /**
      * Increase capacity to {@link RowBucket#capacity()}+{@code additionalRows}.
@@ -26,7 +28,7 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      * <p>A subsequent {@link #clear(int, int)} call will restore the bucket to a determined
      * capacity and will reset all rows.</p>
      */
-    default void recycleInternals() {}
+    void recycleInternals();
 
     /** How many rows fit in this bucket. */
     int capacity();
@@ -53,4 +55,23 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      * {@code batch}
      */
     boolean equals(int row, B other, int otherRow);
+
+    /**
+     * Hash code for the {@code row}-th row in this bucket. If {{@link #has(int)}}, the
+     * hash code MUST be the same as {@link Batch#hash(int)} would return.
+     */
+    int hashCode(int row);
+
+    /** Create a string representation of this bucket. */
+    @SuppressWarnings("unused") default ByteRope dump() {
+        var br = new ByteRope();
+        br.append('[');
+        int rows = capacity();
+        for (int r = 0; r < rows; r++)
+            dump(br.append('\n').append(' '), r);
+        return br.append('\n').append(']');
+    }
+
+    /** Append a representation of the {@code row}-th row of this bucket to {@code dest} */
+    void dump(ByteRope dest, int row);
 }

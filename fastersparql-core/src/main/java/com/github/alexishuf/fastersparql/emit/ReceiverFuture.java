@@ -1,36 +1,44 @@
 package com.github.alexishuf.fastersparql.emit;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.*;
 
 public abstract class ReceiverFuture<T, B extends Batch<B>> extends CompletableFuture<T> implements Receiver<B> {
-    private @MonotonicNonNull Emitter<B> emitter;
+    protected @MonotonicNonNull Emitter<B> upstream;
+    protected @MonotonicNonNull CancellationException cancelledAt;
+    private boolean started = false;
 
-    public ReceiverFuture() { }
-
-    public ReceiverFuture(Emitter<B> emitter) throws Emitter.RegisterAfterStartException {
-        this.emitter = emitter;
-        emitter.subscribe(this);
+    @Override public String toString() {
+        return String.format("%s@%x", getClass().getSimpleName(), System.identityHashCode(this));
     }
 
     /**
      * Calls {@code emitter.subscribe(this)} and performs bookkeeping.
      *
      * @param emitter the emitter that will feed this {@link Receiver}
-     * @throws Emitter.RegisterAfterStartException see {@link Emitter#subscribe(Receiver)}
+     * @return {@code this}
+     * @throws RegisterAfterStartException see {@link Emitter#subscribe(Receiver)}
      */
-    public void subscribeTo(Emitter<B> emitter) throws Emitter.RegisterAfterStartException {
-        if (this.emitter != null) {
-            if (this.emitter == emitter) return;
-            throw new IllegalStateException("Already subscribed to "+emitter);
-        }
-        this.emitter = emitter;
+    public @This ReceiverFuture<T, B>
+    subscribeTo(Emitter<B> emitter) throws RegisterAfterStartException {
+        if (this.upstream == emitter) return this;
+        if (this.upstream !=    null) throw new IllegalStateException("Already subscribed");
+        this.upstream = emitter;
         emitter.subscribe(this);
+        return this;
+    }
+
+    private void start() {
+        if (started) return;
+        started = true;
+        upstream.request(Long.MAX_VALUE);
     }
 
     /**
@@ -40,33 +48,84 @@ public abstract class ReceiverFuture<T, B extends Batch<B>> extends CompletableF
      * @return see {@link #get()}
      * @throws RuntimeExecutionException if {@link #get()} throws {@link ExecutionException}
      */
-    public T getUnchecked() throws RuntimeExecutionException {
+    public T getSimple() throws RuntimeExecutionException {
+        start();
         boolean interrupted = false;
-        T value;
-        while (true) {
-            try {
-                value = super.get();
-                break;
-            } catch (InterruptedException e) {
-                interrupted = true;
-            } catch (ExecutionException e) {
-                throw new RuntimeExecutionException(e.getCause());
+        try {
+            while (true) {
+                try {
+                    return super.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    throw new RuntimeExecutionException(e.getCause());
+                }
             }
+        } finally {
+            if (interrupted)
+                Thread.currentThread().interrupt();
         }
-        if (interrupted)
-            Thread.currentThread().interrupt();
-        return value;
+    }
+
+    /**
+     * Same as {@link #get(long, TimeUnit)}, but is uninterruptible and throws
+     * {@link RuntimeExecutionException}
+     * @param timeout see {@link #get(long, TimeUnit)}
+     * @param timeUnit see {@link #get(long, TimeUnit)}
+     * @return the result of this {@link CompletableFuture}, if completed within the given timeout
+     * @throws TimeoutException If the timeout elapsed and the emitter did not terminate
+     * @throws RuntimeExecutionException If the emitter terminated with an error
+     */
+    public T getSimple(long timeout, TimeUnit timeUnit)
+            throws TimeoutException, RuntimeExecutionException {
+        start();
+        boolean interrupted = false;
+        long parked, nanos = timeUnit.toNanos(timeout);
+        try {
+            while (nanos > 0) {
+                parked = Timestamp.nanoTime();
+                try {
+                    return get(nanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                    nanos -= Timestamp.nanoTime()-parked;
+                } catch (ExecutionException e) {
+                    throw new RuntimeExecutionException(e.getCause());
+                }
+            }
+            throw new TimeoutException();
+        } finally {
+            if (interrupted)
+                Thread.currentThread().interrupt();
+        }
+    }
+
+    @Override public T get() throws InterruptedException, ExecutionException {
+        start();
+        return super.get();
+    }
+
+    @Override
+    public T get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+        start();
+        return super.get(timeout, unit);
+    }
+
+    @Override public T join() {
+        start();
+        return super.join();
     }
 
     @Override public boolean cancel(boolean mayInterruptIfRunning) {
         if (isDone())
             return false;
-        emitter.cancel();
+        cancelledAt = new CancellationException();
+        upstream.cancel();
         return true;
     }
 
     @Override public void onCancelled() {
-        completeExceptionally(new CancellationException());
+        completeExceptionally(cancelledAt == null ? new FSCancelledException() : cancelledAt);
     }
 
     @Override public void onError(Throwable cause) {

@@ -6,11 +6,13 @@ import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchConverter;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.client.BindQuery;
-import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
+import com.github.alexishuf.fastersparql.client.*;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.ReceiverErrorFuture;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -24,12 +26,12 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.util.*;
-import java.util.function.Function;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
@@ -272,7 +274,7 @@ public final class Results {
 
     /** Create a copy of {@code this} that will send the given {@link SparqlQuery}
      *  (or {@link Rope}/{@link CharSequence} to be parsed as one) to
-     *  {@link SparqlClient#query(BatchType, SparqlQuery)} or {@link SparqlClient#query(BindQuery)}
+     *  {@link SparqlClient#query(BatchType, SparqlQuery)} or {@link SparqlClient#query(ItBindQuery)}
      *  on {@link Results#check(SparqlClient)}. */
     public <R> Results query(Object sparql) {
         SparqlQuery query;
@@ -319,7 +321,7 @@ public final class Results {
     }
 
     /** Create a copy of {@code this} that will send {@code bindType} to
-     *  {@link SparqlClient#query(BindQuery)} on {@link Results#check(SparqlClient)}. */
+     *  {@link SparqlClient#query(ItBindQuery)} on {@link Results#check(SparqlClient)}. */
     public Results bindType(BindType bindType) {
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
     }
@@ -355,17 +357,18 @@ public final class Results {
 
     /* --- --- --- accessors & converters --- --- --- */
 
-    public boolean          isEmpty()      { return expected.isEmpty(); }
-    public boolean          isAsk()        { return vars().size() == 0 && size() <= 1; }
-    public int              size()         { return expected.size(); }
-    public int              columns()      { return columns; }
-    public SparqlQuery      query()        { return query; }
-    public List<List<Term>> expected()     { return expected; }
+    public boolean            isEmpty()      { return expected.isEmpty(); }
+    public boolean            isAsk()        { return vars().isEmpty() && size() <= 1; }
+    public int                size()         { return expected.size(); }
+    public int                columns()      { return columns; }
+    public SparqlQuery        query()        { return query; }
+    public List<List<Term>>   expected()     { return expected; }
 
-    public BIt<TermBatch>   asBIt()        { return asPlan().execute(TERM); }
-    public BindType         bindType()     { return bindType; }
-    public boolean          hasBindings()  { return bindingsList != null; }
-    public Vars             bindingsVars() { return bindingsVars; }
+    public BIt<TermBatch>     asBIt()        { return asPlan().execute(TERM); }
+    public Emitter<TermBatch> asEmitter()    { return asPlan().emit(TERM); }
+    public BindType           bindType()     { return bindType; }
+    public boolean            hasBindings()  { return bindingsList != null; }
+    public Vars               bindingsVars() { return bindingsVars; }
 
     public Plan asPlan() {
         if (expectedError != null)
@@ -387,20 +390,28 @@ public final class Results {
             return new EmptyBIt<>(TERM, bindingsVars);
         return new IteratorBIt<>(bindingsList, TERM, bindingsVars);
     }
-    public BindQuery<TermBatch> asBindQuery() {
+    public Emitter<TermBatch> bindingsEmitter() {
+        if (bindingsList == null)
+            return Emitters.empty(TERM, bindingsVars);
+        var b = TERM.create(bindingsList.size(), bindingsVars.size(), 0);
+        for (List<Term> row : bindingsList)
+            b.putRow(row);
+        return Emitters.ofBatch(bindingsVars, b);
+    }
+    public ItBindQuery<TermBatch> asBindQuery() {
         if (bindingsList == null)
             throw new UnsupportedOperationException("No bindings set");
         if (query == null)
             throw new UnsupportedOperationException("No query set");
-        return new BindQuery<>(query, bindingsBIt(), bindType);
+        return new ItBindQuery<>(query, bindingsBIt(), bindType);
     }
 
-    public <B extends Batch<B>> BindQuery<B> asBindQuery(BatchType<B> batchType) {
+    public <B extends Batch<B>> ItBindQuery<B> asBindQuery(BatchType<B> batchType) {
         if (bindingsList == null)
             throw new UnsupportedOperationException("No bindings set");
         if (query == null)
             throw new UnsupportedOperationException("No query set");
-        return new BindQuery<>(query, batchType.convert(bindingsBIt()), bindType);
+        return new ItBindQuery<>(query, batchType.convert(bindingsBIt()), bindType);
     }
 
     public Results bindingsAsResults() {
@@ -429,7 +440,7 @@ public final class Results {
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
         if (bindingsList != null) {
-            queryAndCheck(client, batchType.convert(bindingsBIt()));
+            bindAndCheck(client, batchType);
         } else {
             Plan oldParsed = parse(query);
             int oldHash = query.hashCode();
@@ -439,22 +450,31 @@ public final class Results {
                     || !oldParsed.equals(parse(query))) {
                 throw new AssertionError("Query changed by "+client);
             }
+            check(client.emit(batchType, query));
+            if (!oldString.equals(query.toString()) || oldHash != query.hashCode()
+                    || !oldParsed.equals(parse(query))) {
+                throw new AssertionError("Query changed by "+client);
+            }
+            if (client instanceof ResultsSparqlClient rsc)
+                rsc.assertNoErrors();
         }
     }
 
-    private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings) {
-        queryAndCheck(client, bindings, requireNonNull(this.query), this.bindType);
+    private <B extends Batch<B>> void bindAndCheck(SparqlClient client, BatchConverter<B> bindingsConverter) {
+        bindAndCheck(client, bindingsConverter, requireNonNull(this.query), this.bindType);
     }
 
-    private <B extends Batch<B>> void queryAndCheck(SparqlClient client, BIt<B> bindings,
-                                                    SparqlQuery query, BindType bindType) {
+    private <B extends Batch<B>> void bindAndCheck(SparqlClient client,
+                                                   BatchConverter<B> bindingsConverter,
+                                                   SparqlQuery query, BindType bindType) {
         assert bindingsList != null;
         var observedSeq = new BitSet();
         var errors = new StringBuilder();
         String oldString = query.toString();
         int oldHash = query.hashCode();
         Plan oldParsed = parse(query);
-        check(client.query(new BindQuery<B>(query, bindings, bindType) {
+        BIt<B> bindingsBIt = bindingsConverter.convert(bindingsBIt());
+        check(client.query(new ItBindQuery<B>(query, bindingsBIt, bindType) {
             public void binding(long seq) {
                 if (seq >= bindingsList.size() || seq < 0) {
                     errors.append("Invalid seq number: ").append(seq).append('\n');
@@ -464,9 +484,35 @@ public final class Results {
                     observedSeq.set((int)seq);
                 }
             }
-            @Override public void emptyBinding(long sequence) {binding(sequence);}
+            @Override public void    emptyBinding(long sequence) {binding(sequence);}
             @Override public void nonEmptyBinding(long sequence) {binding(sequence);}
         }));
+        check(query, observedSeq, errors, oldHash, oldString, oldParsed);
+
+        observedSeq.clear();
+        errors.setLength(0);
+        Emitter<B> bindingsEmitter = bindingsConverter.convert(bindingsEmitter());
+        check(client.emit(new EmitBindQuery<B>(query, bindingsEmitter, bindType) {
+            public void binding(long seq) {
+                if (seq >= bindingsList.size() || seq < 0)
+                    errors.append("Invalid seq number: ").append(seq).append('\n');
+                else if (observedSeq.get((int)seq))
+                    errors.append("Duplicate seq: ").append(seq).append('\n');
+                else
+                    observedSeq.set((int) seq);
+            }
+            @Override public void    emptyBinding(long sequence) {binding(sequence);}
+            @Override public void nonEmptyBinding(long sequence) {binding(sequence);}
+        }));
+        check(query, observedSeq, errors, oldHash, oldString, oldParsed);
+
+        if (client instanceof ResultsSparqlClient rsc)
+            rsc.assertNoErrors();
+    }
+
+    private void check(SparqlQuery query, BitSet observedSeq, StringBuilder errors,
+                       int oldHash, String oldString, Plan oldParsed) {
+        assert bindingsList != null;
         for (int i = 0; i < bindingsList.size(); i++) {
             if (!observedSeq.get(i))
                 errors.append("No *Binding(").append(i).append(") call\n");
@@ -492,16 +538,18 @@ public final class Results {
      * (with bindings, if {@link Results#hasBindings()})  against client and receiving rows
      * using the given {@code rowType}.
      */
-    public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType, Function<BIt<TermBatch>, BIt<B>> bindingsConverter) throws AssertionError {
+    public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType,
+                                           BatchConverter<B> bindingsConverter) {
         if (query == null)
             throw new IllegalStateException("No query defined, cannot check(SparqlClient)");
         SparqlQuery query = this.query;
         if (query instanceof Plan plan)
             query = plan.transform(unboundTransformer, client);
         if (bindingsList != null) {
-            queryAndCheck(client, bindingsConverter.apply(bindingsBIt()));
+            bindAndCheck(client, bindingsConverter);
         } else {
             check(client.query(batchType, query));
+            check(client. emit(batchType, query));
         }
     }
 
@@ -516,14 +564,9 @@ public final class Results {
     /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q)} */
     public void check(SparqlClient client, SparqlQuery q) throws AssertionError {
         check(client.query(TERM, q));
+        check(client. emit(TERM, q));
     }
 
-    /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q, bindings, bindType)} */
-    public <B extends Batch<B>> void check(SparqlClient client, BatchType<B> batchType,
-                                           SparqlQuery q, BIt<B> bindings,
-                                           BindType bindType) throws AssertionError {
-        queryAndCheck(client, bindings, q, bindType);
-    }
 
     /** Equivalent to {@code check(((Plan)query()).execute())}. */
     public void check() {
@@ -543,7 +586,6 @@ public final class Results {
 
     /** Consume {@code it} and check the results (and any Throwable) against this {@link Results} spec */
     public <B extends Batch<B>> void check(BIt<B> it) throws AssertionError {
-        LinkedHashMap<List<Term>, Integer> ac = new LinkedHashMap<>(), ex = new LinkedHashMap<>();
         List<List<Term>> acList = new ArrayList<>();
         Throwable thrown = null;
         try {
@@ -552,6 +594,50 @@ public final class Results {
                     acList.add(normalizeRow(b, i));
             }
         } catch (Throwable t) { thrown = t; }
+        check(acList, thrown, it.vars());
+    }
+
+    public final class ResultsChecker<B extends Batch<B>> extends ReceiverErrorFuture<B> {
+        private final List<List<Term>> acList = new ArrayList<>();
+
+        public void assertNoError() {
+            Throwable error = getSimple();
+            if (error != null) {
+                if (ThreadJournal.THREAD_JOURNAL)
+                    ThreadJournal.dumpAndReset(System.err, 80);
+                throw new AssertionError(error);
+            }
+        }
+
+        @Override public B onBatch(B b) {
+            for (int r = 0; r < b.rows; r++)
+                acList.add(normalizeRow(b, r));
+            return b;
+        }
+
+        @Override public boolean complete(Throwable error) {
+            try {
+                Results.this.check(acList, error, upstream.vars());
+                return super.complete(null);
+            } catch (Throwable t) {
+                return super.complete(t);
+            }
+        }
+    }
+
+    public <B extends Batch<B>> ResultsChecker<B> checker(Emitter<B> emitter) {
+        ResultsChecker<B> checker = new ResultsChecker<>();
+        checker.subscribeTo(emitter);
+        return checker;
+    }
+
+    public <B extends Batch<B>> void check(Emitter<B> emitter) {
+        checker(emitter).assertNoError();
+    }
+
+    private <B extends Batch<B>> void check(List<List<Term>> acList,
+                                            Throwable thrown, Vars vars) {
+        LinkedHashMap<List<Term>, Integer> ac = new LinkedHashMap<>(), ex = new LinkedHashMap<>();
         count(ex, expected);
         count(ac, acList);
 
@@ -559,8 +645,8 @@ public final class Results {
         if (!context.isEmpty())
             sb.append("Context: ").append(context).append(context.length() > 40 ? "\n" : ". ");
         sb.append(format("Expected %d rows (%d unique) got %d rows (%d unique)\n",
-                         expected.size(), ex.keySet().size(),
-                         acList.size(),   ac.keySet().size()));
+                expected.size(), ex.keySet().size(),
+                acList.size(), ac.keySet().size()));
         boolean ok = checkMissing(ac, ex, sb) & checkUnexpected(ac, ex, sb);
         if (ordered && ok && !new ArrayList<>(ac.keySet()).equals(new ArrayList<>(ex.keySet()))) {
             ok = false;
@@ -573,7 +659,7 @@ public final class Results {
         }
         ok = ok & checkDuplicates(ac, ex, sb);
         ok = ok & checkException(thrown, sb);
-        ok = ok & checkVars(it.vars(), sb);
+        ok = ok & checkVars(vars, sb);
         if (!ok)
             throw new AssertionError(sb.toString());
     }

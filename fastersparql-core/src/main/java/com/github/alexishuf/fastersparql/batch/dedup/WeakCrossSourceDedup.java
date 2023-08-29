@@ -7,15 +7,12 @@ import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 
 import java.util.Arrays;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     private final RowBucket<B> table;
     private int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
     private byte[] bucketInsertion; // values are 0 <= bucketInsertion[i] < 8
     private final int bucketMask, buckets, capacity;
-    private final Lock lock = new ReentrantLock();
 
     public WeakCrossSourceDedup(BatchType<B> batchType, int capacity, int cols) {
         super(batchType, cols);
@@ -26,8 +23,10 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
         this.capacity = capacity;
         this.buckets = capacity >> 3;
         this.bucketMask = buckets-1;
-        this.bucketInsertion = new byte[buckets]; // each bucket has 8 items
-        this.hashesAndSources = new int[capacity<<1];
+        this.bucketInsertion = ArrayPool.bytesAtLeast(buckets); // each bucket has 8 items
+        this.hashesAndSources = ArrayPool.intsAtLeast(capacity<<1);
+        Arrays.fill(bucketInsertion, (byte)0);
+        Arrays.fill(hashesAndSources, 0);
         this.table = batchType.createBucket(capacity, cols);
     }
 
@@ -42,7 +41,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public void recycleInternals() {
         hashesAndSources = ArrayPool.INT.offer(hashesAndSources, hashesAndSources.length);
         bucketInsertion = ArrayPool.BYTE.offer(bucketInsertion, bucketInsertion.length);
-        table.recycleInternals();
+        bt.recycleBucket(table);
     }
 
     @Override public int capacity() { return table.capacity(); }
@@ -68,14 +67,15 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
      *         than {@code source}
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
-        if (debug) checkBatchType(batch);
-        int hash = batch.hash(row), bucket = hash & bucketMask;
+        if (DEBUG) checkBatchType(batch);
+        int hash = enhanceHash(batch.hash(row));
+        int bucket = hash & bucketMask;
         int begin = bucket << 3, end = begin+8, match = -1;
         for (int i = begin; match == -1 && i < end; i++) {
             if (hashesAndSources[i<<1] == hash && table.equals(i, batch, row))
                 match = i;
         }
-        lock.lock();
+        lock();
         try {
             int sources, sourcesIdx;
             if (match == -1) { // add row to the table, consuming an insertion point
@@ -98,12 +98,13 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
             boolean duplicate = (sources |= mask) != mask; //mark and test if only source
             hashesAndSources[sourcesIdx] = sources;
             return duplicate;
-        } finally { lock.unlock(); }
+        } finally { unlock(); }
     }
 
     @Override public boolean contains(B batch, int row) {
-        if (debug) checkBatchType(batch);
-        int hash = batch.hash(row), i = (hash & bucketMask) << 3, e = i+8;
+        if (DEBUG) checkBatchType(batch);
+        int hash = enhanceHash(batch.hash(row));
+        int i = (hash & bucketMask) << 3, e = i+8;
         while (i < e && (hashesAndSources[i<<1] != hash || !table.equals(i, batch, row))) ++i;
         return i < e;
     }

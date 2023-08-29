@@ -31,7 +31,7 @@ public enum Protocol {
         };
     }
 
-    public static int port(URI uri) {
+    @SuppressWarnings("unused") public static int port(URI uri) {
         int explicit = uri.getPort();
         return explicit <= 0 ? fromURI(uri).port() : explicit;
     }

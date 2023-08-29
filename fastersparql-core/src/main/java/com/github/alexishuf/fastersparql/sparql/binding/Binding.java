@@ -85,23 +85,13 @@ public abstract class Binding {
     /** Equivalent to {@code get(i) != null}, but may avoid instantiating {@link Term}. */
     public boolean has(int i) { return get(i) != null; }
 
-    /** Whether no var in this binding has a value associated, i.e., {@code get(i)==null}
-     *  for every {@code i} in {@code [0, size())}. */
-    public final boolean isUnbound() {
-        for (int i = 0, n = size(); i < n; i++) {
-            if (get(i) != null) return false;
-        }
-        return true;
-    }
-
     /**
      * Maps the {@code i}-th variable to {@code null}
      *
      * @param i the index of the value to be changed
-     * @return this {@link Binding}
      * @throws IndexOutOfBoundsException if {@code i < 0 || i > size()}.
      */
-    public final Binding clear(int i) { return set(i, null); }
+    public final void clear(int i) { set(i, null); }
 
     /** Removes all mappings to values in this {@link Binding}, i.e., call {@code clear(i)}
      *  for every {@code i} in {@code [0,size())}. */

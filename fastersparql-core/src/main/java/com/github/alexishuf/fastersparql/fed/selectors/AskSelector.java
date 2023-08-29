@@ -34,6 +34,7 @@ public class AskSelector extends Selector {
             = new AffinityPool<>(TermBatch.class, 12);
 
     private final SparqlClient client;
+    private final SparqlClient.Guard clientGuard;
     private final StrongDedup<TermBatch> positive, negative;
 
     private static final byte[] POSITIVE_HDR = "@POSITIVE cap=".getBytes(UTF_8);
@@ -108,6 +109,7 @@ public class AskSelector extends Selector {
     public AskSelector(SparqlClient client, Spec spec) {
         super(client.endpoint(), spec);
         this.client = client;
+        this.clientGuard = client.retain();
         this.positive = StrongDedup.strongUntil(TERM, spec.getOr("positive-capacity", askPositiveCapacity()), 3);
         this.negative = StrongDedup.strongUntil(TERM, spec.getOr("negative-capacity", askNegativeCapacity()), 3);
         notifyInit(InitOrigin.LAZY, null);
@@ -117,6 +119,7 @@ public class AskSelector extends Selector {
                        StrongDedup<TermBatch> positive, StrongDedup<TermBatch> negative) {
         super(client.endpoint(), spec);
         this.client = client;
+        this.clientGuard = client.retain();
         this.positive = positive;
         this.negative = negative;
         notifyInit(InitOrigin.LOAD, null);
@@ -217,5 +220,5 @@ public class AskSelector extends Selector {
         }
     }
 
-    @Override public void close() { client.close(); }
+    @Override public void close() { clientGuard.close(); }
 }

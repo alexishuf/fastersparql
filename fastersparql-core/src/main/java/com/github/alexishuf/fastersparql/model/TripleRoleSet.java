@@ -11,36 +11,31 @@ public enum TripleRoleSet {
     SUB_PRE,     //0b110 -> 0x6
     SUB_PRE_OBJ; //0b111 -> 0x7
 
-    public static TripleRoleSet fromBitset(int bits) {
-        return switch (bits) {
-            case 0 -> EMPTY;
-            case 1 -> OBJ;
-            case 2 -> PRE;
-            case 3 -> PRE_OBJ;
-            case 4 -> SUB;
-            case 5 -> SUB_OBJ;
-            case 6 -> SUB_PRE;
-            case 7 -> SUB_PRE_OBJ;
-            default -> throw new IllegalArgumentException();
-        };
-    }
+    public static final byte       EMPTY_BITS = 0x0; // 0b0000
+    public static final byte         OBJ_BITS = 0x1; // 0b0001
+    public static final byte         PRE_BITS = 0x2; // 0b0010
+    public static final byte     PRE_OBJ_BITS = 0x3; // 0b0011
+    public static final byte         SUB_BITS = 0x4; // 0b0100
+    public static final byte     SUB_OBJ_BITS = 0x5; // 0b0101
+    public static final byte     SUB_PRE_BITS = 0x6; // 0b0110
+    public static final byte SUB_PRE_OBJ_BITS = 0x7; // 0b0111
+
+    private static final TripleRoleSet[] VALUES = values();
+
+    public static TripleRoleSet fromBitset(int bits) { return VALUES[bits]; }
+
+    public TripleRoleSet withSub() { return VALUES[ordinal() | 0x4]; }
+    public TripleRoleSet withPre() { return VALUES[ordinal() | 0x2]; }
+    public TripleRoleSet withObj() { return VALUES[ordinal() | 0x1]; }
+
+    public TripleRoleSet union(TripleRoleSet other) { return VALUES[ordinal() | other.ordinal()]; }
+    public TripleRoleSet union(int bitset) { return VALUES[ordinal() | bitset]; }
 
     public int asBitset() { return ordinal(); }
     public boolean hasObj() { return (ordinal()&0x1) != 0; }
     public boolean hasPre() { return (ordinal()&0x2) != 0; }
     public boolean hasSub() { return (ordinal()&0x4) != 0; }
 
-    public TripleRoleSet invert() {
-        return switch (this) {
-            case EMPTY       -> SUB_PRE_OBJ;
-            case OBJ         -> SUB_PRE;
-            case PRE         -> SUB_OBJ;
-            case PRE_OBJ     -> SUB;
-            case SUB         -> PRE_OBJ;
-            case SUB_OBJ     -> PRE;
-            case SUB_PRE     -> OBJ;
-            case SUB_PRE_OBJ -> EMPTY;
-        };
-    }
+    public TripleRoleSet invert() { return VALUES[~ordinal() & 0x7]; }
 
 }

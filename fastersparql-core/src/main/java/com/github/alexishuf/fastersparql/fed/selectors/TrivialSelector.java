@@ -6,8 +6,6 @@ import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 
-import java.io.IOException;
-
 public final class TrivialSelector extends Selector {
     public static final String NAME = "trivial";
     public static final String RESULT = "result";
@@ -17,7 +15,7 @@ public final class TrivialSelector extends Selector {
         @Override public String name() { return NAME; }
 
         @Override
-        public Selector load(SparqlClient client, Spec spec) throws IOException {
+        public Selector load(SparqlClient client, Spec spec) {
             return new TrivialSelector(client.endpoint(), spec);
         }
     }

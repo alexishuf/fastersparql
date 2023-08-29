@@ -83,6 +83,22 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         execute(Action.RELEASE);
     }
 
+    @Override public void preTouch() {
+        if (!sink.needsTouch() || touchState == TOUCH_DISABLED)
+            return;
+        lock();
+        boolean spawn = !active;
+        if (spawn) active = true;
+        unlock();
+        if (spawn) {
+            try {
+                executor.execute(this);
+            } catch (RejectedExecutionException e) {
+                onRejectedExecution();
+            }
+        }
+    }
+
     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
         if (sink.needsTouch()) touch();
         try {

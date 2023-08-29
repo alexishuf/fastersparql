@@ -157,6 +157,7 @@ public final class Spec {
     private enum ValueKind {
         PRIMITIVE, SPEC, PRIMITIVE_ARRAY, SPEC_ARRAY, MIXED_ARRAY;
 
+        @SuppressWarnings("UnusedAssignment")
         public static ValueKind of(Object o) {
             return switch (o) {
                 case Spec ignored -> SPEC;

@@ -22,10 +22,6 @@ public class ShallowLevelPool<T> {
     private final int threadMask;
     private final Class<T> itemClass;
 
-    public ShallowLevelPool(Class<T> cls) {
-        this(cls, Runtime.getRuntime().availableProcessors());
-    }
-
     public ShallowLevelPool(Class<T> cls, int buckets) {
         buckets = Math.max(4,  1 << (32-Integer.numberOfLeadingZeros(buckets-1)));
         threadMask = buckets-1;
@@ -33,7 +29,7 @@ public class ShallowLevelPool<T> {
         pool = (T[]) Array.newInstance(cls, 32*buckets);
     }
 
-    public Class<T> itemClass() { return itemClass; }
+    @SuppressWarnings("unused") public Class<T> itemClass() { return itemClass; }
 
     /**
      * Takes a previously {@code offer*()}ed object with capacity {@code >= capacity}.

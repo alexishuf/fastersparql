@@ -234,7 +234,6 @@ public class IdAccess {
                 +", on dict["+dictId(sourcedId)+"]="+toString(sourcedId);
     }
 
-    @SuppressWarnings("UnnecessaryUnicodeEscape")
     private static final int[] LIT_INVALID = Rope.alphabet("\"\\" +
             "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007" +
             "\u0008\t\n\u000B\u000C\r\u000E\u000F" +

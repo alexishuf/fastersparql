@@ -172,7 +172,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
          * @param term The {@link Term} whose string representation is to be looked up
          * @return see {@link #find(PlainRope)}
          */
-        public abstract long find(Term term);
+        @SuppressWarnings("unused") public abstract long find(Term term);
 
         /**
          * Get the string corresponding to the given id in this dictionary. Valid ids are in the

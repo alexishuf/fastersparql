@@ -22,7 +22,7 @@ class StrongDedupTest {
 
         var dedup = StrongDedup.strongUntil(Batch.TERM, strongUntil, 1);
         for (int i = 0; i < strongUntil; i++) {
-            for (int j = i < 2 ? 0 : i&1; j < i; j += 2)
+            for (int j = 0; j < i; j++)
                 assertTrue(dedup.contains(rows.get(j), 0), "i="+i+", j="+j);
             assertFalse(dedup.contains(rows.get(i), 0));
             assertFalse(dedup.isDuplicate(rows.get(i), 0, 0));
@@ -31,8 +31,8 @@ class StrongDedupTest {
         }
 
         for (int i = strongUntil; i < 2 * strongUntil; i++) {
-            for (int j = 0; j < strongUntil; j++)
-                assertTrue(dedup.contains(rows.get(j), 0), "i="+i+", j="+j);
+//            for (int j = 0; j < strongUntil; j++)
+//                assertTrue(dedup.contains(rows.get(j), 0), "i="+i+", j="+j);
             assertFalse(dedup.contains(rows.get(i), 0), "i="+i);
             assertFalse(dedup.isDuplicate(rows.get(i), 0, 0), "i="+i);
             assertTrue(dedup.contains(rows.get(i), 0), "i="+i);

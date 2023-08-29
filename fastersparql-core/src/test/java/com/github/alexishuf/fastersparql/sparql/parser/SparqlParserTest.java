@@ -170,7 +170,6 @@ class SparqlParserTest {
 
     @Test
     void test() {
-        var p = new SparqlParser();
         List<D> data = data();
         for (int i = 0; i < data.size(); i++) {
             D d = data.get(i);
@@ -180,10 +179,10 @@ class SparqlParserTest {
                     var ctx = baseCtx + ", prefix=\"" + prefix + "\", suffix=\"" + suffix+'"';
                     var in = Rope.of(prefix, d.in, suffix);
                     if (d.expected == null) {
-                        assertThrows(InvalidSparqlException.class, () -> p.parse(in));
+                        assertThrows(InvalidSparqlException.class, () -> SparqlParser.parse(in));
                     } else {
                         try {
-                            assertEquals(d.expected, p.parse(in), ctx);
+                            assertEquals(d.expected, SparqlParser.parse(in), ctx);
                         } catch (InvalidSparqlException e) { fail(ctx, e); }
                     }
                 }

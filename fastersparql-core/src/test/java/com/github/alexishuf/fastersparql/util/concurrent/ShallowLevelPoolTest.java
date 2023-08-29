@@ -72,7 +72,7 @@ class ShallowLevelPoolTest {
 
     @Test
     void testOfferToNearest() {
-        var pool = new ShallowLevelPool<C>(C.class, 15);
+        var pool = new ShallowLevelPool<>(C.class, 15);
         int offerCap = 24, getCap = 16;
         List<C> offers = new ArrayList<>(), gets = new ArrayList<>();
         for (int i = 0; i < 2 * (1 + STEAL_ATTEMPTS); i++) offers.add(new C(offerCap));

@@ -1,44 +1,21 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.base.BItCompletedException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 /**
  * An asynchronous {@link BIt} that internally holds a bounded queue of batches.
  */
-public interface CallbackBIt<B extends Batch<B>> extends BIt<B> {
-    /**
-     * Offers the contents of the batch and the batch itself.
-     *
-     * <p>Contents are always taken, even at the cost of blocking the calling
-     * thread. Ownership of the batch itself will only be taken if the batch satisfies
-     * {@link BIt#minBatch(int)}</p>
-     *
-     * @param batch the batch with items to publish
-     * @return {@code batch} if ownership remains with caller, {@code null} if ownership
-     *         of {@code batch} was taken by the {@link CallbackBIt}.
-     * @throws BItCompletedException if this {@link CallbackBIt} has
-     *         previously {@link CallbackBIt#complete(Throwable)}ed.
-     */
-    @Nullable B offer(B batch) throws BItCompletedException;
-
+public interface CallbackBIt<B extends Batch<B>> extends BIt<B>, CompletableBatchQueue<B> {
     /**
      * Copies the content of {@code batch} into internal storage managed by {@code this} so that
      * the rows can later by consumed via {@link #nextBatch(Batch)}
      * @param batch batch whose rows will be copied. It will not be modified and caller ALWAYS
      *              retains ownership
-     * @throws BItCompletedException if {@link #complete(Throwable)} has been previously called.
+     * @throws CancelledException see {@link #offer(Batch)}
+     * @throws TerminatedException see {@link #offer(Batch)}
      */
-    void copy(B batch) throws BItCompletedException;
-
-    /**
-     * How many batches this iterator can internally queue before the next
-     * {@link CallbackBIt#offer(Batch)} call blocks. Note that an {@code offer(b)} might not
-     * queue {@code b} and rather add its contents to an already queued batch.
-     * */
-    int maxReadyBatches();
+    void copy(B batch) throws CancelledException, TerminatedException;
 
     /**
      * How many items, spread across all queued batches can be hold without causing the
@@ -58,8 +35,6 @@ public interface CallbackBIt<B extends Batch<B>> extends BIt<B> {
      * @return {@code this}
      */
     @This CallbackBIt<B> maxReadyItems(int items);
-
-    void complete(@Nullable Throwable error);
 
     /**
      * Current state of the {@link CallbackBIt}

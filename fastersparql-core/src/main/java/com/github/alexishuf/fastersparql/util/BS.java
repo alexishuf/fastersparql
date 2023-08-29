@@ -151,18 +151,16 @@ public class BS {
 
     /* --- --- --- bitwise operations --- --- --- */
 
-    public static int[] copy(int[] dest, int[] r) {
+    public static void copy(int[] dest, int[] r) {
         int shared = Math.min(dest.length, r.length);
         //noinspection ManualArrayCopy
         for (int i = 0; i < shared; i++) dest[i] = r[i];
-        return dest;
     }
 
-    public static long[] copy(long[] dest, long[] r) {
+    public static void copy(long[] dest, long[] r) {
         int shared = Math.min(dest.length, r.length);
         //noinspection ManualArrayCopy
         for (int i = 0; i < shared; i++) dest[i] = r[i];
-        return dest;
     }
 
     public static void negate(int[] dest, int[] r) {

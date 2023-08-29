@@ -21,7 +21,7 @@ public class TsvSerializer extends ResultsSerializer {
     }
 
     public TsvSerializer() {
-        super(TSV, TSV.contentType());
+        super(TSV.contentType());
     }
 
     @Override protected void init(Vars subset, ByteSink<?, ?> dest) {

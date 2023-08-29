@@ -71,7 +71,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
             b.nVarPos[b.nVarPosSize++] = end + b.growth;
         }
-        return b.build();
+        return b.build(true);
     }
 
     @Override public OpaqueSparqlQuery toDistinct(DistinctType distinctType) {
@@ -92,19 +92,21 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+7; // skip over REDUCED
         b.b.append(' ').append(distinctType.sparql());
         b.growth = b.b.len()-b.consumed;
+        b.nVerbEnd += b.growth;
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
             int begin = varPos[b.posIdx], end = varPos[b.posIdx+1];
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
             b.nVarPos[b.nVarPosSize++] = end + b.growth;
         }
-        return b.build();
+        return b.build(false);
     }
 
     @Override public OpaqueSparqlQuery bound(Binding binding) {
         if (!allVars.intersects(binding.vars))
             return this; // no-op
         Binder b = new Binder(binding);
-        if (b.nPublicVars.isEmpty() && !publicVars.isEmpty())
+        boolean isAsk = b.nPublicVars.isEmpty() && !publicVars.isEmpty();
+        if (isAsk)
             b.replaceWithAsk();
         var name = new SegmentRope(sparql.segment, sparql.utf8, sparql.offset, sparql.len);
         for (; b.posIdx < varPos.length; b.posIdx += 2) {
@@ -130,7 +132,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 b.nVarPos[b.nVarPosSize++] = nBegin+gap;
             }
         }
-        return b.build();
+        return b.build(isAsk);
     }
 
     @Override public boolean equals(Object obj) {
@@ -175,22 +177,33 @@ public class OpaqueSparqlQuery implements SparqlQuery {
 
         void replaceWithAsk() {
             b.append(sparql, 0, consumed = verbBegin); // copy prologue
-            b.append("ASK");                     // add ASK
-            // find end of last "?var" or "?alas)" and mark that point as consumed
+            b.append("ASK ");                                 // add ASK
+
+            // do not copy REDUCED|DISTINCT
+            consumed = sparql.skipWS(sparql.skip(verbBegin, verbEnd, UNTIL_WS), verbEnd);
+            byte[] kw = switch (sparql.get(consumed)) {
+                case 'r', 'R' -> REDUCED_u8;
+                case 'd', 'D' -> DISTINCT_u8;
+                default -> null;
+            };
+            if (kw != null && sparql.hasAnyCase(consumed, kw))
+                consumed = sparql.skipWS(consumed+kw.length, verbEnd);
+
+            // do not copy vars from projection clause
             for (; posIdx < varPos.length && varPos[posIdx+1] <= verbEnd; posIdx += 2)
                 consumed = varPos[posIdx+1];
-            // if there was no varPos before {, this is a SELECT *
-            if (consumed == verbBegin) {
-                consumed = sparql.skip(verbBegin + 6, verbEnd - 1, WS_WILDCARD);
-                b.append(' ');
-            }
-            growth = b.len()-consumed;       // account for decrease in size
-            nVerbEnd = verbEnd +growth;         // adjust verbEnd for replaced SELECT
+            consumed = sparql.skip(consumed, verbEnd, WS_WILDCARD);
+
+            growth = b.len()-consumed; // account for decrease in size
+            nVerbEnd = verbEnd+growth; // adjust verbEnd for replaced SELECT
         }
 
-        OpaqueSparqlQuery build() {
+        OpaqueSparqlQuery build(boolean dropModifiers) {
+            int end = sparql.len();
+            if (dropModifiers)
+                end = Math.min(end, sparql.skipUntilLast(consumed, end, '}')+1);
             // copy last stretch of sparql that has no vars in it
-            var nQuery = b.append(sparql, consumed, sparql.len());
+            var nQuery = b.append(sparql, consumed, end);
             // nVarPosSize <= nVarsPos.length since a no-op bind would've returned earlier
             nVarPos = copyOf(nVarPos, nVarPosSize);
             return new OpaqueSparqlQuery(nQuery, isGraph, nPublicVars, nAllVars, nAliasVars,
@@ -206,7 +219,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         Vars publicVars, allVars, aliasVars = Vars.EMPTY;
         int[] varPositions;
         int nVarPositions, verbBegin, verbEnd;
-        TermParser termParser = new TermParser();
+        final TermParser termParser = new TermParser();
 
         public Scan(SegmentRope query) {
             len = (in = query).len();
@@ -222,7 +235,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 readAllVars();
                 if (allVars.size() == publicVars.size())
                     allVars = publicVars; // release memory
-                if (aliasVars.size() == 0)
+                if (aliasVars.isEmpty())
                     aliasVars = Vars.EMPTY; // release memory
                 if (varPositions.length > nVarPositions)
                     varPositions = Arrays.copyOf(varPositions, nVarPositions);
@@ -246,9 +259,9 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             verbBegin = pos;
             byte[] ex = switch (in.get(pos)) {
                 case 's', 'S' -> { aliasVars = new Vars.Mutable(10); yield SELECT_u8; }
-                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = pos; yield ASK_u8; }
-                case 'c', 'C' -> { isGraph = true; yield CONSTRUCT_u8; }
-                case 'd', 'D' -> { isGraph = true; yield DESCRIBE_u8; }
+                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = in.skipUntil(pos, len, '{'); yield ASK_u8; }
+                case 'c', 'C' -> { isGraph = true; verbEnd = pos+CONSTRUCT_u8.length+1; yield CONSTRUCT_u8; }
+                case 'd', 'D' -> { isGraph = true; verbEnd = pos+ DESCRIBE_u8.length+1; yield DESCRIBE_u8; }
                 default -> null;
             };
             if (ex == null || !in.hasAnyCase(pos, ex)) {

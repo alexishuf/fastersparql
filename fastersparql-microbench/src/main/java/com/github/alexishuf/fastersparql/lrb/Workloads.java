@@ -85,7 +85,7 @@ public class Workloads {
             }
             List<B> copy = new ArrayList<>();
             for (B b : seed) {
-                var bCopy = bt.create(b.rows+1, b.cols, b.bytesUsed());
+                var bCopy = bt.create(b.rows+1, b.cols, b.localBytesUsed());
                 bCopy.put(b);
                 copy.add(bCopy);
             }

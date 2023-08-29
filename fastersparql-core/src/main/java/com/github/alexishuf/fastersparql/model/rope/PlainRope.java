@@ -24,14 +24,14 @@ public abstract class PlainRope extends Rope {
     /** Equivalent to {@link Rope#compareTo(Rope)} but helps the JIT skip some instanceof tests. */
     public abstract int compareTo(TwoSegmentRope o);
 
-    @Override public final int compareTo(Rope o, int begin, int end) {
+    @SuppressWarnings("unused") @Override public final int compareTo(Rope o, int begin, int end) {
         if      (o instanceof SegmentRope    s) return compareTo(s, begin, end);
         else if (o instanceof TwoSegmentRope t) return compareTo(t, begin, end);
         else                                    return super.compareTo(o, begin, end);
     }
 
     /** Equivalent to {@link Rope#compareTo(Rope)} with {@code o.sub(begin, end)} */
-    public final int compareTo(PlainRope o, int begin, int end) {
+    @SuppressWarnings("unused") public final int compareTo(PlainRope o, int begin, int end) {
         return o instanceof SegmentRope s ? compareTo(s, begin, end)
                                           : compareTo((TwoSegmentRope)o, begin, end);
     }

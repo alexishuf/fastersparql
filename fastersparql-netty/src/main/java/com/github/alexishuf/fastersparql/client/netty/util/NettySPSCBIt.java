@@ -13,24 +13,24 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 
 public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
-
     private int retries;
+    protected final SparqlClient client;
     protected @MonotonicNonNull Channel channel;
     private boolean backPressured;
 
-    public NettySPSCBIt(BatchType<B> batchType, Vars vars, int maxBatches) {
+    public NettySPSCBIt(BatchType<B> batchType, Vars vars, int maxBatches,
+                        SparqlClient client) {
         super(batchType, vars, maxBatches);
+        this.client = client;
     }
 
-    public abstract SparqlClient client();
     protected abstract void request();
     protected void afterNormalComplete() {}
 
     @Override public void complete(@Nullable Throwable error) {
         final Channel ch = channel;
         assert ch == null || ch.eventLoop().inEventLoop() : "complete() outside event loop";
-        //noinspection resource
-        error = FSException.wrap(client().endpoint(), error);
+        error = FSException.wrap(client.endpoint(), error);
         if (state() == State.ACTIVE && ClientRetry.retry(++retries, error, this::request))
             return; //will retry request
         if (ch != null) {
@@ -67,7 +67,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
         return b;
     }
 
-    @Override public String toString() {//noinspection resource
-        return "NettySPSC["+client().endpoint()+"]@"+id();
+    @Override public String toString() {
+        return "NettySPSC["+client.endpoint()+"]@"+id()+channel;
     }
 }
