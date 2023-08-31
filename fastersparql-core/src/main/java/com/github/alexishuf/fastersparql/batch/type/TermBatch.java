@@ -229,7 +229,7 @@ public final class TermBatch extends Batch<TermBatch> {
         rows += oRows;
     }
 
-    @Override public <O extends Batch<O>> @This TermBatch putConverting(O other) {
+    @Override public @This TermBatch putConverting(Batch<?> other) {
         int cols = this.cols, rows = other.rows;
         if (other.cols != cols) throw new IllegalArgumentException();
         reserve(rows, 0);
@@ -241,7 +241,7 @@ public final class TermBatch extends Batch<TermBatch> {
         return this;
     }
 
-    @Override public <O extends Batch<O>> void putRowConverting(O other, int row) {
+    @Override public void putRowConverting(Batch<?> other, int row) {
         if (other.type() == TERM) {
             putRow((TermBatch) other, row);
         } else {

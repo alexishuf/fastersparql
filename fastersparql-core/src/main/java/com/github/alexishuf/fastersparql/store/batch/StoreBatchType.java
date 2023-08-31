@@ -110,7 +110,7 @@ public class StoreBatchType extends BatchType<StoreBatch> {
             this.dictId = dictId;
         }
 
-        @Override public void putConverting(StoreBatch dest, I input) {
+        @Override protected void putConverting(StoreBatch dest, I input) {
             dest.putConverting(input, dictId);
         }
     }

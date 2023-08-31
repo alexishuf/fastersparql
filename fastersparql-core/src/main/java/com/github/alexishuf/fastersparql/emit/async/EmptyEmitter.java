@@ -17,7 +17,7 @@ public class EmptyEmitter<B extends Batch<B>> extends SelfEmitter<B> {
         this.error = error == null ? UNSET_ERROR : error;
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         resetForRebind(0, 0);

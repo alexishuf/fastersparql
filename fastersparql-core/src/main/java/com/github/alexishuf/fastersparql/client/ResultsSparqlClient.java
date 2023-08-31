@@ -260,7 +260,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        private void setup(BatchBinding<TermBatch> binding) {
+        private void setup(BatchBinding binding) {
             resetForRebind(0, 0);
             if (expected == null) {
                 this.error = new AssertionError("unexpected query: "+parsedQuery);
@@ -290,7 +290,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        @Override public void rebind(BatchBinding<TermBatch> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onRebind(binding);
             List<Term> actualBinding = new ArrayList<>();

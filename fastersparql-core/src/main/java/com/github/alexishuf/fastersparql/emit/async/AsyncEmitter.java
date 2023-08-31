@@ -374,7 +374,7 @@ public final class AsyncEmitter<B extends Batch<B>> extends TaskEmitter<B> imple
         }
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         try {
@@ -389,7 +389,7 @@ public final class AsyncEmitter<B extends Batch<B>> extends TaskEmitter<B> imple
             throw new RebindException("Unexpected error rebinding producers", t);
         }
     }
-    private void rebindNotPacked(BatchBinding<B> binding) {
+    private void rebindNotPacked(BatchBinding binding) {
         for (int i = PACKED_PEERS; i < nProducers; i++)
             producer(i).rebind(binding);
     }

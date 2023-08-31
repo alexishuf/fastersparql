@@ -8,7 +8,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 
 
-public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable<B> {
+public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable {
     /** Set of vars naming the columns in batches delivered to {@link Receiver#onBatch(Batch)} */
     Vars vars();
 

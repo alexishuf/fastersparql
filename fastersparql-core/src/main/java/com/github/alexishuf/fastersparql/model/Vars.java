@@ -106,7 +106,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         if (array == this.array) return this;
         var copy = new Mutable(array, has, size);
         copy.addAll(right);
-        return copy.size == size ? this : copy;
+        return copy;
     }
 
     /** Get a {@link Vars} (which may be {@code this}) with all items in {@code this} that are
@@ -187,6 +187,20 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         return false;
     }
 
+    /** Test whether {@code this} and {@code other} share at least one item. */
+    @EnsuresNonNullIf(expression = "#1", result = true)
+    public boolean intersects(Vars other) {
+        if (other == null || (has & other.has) == 0) return false;
+        SegmentRope[] array = this.array, oArray = other.array;
+        for (int i = 0, size = this.size, oSize = other.size; i < size; i++) {
+            var name = array[i];
+            for (int j = 0; j < oSize; j++) {
+                if (name.equals(oArray[j])) return true;
+            }
+        }
+        return false;
+    }
+
     /* --- --- --- overridden query methods --- --- --- */
 
     @Override public final SegmentRope get(int index) {
@@ -250,6 +264,21 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     public           boolean contains(SegmentRope name)    { return indexOf(name)         >= 0; }
     public           boolean contains(Term term)           { return indexOf(term)         >= 0; }
 
+    public boolean containsAll(Vars vars) {
+        if ((vars.has &~ has) != 0) return false;
+        SegmentRope[] array = this.array, other = vars.array;
+        int size = this.size, otherSize = vars.size;
+        for (int i = 0; i < otherSize; i++) {
+            SegmentRope name = other[i];
+            boolean found = false;
+            for (int j = 0; j < size && !found; j++)
+                found = name.equals(array[j]);
+            if (!found)
+                return false;
+        }
+        return true;
+    }
+
     @Override public final int size() { return size; }
 
     @Override public final boolean isEmpty() { return size == 0; }
@@ -257,6 +286,18 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     @Override public final @NonNull Iterator<SegmentRope> iterator() { return super.iterator(); }
 
     @Override public final Spliterator<SegmentRope> spliterator() { return super.spliterator(); }
+
+    public boolean equals(Vars o) {
+        if (o == this) return true;
+        if (o == null || has != o.has) return false;
+        int size = this.size;
+        if (size != o.size) return false;
+        SegmentRope[] array = this.array, oArray = o.array;
+        for (int i = 0; i < size; i++) {
+            if (!array[i].equals(oArray[i])) return false;
+        }
+        return true;
+    }
 
     @Override public boolean equals(Object o) {
         if (o == this) return true;

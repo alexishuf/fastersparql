@@ -329,7 +329,7 @@ public class StoreBatch extends IdBatch<StoreBatch> {
      */
     public StoreBatch putConverting(Batch<?> other, int dictId) {
         int cols = other.cols;
-        if (cols != this.cols) throw new IllegalArgumentException();
+        if (cols != this.cols) throw new IllegalArgumentException("cols mismatch");
         if (other.getClass() == getClass()) {
             put((StoreBatch) other);
         } else {

@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.emit.Rebindable;
 
-public interface RowFilter<B extends Batch<B>> extends Rebindable<B> {
+public interface RowFilter<B extends Batch<B>> extends Rebindable {
     enum Decision {
         /** Do not drop the evaluated row. */
         KEEP,

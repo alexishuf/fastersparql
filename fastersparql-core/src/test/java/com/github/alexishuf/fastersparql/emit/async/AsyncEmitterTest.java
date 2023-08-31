@@ -104,7 +104,7 @@ class AsyncEmitterTest {
                 return next >= end ? ExhaustReason.COMPLETED : null;
             }
 
-            @Override public void rebind(BatchBinding<B> binding) {
+            @Override public void rebind(BatchBinding binding) {
                 throw new UnsupportedOperationException();
             }
 

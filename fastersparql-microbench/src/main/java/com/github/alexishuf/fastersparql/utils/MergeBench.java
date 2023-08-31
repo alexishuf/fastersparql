@@ -168,7 +168,7 @@ public class MergeBench {
             return dest;
         }
 
-        @Override public void rebind(BatchBinding<B> binding) {
+        @Override public void rebind(BatchBinding binding) {
             throw new UnsupportedOperationException();
         }
 

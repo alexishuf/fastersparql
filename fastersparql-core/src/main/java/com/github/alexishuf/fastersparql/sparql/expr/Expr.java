@@ -107,16 +107,16 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class Eval implements ExprEvaluator {
             private final Plan filter;
             private final boolean negate;
-            private final BatchBinding<?> binding;
+            private final BatchBinding binding;
 
             public Eval(Vars vars, Exists e) {
                 this.filter  = e.filter().toAsk();
                 this.negate  = e.negate();
-                this.binding = new BatchBinding<>(vars);
+                this.binding = new BatchBinding(vars);
             }
 
             @Override public Term evaluate(Batch<?> batch, int row) {
-                binding.setRow(batch, row);
+                binding.attach(batch, row);
                 try (var it = filter.execute(COMPRESSED, binding, true).eager().tempEager()) {
                     var b = it.nextBatch(null);
                     COMPRESSED.recycle(b);

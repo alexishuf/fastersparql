@@ -715,7 +715,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 ctx.executor().execute(resumeTask);
             }
 
-            @Override public void rebind(BatchBinding<CompressedBatch> binding) {
+            @Override public void rebind(BatchBinding binding) {
                 throw new UnsupportedOperationException();
             }
         }

@@ -464,13 +464,13 @@ public abstract sealed class Plan implements SparqlQuery
             return switch (parent.type) {
                 case MODIFIER -> {
                     Modifier m = (Modifier) parent;
-                    Vars projection = m.projection;
-                    if (projection != null && binding.vars.intersects(projection)) {
+                    Vars projection = m.projection, bVars = binding.vars();
+                    if (projection != null && bVars.intersects(projection)) {
                         if (!copied) {
                             m = m.copy(null);
                             copied = true;
                         }
-                        m.projection = projection.minus(binding.vars);
+                        m.projection = projection.minus(bVars);
                     }
                     List<Expr> boundFilters = m.boundFilters(binding);
                     if (boundFilters != m.filters) {
@@ -481,10 +481,10 @@ public abstract sealed class Plan implements SparqlQuery
                 }
                 case JOIN -> {
                     Join j = (Join) parent;
-                    Vars projection = j.projection;
-                    if (projection != null && binding.vars.intersects(projection)) {
+                    Vars projection = j.projection, bVars = binding.vars();
+                    if (projection != null && bVars.intersects(projection)) {
                         if (!copied) j = j.copy(null);
-                        j.projection = projection.minus(binding.vars);
+                        j.projection = projection.minus(bVars);
                     }
                     yield j;
                 }
@@ -495,7 +495,7 @@ public abstract sealed class Plan implements SparqlQuery
 
     private Empty boundEmpty(Binding binding) {
         Empty e = (Empty) this;
-        Vars bp = e.publicVars.minus(binding.vars), ba = e.allVars.minus(binding.vars);
+        Vars bv = binding.vars(), bp = e.publicVars.minus(bv), ba = e.allVars.minus(bv);
         return bp == e.publicVars && ba == e.allVars ? e : new Empty(bp, ba);
     }
 

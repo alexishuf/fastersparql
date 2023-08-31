@@ -34,8 +34,10 @@ public final class Empty extends Plan {
     public <B extends Batch<B>>
     BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         Vars vars = publicVars;
-        if (binding != null && vars.intersects(binding.vars))
-            vars = vars.minus(binding.vars);
+        if (binding != null) {
+            Vars bindingVars = binding.vars();
+            if (vars.intersects(bindingVars)) vars = vars.minus(bindingVars);
+        }
         //noinspection resource
         return new EmptyBIt<>(bt, vars).metrics(Metrics.createIf(this));
     }

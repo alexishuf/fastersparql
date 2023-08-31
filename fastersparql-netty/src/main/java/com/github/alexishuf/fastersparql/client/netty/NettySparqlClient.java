@@ -174,7 +174,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
             handler.setup(this);
         }
 
-        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 boundQuery = originalQuery.bound(binding);

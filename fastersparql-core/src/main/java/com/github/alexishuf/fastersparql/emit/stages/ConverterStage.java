@@ -13,6 +13,7 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 
 public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends AbstractStage<I, O> {
     private final int cols;
+    private @Nullable O recycled;
 
     public ConverterStage(BatchType<O> type, Emitter<I> upstream) {
         super(type, upstream.vars());
@@ -48,7 +49,7 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         return batch;
     }
 
-    public void putConverting(O dest, I input) {
+    protected void putConverting(O dest, I input) {
         dest.putConverting(input);
     }
 }

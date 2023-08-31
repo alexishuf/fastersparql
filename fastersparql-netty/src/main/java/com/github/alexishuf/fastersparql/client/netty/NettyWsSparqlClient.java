@@ -102,7 +102,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     @Override
     protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
-        return fromProducer(bt, sparql.publicVars(), new WsProducer<>(bt, sparql, null));
+        return fromProducer(bt, sparql.publicVars(), new WsProducer<>(sparql, null));
         }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
@@ -112,7 +112,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
         BatchType<B> bt = query.bindings.batchType();
-        return fromProducer(bt, query.resultVars(), new WsProducer<>(bt, query.query, query));
+        return fromProducer(bt, query.resultVars(), new WsProducer<>(query.query, query));
     }
 
     /* --- --- --- helper methods --- --- --- */
@@ -158,16 +158,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     private final class WsProducer<B extends Batch<B>> extends NettyCallbackProducer<B> {
-        private final BatchType<B> batchType;
         private final SparqlQuery query;
         private final @Nullable EmitBindQuery<B> bindQuery;
         private @Nullable ByteRope request;
         private @Nullable WsHandler<B> handler;
-        private @Nullable BatchBinding<B> binding;
+        private @Nullable BatchBinding binding;
 
-        public WsProducer(BatchType<B> bt, SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
+        public WsProducer(SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
            super(NettyWsSparqlClient.this);
-           this.batchType = bt;
            this.query = query;
            this.bindQuery = bindQuery;
            acquireRef();
@@ -181,7 +179,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void doRelease() {
-            if (binding != null) binding.batch = batchType.recycle(binding.batch);
             releaseRef();
         }
         @Override protected void request()   {
@@ -190,13 +187,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             netty.open(handler);
         }
 
-        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 assert binding.batch != null && binding.row < binding.batch.rows;
-                if (this.binding != null)
-                    this.binding.batch = batchType.recycle(this.binding.batch);
-                this.binding = new BatchBinding<>(binding);
+                this.binding = binding;
                 WsHandler<B> h = handler;
                 if (h != null)
                     h.parser.feedEnd();

@@ -20,7 +20,6 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         implements Stage<I, O> {
     public final BatchType<O> batchType;
     public final Vars vars;
-    protected @Nullable O recycled;
     protected @MonotonicNonNull Emitter<I> upstream;
     protected @MonotonicNonNull Receiver<O> downstream;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
@@ -66,44 +65,14 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public void rebindAcquire() { upstream.rebindAcquire(); }
     @Override public void rebindRelease() { upstream.rebindRelease(); }
 
-    @Override public void rebind(BatchBinding<O> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         if (ThreadJournal.THREAD_JOURNAL)
             ThreadJournal.journal("rebind", this);
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         if (upstream == null)
             throw new NoEmitterException();
-        //noinspection unchecked
-        var converted = batchType.equals(upstream.batchType())
-                ? (BatchBinding<I>) binding : convertBinding(binding);
-        try {
-            upstream.rebind(converted);
-        } finally {
-            if (converted != binding)
-                recycleConvertedBinding(converted);
-        }
-    }
-
-    protected BatchBinding<I> convertBinding(BatchBinding<O> binding) {
-        Vars vars = binding.vars;
-        I conv;
-        O batch = binding.batch;
-        if (batch == null) {
-            conv = null;
-        } else {
-            int row = binding.row, cols = vars.size();
-            conv = upstream.batchType().create(1, cols, batch.localBytesUsed(row));
-            conv.putRowConverting(batch, row);
-        }
-        var convBinding = new BatchBinding<I>(vars);
-        convBinding.setRow(conv, 0);
-        return convBinding;
-    }
-
-    protected void recycleConvertedBinding(BatchBinding<I> binding) {
-        I b = binding.batch;
-        if (b != null)
-            binding.setRow(b.recycle(), 0);
+        upstream.rebind(binding);
     }
 
     /* --- --- --- Receiver methods --- --- --- */

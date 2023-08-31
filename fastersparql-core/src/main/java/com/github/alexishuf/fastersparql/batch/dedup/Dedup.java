@@ -25,7 +25,7 @@ public abstract class Dedup<B extends Batch<B>> extends ReentrantLock implements
         return hash ^ (hash>>>24);
     }
 
-    @Override public final void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public final void rebind(BatchBinding binding) throws RebindException {
         clear(cols);
     }
 
@@ -87,7 +87,7 @@ public abstract class Dedup<B extends Batch<B>> extends ReentrantLock implements
                 return isDuplicate(b, r, sourceIdx) ? Decision.DROP : Decision.KEEP;
             }
             @Override public boolean targetsProjection() {return true;}
-            @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+            @Override public void rebind(BatchBinding binding) throws RebindException {
                 clear(cols);
             }
         };

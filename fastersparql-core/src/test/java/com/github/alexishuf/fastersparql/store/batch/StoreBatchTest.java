@@ -204,9 +204,7 @@ class StoreBatchTest {
                     @Override public Decision drop(StoreBatch batch, int row) {
                         return (row & 1) == 1 ? DROP : KEEP;
                     }
-
-                    @Override public void rebind(BatchBinding<StoreBatch> binding) {
-                    }
+                    @Override public void rebind(BatchBinding binding) {}
                 });
         assertNotNull(filter);
         StoreBatch b = mk(1, 0, 1, 2, 3);
@@ -221,7 +219,7 @@ class StoreBatchTest {
                     @Override public Decision drop(StoreBatch batch, int row) {
                         return (row & 1) == 0 ? DROP : KEEP;
                     }
-                    @Override public void rebind(BatchBinding<StoreBatch> binding) {}
+                    @Override public void rebind(BatchBinding binding) {}
                 });
         assertNotNull(filter);
         StoreBatch b = mk(3,

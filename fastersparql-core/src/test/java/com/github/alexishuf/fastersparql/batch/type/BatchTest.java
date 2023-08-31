@@ -749,9 +749,7 @@ class BatchTest {
                     @Override public Decision drop(B batch, int row) {
                         return survivors.contains(row) ? Decision.KEEP : Decision.DROP;
                     }
-
-                    @Override public void rebind(BatchBinding<B> binding) {
-                    }
+                    @Override public void rebind(BatchBinding binding) {}
                 };
                 var filter = out.equals(in) ? type.filter(out, rowFilter)
                                             : type.filter(out, in, rowFilter);

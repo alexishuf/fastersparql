@@ -49,7 +49,7 @@ class BatchBindingTest {
 
     @ParameterizedTest @MethodSource("test")
     void testGet(Vars vars, TermBatch batch) {
-        BatchBinding<TermBatch> b = new BatchBinding<>(Batch.TERM, vars).setRow(batch, 1);
+        BatchBinding b = new BatchBinding(vars).attach(batch, 1);
         for (int c = 0; c < vars.size(); c++) {
             assertEquals(batch.get(1, c), b.get(c), "c="+c);
             assertEquals(batch.get(1, c), b.get(vars.get(c)), "c="+c);

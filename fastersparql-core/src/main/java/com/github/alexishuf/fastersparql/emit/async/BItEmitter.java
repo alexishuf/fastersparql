@@ -51,7 +51,7 @@ public final class BItEmitter<B extends Batch<B>> extends SelfEmitter<B> {
         return Optional.ofNullable(it).stream();
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         throw new UnsupportedOperationException("Cannot rebind a BIt");
     }
 

@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -11,15 +12,16 @@ import java.util.Collection;
 public class ArrayBinding extends Binding {
     public static final ArrayBinding EMPTY = new ArrayBinding(Vars.EMPTY, new Term[0]);
 
+    public final Vars vars;
     private final @Nullable Term[] values;
 
     public ArrayBinding(Vars vars) {
-        super(vars);
+        this.vars = vars;
         this.values = new Term[vars.size()];
     }
 
     public ArrayBinding(Vars vars, @Nullable Binding parent) {
-        super(vars);
+        this.vars = vars;
         this.values = new Term[vars.size()];
         if (parent != null) {
             for (int i = 0; i < this.values.length; i++) {
@@ -30,12 +32,12 @@ public class ArrayBinding extends Binding {
     }
 
     public ArrayBinding(Vars vars, Term[] values) {
-        super(vars);
+        this.vars = vars;
         this.values = values;
     }
 
     public ArrayBinding(Vars vars, Collection<Term> values) {
-        super(vars);
+        this.vars = vars;
         this.values = values.toArray(Term[]::new);
     }
 
@@ -56,16 +58,68 @@ public class ArrayBinding extends Binding {
         return new ArrayBinding(vars, terms);
     }
 
-    @Override public @Nullable Term get(int i) {
-        return values[i];
+
+    @Override public Vars vars() { return vars; }
+
+    @Override public @Nullable Term get(int i) { return values[i]; }
+
+    /**
+     * Maps the {@code i}-th variable to {@code null}
+     *
+     * @param i the index of the value to be changed
+     * @throws IndexOutOfBoundsException if {@code i < 0 || i > size()}.
+     */
+    public final void clear(int i) { set(i, null); }
+
+    /** Removes all mappings to values in this {@link Binding}, i.e., call {@code clear(i)}
+     *  for every {@code i} in {@code [0,size())}. */
+    public void clear() {
+        Arrays.fill(values, null);
     }
 
-    @Override public Binding set(int i, @Nullable Term value) {
+    /**
+     * Maps {@code var} to {@code null}
+     *
+     * @param var the variable whose value is to be removed.
+     * @return this {@link Binding}
+     * @throws IllegalArgumentException if {@code var} is unknown to this {@link Binding}
+     */
+    public final @This ArrayBinding clear(SegmentRope var) { return set(var, null); }
+
+    /**
+     * Maps the {@code i}-th variable to {@code value}.
+     *
+     * @param i the index of the variable to update
+     * @param value the new value for the {@code i}-th var.
+     * @return this {@link Binding}
+     * @throws IndexOutOfBoundsException if {@code i < 0 || i > size()}.
+     */
+    public @This ArrayBinding set(int i, @Nullable Term value) {
         values[i] = value;
         return this;
     }
 
-    @Override public void clear() { Arrays.fill(values, null); }
+    /**
+     * Maps {@code var} to {@code value}.
+     *
+     * @param var The var whose value will be updated.
+     * @param value The new value for {@code var}
+     * @return this {@link Binding}
+     * @throws IllegalArgumentException if {@code var} is not known to this {@link Binding}
+     */
+    public final @This ArrayBinding set(SegmentRope var, @Nullable Term value) {
+        int i = vars.indexOf(var);
+        if (i == -1)
+            throw new IllegalArgumentException("var="+var+" is not present in "+this);
+        return set(i, value);
+    }
+
+    public final @This ArrayBinding set(Term var, @Nullable Term value) {
+        int i = vars.indexOf(var);
+        if (i == -1)
+            throw new IllegalArgumentException("var="+var+" is not present in "+this);
+        return set(i, value);
+    }
 
     public Term[] copyValues() { return Arrays.copyOf(values, values.length); }
 

@@ -42,7 +42,7 @@ public final class BItProducer<B extends Batch<B>> extends ProducerTask<B> {
 
     @Override protected ExhaustReason exhausted() { return exhausted; }
 
-    @Override public void rebind(BatchBinding<B> binding) {
+    @Override public void rebind(BatchBinding binding) {
         throw new UnsupportedOperationException("BIt does not allow rebind()");
     }
 

@@ -102,7 +102,8 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     @Override public OpaqueSparqlQuery bound(Binding binding) {
-        if (!allVars.intersects(binding.vars))
+        Vars bindingVars = binding.vars();
+        if (!allVars.intersects(bindingVars))
             return this; // no-op
         Binder b = new Binder(binding);
         boolean isAsk = b.nPublicVars.isEmpty() && !publicVars.isEmpty();
@@ -116,7 +117,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 aliasVar(name, vEnd);
             else
                 name.slice(sparql.offset+vBegin+1, vEnd-(vBegin+1));
-            int col = binding.vars.indexOf(name);
+            int col = bindingVars.indexOf(name);
             if (col >= 0 && binding.has(col)) {
                 b.b.append(sparql, b.consumed, vBegin);
                 b.consumed = vEnd;
@@ -166,11 +167,12 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         }
 
         private Binder(Binding binding) {
-            nAllVars = allVars.minus(binding.vars);
+            Vars bindingVars = binding.vars();
+            nAllVars = allVars.minus(bindingVars);
             if (nAllVars == allVars)
                 return; // no-op
-            nPublicVars = publicVars.minus(binding.vars);
-            nAliasVars =  aliasVars.minus(binding.vars);
+            nPublicVars = publicVars.minus(bindingVars);
+            nAliasVars =  aliasVars.minus(bindingVars);
             b = new ByteRope(sparql.len() + (binding.size() << 7));
             nVarPos = new int[varPos.length];
         }

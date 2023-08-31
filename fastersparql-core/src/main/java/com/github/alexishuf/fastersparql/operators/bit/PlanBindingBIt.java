@@ -31,7 +31,7 @@ public final class PlanBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
         }
     }
 
-    @Override protected BIt<B> bind(BatchBinding<B> binding) {
+    @Override protected BIt<B> bind(BatchBinding binding) {
         return bindQuery.parsedQuery().bound(binding).execute(batchType, canDedup);
     }
 }

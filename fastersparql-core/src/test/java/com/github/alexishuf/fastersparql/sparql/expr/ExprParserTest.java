@@ -252,13 +252,13 @@ public class ExprParserTest {
             for (int i = 0, size = data.rows.size(); i < size; ++i) {
                 Binding binding = data.binding(i);
                 assertEquals(data.expected(i), e.eval(binding), "at row " + i);
-                var evaluator = e.evaluator(binding.vars);
+                var evaluator = e.evaluator(binding.vars());
                 for (BatchType<?> bt : BATCH_TYPES) {
-                    Batch<?> b = bt.create(1, binding.vars.size(), 0);
+                    Batch<?> b = bt.create(1, binding.vars().size(), 0);
                     b.beginPut();
                     b.commitPut();
                     b.beginPut();
-                    for (int col = 0; col < binding.vars.size(); col++)
+                    for (int col = 0; col < binding.vars().size(); col++)
                         b.putTerm(col, binding.get(col));
                     b.commitPut();
                     assertEquals(data.expected(i), evaluator.evaluate(b, 1),

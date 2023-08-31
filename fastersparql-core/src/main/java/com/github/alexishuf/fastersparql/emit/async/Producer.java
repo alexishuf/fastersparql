@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartExcep
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-public interface Producer<B extends Batch<B>> extends StreamNode, Rebindable<B> {
+public interface Producer<B extends Batch<B>> extends StreamNode, Rebindable {
 
     /**
      * Registers this producer as a producer to {@code asyncEmitter}.

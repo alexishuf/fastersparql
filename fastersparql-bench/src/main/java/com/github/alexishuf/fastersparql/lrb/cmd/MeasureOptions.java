@@ -90,6 +90,8 @@ public class MeasureOptions {
     public int cooldownMs = 1_000;
 
     public void cooldown(int ms) {
+        if (ms < 0)
+            return;
         if (ms > 1_000)
             log.info("cooldown({})", ms);
         long start = Timestamp.nanoTime();

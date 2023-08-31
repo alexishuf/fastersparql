@@ -181,7 +181,6 @@ class VarsTest {
                      factory.create(size, slack).toString());
     }
 
-    @SuppressWarnings("SimplifiableAssertion")
 //    @ParameterizedTest @MethodSource("mutableData")
     void testEqualsAndHashCode(Factory factory, int size, int slack) {
         Vars a = factory.create(size, slack), b = factory.create(size, slack);

@@ -1159,7 +1159,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         assert validate() : "corrupted";
     }
 
-    @Override public <O extends Batch<O>> @This CompressedBatch putConverting(O other) {
+    @Override public @This CompressedBatch putConverting(Batch<?> other) {
         if (other instanceof CompressedBatch cb) {
             put(cb);
             return this;
@@ -1167,18 +1167,29 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols, rows = other.rows;
         if (other.cols != cols) throw new IllegalArgumentException();
         reserve(rows, other.localBytesUsed());
-        TwoSegmentRope t = TwoSegmentRope.pooled();
+        var t = TwoSegmentRope.pooled();
         for (int r = 0; r < rows; r++)
-            putRowConverting(other, cols, r, t);
+            putRowConverting(other, r, t, cols);
         t.recycle();
         return this;
     }
 
-    private <O extends Batch<O>>
-    void putRowConverting(O other, int cols, int r, TwoSegmentRope t) {
+    @Override public void putRowConverting(Batch<?> other, int row) {
+        if (other.type() == COMPRESSED) {
+            putRow((CompressedBatch)other, row);
+            return;
+        }
+        int cols = this.cols;
+        if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
+        var t = TwoSegmentRope.pooled();
+        putRowConverting(other, row, t, cols);
+        t.recycle();
+    }
+
+    private void putRowConverting(Batch<?> other, int row, TwoSegmentRope t, int cols) {
         beginPut();
         for (int c = 0; c < cols; c++) {
-            if (other.getRopeView(r, c, t)) {
+            if (other.getRopeView(row, c, t)) {
                 byte fst = t.get(0);
                 SegmentRope sh = switch (fst) {
                     case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
@@ -1193,18 +1204,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             }
         }
         commitPut();
-    }
-
-    @Override public <O extends Batch<O>> void putRowConverting(O other, int row) {
-        if (other.type() == COMPRESSED) {
-            putRow((CompressedBatch)other, row);
-            return;
-        }
-        int cols = this.cols;
-        if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
-        TwoSegmentRope t = TwoSegmentRope.pooled();
-        putRowConverting(other, cols, row, t);
-        t.recycle();
     }
 
     /* --- --- --- operation objects --- --- --- */

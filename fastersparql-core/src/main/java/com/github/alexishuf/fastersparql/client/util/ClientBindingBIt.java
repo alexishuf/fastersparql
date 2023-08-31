@@ -16,7 +16,7 @@ public final class ClientBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
         addGuard(client.retain());
     }
 
-    @Override protected BIt<B> bind(BatchBinding<B> binding) {
+    @Override protected BIt<B> bind(BatchBinding binding) {
         return client.query(batchType, bindQuery.query.bound(binding));
     }
 }

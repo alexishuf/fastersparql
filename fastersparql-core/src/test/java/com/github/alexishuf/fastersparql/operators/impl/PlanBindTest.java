@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.operators.impl;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
@@ -50,7 +49,7 @@ class PlanBindTest {
     void testBind(String rightSparql, Vars leftVars, List<Term> leftRow,
                   String expectedSparql) {
         var right = FS.query(DUMMY, rightSparql);
-        var binding = new BatchBinding<>(Batch.TERM, leftVars).setRow(TermBatch.of(leftRow), 0);
+        var binding = new BatchBinding(leftVars).attach(TermBatch.of(leftRow), 0);
         var bound = (Query)right.bound(binding);
         assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
     }

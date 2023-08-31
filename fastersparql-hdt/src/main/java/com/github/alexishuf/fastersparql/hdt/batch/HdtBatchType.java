@@ -106,7 +106,7 @@ public class HdtBatchType extends BatchType<HdtBatch> {
             this.dictId = dictId;
         }
 
-        @Override public void putConverting(HdtBatch dest, I input) {
+        @Override protected void putConverting(HdtBatch dest, I input) {
             dest.putConverting(input, dictId);
         }
     }

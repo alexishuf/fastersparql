@@ -20,7 +20,6 @@ import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.SelfEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
-import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.fed.CardinalityEstimatorProvider;
@@ -29,7 +28,6 @@ import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.hdt.cardinality.HdtCardinalityEstimator;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -67,7 +65,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
     private final HDT hdt;
     final int dictId;
-    private final HdtSingletonFederator federator;
+    private final SingletonFederator federator;
     private final HdtCardinalityEstimator estimator;
 
     public HdtSparqlClient(SparqlEndpoint ep) {
@@ -85,7 +83,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
         dictId = IdAccess.register(hdt.getDictionary());
         estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
-        federator = new HdtSingletonFederator(this, estimator);
+        federator = new SingletonFederator(this, TYPE, estimator);
     }
 
     @Override public SparqlClient.Guard retain() { return new RefGuard(); }
@@ -102,18 +100,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             hdt.close();
         } catch (Throwable t) {
             log.error("Ignoring failure to close HDT object for {}", endpoint, t);
-        }
-    }
-
-    private final class HdtSingletonFederator extends SingletonFederator {
-        public HdtSingletonFederator(HdtSparqlClient client, HdtCardinalityEstimator estimator) {
-            super(client, HdtBatch.TYPE, estimator);
-        }
-
-        @Override
-        protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {
-            //noinspection unchecked
-            return new FromHdtConverter<>(dest, (Emitter<HdtBatch>) in);
         }
     }
 
@@ -146,8 +132,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         } else {
             hdtEm = federator.emit(TYPE, plan);
         }
-        //noinspection unchecked
-        return bt ==  TYPE ? (Emitter<B>) hdtEm : new FromHdtConverter<>(bt, hdtEm);
+        return bt.convert(hdtEm);
     }
 
     private BIt<HdtBatch> queryTP(Vars vars, TriplePattern tp) {
@@ -184,36 +169,17 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
     /* --- --- --- emitters --- --- --- */
 
-    final class FromHdtConverter<B extends Batch<B>> extends ConverterStage<HdtBatch, B> {
-        private final short dictId;
-
-        public FromHdtConverter(BatchType<B> type, Emitter<HdtBatch> upstream) {
-            super(type, upstream);
-            this.dictId = (short)HdtSparqlClient.this.dictId;
-        }
-
-        @Override protected BatchBinding<HdtBatch> convertBinding(BatchBinding<B> binding) {
-            B b = binding.batch;
-            HdtBatch conv = b == null ? null
-                    : TYPE.create(1, b.cols, 0)
-                          .putRowConverting(b, binding.row, dictId);
-            var bb = new BatchBinding<HdtBatch>(binding.vars);
-            bb.setRow(conv, 0);
-            return bb;
-        }
-    }
-
     final class TPEmitter extends SelfEmitter<HdtBatch> {
-        private static final BatchBinding<HdtBatch> EMPTY_BINDING;
+        private static final BatchBinding EMPTY_BINDING;
         static {
-            EMPTY_BINDING = new BatchBinding<>(Vars.EMPTY);
+            EMPTY_BINDING = new BatchBinding(Vars.EMPTY);
             var b = TYPE.create(1, 0, 0);
             b.beginPut();
             b.commitPut();
-            EMPTY_BINDING.setRow(b, 0);
+            EMPTY_BINDING.attach(b, 0);
         }
 
-        private static final int LIMIT_TICKS = 4;
+        private static final int LIMIT_TICKS = 2;
         private static final int INIT_ROWS = 64;
         private static final int MAX_BATCH = BIt.DEF_MAX_BATCH;
         private static final int TIME_CHK_MASK = 0x7;
@@ -234,6 +200,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final Dictionary dict = HdtSparqlClient.this.hdt.getDictionary();
         private final Triples triples = HdtSparqlClient.this.hdt.getTriples();
         private Term view = Term.pooledMutable();
+        private int @Nullable[] skelCol2InCol;
         private final TripleID search = new TripleID();
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
@@ -264,6 +231,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             try {
                 recycled = recyclePooled(recycled);
                 ArrayPool.LONG.offer(rowSkel, rowSkel.length);
+                if (skelCol2InCol != null)
+                    skelCol2InCol = ArrayPool.INT.offer(skelCol2InCol, skelCol2InCol.length);
                 rowSkel = ArrayPool.EMPTY_LONG;
                 view.recycle();
                 view = Term.EMPTY_STRING;
@@ -284,14 +253,24 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             this.pInCol = (byte)pInCol;
             this.oInCol = (byte)oInCol;
             var tpVars = tp.publicVars();
-            for (SegmentRope outVar : vars) {
-                if (!tpVars.contains(outVar) || bVars.contains(outVar))
-                    return setFlagsRelease(state, HAS_UNSET_OUT);
+            boolean hasUnset = false;
+            int cols = vars.size();
+            for (int c = 0; c < cols && !hasUnset; c++) {
+                var outVar = vars.get(c);
+                hasUnset = !tpVars.contains(outVar) || bVars.contains(outVar);
             }
-            return clearFlagsRelease(state, HAS_UNSET_OUT);
+            if (hasUnset) {
+                if (skelCol2InCol == null)
+                    skelCol2InCol = ArrayPool.intsAtLeast(cols);
+                for (int c = 0; c < cols; c++)
+                    skelCol2InCol[c] = bVars.indexOf(vars.get(c));
+                return setFlagsRelease(state, HAS_UNSET_OUT);
+            } else {
+                return clearFlagsRelease(state, HAS_UNSET_OUT);
+            }
         }
 
-        @Override public void rebind(BatchBinding<HdtBatch> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             Vars bVars = binding.vars;
             if (EmitterStats.ENABLED  && stats != null)
                 stats.onRebind(binding);
@@ -300,13 +279,14 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                 if (!bVars.equals(lastBindingVars))
                     st = bindingsVarsChanged(st, bVars);
                 if ((st&HAS_UNSET_OUT) != 0) {
-                    HdtBatch bBatch = binding.batch;
-                    if (bBatch == null || binding.row >= bBatch.rows)
-                        throw new IllegalArgumentException("Bad batch/row for binding");
-                    int base = binding.row*bBatch.cols;
-                    long[] ids = bBatch.arr;
-                    for (int c = 0, bc; c < cols; c++)
-                        rowSkel[c] = (bc = bVars.indexOf(vars.get(c))) < 0 ? NOT_FOUND : ids[base+bc];
+                    int[] skelCol2InCol = this.skelCol2InCol;
+                    if (skelCol2InCol != null) {
+                        for (int c = 0; c < cols; c++) {
+                            int bc = skelCol2InCol[c];
+                            rowSkel[c] = bc < 0 || !binding.get(bc, view) ? NOT_FOUND
+                                       : IdAccess.encode(dictId, dict, view);
+                        }
+                    }
                 }
                 search.setSubject  (findId(sInCol, binding, SUBJECT,   search.getSubject()));
                 search.setPredicate(findId(pInCol, binding, PREDICATE, search.getPredicate()));
@@ -317,7 +297,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             }
         }
 
-        private long findId(int inCol, BatchBinding<?> binding, TripleComponentRole role,
+        private long findId(int inCol, BatchBinding binding, TripleComponentRole role,
                             long fallback) {
             if (inCol >= 0 && binding.get(inCol, view))
                 return plain(dict, view, role);
@@ -472,23 +452,35 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             return plainIn(dict, role,  batch[base+col]);
         }
 
-        @Override protected BIt<HdtBatch> bind(BatchBinding<HdtBatch> binding) {
+        private long bind(Term original, long sourcedId, TripleComponentRole role,
+                          Term offer) {
+            if (offer == original) return sourcedId;
+            if (offer ==     null) return NOT_FOUND;
+            return plain(dict, offer, role);
+        }
+
+        @Override protected BIt<HdtBatch> bind(BatchBinding binding) {
             if (empty != null) return empty;
             TripleID query;
-            HdtBatch bindingBatch = binding.batch;
-            if (bindingBatch == null) {
-                query = new TripleID(s, p, o);
-            } else {
-                long[] batch = bindingBatch.arr();
-                int base = binding.row*bindingBatch.cols;
-                Vars vars = binding.vars;
-                query = new TripleID(bind(right.s, s, SUBJECT,   batch, base, vars),
-                                     bind(right.p, p, PREDICATE, batch, base, vars),
-                                     bind(right.o, o, OBJECT,    batch, base, vars));
-            }
             Term s = binding.getIf(right.s);
             Term p = binding.getIf(right.p);
             Term o = binding.getIf(right.o);
+            Vars bVars = binding.vars;
+            var bb = binding.batch;
+            if (bb instanceof HdtBatch hb) {
+                long[] batch = hb.arr;
+                int base = binding.row*bb.cols;
+                query = new TripleID(bind(right.s, this.s, SUBJECT,   batch, base, bVars),
+                                     bind(right.p, this.p, PREDICATE, batch, base, bVars),
+                                     bind(right.o, this.o, OBJECT,    batch, base, bVars));
+
+            } else if (bb == null) {
+                query = new TripleID(this.s, this.p, this.o);
+            } else {
+                query = new TripleID(bind(right.s, this.s, SUBJECT,   s),
+                                     bind(right.p, this.p, PREDICATE, p),
+                                     bind(right.o, this.o, OBJECT,    o));
+            }
             BIt<HdtBatch> it = new HdtIteratorBIt(rightFreeVars, s, p, o, hdt.getTriples().search(query));
             if (modifier != null)
                 it = modifier.executeFor(it, null, false);

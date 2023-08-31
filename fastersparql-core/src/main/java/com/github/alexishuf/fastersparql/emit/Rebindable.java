@@ -6,7 +6,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindReleasedException
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 
-public interface Rebindable<B extends Batch<B>> {
+public interface Rebindable {
     /**
      * Notifies that this instance may receive future {@link #rebind(BatchBinding)} calls,
      * allowing implementations to delay releasing internal resources until
@@ -71,5 +71,5 @@ public interface Rebindable<B extends Batch<B>> {
      * @param binding binding to be recursively applied to this and all upstream emitters
      * @throws RebindException if the operation cannot be performed due to reasons listed above.
      */
-    void rebind(BatchBinding<B> binding) throws RebindException;
+    void rebind(BatchBinding binding) throws RebindException;
 }

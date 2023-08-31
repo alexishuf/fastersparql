@@ -26,7 +26,7 @@ public class BatchEmitter<B extends Batch<B>> extends SelfEmitter<B> {
         super.doRelease();
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         if (batch == null)
             throw new RebindReleasedException(this);
         nextRow = 0;

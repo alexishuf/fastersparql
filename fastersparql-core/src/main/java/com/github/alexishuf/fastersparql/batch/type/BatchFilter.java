@@ -111,7 +111,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (before != null) before.rebindRelease();
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         super.rebind(binding);
         var rf = rowFilter;
         if (rf     != null)     rf.rebind(binding);

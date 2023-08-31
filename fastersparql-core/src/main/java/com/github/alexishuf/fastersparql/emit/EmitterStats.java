@@ -44,7 +44,7 @@ public class EmitterStats {
         onBatchDelivered(b);
     }
 
-    public void onRebind(BatchBinding<?> binding) {
+    public void onRebind(BatchBinding binding) {
         ++rebinds;
         if (!lastRebindVars.equals(binding.vars)) {
             ++rebindVarsChanged;

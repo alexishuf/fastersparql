@@ -190,7 +190,7 @@ public final class Modifier extends Plan {
                                    @Nullable Binding binding, boolean weakDedup) {
         Vars outVars = projection == null ? inVars : projection;
         if (binding != null)
-            outVars = outVars.minus(binding.vars);
+            outVars = outVars.minus(binding.vars());
         List<Expr> filters = binding == null ? this.filters : boundFilters(binding);
         int dCap = distinctCapacity, cols = outVars.size();
         long limit = this.limit;
@@ -239,7 +239,7 @@ public final class Modifier extends Plan {
         @Override public long upstreamRequestLimit() {
             return Modifier.upstreamRequestLimit(skip, allowed);
         }
-        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             skip = offset;
             allowed = limit;
         }
@@ -267,7 +267,7 @@ public final class Modifier extends Plan {
             allowed = this.limit = limit;
         }
         @Override public boolean targetsProjection() {return true;}
-        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             skip = offset;
             allowed = limit;
             dedup.rebind(binding);
@@ -295,7 +295,7 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-        @Override public void rebind(BatchBinding<B> binding) {
+        @Override public void rebind(BatchBinding binding) {
             skip = offset;
             allowed = limit;
             super.rebind(binding);
@@ -315,13 +315,13 @@ public final class Modifier extends Plan {
     }
 
     private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
-        private final BatchBinding<B> tmpBinding;
+        private final BatchBinding tmpBinding;
         private final List<Expr> filters;
         private final ExprEvaluator[] evaluators;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
-            this.tmpBinding = new BatchBinding<>(bt, inVars);
+            this.tmpBinding = new BatchBinding(inVars);
             this.filters = filters;
             this.evaluators = new ExprEvaluator[filters.size()];
             for (int i = 0; i < evaluators.length; i++)
@@ -334,7 +334,7 @@ public final class Modifier extends Plan {
             log.info("Filter evaluation failed for {}. filters={}", tmpBinding, filters, t);
         }
 
-        @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             int n = evaluators.length;
             for (int i = 0; i < n; i++) {
                 Expr e = filters.get(i), bound;
@@ -344,7 +344,7 @@ public final class Modifier extends Plan {
         }
 
         @Override public Decision drop(B batch, int row) {
-            var binding = this.tmpBinding.setRow(batch, row);
+            var binding = this.tmpBinding.attach(batch, row);
             try {
                 for (ExprEvaluator e : evaluators) {
                     if (!e.evaluate(batch, row).asBool()) return Decision.DROP;

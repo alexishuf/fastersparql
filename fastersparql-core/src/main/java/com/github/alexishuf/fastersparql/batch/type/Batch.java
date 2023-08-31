@@ -128,7 +128,7 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     @SuppressWarnings("SameReturnValue")
-    public static <B extends Batch<B>> @Nullable B recyclePooled(@Nullable B b) {
+    public static <B extends Batch<B>> @Nullable B recyclePooled(@Nullable Batch<?> b) {
         if (b != null) {
             b.unmarkPooled();
             b.recycle();
@@ -935,9 +935,8 @@ public abstract class Batch<B extends Batch<B>> {
      * other than this.
      *
      * @param other source of rows
-     * @param <O> {@link Batch} concrete class
      */
-    public abstract <O extends Batch<O>> @This B putConverting(O other);
+    public abstract @This B putConverting(Batch<?> other);
 
     /**
      * Equivalent to {@link #putRow(Batch, int)}, but accepts a batch of another type.
@@ -948,5 +947,5 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IllegalArgumentException  if {@code other.cols != cols}
      * @throws IndexOutOfBoundsException if {@code row < 0 || row >= other.rows}
      */
-    public abstract <O extends Batch<O>> void putRowConverting(O other, int row);
+    public abstract void putRowConverting(Batch<?> other, int row);
 }

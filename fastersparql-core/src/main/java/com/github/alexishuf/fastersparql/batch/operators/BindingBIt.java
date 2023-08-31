@@ -26,7 +26,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private @Nullable B lb, rb;
     private int leftRow = -1;
     private final BIt<B> empty;
-    private final BatchBinding<B> tempBinding;
+    private final BatchBinding tempBinding;
     private long bindingSeq;
     private @Nullable List<SparqlClient.Guard> guards;
     private @Nullable Thread safeCleanupThread;
@@ -46,7 +46,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         this.bindQuery   = bindQuery;
         this.empty       = inner;
         this.merger      = batchType.merger(vars(), leftPublicVars, rFree);
-        this.tempBinding = new BatchBinding<>(batchType, leftPublicVars);
+        this.tempBinding = new BatchBinding(leftPublicVars);
         this.metrics     = bindQuery.metrics;
     }
 
@@ -88,7 +88,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     }
 
     /* --- --- --- binding behavior --- --- --- */
-    protected abstract BIt<B> bind(BatchBinding<B> binding);
+    protected abstract BIt<B> bind(BatchBinding binding);
 
     private static final byte PUB_MERGE           = 0x1;
     private static final byte PUB_LEFT            = 0x2;
@@ -109,7 +109,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                         lb = bindQuery.bindings.nextBatch(lb);
                         if (lb == null) break; // reached end
                     }
-                    inner = bind(tempBinding.setRow(lb, leftRow));
+                    inner = bind(tempBinding.attach(lb, leftRow));
                     rightEmpty = true;
                     bindingEmpty = true;
                 }

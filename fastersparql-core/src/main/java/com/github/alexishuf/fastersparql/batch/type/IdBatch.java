@@ -245,7 +245,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
     @SuppressWarnings("unchecked") @Override
-    public <O extends Batch<O>> @This B putConverting(O other) {
+    public @This B putConverting(Batch<?> other) {
         if (other.type() == type()) {
             put((B)other);
         } else {
@@ -260,7 +260,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return (B) this;
     }
 
-    private <O extends Batch<O>> void putRowConverting(O other, int row, int cols, Term tmp) {
+    private void putRowConverting(Batch<?> other, int row, int cols, Term tmp) {
         beginPut();
         for (int c = 0; c < cols; c++) {
             if (other.getView(row, c, tmp))
@@ -269,7 +269,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         commitPut();
     }
 
-    @Override public <O extends Batch<O>> void putRowConverting(O other, int row) {
+    @Override public void putRowConverting(Batch<?> other, int row) {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
         Term tmp = Term.pooledMutable();

@@ -694,7 +694,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     /* --- --- --- emitters --- --- --- */
 
     private final class TPEmitter extends SelfEmitter<StoreBatch> {
-        private static final int LIMIT_TICKS = 4;
+        private static final int LIMIT_TICKS = 2;
         private static final int DEADLINE_CHK = 0xf;
         private static final int MAX_BATCH = BIt.DEF_MAX_BATCH;
         private static final int MIN_ROWS = 64;
@@ -716,7 +716,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final LocalityCompositeDict.Lookup lookup = dict.lookup();
         private @MonotonicNonNull Vars lastBindingsVars;
         private final long sId, pId, oId;
-        private Term view = Term.pooledMutable();
+        private int @Nullable[] skelCol2InCol;
+        private final TwoSegmentRope view = TwoSegmentRope.pooled();
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
             super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
@@ -737,8 +738,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             try {
                 recycled = Batch.recyclePooled(recycled);
                 ArrayPool.LONG.offer(rowSkel, rowSkel.length);
+                if (skelCol2InCol != null)
+                    skelCol2InCol = ArrayPool.INT.offer(skelCol2InCol, skelCol2InCol.length);
                 view.recycle();
-                view = Term.EMPTY_STRING;
                 releaseRef();
             } finally {
                 super.doRelease();
@@ -778,11 +780,32 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (o0 != -1                        ) ++colsSet;
             if (o1 != -1 && o1 != o0            ) ++colsSet;
             if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
-            return colsSet < cols ?   setFlagsRelease(state, HAS_UNSET_OUT)
-                                  : clearFlagsRelease(state, HAS_UNSET_OUT);
+            if (colsSet < cols) {
+                if (skelCol2InCol == null)
+                    skelCol2InCol = ArrayPool.intsAtLeast(cols);
+                for (int c = 0; c < cols; c++)
+                    skelCol2InCol[c] = bindingVars.indexOf(vars.get(c));
+                return setFlagsRelease(state, HAS_UNSET_OUT);
+            }
+            return clearFlagsRelease(state, HAS_UNSET_OUT);
         }
 
-        @Override public void rebind(BatchBinding<StoreBatch> binding) throws RebindException {
+        @SuppressWarnings("DataFlowIssue")
+        private long toUnsourcedId(int col, Batch<?> batch, int row, BatchBinding binding) {
+            int cols = batch.cols;
+            while (col >= cols) {
+                col -= cols;
+                row  = (binding = binding.remainder).row;
+                cols = (batch   = binding.batch    ).cols;
+            }
+            if (batch instanceof StoreBatch sb)
+                return translate(sb.arr[cols*row+col], dictId, lookup);
+            else if (batch.getRopeView(row, col, view))
+                 return lookup.find(view);
+            return NOT_FOUND;
+        }
+
+        @Override public void rebind(BatchBinding binding) throws RebindException {
             Vars bVars = binding.vars;
             int st = resetForRebind(0, LOCKED_MASK);
             try {
@@ -790,18 +813,21 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     stats.onRebind(binding);
                 if (!bVars.equals(lastBindingsVars))
                     st = bindingVarsChanged(st, bVars);
-                long s = sInCol >=0 && binding.get(sInCol, view) ? lookup.find(view) : sId;
-                long p = pInCol >=0 && binding.get(pInCol, view) ? lookup.find(view) : pId;
-                long o = oInCol >=0 && binding.get(oInCol, view) ? lookup.find(view) : oId;
+                Batch<?> bb = binding.batch;
+                int bRow = binding.row;
+                if (bb == null || bRow >= bb.rows)
+                    throw new IllegalArgumentException("invalid binding");
+                long s = sInCol >= 0 ? toUnsourcedId(sInCol, bb, bRow, binding) : sId;
+                long p = pInCol >= 0 ? toUnsourcedId(pInCol, bb, bRow, binding) : pId;
+                long o = oInCol >= 0 ? toUnsourcedId(oInCol, bb, bRow, binding) : oId;
                 if ((st&HAS_UNSET_OUT) != 0) {
-                    StoreBatch bBatch = binding.batch;
-                    if (bBatch == null || binding.row >= bBatch.rows)
-                        throw new IllegalArgumentException("bad binding batch/row");
-                    int bBase = binding.row*bBatch.cols;
-                    long[] bIds = bBatch.arr;
-                    for (int c = 0, bCol; c < cols; c++) {
-                        var v = vars.get(c);
-                        rowSkel[c] = (bCol = bVars.indexOf(v)) < 0 ? 0 : bIds[bBase+bCol];
+                    int[] skelCol2InCol = this.skelCol2InCol;
+                    if (skelCol2InCol != null) {
+                        for (int c = 0; c < cols; c++) {
+                            int bc = skelCol2InCol[c];
+                            rowSkel[c] = bc < 0 ? NOT_FOUND
+                                    : source(toUnsourcedId(bc, bb, bRow, binding), dictId);
+                        }
                     }
                 }
                 switch (freeRoles) {
@@ -946,25 +972,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     private final class FromStoreConverter<B extends Batch<B>> extends ConverterStage<StoreBatch, B> {
         private final LocalityCompositeDict.Lookup lookup;
-        private final short dictId;
 
         public FromStoreConverter(BatchType<B> type, Emitter<StoreBatch> upstream) {
             super(type, upstream);
-            this.dictId = (short)StoreSparqlClient.this.dictId;
             this.lookup = dict.lookup();
         }
 
-        @Override protected BatchBinding<StoreBatch> convertBinding(BatchBinding<B> binding) {
-            B b = binding.batch;
-            StoreBatch conv = b == null ? null
-                     : TYPE.create(1, b.cols, 0)
-                           .putRowConverting(b, binding.row, dictId);
-            BatchBinding<StoreBatch> bb = new BatchBinding<>(binding.vars);
-            bb.setRow(conv, 0);
-            return bb;
-        }
-
-        @Override public void putConverting(B dst, StoreBatch src) {
+        @Override protected void putConverting(B dst, StoreBatch src) {
             int cols = src.cols, rows = src.rows;
             if (dst.cols != cols) throw new IllegalArgumentException("cols mismatch");
             long[] ids = src.arr;
@@ -1146,7 +1160,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //
 //        @Override protected void cleanup() { releaseRef(); }
 //
-//        @Override protected Emitter<B> bind(BatchBinding<B> binding) {
+//        @Override protected Emitter<B> bind(BatchBinding binding) {
 //            B lb = this.lb = binding.batch;
 //            int lr = this.lr = binding.row;
 //            assert lb != null;
@@ -1272,7 +1286,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final Plan right;
         /** If a lexical join hold lexical variants of the left-provided binding using the
          *  var names of the right operand instead of the left-side binding var name. */
-        private final @Nullable BatchBinding<B> lexJoinBinding;
+        private final @Nullable BatchBinding lexJoinBinding;
         /** Next values for {@code lexJoinBinding}, continuously swapped with
          * {@code lexJoinBinding.batch} */
         private @Nullable B nextLexBatch;
@@ -1287,6 +1301,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
          * {@code lexJoinBinding.batch}*/
         private final long lexBindingCols;
         private final @Nullable TwoSegmentRope lexView;
+        /** A 1-row batch used to convert lexical binding batches that are not of type B */
+        private @Nullable B convLeftBatch;
 
         public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
@@ -1330,7 +1346,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        private BatchBinding<B> createLexJoinBinding(Plan right, List<Expr> mFilters,
+        private BatchBinding createLexJoinBinding(Plan right, List<Expr> mFilters,
                                                      Vars leftVars) {
             Vars rightBindingVars = null;
             var term = Term.pooledMutable();
@@ -1351,11 +1367,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             varRope.recycle();
             term.recycle();
             if (rightBindingVars != null) {
-                BatchBinding<B> lexJoinBinding = new BatchBinding<>(rightBindingVars);
+                BatchBinding lexJoinBinding = new BatchBinding(rightBindingVars);
                 B b = batchType().create(1, rightBindingVars.size(), 0);
                 b.beginPut();
                 b.commitPut();
-                lexJoinBinding.setRow(b, 0);
+                lexJoinBinding.attach(b, 0);
                 return lexJoinBinding;
             }
             return null;
@@ -1367,12 +1383,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void doRelease() {
             super.doRelease();
-            if (lexJoinBinding != null)
-                lexJoinBinding.batch = batchType.recycle(lexJoinBinding.batch);
+            if (lexJoinBinding != null) //noinspection unchecked
+                lexJoinBinding.attach(batchType.recycle((B)lexJoinBinding.batch), 0);
             nextLexBatch = batchType.recycle(nextLexBatch);
+            convLeftBatch = batchType.recycle(convLeftBatch);
         }
 
-        @Override protected boolean lexContinueRight(B leftBatch, int leftRow,
+        @Override protected boolean lexContinueRight(BatchBinding binding,
                                                      Emitter<B> rightEmitter) {
             if (lexJoinBinding == null)
                 return false;
@@ -1382,17 +1399,18 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (i < 0)
                 return false;
 
-            B lexBatch = lexJoinBinding.batch, nextLexBatch = this.nextLexBatch;
+            //noinspection unchecked
+            B lexBatch = (B)lexJoinBinding.batch, nextLexBatch = this.nextLexBatch;
             assert nextLexBatch != null && lookup != null && lexView != null && lexBatch != null;
             int nVars = lexBatch.cols;
 
             clearAndCopyNonLexBindings(lexBatch, 0, nextLexBatch);
             if (nVars > 64)
-                copyNonLexBindingsExtra(nextLexBatch, lexBatch);
+                copyNonLexBindingsExtra(nextLexBatch, 0, lexBatch);
             putLex(nextLexBatch, i, lookup);
 
             while (++i < nIts) {
-                if (!leftBatch.getRopeView(leftRow, lexItsCols[i], lexView))
+                if (!binding.get(lexItsCols[i], lexView))
                     return false;
                 var it = lexIts[i];
                 it.find(lexView);
@@ -1416,13 +1434,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        private void copyNonLexBindingsExtra(B src, B dst) {
+        private void copyNonLexBindingsExtra(B src, int srcRow, B dst) {
             outer:
             for (int c = 64, n = src.cols; c < n; c++) {
                 for (int lexCol : lexItsCols) {
                     if (lexCol == c) continue outer;
                 }
-                dst.putTerm(c, src, 0, c);
+                dst.putTerm(c, src, srcRow, c);
             }
         }
 
@@ -1435,27 +1453,42 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                  0, local.len, lookup.sharedSuffixed(id));
         }
 
-        @Override protected void rebind(BatchBinding<B> binding, Emitter<B> rightEmitter) {
-            if (lexJoinBinding != null) {
-                B leftBatch = binding.batch, lexBatch = lexJoinBinding.batch;
-                assert leftBatch != null && lexBatch != null && lexView != null && lookup != null;
-                int leftRow = binding.row, nVars = leftBatch.cols;
-                clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
-                if (nVars > 64)
-                    copyNonLexBindingsExtra(leftBatch, lexBatch);
-                for (int i = 0; i < lexIts.length; i++) {
-                    if (leftBatch.getRopeView(leftRow, lexItsCols[i], lexView)) {
-                        var it = lexIts[i];
-                        it.find(lexView);
-                        if (it.advance())
-                            putLex(lexBatch, i, lookup);
-                        else
-                            lexBatch.putTerm(lexItsCols[i], leftBatch, leftRow, lexItsCols[i]);
-                    }
-                }
-                binding = lexJoinBinding;
-            }
+        @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
+            if (lexJoinBinding != null) binding = lexRebind(binding, lexJoinBinding);
             rightEmitter.rebind(binding);
+        }
+
+        private BatchBinding lexRebind(BatchBinding binding, BatchBinding lexJoinBinding) {
+            Batch<?> bBatch = binding.batch;
+            if (bBatch == null)
+                throw new IllegalArgumentException("invalid binding");
+            B leftBatch;
+            if (bBatch.type().equals(batchType)) {//noinspection unchecked
+                leftBatch = (B)bBatch;
+            } else {
+                leftBatch = batchType.empty(convLeftBatch, 1, bBatch.cols, 0);
+                convLeftBatch = leftBatch;
+                leftBatch.putConverting(bBatch);
+            }
+
+            @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
+            assert lexBatch != null && lexView != null && lookup != null;
+            int leftRow = binding.row, nVars = leftBatch.cols;
+            clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
+            if (nVars > 64)
+                copyNonLexBindingsExtra(leftBatch, leftRow, lexBatch);
+            for (int i = 0; i < lexIts.length; i++) {
+                if (leftBatch.getRopeView(leftRow, lexItsCols[i], lexView)) {
+                    var it = lexIts[i];
+                    it.find(lexView);
+                    if (it.advance())
+                        putLex(lexBatch, i, lookup);
+                    else
+                        lexBatch.putTerm(lexItsCols[i], leftBatch, leftRow, lexItsCols[i]);
+                }
+            }
+            binding = lexJoinBinding;
+            return binding;
         }
     }
 

@@ -65,5 +65,4 @@ public final class TermBatchType extends BatchType<TermBatch> {
                                    BatchFilter<TermBatch> before) {
         return new Filter(this, vars, null, filter, before);
     }
-
 }

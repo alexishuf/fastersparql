@@ -117,7 +117,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         allowRelease();
     }
 
-    @Override public void rebind(BatchBinding<B> binding) throws RebindException {
+    @Override public void rebind(BatchBinding binding) throws RebindException {
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         if (upstream != null)

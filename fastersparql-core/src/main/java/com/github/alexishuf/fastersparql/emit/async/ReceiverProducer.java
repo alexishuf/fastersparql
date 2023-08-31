@@ -102,7 +102,7 @@ public class ReceiverProducer<B extends Batch<B>> extends Stateful implements Pr
         if (upstream == null) throw new NoUpstreamException(this);
         upstream.rebindRelease();
     }
-    @Override public void rebind(BatchBinding<B> binding) {
+    @Override public void rebind(BatchBinding binding) {
         if (upstream == null) throw new NoUpstreamException(this);
         upstream.rebind(binding);
     }
