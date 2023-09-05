@@ -60,7 +60,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     public final void release() {
         if (upstream != null || downstream != null)
             throw new IllegalStateException("release() called on a BatchProcessor being used as a Stage.");
-        markDelivered(CREATED, CANCELLED);
+        if (moveStateRelease(statePlain(), CANCELLED))
+            markDelivered(CANCELLED);
     }
 
     /* --- --- --- processing --- --- --- */
@@ -87,6 +88,9 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         if (upstream != null)
             upstream.cancel();
     }
+
+    /** Whether {@link #cancelUpstream()} has been called. */
+    protected boolean upstreamCancelled() { return cancelExpected; }
 
     /* --- --- --- Stage --- --- --- */
 
@@ -131,6 +135,9 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override public void request(long rows) throws NoReceiverException {
         if (upstream == null) throw new NoUpstreamException(this);
+        int state = statePlain();
+        if ((state&STATE_MASK) == CREATED)
+            moveStateRelease(state, ACTIVE);
         upstream.request(rows);
     }
 
@@ -162,24 +169,36 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override public final void onComplete() {
         try {
-            if (downstream == null) throw new NoDownstreamException(this);
-            downstream.onComplete();
-        } finally { markDelivered(statePlain(), COMPLETED); }
+            if (moveStateRelease(statePlain(), COMPLETED)) {
+                if (downstream == null) throw new NoDownstreamException(this);
+                downstream.onComplete();
+            }
+        } finally {
+            markDelivered(COMPLETED);
+        }
     }
 
     @Override public final void onCancelled() {
         try {
-            if (downstream == null) throw new NoDownstreamException(this);
-            if (cancelExpected) downstream.onComplete();
-            else                downstream.onCancelled();
-        } finally { markDelivered(statePlain(), CANCELLED); }
+            if (moveStateRelease(statePlain(), CANCELLED)) {
+                if (downstream == null) throw new NoDownstreamException(this);
+                if (cancelExpected) downstream.onComplete();
+                else downstream.onCancelled();
+            }
+        } finally {
+            markDelivered(CANCELLED);
+        }
     }
 
     @Override public final void onError(Throwable cause) {
         try {
-            if (downstream == null) throw new NoDownstreamException(this);
-            downstream.onError(cause);
-        } finally { markDelivered(statePlain(), FAILED); }
+            if (moveStateRelease(statePlain(), FAILED)) {
+                if (downstream == null) throw new NoDownstreamException(this);
+                downstream.onError(cause);
+            }
+        } finally {
+            markDelivered(FAILED);
+        }
     }
 
     /* --- --- --- recycling --- --- --- */

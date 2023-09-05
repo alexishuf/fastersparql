@@ -29,53 +29,17 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
     }
 
-    private static final int DEDUP_TYPE_MASK = 0x00030000;
-    private static final int DEDUP_COLS_MASK = 0xfffc0000;
-    private static final Flags FILTER_FLAGS = Flags.DEFAULT.toBuilder()
-            .counter(DEDUP_TYPE_MASK, "dedup")
-            .counter(DEDUP_COLS_MASK, "dedupCols")
-            .build();
-    private static final int DEDUP_TYPE_BIT      = numberOfTrailingZeros(DEDUP_TYPE_MASK);
-    private static final int DEDUP_COLS_BIT      = numberOfTrailingZeros(DEDUP_COLS_MASK);
-    private static final int DEDUP_WEAK_TYPE     = 0x0;
-    private static final int DEDUP_CROSS_TYPE    = 0x1;
-    private static final int DEDUP_REDUCED_TYPE  = 0x2;
-    private static final int DEDUP_DISTINCT_TYPE = 0x3;
-    private static final int MAX_DEDUP_COLS      = DEDUP_COLS_MASK >>> DEDUP_COLS_BIT;
-
     public final @Nullable BatchMerger<B> projector;
-    public RowFilter<B> rowFilter;
+    public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
     @SuppressWarnings("unused") protected long requestLimit, plainUpRequested;
 
     /* --- --- --- lifecycle --- --- --- */
 
-    private static int initState(RowFilter<?> filter) {
-        int state = CREATED;
-        if (filter instanceof Dedup<?> dedup) {
-            int cols = dedup.cols();
-            if (cols > MAX_DEDUP_COLS)
-                throw new IllegalArgumentException("Too many dedup cols");
-            state |= cols << DEDUP_COLS_BIT;
-            if (filter instanceof StrongDedup<?> d) {
-                if (d.weakenAt() >= FSProperties.distinctCapacity())
-                    state |= DEDUP_DISTINCT_TYPE << DEDUP_TYPE_BIT;
-                else
-                    state |= DEDUP_REDUCED_TYPE << DEDUP_TYPE_BIT;
-            } else if (filter instanceof WeakCrossSourceDedup<?>) {
-                state |= DEDUP_CROSS_TYPE << DEDUP_TYPE_BIT;
-            } else {
-                assert filter instanceof WeakDedup<?> : "unexpected Dedup type";
-                state |= DEDUP_WEAK_TYPE << DEDUP_TYPE_BIT;
-            }
-        }
-        return state;
-    }
-
     public BatchFilter(BatchType<B> batchType, Vars outVars,
                        @Nullable BatchMerger<B> projector,
                        RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
-        super(batchType, outVars, initState(rowFilter), FILTER_FLAGS);
+        super(batchType, outVars, CREATED, Flags.DEFAULT);
         this.projector = projector;
         this.rowFilter = rowFilter;
         this.before = before;
@@ -95,21 +59,19 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
     }
 
-    /* --- --- --- Emitter methods --- --- --- */
-
     @Override public void rebindAcquire() {
         super.rebindAcquire();
-        var rf = rowFilter;
-        if (rf     != null) rf    .rebindAcquire();
-        if (before != null) before.rebindAcquire();
+        if (rowFilter != null) rowFilter.rebindAcquire();
+        if (before    != null) before.rebindAcquire();
     }
 
     @Override public void rebindRelease() {
         super.rebindRelease();
-        var rf = rowFilter;
-        if (rf     != null) rf    .rebindRelease();
-        if (before != null) before.rebindRelease();
+        if (rowFilter != null) rowFilter.rebindRelease();
+        if (before    != null) before.rebindRelease();
     }
+
+    /* --- --- --- Emitter methods --- --- --- */
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
         super.rebind(binding);
@@ -119,10 +81,9 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     @Override public void request(long rows) throws NoReceiverException {
-        if (upstream == null) throw new NoUpstreamException(this);
         rows = Math.max(1, Math.min(rows, (long)REQUEST_LIMIT.getOpaque(this)));
         Async.safeAddAndGetRelease(UP_REQUESTED, this, rows);
-        upstream.request(rows);
+        super.request(rows);
     }
 
     @Override public String toString() {
