@@ -210,11 +210,13 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     private void rehash() {
-        Bucket<B>[] newBuckets = bucketArray(Math.max(1, buckets.length)<<1);
-        if (buckets == null || buckets.length < PAR_RH_THRESHOLD)
+        var oldBuckets = buckets;
+        Bucket<B>[] newBuckets = bucketArray(Math.max(1, oldBuckets.length)<<1);
+        if (oldBuckets.length < PAR_RH_THRESHOLD)
             singleThreadRehash(newBuckets);
         else
             new Rehash<>(this, newBuckets).compute();
+        bucketArrayPool.offer(oldBuckets, oldBuckets.length);
     }
 
     /** 75% of total capacity of {@code nBuckets} each with {@code bucketCapacity} */
@@ -319,7 +321,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @SuppressWarnings("unchecked") private Bucket<B>[] bucketArray(int nBuckets) {
-        Bucket<B>[] arr = bucketArrayPool(bt).getAtLeast(nBuckets);
+        Bucket<B>[] arr = bucketArrayPool.getAtLeast(nBuckets);
         if (arr == null)
             return new Bucket[nBuckets];
         for (Bucket<B> bucket : arr) {
