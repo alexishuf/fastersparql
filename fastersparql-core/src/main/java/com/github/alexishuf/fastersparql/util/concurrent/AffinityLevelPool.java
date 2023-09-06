@@ -7,6 +7,7 @@ import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
 
 import static java.lang.Integer.numberOfLeadingZeros;
+import static java.lang.Runtime.getRuntime;
 import static java.lang.Thread.currentThread;
 
 /**
@@ -19,16 +20,21 @@ public class AffinityLevelPool<T> {
     private final LevelPool<T> shared;
     private final T[] local;
     private final int threadMask;
+    private final byte disableLocalityLevel;
 
-    public AffinityLevelPool(LevelPool<T> shared) {
-        this(shared, Runtime.getRuntime().availableProcessors());
+    public AffinityLevelPool(LevelPool<T> shared, int disableLocalityLevel) {
+        this(shared, disableLocalityLevel, getRuntime().availableProcessors());
     }
-    public AffinityLevelPool(LevelPool<T> shared, int threads) {
+    public AffinityLevelPool(LevelPool<T> shared, int disableLocalityLevel,
+                             int threads) {
         int safeThreads = 1 << (32 - numberOfLeadingZeros(threads - 1));
         this.threadMask = safeThreads-1;
         //noinspection unchecked
         this.local = (T[]) Array.newInstance(shared.itemClass(), safeThreads*32);
         this.shared = shared;
+        assert numberOfLeadingZeros(disableLocalityLevel) >= (32-5)
+                : "disableLocalityLevel not in [0,32) range";
+        this.disableLocalityLevel = (byte) disableLocalityLevel;
     }
 
     public @Nullable T getAtLeast(int capacity) {
@@ -37,9 +43,11 @@ public class AffinityLevelPool<T> {
 
     @SuppressWarnings("unchecked")
     @Nullable T getFromLevel(int level) {
-        int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
-        T o = (T)L.getAndSetAcquire(local, bucket, null);
-        if (o != null) return o;
+        if (level < disableLocalityLevel) {
+            int bucket = (((int) currentThread().threadId() & threadMask) << 5) + level;
+            T o = (T) L.getAndSetAcquire(local, bucket, null);
+            if (o != null) return o;
+        }
         return shared.getFromLevel(level);
     }
 
@@ -47,8 +55,8 @@ public class AffinityLevelPool<T> {
         int level = 32-numberOfLeadingZeros(capacity);
         // offer directly to pool if level is empty and unlocked. If o would still be offered
         // to local before, a get() could return null even with threadMask items pooled in local
-        if (!shared.levelEmptyUnlocked(level)) {
-            int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
+        if (level < disableLocalityLevel && !shared.levelEmptyUnlocked(level)) {
+            int bucket = (((int)currentThread().threadId() & threadMask) << 5) + level;
             if (L.compareAndExchangeRelease(local, bucket, null, o) == null)
                 return null;
         }
@@ -59,8 +67,8 @@ public class AffinityLevelPool<T> {
         int level = 32-numberOfLeadingZeros(capacity);
         // offer directly to pool if level is empty and unlocked. If o would still be offered
         // to local before, a get() could return null even with threadMask items pooled in local
-        if (!shared.levelEmptyUnlocked(level)) {
-            int bucket = (((int)currentThread().threadId()&threadMask)<<5)+level;
+        if (level < disableLocalityLevel && !shared.levelEmptyUnlocked(level)) {
+            int bucket = (((int)currentThread().threadId() & threadMask) << 5) + level;
             if (L.compareAndExchangeRelease(local, bucket, null, o) == null)
                 return null;
         }

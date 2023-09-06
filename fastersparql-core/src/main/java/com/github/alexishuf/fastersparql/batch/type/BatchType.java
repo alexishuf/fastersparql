@@ -43,7 +43,8 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         this.batchClass = batchClass;
         this.name = getClass().getSimpleName().replaceAll("Type$", "");
         this.pool = new AffinityLevelPool<>(new LevelPool<>(batchClass, TINY_LEVEL_CAP,
-                SMALL_LEVEL_CAP, MEDIUM_LEVEL_CAP, LARGE_LEVEL_CAP, HUGE_LEVEL_CAP));
+                SMALL_LEVEL_CAP, MEDIUM_LEVEL_CAP, LARGE_LEVEL_CAP, HUGE_LEVEL_CAP),
+                LevelPool.FIRST_LARGE_LEVEL);
     }
 
     /** Get the {@link Class} object of {@code B}. */

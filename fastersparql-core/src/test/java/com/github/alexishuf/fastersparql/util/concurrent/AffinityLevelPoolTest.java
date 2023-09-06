@@ -32,7 +32,7 @@ class AffinityLevelPoolTest {
 
     @Test
     void testZero() {
-        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1));
+        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1), LevelPool.FIRST_HUGE_LEVEL);
         C zero = new C(0);
         assertNull(a.offer(zero, 0));
         assertSame(zero, a.getAtLeast(0));
@@ -41,7 +41,7 @@ class AffinityLevelPoolTest {
 
     @Test
     void testFloor() {
-        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1));
+        var a = new AffinityLevelPool<>(new LevelPool<>(C.class, 1, 1, 1, 1, 1), LevelPool.FIRST_HUGE_LEVEL);
 
         C c = new C(7);
         assertNull(a.offer(c, 7));
@@ -56,7 +56,7 @@ class AffinityLevelPoolTest {
     @ParameterizedTest @ValueSource(ints = {16, 1024, 8192})
     void testConcurrent(int capacity) throws ExecutionException, InterruptedException {
         LevelPool<C> levelPool = new LevelPool<>(C.class, 2, 4, 2, 1, 1);
-        var lp = new AffinityLevelPool<>(levelPool);
+        var lp = new AffinityLevelPool<>(levelPool, LevelPool.FIRST_LARGE_LEVEL);
         int threads = getRuntime().availableProcessors() * 2;
         int rounds = 100_000, objects = rounds * threads;
         List<C> offers = new ArrayList<>(objects), taken = new ArrayList<>(objects*2);

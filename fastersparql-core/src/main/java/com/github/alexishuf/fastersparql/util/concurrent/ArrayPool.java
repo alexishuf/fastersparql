@@ -42,7 +42,7 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
     public ArrayPool(Class<T> cls) { this(new LevelPool<>(cls)); }
     public ArrayPool(LevelPool<T> shared) { this(shared, getRuntime().availableProcessors()); }
     public ArrayPool(LevelPool<T> shared, int threads) {
-        super(shared, threads);
+        super(shared, FIRST_HUGE_LEVEL, threads);
         this.componentType = shared.itemClass().componentType();
     }
 
