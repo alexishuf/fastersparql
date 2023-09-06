@@ -266,6 +266,19 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
+
+        @Override public void rebindAcquire() {
+            dedup.rebindAcquire();
+        }
+
+        @Override public void rebindRelease() {
+            dedup.rebindRelease();
+        }
+
+        @Override public void release() {
+            dedup.release();
+        }
+
         @Override public boolean targetsProjection() {return true;}
         @Override public void rebind(BatchBinding binding) throws RebindException {
             skip = offset;
