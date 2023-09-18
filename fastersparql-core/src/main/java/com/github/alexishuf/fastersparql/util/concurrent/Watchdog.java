@@ -23,7 +23,7 @@ public class Watchdog implements AutoCloseable {
 
     @SuppressWarnings("unused") // access through DEADLINE
     private long deadline;
-    private boolean triggered, shutdown;
+    private volatile boolean triggered, shutdown;
     private @MonotonicNonNull ConcurrentLinkedQueue<Runnable> lateActions = null;
     private final Thread thread;
 
@@ -33,7 +33,7 @@ public class Watchdog implements AutoCloseable {
             while (!shutdown) {
                 long now = Timestamp.nanoTime(), deadline = (long) DEADLINE.getAcquire(this);
                 if (now >= deadline) {
-                    if (shutdown) { // courtesy re-check for racing close()
+                    if (shutdown) { // re-check for racing close()
                         break;
                     } else if (!triggered) {
                         triggered = true; // only run action at most once per start() call
@@ -102,5 +102,6 @@ public class Watchdog implements AutoCloseable {
         shutdown = true;
         DEADLINE.setRelease(this, Long.MAX_VALUE);
         LockSupport.unpark(thread);
+        Async.uninterruptibleJoin(thread);
     }
 }
