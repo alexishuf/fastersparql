@@ -27,10 +27,8 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     public static CompressedBatchType get() { return INSTANCE; }
 
     @Override public CompressedBatch create(int rows, int cols, int bytes) {
-        int terms = rows*cols;
-        terms += terms-1 >>> 31; // branch-less Math.max(terms, 1)
-        bytes = Math.max(bytes, terms<<MIN_TERM_LOCAL_SHIFT);
-        int capacity = terms*12 + (rows<<2) + bytes;
+        int terms8 = ((rows*cols)<<3) + ((rows&cols) == 0 ? 1 : 0);
+        int capacity = terms8+(terms8>>1) + (rows<<2);
 
         var b = pool.getAtLeast(capacity>>POOL_SHIFT);
         if (b == null)
@@ -44,7 +42,7 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     static { assert Integer.bitCount(8&(1<<MIN_TERM_LOCAL_SHIFT)) == 1 : "update terms8 below"; }
     @Override public CompressedBatch poll(int rows, int cols, int bytes) {
         int terms8 = ((rows*cols)<<3) + ((rows&cols) == 0 ? 1 : 0);
-        int capacity = terms8+(terms8>>1) + (rows<<2) + Math.max(bytes, terms8);
+        int capacity = terms8+(terms8>>1) + (rows<<2);
 
         var b = pool.getAtLeast(capacity>>POOL_SHIFT);
         if (b != null) {

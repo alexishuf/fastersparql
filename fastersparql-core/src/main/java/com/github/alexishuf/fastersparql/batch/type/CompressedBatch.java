@@ -274,7 +274,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     public int localsFreeCapacity() { return locals.length-localBytesUsed(); }
 
     @Override public int directBytesCapacity() {
-        return ((slices.length + shared.length)<<2) + locals.length;
+        return (slices.length + shared.length)<<2;
     }
 
     @Override public int rowsCapacity() {
