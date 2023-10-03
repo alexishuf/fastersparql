@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -30,12 +31,19 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         }
     }
 
-    public final BatchType<B> batchType;
-    public final Vars vars;
-    @SuppressWarnings("unused") protected @Nullable B recycled;
+    protected static final int EXPECT_CANCELLED  = 0x80000000;
+    protected static final int ASSUME_THREAD_SAFE = 0x40000000;
+
+    protected static final Flags PROC_FLAGS = Flags.DEFAULT.toBuilder()
+            .flag(EXPECT_CANCELLED, "EXPECT_CANCELLED")
+            .flag(ASSUME_THREAD_SAFE, "ASSUME_THREAD_SAFE")
+            .build();
+
     protected @MonotonicNonNull Emitter<B> upstream;
     protected @MonotonicNonNull Receiver<B> downstream;
-    private boolean cancelExpected;
+    @SuppressWarnings("unused") protected @Nullable B recycled;
+    public final BatchType<B> batchType;
+    public final Vars vars;
     protected final EmitterStats stats = EmitterStats.createIfEnabled();
 
 
@@ -43,6 +51,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     public BatchProcessor(BatchType<B> batchType, Vars outVars, int initState, Flags flags) {
         super(initState, flags);
+        assert flags.contains(PROC_FLAGS);
         this.batchType = batchType;
         this.vars = outVars;
     }
@@ -62,6 +71,17 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
             throw new IllegalStateException("release() called on a BatchProcessor being used as a Stage.");
         if (moveStateRelease(statePlain(), CANCELLED))
             markDelivered(CANCELLED);
+    }
+
+    /**
+     * Once called, writes and reads to {@code recycled} will <strong>NOT</strong> be atomic. Thus,
+     * the caller promises to only interact with the processor from a single thread.
+     *
+     * <p>Calling this method when this processor is used as an {@link Emitter}/{@link Receiver},
+     * is not necessary.</p>
+     */
+    public final void assumeThreadSafe() {
+        setFlagsRelease(statePlain(), ASSUME_THREAD_SAFE);
     }
 
     /* --- --- --- processing --- --- --- */
@@ -84,13 +104,13 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
      * {@link #onComplete()}
      */
     protected void cancelUpstream() {
-        cancelExpected = true;
+        setFlagsRelease(statePlain(), EXPECT_CANCELLED);
         if (upstream != null)
             upstream.cancel();
     }
 
     /** Whether {@link #cancelUpstream()} has been called. */
-    protected boolean upstreamCancelled() { return cancelExpected; }
+    protected boolean upstreamCancelled() { return (statePlain()&EXPECT_CANCELLED) != 0; }
 
     /* --- --- --- Stage --- --- --- */
 
@@ -122,10 +142,13 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
+        resetForRebind(0, 0);
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         if (upstream != null)
             upstream.rebind(binding);
+        if (ResultJournal.ENABLED)
+            ResultJournal.rebindEmitter(this, binding);
     }
 
     @Override public final void cancel() {
@@ -162,9 +185,19 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         } else {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onBatchDelivered(batch);
+            if (ResultJournal.ENABLED)
+                ResultJournal.logBatch(this, batch);
             batch = downstream.onBatch(batch);
         }
         return batch;
+    }
+
+    @Override public void onRow(B batch, int row) {
+        if (batch == null) return;
+        B tmp = batch.type().empty(Batch.asUnpooled(recycled), 1, batch.cols, batch.localBytesUsed(row));
+        recycled = null;
+        tmp.putRow(batch, row);
+        recycled = Batch.asPooled(onBatch(tmp));
     }
 
     @Override public final void onComplete() {
@@ -182,7 +215,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         try {
             if (moveStateRelease(statePlain(), CANCELLED)) {
                 if (downstream == null) throw new NoDownstreamException(this);
-                if (cancelExpected) downstream.onComplete();
+                if ((statePlain()&EXPECT_CANCELLED) != 0) downstream.onComplete();
                 else downstream.onCancelled();
             }
         } finally {
@@ -211,11 +244,19 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
      *         {@code batch} if ownership remains with caller
      */
     public final @Nullable B recycle(@Nullable B batch) {
-        if (batch == null) return null;
+        if (batch == null)
+            return null;
         batch.markPooled();
-        if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null) return null;
-        batch.unmarkPooled();
-        return batch;
+        if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
+            if (recycled != null)
+                return batch;
+            recycled = batch;
+            return null;
+        } else {
+           if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null)
+               return null;
+           return batch.untracedUnmarkPooled();
+        }
     }
 
     /**
@@ -233,11 +274,25 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         return b;
     }
 
+    /**
+     * Cheap test if this processor holds a recycled batch. This method is prone to both false
+     * positives and false negatives.
+     */
+    public final boolean hasRecycled() {
+        return recycled != null;
+    }
+
     protected final B getBatch(int rows, int cols, int localBytes) {
-        //noinspection unchecked
-        B b = (B) RECYCLED.getAndSetAcquire(this, null);
-        if (b != null)
-            b.unmarkPooled();
-        return batchType.empty(b, rows, cols, localBytes);
+        if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
+            var b = batchType.empty(Batch.asUnpooled(recycled), rows, cols, localBytes);
+            recycled = null;
+            return b;
+        } else {
+            //noinspection unchecked
+            B b = (B) RECYCLED.getAndSetAcquire(this, null);
+            if (b != null)
+                b.unmarkPooled();
+            return batchType.empty(b, rows, cols, localBytes);
+        }
     }
 }

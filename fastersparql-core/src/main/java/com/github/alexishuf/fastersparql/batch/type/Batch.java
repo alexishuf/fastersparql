@@ -9,7 +9,6 @@ import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
@@ -62,7 +61,7 @@ public abstract class Batch<B extends Batch<B>> {
         public PooledEvent(PoolEvent cause) {super("pooled here", cause);}
     }
     protected static final class UnpooledEvent extends PoolEvent {
-        public UnpooledEvent(PoolEvent cause) {super("unpopooled here", cause);}
+        public UnpooledEvent(PoolEvent cause) {super("unpooled here", cause);}
     }
 
     public void markPooled() {
@@ -90,6 +89,15 @@ public abstract class Batch<B extends Batch<B>> {
             if (old == P_GARBAGE)
                 throw new IllegalStateException("garbage batch marked as garbage again");
         }
+    }
+
+    public B untracedUnmarkPooled() {
+        if (MARK_POOLED && (byte)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) != P_POOLED) {
+            throw new IllegalStateException("un-pooling batch that is not pooled",
+                                            poolTraces == null ? null : poolTraces[1]);
+        }
+        //noinspection unchecked
+        return (B)this;
     }
 
     public void unmarkPooled() {
@@ -127,13 +135,9 @@ public abstract class Batch<B extends Batch<B>> {
         return b;
     }
 
-    @SuppressWarnings("SameReturnValue")
     public static <B extends Batch<B>> @Nullable B recyclePooled(@Nullable Batch<?> b) {
-        if (b != null) {
-            b.unmarkPooled();
-            b.recycle();
-        }
-        return null;
+        //noinspection unchecked
+        return b == null ? null : (B)b.untracedUnmarkPooled().recycle();
     }
 
     @SuppressWarnings("unused") public void requirePooled() {
@@ -143,12 +147,6 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
-    /** Throws as {@link #requireUnpooled()} would but returns {@code true} otherwise,
-     *  allowing use in {@code assert}s */
-    @SuppressWarnings("SameReturnValue") public boolean assertUnpooled() {
-        requireUnpooled();
-        return true;
-    }
 
     public void requireUnpooled() {
         if (MARK_POOLED && (byte)P.getOpaque(this) != P_UNPOOLED) {
@@ -163,11 +161,12 @@ public abstract class Batch<B extends Batch<B>> {
 //                BatchEvent.Leaked.record(this);
 //                PoolEvent e;
 //                if (poolTraces != null && (e = poolTraces[1]) != null)
-//                    e.printStackTrace();
+//                    //noinspection CallToPrintStackTrace
+//                    new Exception("Leaked &batch="+ identityHashCode(this), e).printStackTrace();
 //            }
 //        }
 //    }
-
+//
     /**
      * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
      * this instance. MAy be a no-op for some implementations.
@@ -222,13 +221,6 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract int directBytesCapacity();
 
     public abstract int rowsCapacity();
-
-    /** Whether this batch can reach {@code rowsCapacity} and  a {@link #localBytesUsed()} value
-     *  of {@code bytes} before requiring a new allocation. */
-    public abstract boolean hasCapacity(int rowsCapacity, int bytesCapacity);
-
-    /** Whether this batch has more capacity than {@code other}. */
-    public abstract boolean hasMoreCapacity(B other);
 
     /**
      * <strong>USE ONLY FOR TESTING</strong>
@@ -561,11 +553,10 @@ public abstract class Batch<B extends Batch<B>> {
     /* --- --- --- mutators --- --- --- */
 
     /**
-     * Hints that an implementation SHOULD perform allocation for an incoming sequence of
-     * {@code rows} row offers/puts (see {@link #beginOffer()} and {@link #beginPut()}).
-     *
-     * <p>This method is a hint and thus subsequent {@link #beginOffer()} and related
-     * methods may still reject a row by returning {@code false}.</p>
+     * Checks if the internal structures of {@code this} batch can hold
+     * {@code additionalRows} more rows that together sum {@code additionalBytes} in
+     * local segments. If this is not true, perform a re-alloc <strong>now</strong> to ensure
+     * that the aforementioned capability holds.
      *
      * @param additionalRows expected number of subsequent row offers/puts. Implementations may
      *                       ignore this in favor of {@code additionalBytes}.
@@ -588,142 +579,8 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract void clear(int newColumns);
 
     /**
-     * Starts adding a new row to this batch.
-     *
-     * <p>Columns for the new row will be set through {@link #offerTerm(int, Term)} calls
-     * following this call, with the {@code i-th} {@link #offerTerm(int, Term)} call setting
-     * the {@code i}-th column of the new row. The row will only be visible to other methods
-     * of this batch once {@link #commitOffer()} returns {@code true}./p>
-     *
-     * <p>This method, {@link #offerTerm(int, Term)} and {@link #commitOffer()}
-     * return whether the operation may continue ({@code true}) or if the row will not be
-     * accepted ({@code false}). Addition of a row will be rejected if memory allocation and/or
-     * extensive copying would be required.</p>
-     *
-     * <p>The row offer methods are not thread-safe: For a given {@link Batch}, there MUST be
-     * only one thread invoking any of said methods. Concurrent offers are not detected and thus
-     * resulting behaviour is undefined.</p>
-     *
-     * <p>Example with cols==2:</p>
-     *
-     * <pre>{@code
-     * boolean ok = batch.beginRowOffer();
-     * if (ok) {
-     *     for (int c = 0; c < row.length; c++) ok = batch.offer(row[c]);
-     *     ok = ok && batch.commitRowOffer();
-     * }
-     * if (ok) {
-     *     //row was added
-     * } else {
-     *     //row not added, wait or try another batch
-     * }
-     * }</pre>
-     *
-     * @return {@code true} if, maybe, this batch can accept a new row, {@code false} otherwise.
-     */
-    public abstract boolean beginOffer();
-
-    /**
-     * Offer {@code t} as the value of the next column after a {@link #beginOffer()}.
-     *
-     * @return {@code true} iff the row offer may continue.
-     * @throws IllegalStateException if there is no previously uncommitted {@code true}
-     *                               {@link #beginOffer()} call.
-     */
-    public abstract boolean offerTerm(int col, Term t);
-
-    /** Equivalent to {@code offer(destCol, batch.get(row, col))}. */
-    public boolean offerTerm(int destCol, B batch, int row, int col) {
-        return offerTerm(destCol, batch.get(row, col));
-    }
-
-    /**
-     * Equivalent to {@code offerTerm(col, termParser.asTerm())}, but faster.
-     *
-     * @param col destination column of {@link TermParser#asTerm()}
-     * @param termParser A {@link TermParser} that just parsed some input.
-     * @return {@code true} iff the row offer may continue.
-     */
-    public boolean offerTerm(int col, TermParser termParser) {
-        var local = termParser.localBuf();
-        int begin = termParser.localBegin;
-        return offerTerm(col, termParser.shared(), local, begin,
-                         termParser.localEnd-begin, termParser.sharedSuffixed());
-    }
-
-    /**
-     * Equivalent building a term with the given {@code shared*} and {@code local*} arguments
-     * and then calling {@link #offerTerm(int, Term)}.
-     *
-     * @param col destination column of the term
-     * @param shared A prefix or suffix to be kept by reference
-     * @param local Where the local (i.e., non-shared) prefix/suffix of this term is stored.
-     * @param localOff Index of first byte in {@code local} that is part of the term
-     * @param localLen number of bytes in {@code local} that constitute the local segment.
-     * @param sharedSuffix Whether the shared segment is a suffix
-     * @return {@code true} iff the row offer may continue
-     */
-    public boolean offerTerm(int col, SegmentRope shared, MemorySegment local,
-                             long localOff, int localLen, boolean sharedSuffix) {
-        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
-    public boolean offerTerm(int col, SegmentRope shared, byte[] local, int localOff,
-                             int localLen, boolean sharedSuffix) {
-        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
-    public boolean offerTerm(int col, SegmentRope shared, SegmentRope local, int localOff,
-                             int localLen, boolean sharedSuffix) {
-        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    /** Analogous to {@link #offerTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
-    public boolean offerTerm(int col, SegmentRope shared, TwoSegmentRope local, int localOff,
-                             int localLen, boolean sharedSuffix) {
-        return offerTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    /**
-     * Try to commit the current {@link #beginOffer()}.
-     *
-     * @return {@code true} iff the row was added. If {@code false}, there will be no trace of
-     *         the attempted row offer.
-     * @throws IllegalStateException if there is no uncommitted and {@code true}
-     *                               {@link #beginOffer()} call or if any
-     *                               {@link #offerTerm(int, Term)} after
-     *                               {@link #beginOffer()} returned {@code false}.
-     */
-    @SuppressWarnings("SameReturnValue") public abstract boolean commitOffer();
-
-    /** Equivalent to
-     * <pre>{@code
-     * if (!beginOffer()) return false;
-     * for (int c = 0; c < cols; c++) { if (!offerTerm(other, row, c)) return false; }
-     * return commitOffer();
-     * }</pre>
-     *
-     * @param other source of the row to be added
-     * @param row index of row to be added
-     * @return whether the row was added in full ({@code true}) or if it could not be added and no
-     * side effects remain ({@code false}
-     * @throws IndexOutOfBoundsException if row is not in {@code [0, other.rows)}
-     * @throws IllegalArgumentException If {@code other.cols != this.cols}
-     */
-    public boolean offerRow(B other, int row) {
-        int cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException();
-        if (beginOffer()) {
-            for (int c = 0; c < cols; c++) { if (!offerTerm(c, other, row, c)) return false; }
-            return commitOffer();
-        }
-        return false;
-    }
-
-    /**
-     * Version of {@link #beginOffer()} that never rejects addition.
+     * Starts adding a new whose terms will be added via {@code putTerm()} and the row will
+     * become visible upon {@link #commitPut()}.
      *
      * <p>Example usage:</p>
      *
@@ -737,21 +594,24 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public abstract void beginPut();
 
-    /** Version of {@link #offerTerm(int, Term)} that never rejects. For use with
-     *  {@link #beginPut()} and {@link #commitPut()} */
+    /**
+     * Writes {@code t} to the {@code col}-th column of the row being filled.
+     *
+     * <p>This must be called after {@link #beginPut()} and before {@link #commitPut()}. The
+     * same column cannot be set more than once per filling row, but some {@link Batch}
+     * implementations may silently allow that.</p>
+     *
+     * @param col column where {@code t} will be put
+     * @param t the term to write
+     */
     public abstract void putTerm(int col, Term t);
 
-    /** Equivalent to {@code putTerm(destCol, batch.get(row, col))}. */
+    /** Efficient alternative to {@link #putTerm(int, Term)} using {@code batch.get(row, col)} */
     public void putTerm(int destCol, B batch, int row, int col) {
         putTerm(destCol, batch.get(row, col));
     }
 
-    /**
-     * Equivalent to {@code putTerm(col, termParser.asTerm())}, but faster.
-     *
-     * @param col destination column of {@link TermParser#asTerm()}
-     * @param termParser A {@link TermParser} that just parsed some input.
-     */
+    /** Efficient alternative to {@link #putTerm(int, Term)} using {@link TermParser#asTerm()} */
     public void putTerm(int col, TermParser termParser) {
         var local = termParser.localBuf();
         int begin = termParser.localBegin;
@@ -827,20 +687,24 @@ public abstract class Batch<B extends Batch<B>> {
         return Term.wrap(fst, snd);
     }
 
-    /** Version of {@link #commitOffer()} that never rejects. For use with
-     *  {@link #beginPut()} and {@link #putTerm(int, Term)} */
+    /**
+     * Publishes the row started by the last uncommitted {@link #beginPut()}.
+     */
     public abstract void commitPut();
 
     /**
-     * Aborts the previous {@link #beginPut()}/{@link #beginOffer()} if
-     * {@link #commitPut()}/{@link #commitOffer()} has not yet been called.
-     *
-     * @return {@code true} if a {@link #beginPut()}/{@link #beginOffer()} was aborted,
-     *         {@code false} if there is no uncommitted offer/put underway.
+     * Aborts the previous {@link #beginPut()} if {@link #commitPut()} has not yet been called.
      */
-    public abstract boolean abortOfferOrPut() throws IllegalStateException;
+    public abstract void abortPut() throws IllegalStateException;
 
-    /** Version of {@link #offerRow(Batch, int)} that always add the row. */
+    /**
+     * Equivalent to {@link #beginPut()}, followed by a sequence of
+     * {@link #putTerm(int, Batch, int, int)} and a {@link #commitPut()} that would append
+     * the {@code row}-th row of {@code other} to the end of {@code this} batch.
+     *
+     * @param other source of a row to copy
+     * @param row index of the row to copy from {@code other}
+     */
     public void putRow(B other, int row) {
         int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
@@ -862,7 +726,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param row array with terms for the new row
      * @throws IllegalArgumentException if {@code row.length != this.cols}
      */
-    public void putRow(Term[] row) {
+    public final void putRow(Term[] row) {
         if (row.length != cols) throw new IllegalArgumentException();
         int bytes = 0;
         for (Term t : row)
@@ -885,7 +749,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws InvalidTermException if {@link Term#valueOf(CharSequence)} fails to convert a non-null,
      *                              non-Term row item
      */
-    public void putRow(Collection<?> row) {
+    public final void putRow(Collection<?> row) {
         if (row.size() != cols)
             throw new IllegalArgumentException();
         reserve(1, 0);
@@ -897,46 +761,47 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /**
-     * Tests whether {@link #offer(Batch)} would return true for the given {@code other} batch.
-     * @param other hypothetical argument to {@link #offer(Batch)}
-     * @return {@code true} iff {@code offer(other)}
-     */
-    public abstract boolean fits(B other);
-
-    /**
-     * Tries to add all rows of {@code other} into {@code this}. Either no rows will be
-     * added or all rows will be added.
+     * Return a batch that contains all rows in {@code this}, followed by all rows in {@code other}.
      *
-     * @param other source of rows to add. Must have same number of columns.
-     * @return whether all rows of {@code other} were added to {@code this}
-     * @throws IllegalArgumentException if {@code other.cols != this.cols}.
-     */
-    public abstract boolean offer(B other) ;
-
-    /**
-     * Equivalent to {@code range(0, other.rows).forEach(r -> putRow(other, r))}.
+     * <p>If possible, {@code this} will be returned. If {@code this} cannot receive the rows
+     * from {@code other} without a re-alloc of internal structures, a batch that can hold all
+     * rows may be fetched from the global batch pool. When a pooled batch is used,
+     * {@code this} will be marked as pooled  ({@link #markPooled()} and first offered to the
+     * {@code recycled} field of {@code receiver} via
+     * {@link VarHandle#compareAndExchangeRelease(Object...)} before being {@link #recycle()}d
+     * in case the field already holds a batch.</p>
      *
-     * @param other batch that will have all its rows added to {@code this}.
-     */
-    public final void put(B other) { putRange(other, 0, other.rows); }
-
-    /**
-     * Copy rows {@code [begin, end)} of {@code other} into {@code this}, growing capacity
-     * if required.
      *
-     * @param other the origin for the values
-     * @param begin first row of {@code other} to be copied
-     * @param end {@code other.rows} or first row to NOT be copied
+     * @param other A batch with rows that should be appended to this {@code this}
+     * @param recycled A {@link VarHandle} for a field in {@code receiver} that may receive
+     *                 {@code asPolled(this)} (if the field is null). If the {@link VarHandle}
+     *                 itself is null, this will not be attempted before {@link #recycle()}.
+     * @param receiver An object that contains a field accessed by {@code recycled} can be
+     *                 null if {@code recycled} is null or refers to a static field.
+     * @return {@code this} or a new batch. In both cases the returned batch will contain
+     *         all rows in {@code this} and rows {@code [begin, end)} of {@code other}. If the
+     *         return is not {@code this}, the caller has lost ownership over {@code this},
+     *         which will now be pooled in {@code receiver} or in {@link #type()}.
      */
-    public abstract void putRange(B other, int begin, int end);
+    public abstract B put(B other, @Nullable VarHandle recycled, Object receiver);
+
+    /** Equivalent to {@link #put(Batch, VarHandle, Object)} without a recycled {@link VarHandle}.*/
+    public final B put(B other) { return put(other, null, null); }
 
     /**
-     * Equivalent to {@link #put(Batch)} but accepts {@link Batch} implementations
+     * Equivalent to {@link #put(Batch, VarHandle, Object)} but accepts {@link Batch} implementations
      * other than this.
-     *
-     * @param other source of rows
      */
-    public abstract @This B putConverting(Batch<?> other);
+    public abstract B putConverting(Batch<?> other, @Nullable VarHandle recycled,
+                                    @Nullable Object receiver);
+
+    /**
+     * Equivalent to {@link #putConverting(Batch, VarHandle, Object)} without a
+     * {@code recycled} {@link VarHandle}
+     */
+    public final B putConverting(Batch<?> other) {
+        return putConverting(other, null, null);
+    }
 
     /**
      * Equivalent to {@link #putRow(Batch, int)}, but accepts a batch of another type.

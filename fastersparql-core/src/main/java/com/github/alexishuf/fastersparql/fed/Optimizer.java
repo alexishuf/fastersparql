@@ -499,8 +499,10 @@ public class Optimizer extends CardinalityEstimator {
      * @return plan itself, with possibly mutated tree or a {@link Modifier} wrapping a
      *         possibly mutated tree.
      */
-    public Plan optimize(Plan plan) {
+    public Plan optimize(Plan plan, Vars assumeGrounded) {
         State state = getState(plan);
+        if (!assumeGrounded.isEmpty())
+            groundVars(assumeGrounded, state);
         Plan out = state.optimize(plan, true);
         state.release();
         return out;
@@ -515,7 +517,7 @@ public class Optimizer extends CardinalityEstimator {
      * over a {@link Join}, tries to push filters to operands of the join and reorder the join.
      * Else do nothing.
      *
-     * <p>Unlike {@link #optimize(Plan)}, the operands of the join themselves will not be optimized</p>
+     * <p>Unlike {@link #optimize(Plan, Vars)}, the operands of the join themselves will not be optimized</p>
      *
      * @param boundVars set of vars to be considered as bound when estimating costs.
      * @param joinOrMod the join or `Modifier(Join)` to optimize
@@ -550,12 +552,7 @@ public class Optimizer extends CardinalityEstimator {
 
         // get and init State object
         State st = getState(join);
-        var grounded = st.grounded;
-        for (var name : boundVars) {
-            int i = grounded.vars.indexOf(name);
-            if (i >= 0)
-                grounded.set(i, GROUND);
-        }
+        groundVars(boundVars, st);
 
         // try to push filters on outer modifier
         List<Expr> filters = mod != null && !mod.filters.isEmpty()
@@ -587,6 +584,15 @@ public class Optimizer extends CardinalityEstimator {
         st.reorder(join);
         st.release();
         return joinOrMod;
+    }
+
+    private static void groundVars(Vars boundVars, State st) {
+        var grounded = st.grounded;
+        for (var name : boundVars) {
+            int i = grounded.vars.indexOf(name);
+            if (i >= 0)
+                grounded.set(i, GROUND);
+        }
     }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {

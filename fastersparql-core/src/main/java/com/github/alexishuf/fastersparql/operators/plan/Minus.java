@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -28,8 +29,9 @@ public final class Minus extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
-        return NativeBind.preferNativeEmit(type, this, weakDedup);
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                  boolean weakDedup) {
+        return NativeBind.preferNativeEmit(type, this, rebindHint, weakDedup);
     }
 
     @Override public boolean equals(Object obj) {

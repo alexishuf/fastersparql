@@ -44,9 +44,9 @@ class HdtBatchTest {
     public void testSingletonOfferId() {
         HdtBatch b = HdtBatch.TYPE.create(1, 1, 0);
         assertEquals(1, b.rowsCapacity());
-        assertTrue(b.beginOffer());
-        assertTrue(b.offerTerm(0, Alice));
-        assertTrue(b.commitOffer());
+        b.beginPut();
+        b.putTerm(0, Alice);
+        b.commitPut();
         assertEquals(1, b.rows);
         assertEquals(1, b.cols);
         assertEquals(ALICE_T, b.get(0, 0));
@@ -61,25 +61,22 @@ class HdtBatchTest {
         assertEquals(b, copy1);
         assertNotSame(b, copy0);
         assertNotSame(b, copy1);
-
-        assertFalse(copy0.hasMoreCapacity(copy1));
-        assertFalse(copy0.hasMoreCapacity(b));
     }
 
     @RepeatedTest(2)
     public void testOfferThenPut() {
         HdtBatch two = HdtBatch.TYPE.createSingleton(2);
-        assertTrue(two.beginOffer());
-        assertTrue(two.offerTerm(0, Alice));
-        assertTrue(two.offerTerm(1, charlie));
-        assertTrue(two.commitOffer());
+        two.beginPut();
+        two.putTerm(0, Alice);
+        two.putTerm(1, charlie);
+        two.commitPut();
         assertEquals(ALICE_T, two.get(0, 0));
         assertEquals(CHARLIE_T, two.get(0, 1));
 
         HdtBatch b = HdtBatch.TYPE.create(1, 1, 0);
-        assertTrue(b.beginOffer());
-        assertTrue(b.offerTerm(0, two, 0, 0));
-        assertTrue(b.commitOffer());
+        b.beginPut();
+        b.putTerm(0, two, 0, 0);
+        b.commitPut();
         assertEquals(1, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
 
@@ -96,7 +93,7 @@ class HdtBatchTest {
         assertEquals(CHARLIE_T, b.get(1, 0));
         assertEquals(BOB_T, b.get(2, 0));
 
-        b.putConverting(new HdtBatch(new long[]{knows}, 1, 1));
+        b = b.putConverting(new HdtBatch(new long[]{knows}, 1, 1));
         assertEquals(4, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
         assertEquals(CHARLIE_T, b.get(1, 0));

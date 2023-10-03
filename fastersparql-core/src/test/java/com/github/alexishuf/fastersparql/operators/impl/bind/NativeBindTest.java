@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.operators.impl.bind;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.PlanBindingBIt;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
@@ -82,7 +83,7 @@ class NativeBindTest {
                 }
 
                 // check Emitter variant
-                finalResults.check(preferNativeEmit(TERM, join, false));
+                finalResults.check(preferNativeEmit(TERM, join, Vars.EMPTY, false));
 
                 for (var client : clients)
                     client.assertNoErrors();

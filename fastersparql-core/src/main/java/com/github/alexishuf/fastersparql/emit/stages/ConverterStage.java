@@ -44,12 +44,26 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         int localsRequired = batchType.localBytesRequired(batch);
         O o = batchType.empty(asUnpooled(recycled), batch.rows, cols, localsRequired);
         recycled = null;
-        putConverting(o, batch);
+        o = putConverting(o, batch);
         recycled = asPooled(downstream.onBatch(o));
         return batch;
     }
 
-    protected void putConverting(O dest, I input) {
-        dest.putConverting(input);
+    @Override public void onRow(I batch, int row) {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onRowPassThrough();
+        if (batch == null)
+            return;
+        O o = batchType.empty(asUnpooled(recycled), 1, cols, 0);
+        recycled = null;
+        putRowConverting(o, batch, row);
+        recycled = asPooled(downstream.onBatch(o));
+    }
+
+    protected O putConverting(O dest, I input) {
+        return dest.putConverting(input);
+    }
+    protected void putRowConverting(O dest, I input, int row) {
+        dest.putRowConverting(input, row);
     }
 }

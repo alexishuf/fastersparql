@@ -37,6 +37,22 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         return b;
     }
 
+    @Override public @Nullable StoreBatch poll(int rowsCapacity, int cols, int localBytes) {
+        int terms = rowsCapacity * cols;
+        var b = pool.getAtLeast(terms);
+        if (b != null) {
+            if (b.clearIfFitsTerms(terms, cols)) {
+                b.unmarkPooled();
+                BatchEvent.Unpooled.record(terms);
+                return b;
+            } else {
+                if (pool.shared.offerToNearest(b, terms) != null)
+                    b.markGarbage();
+            }
+        }
+        return null;
+    }
+
     @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
         if (batch == null) return null;
         int capacity = batch.directBytesCapacity();
@@ -84,7 +100,7 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         }
 
         @Override protected StoreBatch putConverting(StoreBatch out, S in) {
-            return out.putConverting(in, dictId);
+            return out.putConverting(in, dictId, null, null);
         }
     }
 
@@ -110,8 +126,12 @@ public class StoreBatchType extends BatchType<StoreBatch> {
             this.dictId = dictId;
         }
 
-        @Override protected void putConverting(StoreBatch dest, I input) {
-            dest.putConverting(input, dictId);
+        @Override protected StoreBatch putConverting(StoreBatch dest, I input) {
+            return dest.putConverting(input, dictId, null, null);
+        }
+
+        @Override protected void putRowConverting(StoreBatch dest, I input, int row) {
+            dest.putRowConverting(input, row, dictId);
         }
     }
 

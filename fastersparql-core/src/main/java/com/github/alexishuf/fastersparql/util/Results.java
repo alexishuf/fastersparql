@@ -365,7 +365,7 @@ public final class Results {
     public List<List<Term>>   expected()     { return expected; }
 
     public BIt<TermBatch>     asBIt()        { return asPlan().execute(TERM); }
-    public Emitter<TermBatch> asEmitter()    { return asPlan().emit(TERM); }
+    public Emitter<TermBatch> asEmitter()    { return asPlan().emit(TERM, Vars.EMPTY); }
     public BindType           bindType()     { return bindType; }
     public boolean            hasBindings()  { return bindingsList != null; }
     public Vars               bindingsVars() { return bindingsVars; }
@@ -450,7 +450,7 @@ public final class Results {
                     || !oldParsed.equals(parse(query))) {
                 throw new AssertionError("Query changed by "+client);
             }
-            check(client.emit(batchType, query));
+            check(client.emit(batchType, query, Vars.EMPTY));
             if (!oldString.equals(query.toString()) || oldHash != query.hashCode()
                     || !oldParsed.equals(parse(query))) {
                 throw new AssertionError("Query changed by "+client);
@@ -503,7 +503,7 @@ public final class Results {
             }
             @Override public void    emptyBinding(long sequence) {binding(sequence);}
             @Override public void nonEmptyBinding(long sequence) {binding(sequence);}
-        }));
+        }, Vars.EMPTY));
         check(query, observedSeq, errors, oldHash, oldString, oldParsed);
 
         if (client instanceof ResultsSparqlClient rsc)
@@ -549,7 +549,7 @@ public final class Results {
             bindAndCheck(client, bindingsConverter);
         } else {
             check(client.query(batchType, query));
-            check(client. emit(batchType, query));
+            check(client. emit(batchType, query, Vars.EMPTY));
         }
     }
 
@@ -564,7 +564,7 @@ public final class Results {
     /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q)} */
     public void check(SparqlClient client, SparqlQuery q) throws AssertionError {
         check(client.query(TERM, q));
-        check(client. emit(TERM, q));
+        check(client. emit(TERM, q, Vars.EMPTY));
     }
 
 
@@ -603,7 +603,7 @@ public final class Results {
         public void assertNoError() {
             Throwable error = getSimple();
             if (error != null) {
-                if (ThreadJournal.THREAD_JOURNAL)
+                if (ThreadJournal.ENABLED)
                     ThreadJournal.dumpAndReset(System.err, 80);
                 throw new AssertionError(error);
             }
@@ -613,6 +613,10 @@ public final class Results {
             for (int r = 0; r < b.rows; r++)
                 acList.add(normalizeRow(b, r));
             return b;
+        }
+
+        @Override public void onRow(B batch, int row) {
+            acList.add(normalizeRow(batch, row));
         }
 
         @Override public boolean complete(Throwable error) {

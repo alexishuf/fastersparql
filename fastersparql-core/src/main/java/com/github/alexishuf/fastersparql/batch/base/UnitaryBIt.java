@@ -12,6 +12,9 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 /** Implements {@link BIt} methods around {@code hasNext()/next()}. */
 public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
     private @Nullable Throwable pendingError;
+    /** This field will be set to {@code true} by {@link #fetch(Batch)} once the end of
+     * the source is met */
+    protected boolean exhausted;
     protected long fillingStart = Timestamp.ORIGIN;
 //    private DebugJournal.RoleJournal journal;
 
@@ -24,12 +27,14 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
     /* --- --- --- helpers --- --- --- */
 
     /**
-     * {@link Batch#beginPut()}/{@link Batch#commitPut()} at most one row to {@code this.filling}.
+     * Tries to put rows into {@code dest} with minimal blocking. Implementations should block to
+     * ensure that at least one row is appended or {@link #exhausted} becomes {@code true}. If
+     * more rows can be appended without further blocking, implementations may also append them to
+     * {@code dest}
      *
-     * @return {@code true} iff a row was added and {@code false} iff the iterator has reached
-     *         its end.
+     * @return {@code dest} or a new batch to replace {@code dest} (see {@link Batch#put(Batch)}
      */
-    protected abstract boolean fetch(B dest);
+    protected abstract B fetch(B dest);
 
     @RequiresNonNull("pendingError")
     private void throwPending() {
@@ -56,8 +61,9 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         long start = fillingStart;
         if (needsStartTime && start == Timestamp.ORIGIN)
             fillingStart = start = Timestamp.nanoTime();
-        try {//noinspection StatementWithEmptyBody
-            while (fetch(b) && readyInNanos(b.rows, start) > 0) {}
+        try {
+            while (!exhausted && readyInNanos(b.rows, start) > 0)
+                b = fetch(b);
         } catch (Throwable t) { pendingError = t; }
         fillingStart = Timestamp.ORIGIN;
         if (b.rows == 0) {

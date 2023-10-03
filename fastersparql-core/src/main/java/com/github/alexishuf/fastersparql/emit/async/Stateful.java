@@ -11,7 +11,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.LongRenderer.HEX;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.THREAD_JOURNAL;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.*;
 import static java.util.Arrays.copyOf;
@@ -28,6 +28,7 @@ public abstract class Stateful {
             throw new ExceptionInInitializerError(e);
         }
     }
+//    public static final ConcurrentHashMap<Integer, Stateful> INSTANCES = new ConcurrentHashMap<>();
 
     /* --- --- --- static constants and their static functions --- --- --- */
 
@@ -126,6 +127,7 @@ public abstract class Stateful {
     protected Stateful(int initState, Flags flags) {
         this.plainState = initState;
         this.flags = flags;
+//        INSTANCES.put(System.identityHashCode(this), this);
     }
 
     /* --- --- --- observers --- --- --- */
@@ -226,7 +228,7 @@ public abstract class Stateful {
             return;
         int ex = current&~(DELAY_RELEASE_MASK|RELEASED_MASK);
         if ((int)S.compareAndExchangeRelease(this, ex, ex|RELEASED_MASK) == ex) {
-            if (THREAD_JOURNAL)
+            if (ENABLED)
                 journal("doRelease", this);
             try {
                 doRelease();
@@ -260,47 +262,18 @@ public abstract class Stateful {
             updated = (current&UNLOCKED_FLAGS_MASK)|nextState;
             current = (int)S.compareAndExchangeRelease(this, ex, updated);
         } while (current != ex);
-        if (THREAD_JOURNAL)
+        if (ENABLED)
             journal("transition to", nextState, flags, "on", this);
         return true;
     }
 
-    private static final int LOCKED_OR_PENDING_MASK = LOCKED_MASK|IS_PENDING_TERM;
-    private static final int UNLOCKED_NOT_PENDING_TERM = ~LOCKED_OR_PENDING_MASK;
-
     /**
-     * Atomically checks the if the current state {@link #IS_PENDING_TERM} and changes it to
-     * the corresponding {@link #IS_TERM} state.
-     *
-     * <p>As {@link #moveStateRelease(int, int)}, this will spin if the state is locked. If at any
-     * point the observed state is not {@link #IS_PENDING_TERM} the method will return
-     * without changing the state.</p>
-     *
-     * @param current the likely current value of {@link #state()}
-     * @return {@code true} iff this call changed the {@link #state()} from a
-     *         {@link #IS_PENDING_TERM} state to the equivalent {@link #IS_TERM} state. If the
-     *         change was done by another thread or if the state got changed to something other
-     *         than a {@link #IS_PENDING_TERM}, return {@code false}.
-     */
-    protected boolean markNotPending(int current) {
-        int e, u;
-        do {
-            if ((current&IS_PENDING_TERM) == 0)
-                return false; // not pending and not changed by this call
-            e = current&UNLOCKED_MASK;
-            u = (current&UNLOCKED_NOT_PENDING_TERM)|IS_TERM;
-        } while ((current=(int)S.compareAndExchangeRelease(this, e, u)) != e);
-        return true; // this call cleared PENDING and set TERM
-    }
-
-    /**
-     * Atomically sets the state to the {@link #IS_TERM_DELIVERED} variant of
-     * {@code termState}, and if conditions allow, sets {@link #RELEASED_MASK} and calls
-     * {@link #doRelease()}.
+     * Atomically sets the state from a {@link #IS_TERM} state to its {@link #IS_TERM_DELIVERED}
+     * variant, and if conditions allow, sets {@link #RELEASED_MASK} and calls {@link #doRelease()}.
      *
      * @param termState A un-flagged {@link #IS_TERM} state or the likely current
      *                  {@link #state()} which must be an {@link #IS_TERM} state.
-     * @return {@code true} iff this call observed a non-{@link #IS_TERM_DELIVERED} {@link #state()}
+     * @return {@code true} iff this call observed a {@link #IS_TERM} {@link #state()}
      *         and transitioned to a {@link #IS_TERM_DELIVERED} state.
      */
     protected boolean markDelivered(int termState) {
@@ -344,7 +317,7 @@ public abstract class Stateful {
                 throw new RebindReleasedException(this);
             ex = st&UNLOCKED_MASK;
         } while ((st=(int)S.compareAndExchangeRelease(this, ex, (st&clear)|set)) != ex);
-        if (THREAD_JOURNAL) {
+        if (ENABLED) {
             journal((setFlags&LOCKED_MASK) == 0 ? "resetForRebind cl=" : "lock+resetForRebind, cl=",
                     clearFlags, HEX, "set=", setFlags, HEX);
         }
@@ -362,7 +335,7 @@ public abstract class Stateful {
         int ex = current;
         while ((current = (int)S.compareAndExchangeRelease(this, ex, ex|flags)) != ex)
             ex = current;
-        if (THREAD_JOURNAL) journal("set flags=", flags, this.flags, this);
+        if (ENABLED) journal("set flags=", flags, this.flags, this);
         return ex|flags;
     }
 
@@ -378,7 +351,7 @@ public abstract class Stateful {
         int ex = current;
         while ((current = (int)S.compareAndExchangeRelease(this, ex, ex&~flags)) != ex)
             ex = current;
-        if (THREAD_JOURNAL) journal("clear flags=", flags, this.flags, this);
+        if (ENABLED) journal("clear flags=", flags, this.flags, this);
         return ex&~flags;
     }
 
@@ -426,18 +399,6 @@ public abstract class Stateful {
     }
 
     /**
-     * Atomically attempts once to set the {@link #LOCKED_MASK} bit in {@link #state()} if that
-     * bit is observed unset.
-     *
-     * @return {@code true} iff the {@link #LOCKED_MASK} bit was off and was turned on by this call.
-     */
-    public boolean tryLock() {
-        int e = (int)S.getOpaque(this) & UNLOCKED_MASK;
-        return (int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) == e;
-//        if (THREAD_JOURNAL && got) journal("locked, s=", e, this.flags, this);
-    }
-
-    /**
      * Atomically clears the {@link #LOCKED_MASK} bit from {@link #state()}, if set
      *
      * <p><strong>Important:</strong>This must be called <strong>exactly</strong> once per
@@ -482,7 +443,7 @@ public abstract class Stateful {
         int mask = ~(clear|LOCKED_MASK);
         while ((current=(int)S.compareAndExchangeRelease(this, e, (e&mask)|set)) != e)
             e = current;
-        if (THREAD_JOURNAL)
+        if (ENABLED)
             journal("unlckd, clear=", clear, flags, "set=", set, flags, this);
         return current&UNLOCKED_MASK;
     }

@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -39,9 +40,9 @@ public final class Query extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         var sparql = weakDedup ? this.sparql.toDistinct(WEAK) : this.sparql;
-        return client.emit(type, sparql);
+        return client.emit(type, sparql, rebindHint);
     }
 
     @Override public boolean equals(Object o) {

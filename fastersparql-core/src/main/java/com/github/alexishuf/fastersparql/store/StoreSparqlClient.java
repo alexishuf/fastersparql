@@ -16,7 +16,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.async.SelfEmitter;
+import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
@@ -49,6 +49,7 @@ import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -72,6 +73,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 import static java.util.Arrays.copyOfRange;
@@ -480,7 +482,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     @Override public <B extends Batch<B>> Emitter<B>
-    doEmit(BatchType<B> bt, SparqlQuery sparql) {
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         Plan plan = SparqlParser.parse(sparql);
         var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
         Emitter<StoreBatch> storeEm;
@@ -491,7 +493,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (m != null) // apply any modification required (projection may be done already)
                 storeEm = m.processed(storeEm);
         } else {
-            storeEm = federator.emit(TYPE, plan);
+            storeEm = federator.emit(TYPE, plan, rebindHint);
         }
         //noinspection unchecked
         return bt == TYPE ? (Emitter<B>) storeEm : new FromStoreConverter<>(bt, storeEm);
@@ -546,11 +548,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return it;
     }
 
-    @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq) {
+    @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
+                                                            Vars rebindHint) {
         Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
         if (right instanceof Modifier m && !m.filters.isEmpty())
             right = splitFiltersForLexicalJoin(m, m == bq.query);
-        return new StoreBindingEmitter<>(bq, right);
+        return new StoreBindingEmitter<>(bq, right, rebindHint);
     }
 
     private Modifier splitFiltersForLexicalJoin(Modifier m, boolean copyOnChange) {
@@ -693,13 +696,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     /* --- --- --- emitters --- --- --- */
 
-    private final class TPEmitter extends SelfEmitter<StoreBatch> {
+    private final class TPEmitter extends TaskEmitter<StoreBatch> {
         private static final int LIMIT_TICKS = 2;
         private static final int DEADLINE_CHK = 0xf;
         private static final int MAX_BATCH = BIt.DEF_MAX_BATCH;
         private static final int MIN_ROWS = 64;
         private static final int HAS_UNSET_OUT    = 0x01000000;
-        private static final Flags FLAGS = SELF_EMITTER_FLAGS.toBuilder()
+        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
                 .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
                 .build();
 
@@ -731,6 +734,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             pId = lookup.find(tp.p);
             oId = lookup.find(tp.o);
             rebind(BatchBinding.ofEmpty(TYPE));
+            if (stats != null)
+                stats.rebinds = 0;
+            if (ResultJournal.ENABLED)
+                ResultJournal.initEmitter(this, vars);
             acquireRef();
         }
 
@@ -805,12 +812,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return NOT_FOUND;
         }
 
+
         @Override public void rebind(BatchBinding binding) throws RebindException {
             Vars bVars = binding.vars;
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 if (EmitterStats.ENABLED && stats != null)
                     stats.onRebind(binding);
+                if (ResultJournal.ENABLED)
+                    ResultJournal.rebindEmitter(this, binding);
                 if (!bVars.equals(lastBindingsVars))
                     st = bindingVarsChanged(st, bVars);
                 Batch<?> bb = binding.batch;
@@ -845,6 +855,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
+        @Override public String toString() { return super.toString()+'('+tp+')'; }
+
+        @Override protected void appendToSimpleLabel(StringBuilder out) {
+            String uri = endpoint.uri();
+            int begin = uri.lastIndexOf('/');
+            String file = begin < 0 ? uri : uri.substring(begin);
+            out.append('\n').append(tp).append(file);
+        }
+
         @Override protected int produceAndDeliver(int state) {
             long limit = (long)REQUESTED.getOpaque(this);
             if (limit <= 0)
@@ -867,6 +886,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (rows > 0) {
                 if ((long)REQUESTED.getAndAddRelease(this, -rows) > rows)
                     termState |= MUST_AWAKE;
+                journal("produced rows=", rows, "upd req=", (long)REQUESTED.getOpaque(this));
                 b = deliver(b);
             }
             recycled = Batch.asPooled(b);
@@ -978,35 +998,44 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.lookup = dict.lookup();
         }
 
-        @Override protected void putConverting(B dst, StoreBatch src) {
+        @Override protected B putConverting(B dst, StoreBatch src) {
             int cols = src.cols, rows = src.rows;
             if (dst.cols != cols) throw new IllegalArgumentException("cols mismatch");
             long[] ids = src.arr;
             dst.reserve(rows, 8*rows);
-            for (int base = 0, end = rows*cols; base < end; base += cols) {
-                dst.beginPut();
-                for (int c = 0; c < cols; c++) {
-                    TwoSegmentRope t = lookup.get(unsource(ids[base + c]));
-                    if (t == null) continue;
-                    byte fst = t.get(0);
-                    SegmentRope sh = switch (fst) {
-                        case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                        case '<' -> {
-                            if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
-                            int slot = (int)(t.fstOff & PREFIXES_MASK);
-                            var cached = prefixes[slot];
-                            if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
-                                prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
-                            yield cached;
-                        }
-                        case '_' -> ByteRope.EMPTY;
-                        default -> throw new IllegalArgumentException("Not an RDF term");
-                    };
-                    int localOff = fst == '<' ? sh.len : 0;
-                    dst.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
-                }
-                dst.commitPut();
+            for (int base = 0, end = rows*cols; base < end; base += cols)
+                putRowConverting(dst, ids, cols, base);
+            return dst;
+        }
+
+        @Override protected void putRowConverting(B dest, StoreBatch input, int row) {
+            int cols = input.cols;
+            putRowConverting(dest, input.arr, cols, cols*row);
+        }
+
+        private void putRowConverting(B dest, long[] ids, int cols, int base) {
+            dest.beginPut();
+            for (int c = 0; c < cols; c++) {
+                TwoSegmentRope t = lookup.get(unsource(ids[base + c]));
+                if (t == null) continue;
+                byte fst = t.get(0);
+                SegmentRope sh = switch (fst) {
+                    case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+                    case '<' -> {
+                        if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                        int slot = (int)(t.fstOff & PREFIXES_MASK);
+                        var cached = prefixes[slot];
+                        if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
+                            prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                        yield cached;
+                    }
+                    case '_' -> ByteRope.EMPTY;
+                    default -> throw new IllegalArgumentException("Not an RDF term");
+                };
+                int localOff = fst == '<' ? sh.len : 0;
+                dest.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
             }
+            dest.commitPut();
         }
     }
 
@@ -1283,7 +1312,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private static final LocalityCompositeDict.LocalityLexIt [] EMPTY_LEX_ITS
                 = new LocalityCompositeDict.LocalityLexIt[0];
 
-        private final Plan right;
         /** If a lexical join hold lexical variants of the left-provided binding using the
          *  var names of the right operand instead of the left-side binding var name. */
         private final @Nullable BatchBinding lexJoinBinding;
@@ -1304,11 +1332,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
         /** A 1-row batch used to convert lexical binding batches that are not of type B */
         private @Nullable B convLeftBatch;
 
-        public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right) {
+        public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right,
+                                   Vars rebindHint) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
-                  emit(bq.bindings.batchType(), right));
+                  emit(bq.bindings.batchType(), right,
+                       bq.bindingsVars().union(rebindHint)));
             Vars leftVars = bq.bindingsVars();
-            this.right = right;
 
             var m = right instanceof Modifier mod ? mod : null;
             List<Expr> mFilters = m == null ? List.of() : m.filters;
@@ -1375,10 +1404,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return lexJoinBinding;
             }
             return null;
-        }
-
-        @Override protected Object rightDisplay() {
-            return sparqlDisplay(right.sparql().toString());
         }
 
         @Override protected void doRelease() {
@@ -1467,8 +1492,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 leftBatch = (B)bBatch;
             } else {
                 leftBatch = batchType.empty(convLeftBatch, 1, bBatch.cols, 0);
-                convLeftBatch = leftBatch;
-                leftBatch.putConverting(bBatch);
+                convLeftBatch = leftBatch = leftBatch.putConverting(bBatch);
             }
 
             @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
@@ -1529,13 +1553,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (vars.size() > 1) throw new IllegalArgumentException("Expected 1 var");
         }
 
-        @Override protected boolean fetch(StoreBatch dest) {
-            if (!vit.advance()) return false;
-            dest.beginPut();
-            if (term0Col >= 0)
-                dest.putTerm(term0Col, source(vit.valueId, dictId));
-            dest.commitPut();
-            return true;
+        @Override protected StoreBatch fetch(StoreBatch dest) {
+            if (vit.advance()) {
+                dest.beginPut();
+                if (term0Col >= 0) dest.putTerm(term0Col, source(vit.valueId, dictId));
+                dest.commitPut();
+            } else {
+                exhausted = true;
+            }
+            return dest;
         }
     }
 
@@ -1547,13 +1573,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.pit = pit;
         }
 
-        @Override protected boolean fetch(StoreBatch dest) {
-            if (!pit.advance()) return false;
-            dest.beginPut();
-            if (term0Col >= 0) dest.putTerm(term0Col, source(pit.subKeyId, dictId));
-            if (term1Col >= 0) dest.putTerm(term1Col, source(pit.valueId,  dictId));
-            dest.commitPut();
-            return true;
+        @Override protected StoreBatch fetch(StoreBatch dest) {
+            if (pit.advance()) {
+                dest.beginPut();
+                if (term0Col >= 0) dest.putTerm(term0Col, source(pit.subKeyId, dictId));
+                if (term1Col >= 0) dest.putTerm(term1Col, source(pit.valueId, dictId));
+                dest.commitPut();
+            } else {
+                exhausted = true;
+            }
+            return dest;
         }
     }
 
@@ -1565,12 +1594,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.sit = sit;
         }
 
-        @Override protected boolean fetch(StoreBatch dest) {
-            if (!sit.advance()) return false;
-            dest.beginPut();
-            if (term0Col >= 0) dest.putTerm(term0Col, source(sit.subKeyId, dictId));
-            dest.commitPut();
-            return true;
+        @Override protected StoreBatch fetch(StoreBatch dest) {
+            if (sit.advance()) {
+                dest.beginPut();
+                if (term0Col >= 0) dest.putTerm(term0Col, source(sit.subKeyId, dictId));
+                dest.commitPut();
+            } else {
+                exhausted = true;
+            }
+            return dest;
         }
     }
 
@@ -1598,14 +1630,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
             } finally { releaseRef(); }
         }
 
-        @Override protected boolean fetch(StoreBatch dest) {
-            if (!sit.advance()) return false;
-            dest.beginPut();
-            if (sCol >= 0) dest.putTerm(sCol, source(sit.keyId,    dictId));
-            if (pCol >= 0) dest.putTerm(pCol, source(sit.subKeyId, dictId));
-            if (oCol >= 0) dest.putTerm(oCol, source(sit.valueId,  dictId));
-            dest.commitPut();
-            return true;
+        @Override protected StoreBatch fetch(StoreBatch dest) {
+            if (sit.advance()) {
+                dest.beginPut();
+                if (sCol >= 0) dest.putTerm(sCol, source(sit.keyId, dictId));
+                if (pCol >= 0) dest.putTerm(pCol, source(sit.subKeyId, dictId));
+                if (oCol >= 0) dest.putTerm(oCol, source(sit.valueId, dictId));
+                dest.commitPut();
+            } else {
+                exhausted = true;
+            }
+            return dest;
         }
     }
 

@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.ReceiverErrorFuture;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -27,7 +28,7 @@ import static java.lang.Thread.ofPlatform;
 public final class QueryRunner {
     private static final Logger log = LoggerFactory.getLogger(QueryRunner.class);
 
-    public abstract static class BatchConsumer{
+    public abstract static class BatchConsumer {
         public final BatchType<?> batchType;
 
         public BatchConsumer(BatchType<?> batchType) { this.batchType = batchType; }
@@ -42,6 +43,14 @@ public final class QueryRunner {
          * process it before returning.
          */
         public abstract void accept(Batch<?> batch);
+
+        /**
+         * Called for every {@link Receiver#onRow(Batch, int)} from upstream.
+         *
+         * @param batch a batch
+         * @param row the only row in {@code batch} which should be treated as a result row
+         */
+        public abstract void accept(Batch<?> batch, int row);
 
         /**
          * Called after {@link BIt#nextBatch(Batch)} returns {@code null}. Or if an error
@@ -144,6 +153,9 @@ public final class QueryRunner {
                     consumer.accept(batch);
                     return batch;
                 }
+                @Override public void onRow(B batch, int row) {
+                    consumer.accept(batch, row);
+                }
             };
             future.subscribeTo(emitter);
             var error = future.getSimple(timeoutMs, TimeUnit.MILLISECONDS);
@@ -164,7 +176,7 @@ public final class QueryRunner {
 
     /** Accumulates all rows in a single batch. */
     public static abstract class Accumulator<B extends Batch<B>> extends BatchConsumer {
-        public final B batch;
+        public B batch;
         public Accumulator(BatchType<B> batchType) {
             super(batchType);
             this.batch = batchType.create(64*BIt.PREFERRED_MIN_BATCH, 3, 0);
@@ -172,7 +184,11 @@ public final class QueryRunner {
         @Override public void start(Vars vars) { batch.clear(vars.size()); }
         @Override public void accept(Batch<?> batch) {
             //noinspection unchecked
-            this.batch.put((B)batch);
+            this.batch = this.batch.put((B)batch);
+        }
+        @Override public void accept(Batch<?> batch, int row) {
+            //noinspection unchecked
+            this.batch.putRow((B)batch, row);
         }
     }
 
@@ -206,6 +222,7 @@ public final class QueryRunner {
             serializer.init(vars, vars, vars.isEmpty(), sink);
         }
         @Override public void accept(Batch<?> b) { serializer.serialize(b, sink); }
+        @Override public void accept(Batch<?> b, int r) { serializer.serialize(b, r, 1, sink); }
         @Override public void finish(@Nullable Throwable error) {
             try {
                 if (close) sink.os.close();
@@ -247,6 +264,14 @@ public final class QueryRunner {
                     var type = b.termType(r, c);
                     counts[type == null ? 4 : type.ordinal()]++;
                 }
+            }
+        }
+
+        @Override public void accept(Batch<?> b, int r) {
+            this.rows++;
+            for (int c = 0, cols = b.cols; c < cols; c++) {
+                var type = b.termType(r, c);
+                counts[type == null ? 4 : type.ordinal()]++;
             }
         }
     }

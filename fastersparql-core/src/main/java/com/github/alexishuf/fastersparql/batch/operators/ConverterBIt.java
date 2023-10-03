@@ -42,7 +42,7 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
             out.clear(in.cols);
         else
             out = batchType.create(in.rows, in.cols, batchType.localBytesRequired(in));
-        out = out.putConverting(in);
+        out = out.putConverting(in, null, null);
         lastIn = in;
         if (metrics != null) metrics.batch(out.rows);
         return out;

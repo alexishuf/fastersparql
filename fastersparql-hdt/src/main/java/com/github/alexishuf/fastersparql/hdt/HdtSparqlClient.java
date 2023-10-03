@@ -17,7 +17,6 @@ import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
-import com.github.alexishuf.fastersparql.emit.async.SelfEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -38,6 +37,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
@@ -120,7 +120,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     }
 
     @Override protected <B extends Batch<B>> Emitter<B>
-    doEmit(BatchType<B> bt, SparqlQuery sparql) {
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         var plan = SparqlParser.parse(sparql);
         Emitter<HdtBatch> hdtEm;
         Modifier m = plan instanceof Modifier mod ? mod : null;
@@ -130,7 +130,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             if (m != null)
                 hdtEm = m.processed(hdtEm);
         } else {
-            hdtEm = federator.emit(TYPE, plan);
+            hdtEm = federator.emit(TYPE, plan, rebindHint);
         }
         return bt.convert(hdtEm);
     }
@@ -163,13 +163,14 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         return new ClientBindingBIt<>(bq, this);
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq) {
-        return new BindingStage.ForPlan<>(bq, false, null);
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
+                                                               Vars rebindHint) {
+        return new BindingStage.ForPlan<>(bq, rebindHint, false, null);
     }
 
     /* --- --- --- emitters --- --- --- */
 
-    final class TPEmitter extends SelfEmitter<HdtBatch> {
+    final class TPEmitter extends com.github.alexishuf.fastersparql.emit.async.TaskEmitter<HdtBatch> {
         private static final BatchBinding EMPTY_BINDING;
         static {
             EMPTY_BINDING = new BatchBinding(Vars.EMPTY);
@@ -184,7 +185,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private static final int MAX_BATCH = BIt.DEF_MAX_BATCH;
         private static final int TIME_CHK_MASK = 0x7;
         private static final int HAS_UNSET_OUT = 0x01000000;
-        private static final Flags FLAGS = SELF_EMITTER_FLAGS.toBuilder()
+        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
                 .flag(HAS_UNSET_OUT, "UNSET_OUT").build();
 
         private @Nullable HdtBatch recycled;
@@ -223,7 +224,11 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             search.setPredicate(plain(dict, tp.p, PREDICATE));
             search.setObject   (plain(dict, tp.o, OBJECT));
             rebind(BatchBinding.ofEmpty(TYPE));
+            if (stats != null)
+                stats.rebinds = 0;
             it = triples.search(search);
+            if (ResultJournal.ENABLED)
+                ResultJournal.initEmitter(this, vars);
             acquireRef();
         }
 
@@ -274,6 +279,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             Vars bVars = binding.vars;
             if (EmitterStats.ENABLED  && stats != null)
                 stats.onRebind(binding);
+            if (ResultJournal.ENABLED)
+                ResultJournal.rebindEmitter(this, binding);
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 if (!bVars.equals(lastBindingVars))
@@ -390,16 +397,19 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             }
         }
 
-        @Override protected boolean fetch(HdtBatch dest) {
-            if (!it.hasNext()) return false;
-            TripleID t = it.next();
-            dest.beginPut();
-            int dictId = HdtSparqlClient.this.dictId;
-            putRole(0, dest, v0Role, t, dictId);
-            putRole(1, dest, v1Role, t, dictId);
-            putRole(2, dest, v2Role, t, dictId);
-            dest.commitPut();
-            return true;
+        @Override protected HdtBatch fetch(HdtBatch dest) {
+            if (it.hasNext()) {
+                TripleID t = it.next();
+                dest.beginPut();
+                int dictId = HdtSparqlClient.this.dictId;
+                putRole(0, dest, v0Role, t, dictId);
+                putRole(1, dest, v1Role, t, dictId);
+                putRole(2, dest, v2Role, t, dictId);
+                dest.commitPut();
+            } else {
+                exhausted = true;
+            }
+            return dest;
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {

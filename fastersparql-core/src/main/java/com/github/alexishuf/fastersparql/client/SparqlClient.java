@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQuery;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 
 /**
@@ -113,19 +114,29 @@ public interface SparqlClient extends AutoCloseable {
      *
      * @param batchType the type of batches to be produced
      * @param sparql The SPARQL SELECT or ASK query to execute
+     * @param rebindHint Likely set of vars in a future {@link Emitter#rebind(BatchBinding)}
+     *                   call on the returned {@link Emitter} if no such call is planned or
+     *                   if whether it will happen is unknown, this should be {@link Vars#EMPTY}
      * @return an {@link Emitter}
      * @param <B> the batch type
      */
-    <B extends Batch<B>> Emitter<B> emit(BatchType<B> batchType, SparqlQuery sparql);
+    <B extends Batch<B>> Emitter<B> emit(BatchType<B> batchType, SparqlQuery sparql,
+                                         Vars rebindHint);
 
     /**
      * Analogous to {@link #query(ItBindQuery)} but returns an unstarted {@link Emitter}.
      *
      * @param bindQuery the specification fot the bind query.
+     * @param rebindHint likely set of vars in future {@link Emitter#rebind(BatchBinding)}
+     *                   calls on the returned {@link Emitter}. This shall be used only for
+     *                   optimization purposes and future {@link Emitter#rebind(BatchBinding)}
+     *                   calls might not occurr or use a diferent set of vars. This parameter
+     *                   should be {@link Vars#EMPTY} if no {@link Emitter#rebind(BatchBinding)}
+     *                   is expected or if whether a rebind will happen is not kown.
      * @return An unstarted {@link Emitter}
      * @param <B> the batch type
      */
-    <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> bindQuery);
+    <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> bindQuery, Vars rebindHint);
 
     /**
      * Closes the client, releasing all resources.

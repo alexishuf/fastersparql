@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitter;
-import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -43,10 +42,6 @@ public class BItProducerTest {
                      Class<? extends Throwable> expectedErrCls) {
         public D(Supplier<BIt<TermBatch>> itSupplier, int[] expected) {
             this(itSupplier, expected, true, null);
-        }
-
-        public void testProducer() {
-            check(new IntsReceiver(Emitters.fromBIt(itSupplier.get())));
         }
 
         public void testEmitter() {
@@ -94,6 +89,16 @@ public class BItProducerTest {
                 return batch;
             }
 
+            @Override public void onRow(TermBatch batch, int row) {
+                Term view = Term.pooledMutable();
+                if (batch.getView(row, 0, view)) {
+                    if (size == ints.length)
+                        ints = ArrayPool.grow(ints, size << 1);
+                    ints[size++] = IntsBatch.parse(view);
+                }
+                view.recycle();
+            }
+
             @Override public void onComplete() { complete(ints); }
         }
     }
@@ -130,19 +135,6 @@ public class BItProducerTest {
         }
 
         return list.stream().map(Arguments::arguments);
-    }
-
-    @ParameterizedTest @MethodSource("data")
-    void testProducer(D data) throws Exception {
-        data.testProducer();
-        TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, data::testProducer);
-    }
-
-    @Test
-    void testConcurrentProducer() throws Exception {
-        try (var tasks = new TestTaskSet(getClass().getSimpleName(), newFixedThreadPool(THREADS))) {
-            data().map(a -> (D)a.get()[0]).forEach(d -> tasks.repeat(THREADS, d::testProducer));
-        }
     }
 
     @ParameterizedTest @MethodSource("data")

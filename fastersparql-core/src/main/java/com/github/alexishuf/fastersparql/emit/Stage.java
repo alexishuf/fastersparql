@@ -21,7 +21,7 @@ public interface Stage<I extends Batch<I>, O extends Batch<O>> extends Emitter<O
         public NoEmitterException() {
             super("Stage not yet subscribedTo() an upstream Emitter");
         }
-
+        @Override public String toString() { return getClass().getSimpleName()+": "+getMessage(); }
     }
 
 }

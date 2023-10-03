@@ -68,16 +68,28 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
     /**
      * Create an empty {@link Batch} with given initial capacity.
      *
-     * @param rowsCapacity number of rows that the batch may hold. offer methods
-     *                     (see {@link Batch#beginOffer()}) are still allowed to reject
-     *                     insertions before this is reached. Some implementations may
-     *                     ignore this in favor of {@code bytesCapacity}
-     * @param cols number of columns in the batch
-     * @param localBytes number of bytesCapacity to allocate. Some implementations may ignore this in favor
-     *                   of {@code rowsCapacity}
+     * @param rowsCapacity hints the number of rows that the batch is expected to hold
+     * @param cols desired {@link Batch#cols} of the returned batch
+     * @param localBytes hints the total number of bytes collectively held for local segments of
+     *                  terms to be stored in the batch. Some implementations may ignore this
+     *                   hint completely.
      * @return an empty {@link Batch}
      */
     public abstract B create(int rowsCapacity, int cols, int localBytes);
+
+    /**
+     * Similar to {@link #create(int, int, int)}, but will return {@code null} if there is no
+     * suitable batch pooled, instead of creating a new instance.
+     *
+     * @param rowsCapacity minimum value for {@link Batch#rowsCapacity()} of the returned batch
+     * @param cols desired {@link Batch#cols()} of returned batch
+     * @param localBytes if this method returns non-null, the returned batch will be able to
+     *                   hold this many bytes in total local segments of terms. This value may
+     *                   be meaningless for some batch types.
+     * @return a batch that satisfies the {@code rowsCapacity}, {@code cols} and {@code localBytes}
+     *         constraints or null if there is no pooled batch that satisfies all three constraints.
+     */
+    public abstract @Nullable B poll(int rowsCapacity, int cols, int localBytes);
 
     /**
      * Equivalent to {@link #create(int, int, int)} if {@code offer == null},
@@ -143,7 +155,7 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @return a batch of this type ({@code B}) with the same rows as {@code src}
      */
     public final <O extends Batch<O>> B convert(O src) {
-        return create(src.rows, src.cols, localBytesRequired(src)).putConverting(src);
+        return create(src.rows, src.cols, localBytesRequired(src)).putConverting(src, null, null);
     }
 
     /**

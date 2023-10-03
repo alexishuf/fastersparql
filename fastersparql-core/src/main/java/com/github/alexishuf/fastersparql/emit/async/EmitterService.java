@@ -93,11 +93,6 @@ public class EmitterService {
          */
         protected abstract void task();
 
-        /** Whether the calling thread is an {@link EmitterService} worker thread. */
-        protected boolean inEmitterService() {
-            return Thread.currentThread() instanceof Worker;
-        }
-
         /**
          * Execute this task <strong>now</strong>, unless it is already being executed by
          * another thread. Unlike a direct call to {@link #task()}, this will ensure there are
@@ -151,6 +146,8 @@ public class EmitterService {
 
     private final class Worker extends Thread {
         private final int id;
+        private boolean yielding;
+
         public Worker(ThreadGroup group, int i) {
             super(group, "EmitterService-"+EmitterService.this.id+"-"+i);
             this.id = i;
@@ -171,10 +168,78 @@ public class EmitterService {
                     try {
                         task.run();
                     } catch (Throwable t) {
-                        log.error("Task {} failed", task, t);
+                        log.error("Dispatch failed for {}", task, t);
                     }
                 }
             }
+        }
+
+//        private static final AtomicInteger YIELD_RAN           = new AtomicInteger();
+//        private static final AtomicInteger YIELD_FAIL_RUNNING  = new AtomicInteger();
+//        private static final AtomicInteger YIELD_FAIL_EMPTY    = new AtomicInteger();
+//        private static final AtomicInteger YIELD_FAIL_YIELDING = new AtomicInteger();
+//        static {
+//            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+//                int ran      = YIELD_RAN          .getOpaque();
+//                int running  = YIELD_FAIL_RUNNING .getOpaque();
+//                int empty    = YIELD_FAIL_EMPTY   .getOpaque();
+//                int yielding = YIELD_FAIL_YIELDING.getOpaque();
+//                double calls = ran+running+empty+yielding;
+//                System.err.printf("""
+//                        Yield success:               %,9d (%5.2f%%)
+//                        Yield fail:    task running: %,9d (%5.2f%%)
+//                        Yield fail:     empty queue: %,9d (%5.2f%%)
+//                        Yield fail: worker yielding: %,9d (%5.2f%%)
+//                        """,
+//                        ran,      100*(ran     /calls),
+//                        running,  100*(running /calls),
+//                        empty,    100*(empty   /calls),
+//                        yielding, 100*(yielding/calls)
+//                );
+//            }));
+//        }
+
+        public boolean yieldToTaskOnce() {
+            if (yielding)
+                return false;
+            int mdb = id << MD_BITS, size, queueIdx;
+            boolean ran = false, locked = false;
+            short os = 0;
+            try {
+                yielding = true;
+                while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
+                    onSpinWait(); // spin until locked worker queue
+                locked = true;
+                if ((size = md[mdb+MD_SIZE]) > 0) {
+                    queueIdx = md[mdb+MD_TAKE];
+                    Task task = queues[md[mdb+MD_QUEUE_BASE]+queueIdx];
+                    if (task.compareAndSetFlagRelease(Task.IS_RUNNING)) { // blocked task.runNow()
+                        try {
+                            md[mdb+MD_SIZE] = size-1;                   // remove task from queue
+                            md[mdb+MD_TAKE] = (queueIdx+1)&QUEUE_MASK;  // bump take index
+                            MD.setRelease(md, mdb+MD_LOCK, 0);          // release worker queue
+                            locked = false;                             // do not release
+                            os = (short)Task.SCHEDULED.getOpaque(task); // pending awake()s
+                            task.task();
+                            ran = true;
+                        } catch (Throwable t) {
+                            task.handleTaskException(t);
+                        } finally {
+                            task.clearFlagsRelease(task.statePlain(), Task.IS_RUNNING);
+                        }
+                        if ((short)Task.SCHEDULED.compareAndExchange(task, os, (short)0) != os) {
+                            // got awake() calls during task.task(), enqueue task again
+                            Task.SCHEDULED.setRelease(task, (short)1);
+                            add(task, task.preferredWorker == id);
+                        }
+                    }
+                }
+            } finally {
+                yielding = false;
+                if (locked) // release worker queue if not already released
+                    MD.setRelease(md, mdb+MD_LOCK, 0);
+            }
+            return ran;
         }
     }
 
@@ -210,7 +275,7 @@ public class EmitterService {
     private final int[] md;
     private final short threadsMask, threadMaskBits;
     private final int[] runnerMd;
-    private final Thread[] workers;
+    private final Worker[] workers;
     private final ArrayDeque<Task> sharedQueue;
     private final Task[] queues;
     private final int id;
@@ -225,7 +290,7 @@ public class EmitterService {
         queues = new Task[nWorkers*QUEUE_CAP];
         for (int i = 0; i < nWorkers; i++)
             md[(i<<MD_BITS) + MD_QUEUE_BASE] = i*QUEUE_CAP;
-        workers = new Thread[nWorkers];
+        workers = new Worker[nWorkers];
         id = nextServiceId.getAndIncrement();
         var grp = new ThreadGroup("EmitterService-"+id);
         for (int i = 0; i < nWorkers; i++)
@@ -264,6 +329,25 @@ public class EmitterService {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * Tries to execute a previously scheduled task in this {@link EmitterService}.
+     *
+     * <p>If this method is called from a worker thread, tasks scheduled in the worker will
+     * be preferred. If the calling thread is not a worker thread, a task will be stolen
+     * from an arbitrary worker chosen according to the calling Thread (i.e., the same
+     * external thread will always try stealing from the same worker thread).</p>
+     *
+     * @return Whether a task was executed. {@code false} will be returned if there is no
+     * scheduled task in the worker or if the selected task is already being executed
+     * (i.e., {@link Task#awake()} called from within {@link Task#task()}),
+     */
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    public boolean yieldToTaskOnce() {
+        if (Thread.currentThread() instanceof Worker w)
+            return w.yieldToTaskOnce();
+        return false;
     }
 
     /**

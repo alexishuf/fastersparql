@@ -106,7 +106,7 @@ public enum QueryName {
             });
             B acc = batchType.create(64, vars.size(), 64*32);
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
-                acc.put(b);
+                acc = acc.put(b);
             return acc;
         } catch (IOException e) {
             throw new RuntimeException("IOException reading from resource");
@@ -136,13 +136,17 @@ public enum QueryName {
     public Plan parsed() { return SparqlParser.parse(opaque()); }
 
     public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
+        return amputateNumbers(type, b, 0, b.rows);
+    }
+
+    public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b, int beginRow, int endRow) {
         if (this != C7 && this != C8 && this != C10)
             return b;
         boolean changed = false;
         B fixed = type.create(b.rows, b.cols, b.localBytesUsed());
         var tmp = Term.pooledMutable();
-        var trunc = new ByteRope();
-        for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
+        var tr = new ByteRope();
+        for (int r = beginRow, cols = b.cols; r < endRow; r++) {
             fixed.beginPut();
             for (int c = 0; c < cols; c++) {
                 if (Term.isNumericDatatype(b.shared(r, c))) {
@@ -151,8 +155,8 @@ public enum QueryName {
                         throw new AssertionError("no term, but shared() != null");
                     SegmentRope local = tmp.local();
                     int dot = local.skipUntil(0, local.len, '.');
-                    trunc.clear().append(local, 0, dot);
-                    fixed.putTerm(c, tmp.shared(), trunc.utf8, 0, trunc.len, true);
+                    tr.clear().append(local, 0, dot);
+                    fixed.putTerm(c, tmp.shared(), tr.utf8, 0, tr.len, true);
                 } else {
                     fixed.putTerm(c, b, r, c);
                 }
@@ -162,7 +166,7 @@ public enum QueryName {
         tmp.recycle();
         if (changed) {
             b.clear();
-            b.put(fixed);
+            b = b.put(fixed);
         }
         type.recycle(fixed);
         return b;

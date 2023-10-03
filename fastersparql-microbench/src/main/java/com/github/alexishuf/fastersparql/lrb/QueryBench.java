@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
@@ -105,7 +106,9 @@ public class QueryBench {
     private RowCounter rowCounter;
     private RopeLenCounter ropeLenCounter;
     private TermLenCounter termLenCounter;
-    private int iterationsComplete;
+    private long iterationStart = 0;
+    private int iterationNumber = 0;
+    private int iterationMs = 0;
     private final MetricsConsumer metricsConsumer = new MetricsConsumer();
     private int lastBenchResult;
     private Blackhole bh;
@@ -121,6 +124,7 @@ public class QueryBench {
         public int rows() { return rows; }
         @Override public void start(Vars vars)                  { rows = 0; }
         @Override public void accept(Batch<?> batch)            { rows += batch.rows; }
+        @Override public void accept(Batch<?> batch, int row)   { rows++; }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
     }
 
@@ -139,6 +143,12 @@ public class QueryBench {
                     if (batch.getRopeView(r, c, tmp))
                         acc += tmp.len;
                 }
+            }
+        }
+        @Override public void accept(Batch<?> batch, int r) {
+            for (int c = 0, cols = batch.cols; c < cols; c++) {
+                if (batch.getRopeView(r, c, tmp))
+                    acc += tmp.len;
             }
         }
     }
@@ -162,6 +172,12 @@ public class QueryBench {
                     if (batch.getView(r, c, tmp))
                         acc += tmp.len;
                 }
+            }
+        }
+        @Override public void accept(Batch<?> batch, int r) {
+            for (int c = 0, cols = batch.cols; c < cols; c++) {
+                if (batch.getView(r, c, tmp))
+                    acc += tmp.len;
             }
         }
     }
@@ -229,18 +245,19 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
+        // do I/O, garbage collection and let the CPU cool down.
         PoolCleaner.INSTANCE.sync();
         IOUtils.fsync(50_000);
-        if (iterationsComplete > 0) {
-            if ((iterationsComplete & 1) == 0)
-                System.gc();
-            Async.uninterruptibleSleep(500); //thermal slack
-        }
+        if ((iterationNumber&1) == 0)
+            System.gc();
+        Async.uninterruptibleSleep(Math.max(1_000, 50+iterationMs));
+        iterationStart = Timestamp.nanoTime();
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
         fedHandle.close();
-        ++iterationsComplete;
+        ++iterationNumber;
+        iterationMs = (int)Math.max(1, (Timestamp.nanoTime()-iterationStart)/1_000_000L);
     }
 
     @TearDown(Level.Trial) public void tearDown() {
@@ -259,8 +276,8 @@ public class QueryBench {
         this.bh = bh;
         for (Plan plan : plans) {
             switch (flowModel) {
-                case ITERATE -> QueryRunner.drain(plan.execute(batchType), consumer);
-                case EMIT    -> QueryRunner.drain(plan.emit(batchType),    consumer);
+                case ITERATE -> QueryRunner.drain(plan.execute(batchType),          consumer);
+                case EMIT    -> QueryRunner.drain(plan.emit(batchType, Vars.EMPTY), consumer);
             }
         }
         return checkResult(resultGetter.getAsInt());

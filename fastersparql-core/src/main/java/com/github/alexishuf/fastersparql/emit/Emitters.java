@@ -1,16 +1,14 @@
 package com.github.alexishuf.fastersparql.emit;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.async.*;
-import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
+import com.github.alexishuf.fastersparql.emit.async.BatchEmitter;
+import com.github.alexishuf.fastersparql.emit.async.EmptyEmitter;
 import com.github.alexishuf.fastersparql.model.Vars;
-import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.THREAD_JOURNAL;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public class Emitters {
@@ -30,49 +28,19 @@ public class Emitters {
         return new BatchEmitter<>(vars, batch);
     }
 
-    public static <B extends Batch<B>> AsyncEmitter<B>
-    fromProducer(BatchType<B> bt, Vars vars, Producer<B> producer) {
-        AsyncEmitter<B> ae = new AsyncEmitter<>(bt, vars);
-        producer.registerOn(ae);
-        return ae;
-    }
-
-    public static <B extends Batch<B>> AsyncEmitter<B> fromBIt(BIt<B> it) {
-        var ae = new AsyncEmitter<>(it.batchType(), it.vars());
-        new BItProducer<>(it, ae);
-        return ae;
-    }
-
     public static <B extends Batch<B>> Emitter<B> withVars(Vars vars, Emitter<B> in) {
         var projector = in.batchType().projector(vars, in.vars());
         return projector == null ? in : projector.subscribeTo(in);
     }
 
-    private static final class Collector<B extends Batch<B>> extends ReceiverFuture<B, B> {
-        private B collected;
-
-        @Override
-        public @This Collector<B> subscribeTo(Emitter<B> e) throws RegisterAfterStartException {
-            super.subscribeTo(e);
-            collected = e.batchType().create(64, e.vars().size(), 0);
-            return this;
-        }
-
-        @Override public B onBatch(B batch) {
-            collected.put(batch);
-            return batch;
-        }
-        @Override public void onComplete() { complete(collected); }
-    }
-
     @SuppressWarnings("unused") public static <B extends Batch<B>> B collect(Emitter<B> e) {
-        return new Collector<B>().subscribeTo(e).join();
+        return new CollectingReceiver<>(e).join();
     }
 
     public static void handleEmitError(Receiver<?> downstream, Emitter<?> upstream,
                                        boolean emitterTerminated,
                                        Throwable emitError) {
-        if (THREAD_JOURNAL) journal("deliver failed, rcv=", downstream, ", on", upstream);
+        if (ENABLED) journal("deliver failed, rcv=", downstream, ", on", upstream);
         if (emitterTerminated) {
             log.debug("{}.onBatch() failed, will not cancel {}: terminated or terminating",
                     downstream, upstream, emitError);
@@ -88,7 +56,7 @@ public class Emitters {
 
     public static void handleTerminationError(Receiver<?> downstream, Emitter<?> upstream,
                                               Throwable error) {
-        if (THREAD_JOURNAL) journal("handleTerminationError, rcv=", downstream, ", on", upstream);
+        if (ENABLED) journal("handleTerminationError, rcv=", downstream, ", on", upstream);
         String name = error.getClass().getSimpleName();
         if (LOG_DEBUG)
             log.info("Ignoring {} while delivering termination to {}", name, downstream, error);

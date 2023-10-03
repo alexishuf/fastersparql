@@ -48,7 +48,6 @@ import java.util.List;
 import java.util.Map;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
-import static com.github.alexishuf.fastersparql.emit.Emitters.fromProducer;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
@@ -101,18 +100,20 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
-        return fromProducer(bt, sparql.publicVars(), new WsProducer<>(sparql, null));
-        }
+    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
+                                                     Vars rebindHint) {
+        return new WsEmitter<>(bt, sparql.publicVars(), sparql, null);
+    }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
         ByteRope msg = createRequest(BIND_VERB[bq.type.ordinal()], bq.query.sparql(), null);
         return new WsBIt<>(msg, bq.batchType(), bq.resultVars(), bq);
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query,
+                                                               Vars rebindHint) {
         BatchType<B> bt = query.bindings.batchType();
-        return fromProducer(bt, query.resultVars(), new WsProducer<>(query.query, query));
+        return new WsEmitter<>(bt, query.resultVars(), query.query, query);
     }
 
     /* --- --- --- helper methods --- --- --- */
@@ -157,15 +158,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override protected void request()                      { netty.open(handler); }
     }
 
-    private final class WsProducer<B extends Batch<B>> extends NettyCallbackProducer<B> {
+    private final class WsEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
         private final SparqlQuery query;
         private final @Nullable EmitBindQuery<B> bindQuery;
         private @Nullable ByteRope request;
         private @Nullable WsHandler<B> handler;
         private @Nullable BatchBinding binding;
 
-        public WsProducer(SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
-           super(NettyWsSparqlClient.this);
+        public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
+           super(batchType, outVars, NettyWsSparqlClient.this);
            this.query = query;
            this.bindQuery = bindQuery;
            acquireRef();

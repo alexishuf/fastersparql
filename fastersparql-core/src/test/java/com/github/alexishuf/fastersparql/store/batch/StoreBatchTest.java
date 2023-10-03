@@ -83,37 +83,20 @@ class StoreBatchTest {
     @ParameterizedTest @MethodSource
     void testFill(boolean grow, int rows, int cols) {
         StoreBatch b0 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        StoreBatch b1 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
         StoreBatch b2 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        StoreBatch b3 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
         StoreBatch b4 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        StoreBatch b5 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        b1.reserve(rows, cols);
-        b3.reserve(rows, cols);
-        b5.reserve(rows, cols);
         var lookup = IdTranslator.lookup(dictId);
-        List<StoreBatch> batches = List.of(b0, b1, b2, b3, b4, b5);
+        List<StoreBatch> batches = List.of(b0, b2, b4);
         for (int r = 0; r < rows; r++) {
             b0.beginPut();
-            b1.beginOffer();
-            for (int c = 0; c < cols; c++) {
-                b0.putTerm(c, sourcedIds[r*c]);
-                assertTrue(b1.offerTerm(c, sourcedIds[r*c]));
-            }
+            for (int c = 0; c < cols; c++) b0.putTerm(c, sourcedIds[r*c]);
             b0.commitPut();
-            b1.commitOffer();
 
             b2.beginPut();
-            b3.beginOffer();
-            for (int c = cols-1; c >= 0; c--) {
-                b2.putTerm(c, sourcedIds[r*c]);
-                assertTrue(b3.offerTerm(c, sourcedIds[r*c]));
-            }
+            for (int c = cols-1; c >= 0; c--) b2.putTerm(c, sourcedIds[r*c]);
             b2.commitPut();
-            b3.commitOffer();
 
             b4.putRow(b0, r);
-            assertTrue(b5.offerRow(b0, r));
 
             for (int i = 0; i <= r; i++) {
                 for (int c = 0; c < cols; c++) {

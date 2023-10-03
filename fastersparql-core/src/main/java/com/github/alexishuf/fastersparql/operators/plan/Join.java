@@ -45,8 +45,9 @@ public final class Join extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
-        return NativeBind.preferNativeEmit(type, this, weakDedup);
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                  boolean weakDedup) {
+        return NativeBind.preferNativeEmit(type, this, rebindHint, weakDedup);
     }
 
 

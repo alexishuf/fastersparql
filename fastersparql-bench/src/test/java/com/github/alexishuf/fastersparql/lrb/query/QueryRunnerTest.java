@@ -50,8 +50,9 @@ class QueryRunnerTest {
                return it;
             }
             @Override
-            protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparaql) {
-                return new BItEmitter<>(doQuery(bt, sparaql));
+            protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
+                                                             Vars rebindHint) {
+                return new BItEmitter<>(doQuery(bt, sparql));
             }
             @Override public Guard retain() { return NoOpGuard.INSTANCE; }
             @Override protected void doClose() {}
@@ -59,7 +60,7 @@ class QueryRunnerTest {
         OpaqueSparqlQuery query = new OpaqueSparqlQuery("SELECT * WHERE {?s ?p ?o}");
         long start = System.nanoTime();
         if (emit) {
-            QueryRunner.drain(slow.emit(consumer.batchType(), query), consumer, 1_000);
+            QueryRunner.drain(slow.emit(consumer.batchType(), query, Vars.EMPTY), consumer, 1_000);
         } else {
             QueryRunner.drain(slow.query(consumer.batchType(), query), consumer, 1_000);
         }

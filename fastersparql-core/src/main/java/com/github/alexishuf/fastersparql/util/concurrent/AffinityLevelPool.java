@@ -17,7 +17,7 @@ import static java.lang.Thread.currentThread;
 public class AffinityLevelPool<T> {
     private static final VarHandle L = MethodHandles.arrayElementVarHandle(Object[].class);
 
-    private final LevelPool<T> shared;
+    public final LevelPool<T> shared;
     private final T[] local;
     private final int threadMask;
     private final byte disableLocalityLevel;
@@ -74,7 +74,7 @@ public class AffinityLevelPool<T> {
         }
         if (shared.offerToLevel(level, o) == null)
             return null;
-        return shared.offerToLevel(31&(level+1), o);
+        return shared.offerToLevel(31&(level-1), o);
     }
 
     @Override public String toString() {

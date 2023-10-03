@@ -92,7 +92,10 @@ class QueryCheckerTest {
                 for (int c = 0; c < consumer.unexpected.cols; c++)
                     assertNull(consumer.unexpected.get(0, c));
                 boolean[] had = {false};
-                consumer.forEachMissing((b, r) -> had[0] = true);
+                consumer.forEachMissing((b, r) -> {
+                    had[0] = true;
+                    return false;
+                });
                 assertFalse(had[0]);
             }
         }

@@ -4,10 +4,10 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
-import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -29,10 +29,13 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         this.vars = vars;
     }
 
-    @Override public String toString() { return getClass().getSimpleName()+"<-"+upstream; }
+    @Override public String toString() { return label(StreamNodeDOT.Label.MINIMAL)+"<-"+upstream; }
 
-    @Override public String nodeLabel() {
-        return getClass().getSimpleName();
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+        if (type.showStats() && stats != null)
+            return stats.appendToLabel(sb).toString();
+        return sb.toString();
     }
 
     /* --- --- --- Emitter methods --- --- --- */
@@ -44,12 +47,11 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         return Optional.ofNullable(upstream).stream();
     }
 
-    @Override public void subscribe(Receiver<O> receiver)
-            throws RegisterAfterStartException, MultipleRegistrationUnsupportedException {
+    @Override public void subscribe(Receiver<O> receiver) {
         if (downstream != null && downstream != receiver)
             throw new MultipleRegistrationUnsupportedException(this);
         downstream = receiver;
-        if (ThreadJournal.THREAD_JOURNAL)
+        if (ThreadJournal.ENABLED)
             ThreadJournal.journal("subscribed", receiver, "to", this);
     }
 
@@ -66,7 +68,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public void rebindRelease() { upstream.rebindRelease(); }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
-        if (ThreadJournal.THREAD_JOURNAL)
+        if (ThreadJournal.ENABLED)
             ThreadJournal.journal("rebind", this);
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);

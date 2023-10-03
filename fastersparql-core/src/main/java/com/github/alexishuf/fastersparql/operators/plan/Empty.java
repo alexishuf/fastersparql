@@ -44,7 +44,7 @@ public final class Empty extends Plan {
 
     @Override
     public <B extends Batch<B>>
-    Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+    Emitter<B> doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         return Emitters.empty(type, publicVars);
     }
 

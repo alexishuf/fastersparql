@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
-import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
+import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
@@ -14,7 +14,6 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -137,7 +136,7 @@ class MeasureTest {
                 "--dest-dir", destDir.getPath(),
                 "--warm-secs", "0",
                 "--warm-cool-ms", "500",
-                "--cool-ms", "600",
+                "--cool-ms", "1", // minimal amount, just to touch the code
                 "--reps", Integer.toString(nReps),
                 "--seed", "728305461",
                 "--consumer", consumer.name(),
@@ -174,49 +173,21 @@ class MeasureTest {
 
     public static void main(String[] args) {
         beforeAll();
-        String uri = "file://" + dataDir + "/DBPedia-Subset";
+        String uri = "file://" + dataDir + "/DrugBank";
         try (var client = new StoreSparqlClient(SparqlEndpoint.parse(uri))) {
-            List<CompressedBatch> results = new ArrayList<>();
-            for (int i = 0; i < 10_000; i++) {
-                var emitter = client.emit(COMPRESSED, new OpaqueSparqlQuery("""
-                    SELECT ?predicate ?object WHERE {
-                      <http://dbpedia.org/resource/Barack_Obama> ?predicate ?object
-                    }"""));
-                results.add(new ReceiverFuture<CompressedBatch, CompressedBatch>() {
-                    private final CompressedBatch acc = COMPRESSED.create(90, 2, 0);
-                    @Override public @Nullable CompressedBatch onBatch(CompressedBatch batch) {
-                        acc.put(batch);
-                        return batch;
-                    }
-                    @Override public void onComplete() { complete(acc); }
-                }.subscribeTo(emitter).getSimple());
-            }
-            var expected = results.get(0);
-            for (int i = 0; i < expected.rows; i++) {
-                for (int resIdx = 1; resIdx < results.size(); resIdx++) {
-                    var b = results.get(resIdx);
-                    boolean missing = true;
-                    for (int j = 0; missing && j < b.rows; j++)
-                        missing = !expected.equals(i, b, j);
-                    if (missing)
-                        System.out.printf("Row %d missing from results set %d: %s\n", i, resIdx, expected.toString(i));
-                }
-            }
-            for (int resIdx = 1; resIdx < results.size(); resIdx++) {
-                var b = results.get(resIdx);
-                for (int i = 0; i < b.rows; i++) {
-                    boolean missing = true;
-                    for (int j = 0; missing && j < expected.rows; j++) 
-                        missing = !expected.equals(j, b, i);
-                    if (missing)
-                        System.out.printf("results %d has unexpected %s\n", resIdx, b.toString(i));
-                }
-            }
-
+//            var emitter = client.emit(COMPRESSED, new OpaqueSparqlQuery("""
+//                SELECT ?predicate ?object WHERE {
+//                  ?drug <http://purl.org/dc/elements/1.1/title> "Adenine (JAN/USP)"
+//                }"""), Vars.EMPTY);
+            var query = new OpaqueSparqlQuery("""
+                    SELECT ?s ?p ?o WHERE {
+                      <http://bio2rdf.org/dr:D04682> <http://purl.org/dc/elements/1.1/title> ?o .
+                    }""");
+            var acc = Emitters.collect(client.emit(COMPRESSED, query, Vars.EMPTY));
             var serializer = ResultsSerializer.create(TSV);
             var tsv = new ByteRope();
-            serializer.init(Vars.of("p", "o"), Vars.of("p", "o"), false, tsv);
-            serializer.serialize(expected, tsv);
+            serializer.init(query.publicVars(), query.publicVars(), false, tsv);
+            serializer.serialize(acc, tsv);
             serializer.serializeTrailer(tsv);
             System.out.println(tsv);
         }
@@ -243,6 +214,7 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
+        doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, ITERATE);
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
     }
 

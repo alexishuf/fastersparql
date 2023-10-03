@@ -71,7 +71,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             forEachMissing((b, r) -> {
                 boolean stop = ++missing[0] >= 10;
                 if (!stop) sb.append("\n  ").append(b.toString(r));
-                return stop;
+                return !stop;
             });
             if (missing[0] == 0)
                 sb.append(" 0");
@@ -153,9 +153,9 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         }
     }
 
-    @Override public void accept(Batch<?> genericBatch) {
+    @Override public void accept(Batch<?> gb) {
         //noinspection unchecked
-        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)genericBatch);
+        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb, 0, gb.rows);
         rows += b.rows;
         if (expected == null || observed == null) return;
         for (int r = 0, rows = b.rows; r < rows; r++) {
@@ -164,5 +164,16 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             else
                 observed.add(b, r);
         }
+    }
+
+    @Override public void accept(Batch<?> gb, int r) {
+        //noinspection unchecked
+        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb, r, r+1);
+        ++rows;
+        if (expected == null || observed == null) return;
+        if (!expected.contains(b, 0))
+            unexpected.putRow(b, 0);
+        else
+            observed.add(b, 0);
     }
 }

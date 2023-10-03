@@ -1,20 +1,21 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.emit.async.CallbackProducer;
+import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.stream.Stream;
-
 import static com.github.alexishuf.fastersparql.client.util.ClientRetry.retry;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
-public abstract class NettyCallbackProducer<B extends Batch<B>> extends CallbackProducer<B> {
+public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B> {
     private static final int NO_AUTO_READ = 0x40000000;
     private static final int STARTED      = 0x20000000;
     private static final Stateful.Flags FLAGS = Flags.DEFAULT.toBuilder()
@@ -27,17 +28,15 @@ public abstract class NettyCallbackProducer<B extends Batch<B>> extends Callback
     protected final SparqlClient client;
     private int retries;
 
-    public NettyCallbackProducer(SparqlClient client) {
-        super(FLAGS);
+    public NettyCallbackEmitter(BatchType<B> batchType, Vars vars, SparqlClient client) {
+        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
         this.client = client;
+        if (ResultJournal.ENABLED)
+            ResultJournal.initEmitter(this, vars);
     }
 
-    @Override public String toString() {
+    @Override public final String toString() {
         return "NettyCallbackProducer["+client.endpoint()+"]"+channel;
-    }
-
-    @Override public Stream<? extends StreamNode> upstream() {
-        return Stream.empty();
     }
 
     private void setAutoRead0() {
@@ -71,26 +70,27 @@ public abstract class NettyCallbackProducer<B extends Batch<B>> extends Callback
 
     protected abstract void request();
 
-    @Override protected int interceptComplete(@Nullable Throwable cause) {
+    @Override protected int complete2state(int current, @Nullable Throwable cause) {
         cause = cause == CancelledException.INSTANCE ? cause
-              : FSException.wrap(client.endpoint(), cause);
+                : FSException.wrap(client.endpoint(), cause);
         if ((state()&IS_LIVE) != 0 && retry(++retries, cause, this::request))
-            return -1; // do not complete
-        return super.interceptComplete(cause);
+            return 0; // do not complete
+        return super.complete2state(current, cause);
     }
 
-    @Override protected void pause() {
-        setAutoRead(false);
-    }
-    @Override public    void resume() {
+    @Override public void  pause() { setAutoRead(false); }
+    @Override public void resume() {
         setAutoRead(true);
         if (compareAndSetFlagRelease(STARTED))
             request();
     }
 
-    @Override protected void doCancel() {
-        Channel ch = channel;
-        if (ch != null)
-            ch.close();
+    @Override public void cancel() {
+        super.cancel();
+        if ((state()&IS_CANCEL_REQ) != 0) {
+            Channel ch = channel;
+            if (ch != null)
+                ch.close();
+        }
     }
 }

@@ -37,19 +37,19 @@ public class SingletonFederator extends Optimizer {
     public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, Plan plan) {
         Vars pubVars = plan.publicVars();
         plan = Federation.copySanitize(plan);
-        plan = optimize(plan);
+        plan = optimize(plan, Vars.EMPTY);
         plan = bind2client(plan, QueryMode.ITERATOR);
         plan = FS.project(plan, pubVars);
         return batchType.convert(plan.execute(preferredBatchType));
     }
 
-    public <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Plan plan) {
+    public <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Plan plan, Vars rebindHint) {
         Vars pubVars = plan.publicVars();
         plan = Federation.copySanitize(plan);
-        plan = optimize(plan);
+        plan = optimize(plan, rebindHint);
         plan = bind2client(plan, QueryMode.EMIT);
         plan = FS.project(plan, pubVars);
-        var emitter = plan.emit(preferredBatchType);
+        var emitter = plan.emit(preferredBatchType, rebindHint);
         //noinspection unchecked
         return preferredBatchType.equals(type) ? (Emitter<B>) emitter : convert(type, emitter);
     }

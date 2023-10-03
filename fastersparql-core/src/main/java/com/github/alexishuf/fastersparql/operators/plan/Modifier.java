@@ -161,8 +161,9 @@ public final class Modifier extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
-        return processed(left().emit(type, weakDedup), weakDedup);
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                  boolean weakDedup) {
+        return processed(left().emit(type, rebindHint, weakDedup), weakDedup);
     }
 
     public <B extends Batch<B>>

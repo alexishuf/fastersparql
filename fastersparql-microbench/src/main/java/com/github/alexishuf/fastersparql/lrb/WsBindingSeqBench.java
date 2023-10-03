@@ -55,11 +55,8 @@ public class WsBindingSeqBench {
             seedRope.append(tsr).append('\n');
         }
         batches.clear();
-        for (int i = 0; i < N_BATCHES; i++) {
-            var b = COMPRESSED.create(seedBatch.rows, seedBatch.cols, seedBatch.localBytesUsed());
-            b.put(seedBatch);
-            batches.add(b);
-        }
+        for (int i = 0; i < N_BATCHES; i++)
+            batches.add(seedBatch.copy(null));
         for (int i = 0, begin = 0, len = seedRope.len; begin < len; ++i) {
             begins[i] = begin;
             ends[i] = seedRope.skipUntil(begin, len, '\t');

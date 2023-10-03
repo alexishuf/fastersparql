@@ -37,6 +37,22 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         return b;
     }
 
+    @Override public @Nullable HdtBatch poll(int rowsCapacity, int cols, int localBytes) {
+        int terms = rowsCapacity*cols;
+        var b = pool.getAtLeast(terms);
+        if (b != null) {
+            if (b.clearIfFitsTerms(terms, cols)) {
+                b.unmarkPooled();
+                BatchEvent.Unpooled.record(terms);
+                return b;
+            } else {
+                if (pool.shared.offerToNearest(b, terms) != null)
+                    b.markGarbage();
+            }
+        }
+        return null;
+    }
+
     @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
         if (batch == null) return null;
         batch.markPooled();
@@ -80,7 +96,7 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         }
 
         @Override protected HdtBatch putConverting(HdtBatch out, S in) {
-            return out.putConverting(in, dictId);
+            return out.putConverting(in, dictId, null, null);
         }
     }
 
@@ -106,8 +122,12 @@ public class HdtBatchType extends BatchType<HdtBatch> {
             this.dictId = dictId;
         }
 
-        @Override protected void putConverting(HdtBatch dest, I input) {
-            dest.putConverting(input, dictId);
+        @Override protected HdtBatch putConverting(HdtBatch dest, I input) {
+            return dest.putConverting(input, dictId, null, null);
+        }
+
+        @Override protected void putRowConverting(HdtBatch dest, I input, int row) {
+            dest.putRowConverting(input, row, dictId);
         }
     }
 

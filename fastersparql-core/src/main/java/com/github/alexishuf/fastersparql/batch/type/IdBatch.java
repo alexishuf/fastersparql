@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -75,8 +74,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     @Override public int      directBytesCapacity()                            { return arr.length*8;}
     @Override public int      rowsCapacity()                                   { return arr.length/Math.max(1, cols); }
-    @Override public boolean  hasCapacity(int rowsCapacity, int bytesCapacity) { return arr.length >= rowsCapacity*cols; }
-    @Override public boolean  hasMoreCapacity(B other)                         { return arr.length > other.arr.length; }
 
     /* --- --- --- helpers --- --- --- */
     protected Term cachedTerm(int addr) {
@@ -103,7 +100,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public long id(int row, int col) {
         requireUnpooled();
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        if (row < 0 || col < 0 || row >= rows || col >= cols)
+            throw new IndexOutOfBoundsException("(row, col) out of bounds");
         return arr[row * cols + col];
     }
 
@@ -117,86 +115,26 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             hashes = grow(hashes, required);
     }
 
+    public boolean clearIfFitsTerms(int terms, int cols) {
+        if (terms <= arr.length && terms <= hashes.length) {
+            this.rows = 0;
+            this.cols = cols;
+            cacheTerm(-1, null);
+            return true;
+        }
+        return false;
+    }
     @Override public void clear(int newColumns) {
         rows = 0;
         cols = newColumns;
         cacheTerm(-1, null);
     }
 
-    public void dropCachedHashes() {
-        Arrays.fill(hashes, 0, rows*cols, 0);
-    }
+    public void dropCachedHashes() { Arrays.fill(hashes, 0, rows*cols, 0); }
 
-    @Override public boolean beginOffer() {
-        int base = rows * cols, required = base + cols;
-        if (arr.length < required) return false;
-        for (int i = base; i < required; i++) {
-            arr[i] = 0;
-            hashes[i] = 0;
-        }
-        offerRowBase = base;
-        return true;
-    }
-
-    @SuppressWarnings("UnusedReturnValue")
-    public boolean offerTerm(int col, long sourcedId) {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        if (col < 0 || col > cols) throw new IndexOutOfBoundsException();
-        arr[offerRowBase+col] = sourcedId;
-        return true;
-    }
-
-    @Override public boolean offerTerm(int col, Term t) {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        if (t != null) return false;
-        putTerm(col, 0);
-        return true;
-    }
-
-    @Override public boolean offerTerm(int destCol, B o, int row, int col) {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        int oCols = o.cols;
-        if (row < 0 || col < 0 || row >= o.rows || col >= oCols || destCol < 0 || destCol >= cols)
-            throw new IndexOutOfBoundsException();
-        arr[offerRowBase+destCol] = o.arr[row*oCols + col];
-        return true;
-    }
-
-    @Override public boolean commitOffer() {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        ++rows;
+    @Override public void abortPut() throws IllegalStateException {
+        if (offerRowBase < 0) return;
         offerRowBase = -1;
-        return true;
-    }
-
-    @Override public boolean abortOfferOrPut() throws IllegalStateException {
-        if (offerRowBase < 0) return false;
-        offerRowBase = -1;
-        return true;
-    }
-
-    @Override public boolean offerRow(B other, int row) {
-        int cols = other.cols;
-        if (cols != this.cols) throw new IllegalArgumentException();
-        if (row < 0 || row >= other.rows) throw new IndexOutOfBoundsException();
-        if (beginOffer()) {
-            arraycopy(other.arr, row*cols, arr, offerRowBase, cols);
-            ++rows;
-            offerRowBase = -1;
-            return true;
-        }
-        return false;
-    }
-
-    @Override public boolean fits(B other) {
-        return (rows+other.rows)*cols <= arr.length;
-    }
-
-    @Override public boolean offer(B other) {
-        int out = rows * cols, nTerms = other.rows*other.cols;
-        if (nTerms > arr.length-out) return false;
-        put(other);
-        return true;
     }
 
 //    @Override public void put(B other) {
@@ -212,30 +150,61 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 //        rows += oRows;
 //    }
 
-    @Override public void putRange(B other, int begin, int end) {
-        int oRows = end-begin, cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-        if (oRows <= 0) return; // no-op
+    @SuppressWarnings("unchecked")
+    protected final B put0(B other, @Nullable VarHandle rec, Object holder, BatchType<B> type) {
+        if (MARK_POOLED) {
+            this .requireUnpooled();
+            other.requireUnpooled();
+        }
 
-        reserve(oRows, 0);
-        int src = begin*cols, dst = rows*cols, terms = oRows*cols;
-        arraycopy(other.arr,    src, arr,    dst, terms);
-        arraycopy(other.hashes, src, hashes, dst, terms);
-        rows += oRows;
+        int oRows = other.rows, cols = this.cols, rows = this.rows;
+        if (oRows <= 0) return (B)this; // no-op
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+
+        B dst = choosePutDst(rows, oRows, cols, rec, holder, type);
+        int thisTerms = rows*cols, otherTerms = oRows*cols;
+        arraycopy(other.arr,    0, dst.arr,    thisTerms, otherTerms);
+        arraycopy(other.hashes, 0, dst.hashes, thisTerms, otherTerms);
+        dst.rows += oRows;
+        return dst;
     }
 
     @Override public void beginPut() {
         reserve(1, 0);
-        beginOffer();
+        int base = rows * cols, required = base + cols;
+        if (arr.length < required) return;
+        for (int i = base; i < required; i++) {
+            arr[i] = 0;
+            hashes[i] = 0;
+        }
+        offerRowBase = base;
     }
 
     @Override public void putTerm(int destCol, Term t) {
-        if (!offerTerm(destCol, t))
-            throw new UnsupportedOperationException("Cannot put non-null terms. Use putConverting(Batch, int) instead");
+        if (offerRowBase < 0) throw new IllegalStateException();
+        if (t != null) throw new UnsupportedOperationException("Cannot put non-null terms. Use putConverting(Batch, int) instead");
+        putTerm(destCol, 0);
     }
-    @Override public void putTerm(int d, B b, int r, int c) { offerTerm(d, b, r, c); }
-    public           void putTerm(int col, long sourcedId)           { offerTerm(col, sourcedId); }
-    @Override public void commitPut()                                { commitOffer(); }
+
+    @Override public void putTerm(int d, B b, int r, int c) {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        int oCols = b.cols;
+        if (r < 0 || c < 0 || r >= b.rows || c >= oCols || d < 0 || d >= cols)
+            throw new IndexOutOfBoundsException();
+        arr[offerRowBase+ d] = b.arr[r *oCols + c];
+    }
+
+    public void putTerm(int col, long sourcedId) {
+        if (offerRowBase < 0)      throw new IllegalStateException();
+        if (col < 0 || col > cols) throw new IndexOutOfBoundsException();
+        arr[offerRowBase+ col] = sourcedId;
+    }
+
+    @Override public void commitPut() {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        ++rows;
+        offerRowBase = -1;
+    }
 
     @Override public void putRow(B other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException();
@@ -244,23 +213,45 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
     }
 
-    @SuppressWarnings("unchecked") @Override
-    public @This B putConverting(Batch<?> other) {
-        if (other.type() == type()) {
-            put((B)other);
-        } else {
-            int cols = this.cols, rows = other.rows;
-            if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-            reserve(rows, 0);
-            Term t = Term.pooledMutable();
-            for (int r = 0; r < rows; r++)
-                putRowConverting(other, r, cols, t);
-            t.recycle();
+    @SuppressWarnings("unchecked")
+    protected B choosePutDst(int rows, int oRows, int cols, @Nullable VarHandle rec,
+                             @Nullable Object holder, BatchType<B> type) {
+        int nRows = rows+oRows, req = nRows*cols;
+        if (req <= arr.length && req <= hashes.length)
+            return (B)this;
+        B dst = type.poll(nRows, cols, 0);
+        if (dst == null) {
+            if (arr   .length < req) arr    = grow(arr,    req);
+            if (hashes.length < req) hashes = grow(hashes, req);
+            return (B)this;
         }
-        return (B) this;
+        int terms = rows*cols;
+        arraycopy(arr,    0, dst.arr,    0, terms);
+        arraycopy(hashes, 0, dst.hashes, 0, terms);
+        dst.rows = rows;
+        markPooled();
+        if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
+            type.recycle(untracedUnmarkPooled());
+        return dst;
     }
 
-    private void putRowConverting(Batch<?> other, int row, int cols, Term tmp) {
+    @SuppressWarnings("unchecked")
+    public final B putConverting0(Batch<?> other, @Nullable VarHandle rec, Object holder,
+                                  BatchType<B> type) {
+        if (other.type() == type)
+            return put0((B)other, rec, holder, type);
+        int cols = this.cols, oRows = other.rows;
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+
+        B dst = choosePutDst(rows, oRows, cols, rec, holder, type);
+        Term t = Term.pooledMutable();
+        for (int r = 0; r < oRows; r++)
+            dst.putRowConverting(other, r, cols, t);
+        t.recycle();
+        return dst;
+    }
+
+    void putRowConverting(Batch<?> other, int row, int cols, Term tmp) {
         beginPut();
         for (int c = 0; c < cols; c++) {
             if (other.getView(row, c, tmp))

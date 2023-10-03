@@ -7,13 +7,12 @@ import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
-import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
-import com.github.alexishuf.fastersparql.emit.async.ProducerTask;
+import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
+import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -22,7 +21,6 @@ import org.openjdk.jmh.annotations.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
@@ -88,10 +86,12 @@ public class MergeBench {
             this.source = source;
         }
 
-        @Override protected boolean fetch(B dest) {
-            if (row == source.rows) return false;
-            dest.putRow(source, row++);
-            return true;
+        @Override protected B fetch(B dest) {
+            if (row == source.rows)
+                exhausted = true;
+            else
+                dest.putRow(source, row++);
+            return dest;
         }
     }
 
@@ -114,66 +114,56 @@ public class MergeBench {
     @Benchmark
     public <B extends Batch<B>> int emit() {
         BatchType<B> type = (BatchType<B>) this.type;
-        AsyncEmitter<B> ae = new AsyncEmitter<>(type, X);
+        var gather = new GatheringEmitter<>(type, X);
         for (Batch<?> source : columns) {
-            SourceProducer<B> p = new SourceProducer<>(type, (B) source);
-            p.registerOn(ae);
+            gather.subscribeTo(new SourceProducer<>(type, (B)source));
         }
-        return new BenchReceiver<B>().subscribeTo(ae).getSimple().h;
+        return new BenchReceiver<B>().subscribeTo(gather).getSimple().h;
     }
 
     private static final class BenchReceiver<B extends Batch<B>>
             extends ReceiverFuture<BenchReceiver<B>, B> {
         public int h;
-
         @Override public B onBatch(B batch) {
             for (int r = 0, rows = batch.rows; r < rows; r++)
                 h ^= batch.hash(r);
             return batch;
         }
+        @Override public void onRow(B batch, int row) {
+            h ^= batch.hash(row);
+        }
         @Override public void onComplete() { complete(this); }
     }
 
 
-    private static final class SourceProducer<B extends Batch<B>> extends ProducerTask<B> {
+    private static final class SourceProducer<B extends Batch<B>> extends TaskEmitter<B> {
         private final B source;
-        private final BatchType<B> type;
+        private @Nullable B recycled;
         private int row;
 
         public SourceProducer(BatchType<B> type, B source) {
-            super(EMITTER_SVC);
-            this.type = type;
+            super(type, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
             this.source = source;
         }
 
-        @Override public Stream<? extends StreamNode> upstream() { return Stream.empty(); }
-
-        @Override protected @Nullable B produce(long limit, long deadline, @Nullable B dest) {
-//            int n = (int) Math.min(limit, source.rows - row);
-//            if (dest == null) dest = type.create(n, 1, 0);
-//            for (int k, r = row; n > 0; row = r += k, n -= k) {
-//                k = Math.min(4, n);
-//                for (int i = 0; i < k; i++) dest.putRow(source, r+i);
-//                if (Timestamp.nanoTime() > deadline) break;
-//            }
-//            return dest;
-
-            int r = row, end = (int)Math.min(r+limit, source.rows);
-            if (dest == null) dest = type.create(end-r, 1, 0);
-            while (r != end) {
-                dest.putRow(source, r++);
+        @Override protected int produceAndDeliver(int state) {
+            int r = row;
+            int limit = (int)Math.min(source.rows-r, (long)REQUESTED.getOpaque(this));
+            B b = batchType.empty(Batch.asUnpooled(recycled), limit, 1, 0);
+            recycled = null;
+            int end = r+limit;
+            long deadline = Timestamp.nextTick(1);
+            while (r < end) {
+                b.putRow(source, r++);
                 if (Timestamp.nanoTime() > deadline) break;
             }
             row = r;
-            return dest;
+            recycled = Batch.asPooled(deliver(b));
+            return r >= source.rows ? COMPLETED : state|MUST_AWAKE;
         }
 
         @Override public void rebind(BatchBinding binding) {
             throw new UnsupportedOperationException();
-        }
-
-        @Override protected ExhaustReason exhausted() {
-            return row >= source.rows ? ExhaustReason.COMPLETED : null;
         }
     }
 

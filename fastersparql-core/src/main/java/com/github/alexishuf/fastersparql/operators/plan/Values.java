@@ -24,7 +24,7 @@ import java.util.Objects;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
 
 public final class Values extends Plan {
-    private final @Nullable TermBatch values;
+    private @Nullable TermBatch values;
     private @MonotonicNonNull TermBatch dedupValues;
 
     public Values(Vars vars, @Nullable TermBatch values) {
@@ -37,6 +37,14 @@ public final class Values extends Plan {
 
     public TermBatch values() { return values; }
 
+    public void append(TermBatch other) {
+        if (values == null)
+            values = TERM.create(other.rows, other.cols, 0);
+        else
+            assert other.cols == values.cols;
+        values = values.put(other);
+    }
+
     @Override public <B extends Batch<B>> BIt<B>
     execute(BatchType<B> batchType, @Nullable Binding binding, boolean weakDedup) {
         TermBatch values = this.values;
@@ -46,7 +54,8 @@ public final class Values extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                  boolean weakDedup) {
         TermBatch values = this.values;
         if (weakDedup && values != null && values.rows > 1)
             values = dedupValues();

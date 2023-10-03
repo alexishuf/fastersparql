@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
-import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
+import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
@@ -89,11 +89,12 @@ public final class Union extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup) {
+    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                  boolean weakDedup) {
         Vars outVars = publicVars();
-        AsyncEmitter<B> gather = new AsyncEmitter<>(type, outVars);
+        var gather = new GatheringEmitter<>(type, outVars);
         for (int i = 0, n = opCount(); i < n; i++)
-            gather.registerProducer(op(i).emit(type, weakDedup));
+            gather.subscribeTo(op(i).emit(type, rebindHint, weakDedup));
         Dedup<B> dedup = createDedup(type, weakDedup);
         if (dedup == null)
             return gather;

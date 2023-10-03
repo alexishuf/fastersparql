@@ -18,6 +18,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.BIt.DEF_MAX_BATCH;
 import static java.lang.Integer.MAX_VALUE;
@@ -324,6 +326,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             this.sender.preTouch();
             this.sentBindings = WsClientParser.this.sentBindings;
             upstream.subscribe(this);
+        }
+
+        @Override public Stream<? extends StreamNode> upstream() {
+            return Stream.of(upstream);
         }
 
         public void requestBindings(long n) {

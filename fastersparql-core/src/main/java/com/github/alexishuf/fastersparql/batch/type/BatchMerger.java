@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
@@ -23,23 +25,26 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     public BatchMerger(BatchType<B> batchType, Vars outVars, int[] sources) {
-        super(batchType, outVars, CREATED, Flags.DEFAULT);
+        super(batchType, outVars, CREATED, PROC_FLAGS);
         this.sources = sources;
         this.columns = makeColumns(sources);
+        if (ResultJournal.ENABLED)
+            ResultJournal.initEmitter(this, outVars);
     }
 
     @Override public String toString() {
-        String inner = nodeLabel();
+        String inner = label(StreamNodeDOT.Label.SIMPLE);
         if (upstream != null)
             return "<-"+inner+"- "+upstream;
         return (columns == null ? "Merge(" : "Project") + inner + (columns == null ? ")" : "");
     }
 
-    @Override public String nodeLabel() {
+    @Override public String label(StreamNodeDOT.Label type) {
+        final StringBuilder sb = new StringBuilder();
         if (columns != null) {
-            return vars.toString();
+            sb.append(vars).append('@').append(System.identityHashCode(this));
         } else {
-            var sb = new StringBuilder().append("[");
+            sb.append('[');
             for (int i = 0, n = vars.size(); i < n; i++) {
                 if (sources[i] > 0) sb.append(vars.get(i)).append(", ");
             }
@@ -49,8 +54,15 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
                 if (sources[i] < 0) sb.append(vars.get(i)).append(", ");
             }
             if (sb.charAt(sb.length()-1) == ' ') sb.setLength(sb.length()-2);
-            return sb.append("]").toString();
+            sb.append("]");
         }
+        if (type.showState()) {
+            sb.append("\nstate=").append(flags.render(state()))
+                    .append(", upstreamCancelled=").append(upstreamCancelled());
+        }
+        if (type.showStats() && stats != null)
+            stats.appendToLabel(sb);
+        return sb.toString();
     }
 
     protected int[] makeColumns(int[] sources) {
@@ -82,7 +94,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         if (columns == null) throw new UnsupportedOperationException();
         int rows = in.rows;
         if (dest == null)
-            dest = getBatch(rows, sources.length, in.localBytesUsed());
+            dest = getBatch(rows, columns.length, in.localBytesUsed());
         for (int r = 0; r < rows; r++) {
             dest.beginPut();
             for (int c = 0; c < columns.length; c++) {
@@ -92,6 +104,31 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
             dest.commitPut();
         }
         return dest;
+    }
+
+    /**
+     * Appends a projection of the {@code row}-th row in {@code in} to {@code dst}.
+     *
+     * @param dst the destination batch that will receive a new row. If {@code null}, a
+     *            new batch will be created via {@link #batchType()}. If non-null, it
+     *            will not be {@link Batch#clear()}ed and must have
+     *            {@link Batch#cols}{@code ==}{@link #vars()}{@code .size()}.
+     * @param in the source batch containing a row to be projected
+     * @param row the row in {@code in} to be projected.
+     */
+    public B projectRow(@Nullable B dst, B in, int row) {
+        if (columns == null) throw new UnsupportedOperationException();
+        if (dst == null)
+            dst = getBatch(1, columns.length, in.localBytesUsed(row));
+        else if (dst.cols != columns.length)
+            throw new IllegalArgumentException("dst.cols != columns.length");
+        dst.beginPut();
+        for (int c = 0; c < columns.length; c++) {
+            int src = columns[c];
+            if (src >= 0) dst.putTerm(c, in, row, src);
+        }
+        dst.commitPut();
+        return dst;
     }
 
     /**
@@ -109,11 +146,13 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     public B merge(@Nullable B dest, B left, int leftRow, @Nullable B right) {
         if (right == null || right.rows == 0)
             return mergeWithMissing(dest, left, leftRow);
-        int rows = right.rows, bytesCapacity = right.localBytesUsed() + left.localBytesUsed(leftRow);
-        if (dest == null)
-            dest = getBatch(rows, sources.length, bytesCapacity);
-        else if (dest.cols != sources.length)
+        int rows = right.rows;
+        if (dest == null) {
+            int local = right.localBytesUsed() + rows * left.localBytesUsed(leftRow);
+            dest = getBatch(rows, sources.length, local);
+        } else if (dest.cols != sources.length) {
             throw new IllegalArgumentException("dest.cols != sources.length");
+        }
         for (int i = 0; i < rows; i++) {
             dest.beginPut();
             for (int c = 0; c < sources.length; c++) {

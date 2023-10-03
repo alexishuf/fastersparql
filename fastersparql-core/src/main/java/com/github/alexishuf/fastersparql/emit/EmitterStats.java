@@ -29,6 +29,18 @@ public class EmitterStats {
         }
     }
 
+    public void onRowDelivered() {
+        ++deliveredBatches;
+        ++deliveredSingleRowBatches;
+        ++deliveredRows;
+    }
+
+    public void onRowReceived() {
+        ++receivedBatches;
+        ++receivedSingleRowBatches;
+        ++receivedRows;
+    }
+
     public void onBatchReceived(@Nullable Batch<?> b) {
         ++receivedBatches;
         if (b == null) {
@@ -42,6 +54,11 @@ public class EmitterStats {
     public void onBatchPassThrough(@Nullable Batch<?> b) {
         onBatchReceived(b);
         onBatchDelivered(b);
+    }
+
+    public void onRowPassThrough() {
+        onRowReceived();
+        onRowDelivered();
     }
 
     public void onRebind(BatchBinding binding) {
@@ -63,5 +80,19 @@ public class EmitterStats {
             log.info("{}: received {} batches (of which {} were single-row and {} null) summing {} rows",
                      owner, receivedBatches, receivedSingleRowBatches, receivedNullBatches, receivedRows);
         }
+    }
+
+    public StringBuilder appendToLabel(StringBuilder sb) {
+        sb.append("\ndelivered ").append(deliveredBatches).append(" batches, ")
+                .append(deliveredRows).append(" rows");
+        if (receivedBatches > 0) {
+            sb.append("\n received ").append(receivedBatches).append(" batches, ")
+                    .append(receivedRows).append(" rows");
+        }
+        if (rebinds > 0) {
+            sb.append('\n').append(rebinds).append(" rebinds, vars changed ")
+                    .append(rebindVarsChanged).append(" times");
+        }
+        return sb;
     }
 }

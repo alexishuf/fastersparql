@@ -111,15 +111,6 @@ public final class TermBatch extends Batch<TermBatch> {
         return arr.length/Math.max(1, cols);
     }
 
-    @Override public boolean hasCapacity(int rowsCapacity, int bytesCapacity) {
-        return arr.length >= rowsCapacity*cols;
-    }
-
-    @Override public boolean hasMoreCapacity(TermBatch o) {
-        return arr.length > o.arr.length;
-    }
-
-
     /* --- --- --- term accessors --- --- --- */
 
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
@@ -169,46 +160,9 @@ public final class TermBatch extends Batch<TermBatch> {
         cols = newColumns;
     }
 
-    @Override public boolean beginOffer() {
-        int base = rows*cols, required = base + cols;
-        if (arr.length < required) return false;
-        Arrays.fill(arr, base, required, null);
-        offerRowBase = base;
-        return true;
-    }
-
-    @Override public boolean offerTerm(int col, Term t) {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        if (col < 0 || col >= cols) throw new IndexOutOfBoundsException();
-        arr[offerRowBase+col] = t == null ? null : t.asImmutable();
-        return true;
-    }
-
-    @Override public boolean commitOffer() {
-        if (offerRowBase < 0) throw new IllegalStateException();
-        ++rows;
+    @Override public void abortPut() throws IllegalStateException {
+        if (offerRowBase < 0) return;
         offerRowBase = -1;
-        return true;
-    }
-
-    @Override public boolean abortOfferOrPut() throws IllegalStateException {
-        if (offerRowBase < 0) return false;
-        offerRowBase = -1;
-        return true;
-    }
-
-
-    @Override public boolean fits(TermBatch other) {
-        return (rows+other.rows)*cols <= arr.length;
-    }
-
-    @Override public boolean offer(TermBatch other) {
-        if (other.cols != cols) throw new IllegalArgumentException();
-        int out = rows * cols, nTerms = other.rows*other.cols;
-        if (nTerms > arr.length-out) return false;
-        arraycopy(other.arr, 0, arr, out, nTerms);
-        rows += other.rows;
-        return true;
     }
 
 //    @Override public void put(TermBatch other) {
@@ -220,25 +174,66 @@ public final class TermBatch extends Batch<TermBatch> {
 //        rows += oRows;
 //    }
 
-    @Override public void putRange(TermBatch other, int begin, int end) {
-        int oRows = end-begin, cols = this.cols;
+    @Override
+    public TermBatch put(TermBatch other,
+                         @Nullable VarHandle rec, Object holder) {
+        int oRows = other.rows, cols = this.cols;
+        if (oRows <= 0) return this; // no-op
         if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
-        if (oRows <= 0) return; // no-op
-        reserve(oRows, 0);
-        arraycopy(other.arr, begin*cols, arr, rows*cols, oRows*cols);
-        rows += oRows;
+
+        if (MARK_POOLED) {
+            requireUnpooled();
+            other.requireUnpooled();
+        }
+
+        int rows = this.rows, nRows = rows+oRows;
+        TermBatch dst;
+        if (nRows*cols <= arr.length ) {
+            dst = this;
+        } else if ((dst=TERM.poll(nRows, cols, 0)) == null) {
+            dst = this;
+            reserve(oRows, 0);
+        } else {
+            dst.rows = rows;
+            arraycopy(arr, 0, dst.arr, 0, rows*cols);
+            markPooled();
+            if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
+                TERM.recycle(untracedUnmarkPooled());
+        }
+
+        arraycopy(other.arr, 0, dst.arr, rows*cols, oRows*cols);
+        dst.rows += oRows;
+        return dst;
     }
 
-    @Override public @This TermBatch putConverting(Batch<?> other) {
-        int cols = this.cols, rows = other.rows;
+    @Override public @This TermBatch putConverting(Batch<?> other, VarHandle rec,
+                                                   Object holder) {
+        int cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException();
-        reserve(rows, 0);
-        for (int r = 0, i = this.rows*cols; r < rows; r++) {
+
+        int rows = this.rows, oRows = other.rows, nRows = rows+oRows;
+        TermBatch dst;
+        if (oRows == 0) {
+            return this;
+        } else if (nRows*cols <= arr.length) {
+            dst = this;
+        } else if ((dst=TERM.poll(nRows, cols, 0)) == null) {
+            dst = this;
+            reserve(oRows, 0);
+        } else {
+            arraycopy(arr, 0, dst.arr, 0, (dst.rows=rows)*cols);
+            markPooled();
+            if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
+                TERM.recycle(untracedUnmarkPooled());
+        }
+
+        Term[] arr = dst.arr;
+        for (int r = 0, i = rows*cols; r < oRows; r++) {
             for (int c = 0; c < cols; c++)
                 arr[i++] = other.get(r, c);
         }
-        this.rows += rows;
-        return this;
+        dst.rows += oRows;
+        return dst;
     }
 
     @Override public void putRowConverting(Batch<?> other, int row) {
@@ -256,7 +251,10 @@ public final class TermBatch extends Batch<TermBatch> {
 
     @Override public void beginPut() {
         reserve(1, 0);
-        beginOffer();
+        int base = rows*cols, required = base + cols;
+        if (arr.length < required) return;
+        Arrays.fill(arr, base, required, null);
+        offerRowBase = base;
     }
 
     @Override
@@ -264,21 +262,23 @@ public final class TermBatch extends Batch<TermBatch> {
         super.putTerm(col, shared, local, localOff, localLen, sharedSuffix);
     }
 
-    @Override public void putTerm(int col, Term t) { offerTerm(col, t); }
+    @Override public void putTerm(int col, Term t) {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        if (col < 0 || col >= cols) throw new IndexOutOfBoundsException();
+        arr[offerRowBase+ col] = t == null ? null : t.asImmutable();
+    }
 
-    @Override public void commitPut() { commitOffer(); }
+    @Override public void commitPut() {
+        if (offerRowBase < 0) throw new IllegalStateException();
+        ++rows;
+        offerRowBase = -1;
+    }
 
     @Override public void putRow(TermBatch other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
         if (row >= other.rows) throw new IndexOutOfBoundsException("row >= other.rows");
         reserve(1, 0);
         arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
-    }
-
-    @Override public void putRow(Term[] row) {
-        if (row.length != cols) throw new IllegalArgumentException("cols mismatch");
-        reserve(1, 0);
-        arraycopy(row, 0, arr, cols*rows++, row.length);
     }
 
     /* --- --- --- operation objects --- --- --- */

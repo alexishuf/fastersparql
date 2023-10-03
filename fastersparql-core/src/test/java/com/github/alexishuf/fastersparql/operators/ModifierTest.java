@@ -66,11 +66,11 @@ public class ModifierTest {
             expected.check(plan.execute(Batch.TERM));
             expected.check(plan.execute(Batch.TERM));
             expected.check(plan.execute(Batch.COMPRESSED));
-            expected.check(plan.emit(Batch.TERM));
-            expected.check(plan.emit(Batch.TERM));
-            expected.check(plan.emit(Batch.COMPRESSED));
-            expected.check(plan.emit(Batch.TERM));
-            expected.check(plan.emit(Batch.COMPRESSED));
+            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
+            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
+            expected.check(plan.emit(Batch.COMPRESSED, Vars.EMPTY));
+            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
+            expected.check(plan.emit(Batch.COMPRESSED, Vars.EMPTY));
         }
     }
 
@@ -220,6 +220,10 @@ public class ModifierTest {
             rec.setDestination(Path.of("/tmp/profile.jfr"));
             rec.start();
             test.testRace();
+            test.testRace();
+            test.testRace();
+            test.testRace();
+            test().map(a -> (D)a.get()[0]).forEach(test::test);
         }
     }
 

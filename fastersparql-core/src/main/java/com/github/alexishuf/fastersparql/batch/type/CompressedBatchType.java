@@ -41,6 +41,24 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         return b;
     }
 
+    static { assert Integer.bitCount(8&(1<<MIN_TERM_LOCAL_SHIFT)) == 1 : "update terms8 below"; }
+    @Override public CompressedBatch poll(int rows, int cols, int bytes) {
+        int terms8 = ((rows*cols)<<3) + ((rows&cols) == 0 ? 1 : 0);
+        int capacity = terms8+(terms8>>1) + (rows<<2) + Math.max(bytes, terms8);
+
+        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
+        if (b != null) {
+            if (b.clearIfFits(rows, cols, bytes)) {
+                b.unmarkPooled();
+                BatchEvent.Unpooled.record(capacity);
+                return b;
+            }
+            if (pool.shared.offerToNearest(b, b.directBytesCapacity()) != null)
+                b.markGarbage();
+        }
+        return null;
+    }
+
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
         if (b == null) return null;
         b.markPooled();

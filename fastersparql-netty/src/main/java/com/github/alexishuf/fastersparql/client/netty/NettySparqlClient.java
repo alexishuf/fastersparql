@@ -14,14 +14,14 @@ import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackProducer;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackEmitter;
 import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
-import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.model.MediaType;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -73,8 +73,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
-        return Emitters.fromProducer(bt, sparql.publicVars(), new QueryProducer<>(sparql));
+    protected <B extends Batch<B>> Emitter<B>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
+        return new QueryEmitter<>(bt, sparql);
     }
 
     /* --- --- --- helper methods  --- --- ---  */
@@ -140,13 +141,13 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
     }
 
-    private final class QueryProducer<B extends Batch<B>> extends NettyCallbackProducer<B> {
+    private final class QueryEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
         private final SparqlQuery originalQuery;
         private SparqlQuery boundQuery;
         private @Nullable FullHttpRequest boundRequest;
 
-        public QueryProducer(SparqlQuery query) {
-            super(NettySparqlClient.this);
+        public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
+            super(batchType, query.publicVars(), NettySparqlClient.this);
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();

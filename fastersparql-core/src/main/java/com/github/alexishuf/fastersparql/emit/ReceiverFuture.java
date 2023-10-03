@@ -5,10 +5,12 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.concurrent.*;
+import java.util.stream.Stream;
 
 public abstract class ReceiverFuture<T, B extends Batch<B>> extends CompletableFuture<T> implements Receiver<B> {
     protected @MonotonicNonNull Emitter<B> upstream;
@@ -35,7 +37,11 @@ public abstract class ReceiverFuture<T, B extends Batch<B>> extends CompletableF
         return this;
     }
 
-    private void start() {
+    @Override public Stream<? extends StreamNode> upstream() {
+        return Stream.ofNullable(upstream);
+    }
+
+    public void start() {
         if (started) return;
         started = true;
         upstream.request(Long.MAX_VALUE);

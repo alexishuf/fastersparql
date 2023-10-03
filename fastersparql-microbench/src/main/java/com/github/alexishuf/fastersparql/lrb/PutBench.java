@@ -51,7 +51,7 @@ public class PutBench {
             Batch outBatch = out.get(i);
             Batch inBatch = in.get(i);
             outBatch.clear(inBatch.cols);
-            outBatch.put(inBatch);
+            out.set(i, outBatch.put(inBatch));
         }
         return out;
     }

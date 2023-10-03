@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.UnboundSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.*;
@@ -255,7 +256,7 @@ public class Federation extends AbstractSparqlClient {
     @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
         long entryNs = Timestamp.nanoTime();
         var m = new FedMetrics(this, sparql);
-        var it = plan(sparql, m).execute(bt);
+        var it = plan(sparql, m, Vars.EMPTY).execute(bt);
         m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
         // deliver metrics
@@ -264,10 +265,11 @@ public class Federation extends AbstractSparqlClient {
         return it;
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
+                                                               Vars rebindHint) {
         long entryNs = Timestamp.nanoTime();
         var m = new FedMetrics(this, sparql);
-        var it = plan(sparql, m).emit(bt);
+        var it = plan(sparql, m, rebindHint).emit(bt, rebindHint);
         m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
         // deliver metrics
@@ -282,7 +284,7 @@ public class Federation extends AbstractSparqlClient {
         try {
             var m = new FedMetrics(this, sparql);
 
-            Plan root = plan(sparql, m);
+            Plan root = plan(sparql, m, Vars.EMPTY);
             m.dispatchNs = Timestamp.nanoTime() - entryNs - m.selectionAndAgglutinationNs - m.optimizationNs;
 
             // deliver metrics
@@ -294,7 +296,7 @@ public class Federation extends AbstractSparqlClient {
         }
     }
 
-    private Plan plan(SparqlQuery sparql, FedMetrics m) {
+    private Plan plan(SparqlQuery sparql, FedMetrics m, Vars rebindHint) {
         // parse query or copy tree and sanitize
         cdc = FSProperties.crossDedupCapacity();
         Plan root = sparql instanceof Plan p
@@ -307,7 +309,7 @@ public class Federation extends AbstractSparqlClient {
         last = m.addSelectionAndAgglutination(last);
 
         // optimization
-        m.plan = root = optimizer.optimize(root);
+        m.plan = root = optimizer.optimize(root, rebindHint);
         m.addOptimization(last);
 
         // final dispatch for execution

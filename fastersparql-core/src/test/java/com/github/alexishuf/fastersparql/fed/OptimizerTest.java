@@ -101,7 +101,7 @@ class OptimizerTest {
     @ParameterizedTest @MethodSource void test(Plan in, Plan expected) {
         Plan backup = in.deepCopy();
         boolean nop = expected == in;
-        Plan optimized = optimizer.optimize(in);
+        Plan optimized = optimizer.optimize(in, Vars.EMPTY);
         if (nop) {
             assertEquals(backup, optimized);
             assertSame(in, optimized);

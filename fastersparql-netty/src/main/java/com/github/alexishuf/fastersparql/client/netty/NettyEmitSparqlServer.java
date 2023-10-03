@@ -12,8 +12,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
-import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
-import com.github.alexishuf.fastersparql.emit.async.CallbackProducer;
+import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -35,6 +34,7 @@ import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -63,6 +63,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
@@ -184,9 +185,17 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         /* --- --- --- Receiver methods --- --- --- */
 
+        @Override public Stream<? extends StreamNode> upstream() {
+            return Stream.of(upstream);
+        }
+
         @Override public final @Nullable CompressedBatch onBatch(CompressedBatch batch) {
             sendSerialized(batch);
             return batch;
+        }
+
+        @Override public void onRow(CompressedBatch batch, int row) {
+            sendSerialized(batch, row, 1);
         }
 
         @Override public void onComplete() {
@@ -503,7 +512,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private void handleQuery(SegmentRope sparqlRope) {
             if ((parseQuery(sparqlRope)) == null)
                 return;
-            var results = sparqlClient.emit(COMPRESSED, query);
+            var results = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
             sender = new HttpSender(resultsSerializer, this, results);
             var res = new DefaultHttpResponse(HTTP_1_1, OK);
             res.headers().set(CONTENT_TYPE, resultsSerializer.contentType())
@@ -657,7 +666,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 ctx.writeAndFlush(new TextWebSocketFrame(
                         ctx.alloc().buffer().writeBytes(fullBindReq)));
             } else {
-                var em = sparqlClient.emit(COMPRESSED, query);
+                var em = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
                 sender = new WsSender(WsSerializer.create(sizeHint), this, em);
                 sender.start();
             }
@@ -696,16 +705,17 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
         }
 
-        private final class BindingsQueue extends CallbackProducer<CompressedBatch> {
+        private final class BindingsQueue extends CallbackEmitter<CompressedBatch> {
             private @Nullable Runnable resumeTask;
 
-            private BindingsQueue() { super(Flags.DEFAULT); }
+            private BindingsQueue(Vars vars) {
+                super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+                if (ResultJournal.ENABLED)
+                    ResultJournal.initEmitter(this, vars);
+            }
 
-            @Override public Stream<? extends StreamNode> upstream() { return Stream.empty(); }
-
-            @Override public String toString()  { return ctx.channel().toString(); }
-            @Override protected void pause()    { requestBindingsAt = Long.MAX_VALUE; }
-            @Override protected void doCancel() { requestBindingsAt = Long.MAX_VALUE; }
+            @Override public   String toString() { return ctx.channel().toString(); }
+            @Override public   void   pause()    { requestBindingsAt = Long.MAX_VALUE; }
 
             @Override public void resume() {
                 requestBindingsAt = 0;
@@ -747,16 +757,16 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             waitingVars = false;
 
             // create bindings -> BindingStage -> sender pipeline
-            var bindingsEmitter = new AsyncEmitter<>(COMPRESSED, bindingsVars);
-            var bindingsQueue = new BindingsQueue();
+
+            var bindingsQueue = new BindingsQueue(bindingsVars);
             bindingsParser = new WsServerParser<>(this, bindingsQueue);
-            bindQuery = new VolatileBindQuery(query, bindingsEmitter, bType);
-            var results = sparqlClient.emit(bindQuery);
+            bindQuery = new VolatileBindQuery(query, bindingsQueue, bType);
+            var results = sparqlClient.emit(bindQuery, Vars.EMPTY);
             var sender = new WsSender(WsSerializer.create(sizeHint), this, results);
             this.sender = sender;
 
             // only send binding seq number and right unbound vars
-            Vars emVars = bindingsEmitter.vars();
+            Vars emVars = bindingsQueue.vars();
             var serializeVars = new Vars.Mutable(emVars.size()+1);
             serializeVars.add(WsBindingSeq.VAR);
             for (var v : emVars)

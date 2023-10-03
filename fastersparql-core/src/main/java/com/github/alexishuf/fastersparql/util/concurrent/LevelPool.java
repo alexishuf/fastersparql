@@ -36,6 +36,12 @@ public final class LevelPool<T> implements LeakyPool {
     private static final int N_MEDIUM_LEVELS = numberOfTrailingZeros(MEDIUM_MAX_CAPACITY) - numberOfTrailingZeros(SMALL_MAX_CAPACITY);
     private static final int N_LARGE_LEVELS  = numberOfTrailingZeros(LARGE_MAX_CAPACITY)  - numberOfTrailingZeros(MEDIUM_MAX_CAPACITY);
     private static final int N_HUGE_LEVELS   = numberOfTrailingZeros(HUGE_MAX_CAPACITY)   - numberOfTrailingZeros(LARGE_MAX_CAPACITY);
+    public static final int  FIRST_TINY_LEVEL = 0;
+    public static final int  FIRST_SMALL_LEVEL = FIRST_TINY_LEVEL+N_TINY_LEVELS;
+    public static final int  FIRST_MEDIUM_LEVEL = FIRST_SMALL_LEVEL+N_SMALL_LEVELS;
+    public static final int  FIRST_LARGE_LEVEL = FIRST_MEDIUM_LEVEL+N_MEDIUM_LEVELS;
+    public static final int  FIRST_HUGE_LEVEL = FIRST_LARGE_LEVEL+N_LARGE_LEVELS;
+
     private static final int S_SHIFT = numberOfTrailingZeros(64/4); // one "size" per cache line
     private static final short LOCKED  = Short.MIN_VALUE;
     private static final int MD_BASE_AND_CAP = (32+1)<<S_SHIFT;
@@ -44,8 +50,8 @@ public final class LevelPool<T> implements LeakyPool {
 
     private final T[] pool;
     private final short[] metadata;
-    private final Class<T> cls;
     private final boolean forbidOfferToNearest;
+    private final Class<T> cls;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -179,8 +185,7 @@ public final class LevelPool<T> implements LeakyPool {
 
     /**
      * Offers {@code o} as if capacity where {@code 1<<floor(log2(capacity))}. If the pool is
-     * full for that level and capacity is not a power of 2, attempts to offer as if capacity
-     * where {@code 1<<ceil(log2(capacity))}.
+     * full for that level, retry as if capacity were {@code capacity>>1}.
      *
      * @param o an object whose ownership may be transferred to this pool so that it can be
      *          returned from a future {@link #getAtLeast(int)} or {@link #getAtLeast(int)} call.
@@ -197,7 +202,7 @@ public final class LevelPool<T> implements LeakyPool {
         int level = 32 - numberOfLeadingZeros(capacity);
         if (offerToLevel(level, o) == null)
             return null;
-        return offerToLevel(31&(level+1), o);
+        return offerToLevel(31&(level-1), o);
     }
 
     /* --- --- --- Object methods --- --- --- */

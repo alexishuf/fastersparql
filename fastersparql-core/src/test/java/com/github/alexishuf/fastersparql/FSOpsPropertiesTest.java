@@ -29,12 +29,14 @@ class FSOpsPropertiesTest {
 
     @Test
     void testDefaultBindJoinReorder() {
+        FSProperties.refresh();
         assertEquals(AvoidCartesianJoinReorderStrategy.class, bindJoinReorder().getClass());
     }
 
     @Test
     void testBindJoinReorderFallsBackToGeneral() {
         System.setProperty(FSProperties.OP_JOIN_REORDER, "None");
+        FSProperties.refresh();
         try {
             assertEquals(NoneJoinReorderStrategy.class, bindJoinReorder().getClass());
         } finally {
@@ -46,6 +48,7 @@ class FSOpsPropertiesTest {
     void testHashJoinReorderOverridable() {
         System.setProperty(FSProperties.OP_JOIN_REORDER, "None");
         System.setProperty(FSProperties.OP_JOIN_REORDER_HASH, "AvoidCartesian");
+        FSProperties.refresh();
         try {
             assertEquals(AvoidCartesianJoinReorderStrategy.class, hashJoinReorder().getClass());
         } finally {
@@ -58,6 +61,7 @@ class FSOpsPropertiesTest {
     void testWcoJoinReorderThrowsInsteadOfFallback() {
         System.setProperty(FSProperties.OP_JOIN_REORDER, "None");
         System.setProperty(FSProperties.OP_JOIN_REORDER_WCO, "bullshit");
+        FSProperties.refresh();
         try {
             assertThrows(IllegalArgumentException.class, FSProperties::wcoJoinReorder);
         } finally {

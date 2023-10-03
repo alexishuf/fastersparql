@@ -2,23 +2,25 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.emit.exceptions.IllegalEmitStateException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Optional;
 import java.util.stream.Stream;
 
-public final class BItEmitter<B extends Batch<B>> extends SelfEmitter<B> {
-    private BIt<B> it;
+public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
+    private final BIt<B> it;
     private @Nullable B recycled;
 
     public BItEmitter(BIt<B> it) { this(EmitterService.EMITTER_SVC, RR_WORKER, it); }
     public BItEmitter(EmitterService runner, int worker, BIt<B> it) {
-        super(it.batchType(), it.vars(), runner, worker, CREATED, SELF_EMITTER_FLAGS);
+        super(it.batchType(), it.vars(), runner, worker, CREATED, TASK_EMITTER_FLAGS);
         this.it = it;
+        if (ResultJournal.ENABLED)
+            ResultJournal.initEmitter(this, vars);
     }
 
     @Override protected void doRelease() {
@@ -26,26 +28,7 @@ public final class BItEmitter<B extends Batch<B>> extends SelfEmitter<B> {
         super.doRelease();
     }
 
-    public static final class StolenBItException extends Exception {
-        private StolenBItException() {super("it stole with stealIt()");}
-    }
-    private static final StolenBItException STOLEN_ERROR = new StolenBItException();
-
-
-    BIt<B> stealIt() {
-        int state = state();
-        if ((state&STATE_MASK) != CREATED)
-            throw new IllegalEmitStateException("Cannot steal if not in CREATED state");
-        BIt<B> it = this.it;
-        this.it = null;
-        this.error = STOLEN_ERROR;
-        deliverTermination(state, FAILED);
-        return it;
-    }
-
-    @Override public String toString() {
-        return it == null ? "stolen BIt" : it.toString();
-    }
+    @Override public String toString() { return it.toString(); }
 
     @Override public Stream<? extends StreamNode> upstream() {
         return Optional.ofNullable(it).stream();

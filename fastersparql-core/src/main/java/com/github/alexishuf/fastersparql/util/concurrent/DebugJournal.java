@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -94,6 +96,8 @@ public class DebugJournal {
             roles.clear();
         } finally { LOCK.setRelease(this, 0); }
     }
+
+    public int tick() { return tick; }
 
     public void dump(int columnWidth) { dump(System.err, columnWidth); }
 
@@ -206,26 +210,28 @@ public class DebugJournal {
         public static final DefaultRenderer INSTANCE = new DefaultRenderer();
 
         private static StringBuilder writeObj(StringBuilder sb, Object o, int maxWidth) {
-            if (o != null) {
-                if (o instanceof String) {
-                    sb.append(o);
+            if (o == null)
+                return sb;
+            if (o instanceof String) {
+                sb.append(o);
+            } else {
+                String str = switch (o) {
+                    case Throwable t  -> t.getClass().getSimpleName();
+                    case Term t       -> t.toSparql().toString();
+                    case StreamNode n -> n.label(StreamNodeDOT.Label.MINIMAL);
+                    default           -> o.toString();
+                };
+                if (str.length() > maxWidth) {
+                    int side = Math.max(1, (maxWidth - 12)/2);
+                    sb.append(str, 0, side).append("...")
+                            .append(str, str.length() - side, str.length()).append('@')
+                            .append(toHexString(identityHashCode(o)));
                 } else {
-                    String str;
-                    if      (o instanceof Throwable t) str = t.getClass().getSimpleName();
-                    else if (o instanceof      Term t) str = t.toSparql().toString();
-                    else                               str = o.toString();
-                    if (str.length() > maxWidth) {
-                        int side = Math.max(1, (maxWidth - 12)/2);
-                        sb.append(str, 0, side).append("...")
-                                .append(str, str.length() - side, str.length()).append('@')
-                                .append(toHexString(identityHashCode(o)));
-                    } else {
-                        sb.append(str);
-                    }
+                    sb.append(str);
                 }
-                if (!sb.isEmpty() && sb.charAt(sb.length()-1) != '=')
-                    sb.append(' ');
             }
+            if (!sb.isEmpty() && sb.charAt(sb.length()-1) != '=')
+                sb.append(' ');
             return sb;
         }
 

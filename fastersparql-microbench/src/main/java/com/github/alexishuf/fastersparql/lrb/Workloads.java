@@ -75,7 +75,7 @@ public class Workloads {
     }
 
     public static <B extends Batch<B>> void
-    repeat(List<B> seed, BatchType<B> bt, int n, Collection<List<B>> dest) {
+    repeat(List<B> seed, int n, Collection<List<B>> dest) {
         long last = Timestamp.nanoTime();
         for (int i = 0; i < n; i++) {
             if (Timestamp.nanoTime()-last > 10_000_000_000L) {
@@ -84,11 +84,8 @@ public class Workloads {
                 last = Timestamp.nanoTime();
             }
             List<B> copy = new ArrayList<>();
-            for (B b : seed) {
-                var bCopy = bt.create(b.rows+1, b.cols, b.localBytesUsed());
-                bCopy.put(b);
-                copy.add(bCopy);
-            }
+            for (B b : seed)
+                copy.add(b.copy(null));
             dest.add(copy);
         }
     }

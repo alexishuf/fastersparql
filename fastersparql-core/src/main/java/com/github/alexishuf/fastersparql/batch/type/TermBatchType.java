@@ -30,6 +30,23 @@ public final class TermBatchType extends BatchType<TermBatch> {
         return b;
     }
 
+    @Override public @Nullable TermBatch poll(int rowsCapacity, int cols, int localBytes) {
+        int capacity = rowsCapacity * cols;
+        var b = pool.getAtLeast(capacity);
+        if (b != null) {
+            if (capacity <= b.arr.length) {
+                b.unmarkPooled();
+                b.clear(cols);
+                BatchEvent.Unpooled.record(capacity);
+                return b;
+            } else {
+                if (pool.shared.offerToNearest(b, capacity) != null)
+                    b.markGarbage();
+            }
+        }
+        return null;
+    }
+
     @Override public @Nullable TermBatch recycle(@Nullable TermBatch batch) {
         if (batch == null) return null;
         Arrays.fill(batch.arr, null); // allow collection of Terms

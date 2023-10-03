@@ -448,7 +448,7 @@ public class SparqlParser {
             if (this.values == null)
                 this.values = v;
             else if (values.publicVars().equals(v.publicVars()))
-                this.values.values().put(v.values());
+                this.values.append(v.values());
             else
                 coldMergeValues(v);
         }
@@ -460,8 +460,9 @@ public class SparqlParser {
             var p = TERM.projector(union, currentVars);
             current = p == null ? current : p.projectInPlace(current);
             p = TERM.projector(union, v.publicVars());
-            if (p == null) current.put(v.values());
-            else           p.project(current, v.values());
+            var b = v.values();
+            if (p == null) current = current.put(b);
+            else           p.project(current, b);
             this.values = new Values(union, current);
         }
 

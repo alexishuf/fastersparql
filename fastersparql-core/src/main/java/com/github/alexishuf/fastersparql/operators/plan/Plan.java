@@ -544,7 +544,8 @@ public abstract sealed class Plan implements SparqlQuery
     /** See {@link #execute(BatchType, Binding, boolean)} */
     @SuppressWarnings("unused") public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, Binding binding) { return execute(bt, binding, false); }
 
-    public abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, boolean weakDedup);
+    public abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
+                                                           boolean weakDedup);
 
     /**
      * Create a unstarted {@link Emitter} that will produce the solutions for this plan.
@@ -554,14 +555,17 @@ public abstract sealed class Plan implements SparqlQuery
      * @return an unstarted {@link Emitter}
      * @param <B> the batch type to be emitted
      */
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, boolean weakDedup) {
-        Emitter<B> em = doEmit(type, weakDedup);
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Vars rebindHint,
+                                                      boolean weakDedup) {
+        Emitter<B> em = doEmit(type, rebindHint, weakDedup);
         if (this.listeners.isEmpty()) return em;
         return new MetricsStage<>(em, new Metrics(this));
     }
 
-    /** See {@link #emit(BatchType, boolean)} */
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type) {return emit(type, false);}
+    /** See {@link #emit(BatchType, Vars, boolean)} */
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Vars rebindHint) {
+        return emit(type, rebindHint, false);
+    }
 
     /* --- --- --- helpers --- --- --- */
 

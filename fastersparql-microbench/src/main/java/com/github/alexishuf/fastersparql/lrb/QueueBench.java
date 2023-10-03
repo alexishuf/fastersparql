@@ -71,7 +71,7 @@ public class QueueBench {
     @Setup(Level.Iteration) public void setup() {
         warnedNoInputs = false;
         invocations = 0;
-        Workloads.repeat(seedInputs, bt, expectedInvocations, inputsQueue);
+        Workloads.repeat(seedInputs, expectedInvocations, inputsQueue);
         System.gc();
         vars = Workloads.makeVars(requireNonNull(inputsQueue.peekFirst()));
         invocations = 0;

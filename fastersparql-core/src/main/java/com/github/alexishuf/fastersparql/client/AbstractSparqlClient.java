@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.model.BindType;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,14 +91,15 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     /* --- --- --- query implementations --- --- --- */
 
     protected abstract <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql);
-    protected abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql);
+    protected abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
+                                                              Vars rebindHint);
 
     protected <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
         return new ClientBindingBIt<>(bq, this);
     }
 
-    protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query) {
-        return new BindingStage.ForSparql<>(query, this);
+    protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query, Vars rebindHint) {
+        return new BindingStage.ForSparql<>(query, rebindHint, this);
     }
 
     /* --- --- --- interface implementations --- --- --- */
@@ -118,12 +120,13 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     }
 
     @Override
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> bt, SparqlQuery sparql) {
+    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> bt, SparqlQuery sparql,
+                                                      Vars rebindHint) {
         if (sparql.isGraph())
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         acquireRef();
         try {
-            return doEmit(bt, sparql);
+            return doEmit(bt, sparql, rebindHint);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
         } finally {
@@ -147,7 +150,8 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         }
     }
 
-    @Override public final <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> q) {
+    @Override public final <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> q,
+                                                                Vars rebindHint) {
         if (q.query.isGraph())
             throw new InvalidSparqlQueryType("emit() method only takes SELECT/ASK queries");
         acquireRef();
@@ -155,7 +159,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
             var bindings = q.bindings;
             if (q.type == BindType.MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
                 return bindings;
-            return doEmit(q);
+            return doEmit(q, rebindHint);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);
         } finally {

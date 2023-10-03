@@ -38,7 +38,7 @@ public class ResultsSerializerBench {
         ropeTypeHolder = new RopeTypeHolder(ropeType);
         List<Batch> seed = Workloads.uniformCols(Workloads.<Batch>fromName(bt, sizeName), bt);
         batchLists.add(seed);
-        Workloads.repeat(seed, bt, nLists-1, batchLists);
+        Workloads.repeat(seed, nLists-1, batchLists);
         vars = Workloads.makeVars(seed);
     }
 

@@ -266,7 +266,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
             try {
                 if (incompleteRow) { // drop incomplete row
                     incompleteRow = false;
-                    batch.abortOfferOrPut();
+                    batch.abortPut();
                 }
                 emitBatch();
             } catch (Throwable t) {

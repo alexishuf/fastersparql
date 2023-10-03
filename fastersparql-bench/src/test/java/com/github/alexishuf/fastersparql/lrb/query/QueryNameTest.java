@@ -123,7 +123,7 @@ class QueryNameTest {
             parser.feedEnd();
             B acc = type.create(expected.rows, expected.cols, expected.localBytesUsed());
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
-                acc.put(b);
+                acc = acc.put(b);
             assertEquals(expected, acc);
         } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
             throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());

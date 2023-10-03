@@ -16,7 +16,8 @@ import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Emitters;
-import com.github.alexishuf.fastersparql.emit.async.AsyncEmitter;
+import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
+import com.github.alexishuf.fastersparql.emit.async.ScatterStage;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage.ForPlan;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -189,17 +190,17 @@ public class NativeBind {
 
     public static <B extends Batch<B>> Emitter<B>
     multiBindEmit(Emitter<B> left, BindType type, Vars outVars, Union right,
-                  boolean weakDedup, SparqlClient clientForAlgebra) {
+                  Vars rebindHints, boolean weakDedup, SparqlClient clientForAlgebra) {
         var bt = left.batchType();
         Emitter<B> scatter;
-        if (left.canScatter())
+        if (left.canScatter()) {
             scatter = left;
-        else {
-            var ae = new AsyncEmitter<>(bt, left.vars());
-            ae.registerProducer(left);
-            scatter = ae;
+        } else {
+            var ss = new ScatterStage<>(bt, left.vars());
+            ss.subscribeTo(left);
+            scatter = ss;
         }
-        var gather = new AsyncEmitter<>(bt, outVars);
+        var gather = new GatheringEmitter<>(left.batchType(), outVars);
         for (int i = 0, n = right.opCount(); i < n; i++) {
             Plan operand = right.op(i);
             SparqlClient client;
@@ -211,24 +212,26 @@ public class NativeBind {
                 sparql = operand;
                 client = clientForAlgebra;
             }
-            if (weakDedup)        sparql = sparql.toDistinct(WEAK);
-            gather.registerProducer(client.emit(new EmitBindQuery<>(sparql, scatter, type)));
+            if (weakDedup)
+                sparql = sparql.toDistinct(WEAK);
+            var bind = client.emit(new EmitBindQuery<>(sparql, scatter, type), rebindHints);
+            gather.subscribeTo(bind);
         }
 
         int cdc = right.crossDedupCapacity;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
         if      (weakDedup) dedup = new WeakDedup<>(bt, dedupCapacity(), dedupCols);
-        else if (cdc >   0) dedup = new WeakCrossSourceDedup<>(bt, cdc, dedupCols);
+        else if (cdc >   0) dedup = new WeakCrossSourceDedup<>(bt, cdc,  dedupCols);
         else                return gather;
         return bt.filter(outVars, dedup).subscribeTo(gather);
     }
 
     public static <B extends Batch<B>> Emitter<B>
-    preferNativeEmit(BatchType<B> bType, Plan join, boolean weakDedup) {
+    preferNativeEmit(BatchType<B> bType, Plan join, Vars rebindHint, boolean weakDedup) {
         BindType type = join.type.bindType();
         if (type == null) throw new IllegalArgumentException("Unsupported: Plan type");
-        Emitter<B> left = join.op(0).emit(bType, weakDedup);
+        Emitter<B> left = join.op(0).emit(bType, rebindHint, weakDedup);
         for (int i = 1, n = join.opCount(); i < n; i++) {
             var r = join.op(i);
             if (r instanceof Union u && u.right == null) r = u.left();
@@ -237,11 +240,13 @@ public class NativeBind {
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
                 if (weakDedup)        sparql = sparql.toDistinct(WEAK);
-                left = q.client.emit(new EmitBindQuery<>(sparql, left, type));
+                left = q.client.emit(new EmitBindQuery<>(sparql, left, type), rebindHint);
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
-                left = multiBindEmit(left, type, projection, rUnion, weakDedup, null);
+                left = multiBindEmit(left, type, projection, rUnion, rebindHint,
+                                     weakDedup, null);
             } else {
-                left = new ForPlan<>(new EmitBindQuery<>(r, left, type), weakDedup, projection);
+                left = new ForPlan<>(new EmitBindQuery<>(r, left, type), rebindHint,
+                                     weakDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)

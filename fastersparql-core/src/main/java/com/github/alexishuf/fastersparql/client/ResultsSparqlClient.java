@@ -10,7 +10,7 @@ import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.AbstractStage;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.async.SelfEmitter;
+import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -23,6 +23,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -219,11 +220,12 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql) {
+    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
+                                                     Vars rebindHint) {
         return bt.convert(new ResultsEmitter(SparqlParser.parse(sparql)));
     }
 
-    private class ResultsEmitter extends SelfEmitter<TermBatch> {
+    private class ResultsEmitter extends TaskEmitter<TermBatch> {
         private final Plan parsedQuery;
         private final Results expected;
         private @Nullable TermBatch batch;
@@ -232,9 +234,11 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         public ResultsEmitter(Plan parsedQuery) {
             super(Batch.TERM, parsedQuery.publicVars(), EMITTER_SVC, RR_WORKER,
-                  CREATED, SELF_EMITTER_FLAGS);
+                  CREATED, TASK_EMITTER_FLAGS);
             this.parsedQuery = parsedQuery;
             this.expected = qry2emitResults.getOrDefault(parsedQuery, null);
+            if (ResultJournal.ENABLED)
+                ResultJournal.initEmitter(this, vars);
             setup(BatchBinding.ofEmpty(TERM));
         }
 
@@ -293,6 +297,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         @Override public void rebind(BatchBinding binding) throws RebindException {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onRebind(binding);
+            if (ResultJournal.ENABLED)
+                ResultJournal.rebindEmitter(this, binding);
             List<Term> actualBinding = new ArrayList<>();
             Vars exBindingVars = expected.bindingsVars();
             for (SegmentRope var : (exBindingVars == null ? binding.vars : exBindingVars))
@@ -302,9 +308,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected int produceAndDeliver(int state) {
-            if (batch != null) {
+            if (batch != null)
                 recycled = asPooled(deliver(batch.copy(asUnpooled(recycled))));
-            }
             return error == UNSET_ERROR ? COMPLETED : FAILED;
         }
     }
@@ -359,7 +364,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq) {
+    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
+                                                               Vars rebindHint) {
         var sparql = bq.parsedQuery();
         Results expected = emulateWs ? qry2WsResults.get(sparql) : qry2results.get(sparql);
         if (expected == null) {
@@ -384,6 +390,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
                 @Override public @Nullable TermBatch onBatch(TermBatch batch) {
                     return downstream.onBatch(batch);
+                }
+
+                @Override public void onRow(TermBatch batch, int row) {
+                    downstream.onRow(batch, row);
                 }
 
                 @Override public String toString() { return "CheckBindings<-"+upstream; }
@@ -419,7 +429,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 if (!boundExpected.vars().equals(unboundVars))
                     throw error("Bound query results vars do not match ");
             }
-            return new BindingStage.ForSparql<>(bq, this);
+            return new BindingStage.ForSparql<>(bq, Vars.EMPTY, this);
         }
     }
 

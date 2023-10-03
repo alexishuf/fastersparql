@@ -194,7 +194,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         lock();
                         locked = true;
                     } else {
-                        f.put(b);
+                        this.filling = f.put(b, RECYCLED, this);
                         delayedWake = consumer; // delay unpark() to avoid Thread.yield
                         break;
                     }
@@ -243,7 +243,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     lock();
                     locked = true;
                 } else { // put and return
-                    dst.put(b);
+                    this.filling = dst = dst.put(b, RECYCLED, this);
                     if (READY.getOpaque(this) == null && readyInNanos(dst.rows, fillingStart)==0) {
                         READY.setRelease(this, dst);
                         this.filling = null;

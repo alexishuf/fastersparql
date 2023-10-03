@@ -13,6 +13,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 
+import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
@@ -133,8 +134,8 @@ public class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     /**
-     * Similar to {@link Batch#putConverting(Batch)}, but converts {@link Term}s into
-     * {@code sourcedIds} referring to {@code dictId} rather than throwing
+     * Similar to {@link Batch#putConverting(Batch, VarHandle, Object)}, but converts
+     * {@link Term}s into {@code sourcedIds} referring to {@code dictId} rather than throwing
      * {@link UnsupportedOperationException}.
      *
      * @param other a {@link Batch} whose rows are to be added to {@code this}
@@ -142,21 +143,20 @@ public class HdtBatch extends IdBatch<HdtBatch> {
      *               which generated {@code sourcedId}s will point
      * @return {@code this}
      */
-    public HdtBatch putConverting(Batch<?> other, int dictId) {
-        int cols = other.cols;
+    public HdtBatch putConverting(Batch<?> other, int dictId, @Nullable VarHandle rec,
+                                  @Nullable Object holder) {
+        if (other.getClass() == getClass())
+            return put((HdtBatch) other, rec, holder);
+        int cols = other.cols, oRows = other.rows;
         if (cols != this.cols) throw new IllegalArgumentException();
-        if (other.getClass() == getClass()) {
-            put((HdtBatch) other);
-        } else {
-            var dict = IdAccess.dict(dictId);
-            int rows = other.rows;
-            var tmp = Term.pooledMutable();
-            reserve(rows, 0);
-            for (int r = 0; r < rows; r++)
-                putRowConverting(other, r, dictId, cols, tmp, dict);
-            tmp.recycle();
-        }
-        return this;
+
+        var dst = choosePutDst(rows, oRows, cols, rec, holder, TYPE);
+        var dict = IdAccess.dict(dictId);
+        var tmp = Term.pooledMutable();
+        for (int r = 0; r < oRows; r++)
+            putRowConverting(other, r, dictId, cols, tmp, dict);
+        tmp.recycle();
+        return dst;
     }
 
     public @This HdtBatch putRowConverting(Batch<?> other, int row, int dictId) {
@@ -182,5 +182,16 @@ public class HdtBatch extends IdBatch<HdtBatch> {
                 putTerm(c, IdAccess.encode(dictId, dict, tmp));
         }
         commitPut();
+    }
+
+    @Override
+    public HdtBatch put(HdtBatch other, @Nullable VarHandle rec, @Nullable Object holder) {
+        return put0(other, rec, holder, TYPE);
+    }
+
+    @Override
+    public HdtBatch putConverting(Batch<?> other, @Nullable VarHandle rec,
+                                  @Nullable Object holder) {
+        return putConverting0(other, rec, holder, TYPE);
     }
 }

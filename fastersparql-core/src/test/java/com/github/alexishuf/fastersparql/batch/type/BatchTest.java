@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -14,6 +15,7 @@ import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import jdk.incubator.vector.ByteVector;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -25,9 +27,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
@@ -216,8 +219,6 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
                 var b = type.create(size.rows, size.cols, reqBytes);
-//                assertTrue(b.hasCapacity(size.rows, reqBytes), ctx);
-                assertFalse(b.hasMoreCapacity(b), ctx);
                 assertEquals(size.cols, b.cols, ctx);
                 assertEquals(0, b.rows(), ctx);
                 assertEquals(size.cols, b.hashCode(), ctx);
@@ -342,6 +343,7 @@ class BatchTest {
         forEachSize(new ForEachSizeTest() {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
+                ThreadJournal.closeThreadJournals();
                 int reqBytes = size.requiredBytes(type);
                 B b1  = type.create(1, size.cols, 1);
                 B b2  = type.create(1, size.cols, 0);
@@ -388,15 +390,16 @@ class BatchTest {
                             b9.putTerm(c, termParser);
                         }
                     }
-                    for (B b : putBatches) b.commitPut();
+                    for (B b : putBatches)
+                        b.commitPut();
                 }
-                b3.put(b1);
+                b3 = b3.put(b1);
                 if (size.rows > 0)
                     b6.putRow(b1, 0);
                 for (int r = 1; r < size.rows; r++)
                     b6_.putRow(size.terms[r]);
-                b6.put(b6_);
-                assertSame(bA, bA.putConverting(bT));
+                b6 = b6.put(b6_);
+                bA = bA.putConverting(bT, null, null);
                 assertBatchesEquals(size, b1, ctx);
                 assertBatchesEquals(size, b2, ctx);
                 assertBatchesEquals(size, b3, ctx);
@@ -416,95 +419,72 @@ class BatchTest {
                 assertBatchesEquals(b7, b8, ctx);
                 assertBatchesEquals(b8, b9, ctx);
                 assertBatchesEquals(b9, bA, ctx);
+
+                for (B b : List.of(b1, b2, b3, b4, b5, b6, b7, b8, b9))
+                    b.recycle();
             }
         });
     }
 
-    @Test void testOffer() {
+    private static final VarHandle REC;
+    static {
+        try {
+            REC = MethodHandles.lookup().findVarHandle(RecHolder.class, "rec", Batch.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    private static final class RecHolder { Batch<?> rec; }
+
+    @Test void testAppended() {
         forEachSize(new ForEachSizeTest() {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                B b1 = type.create(size.rows, size.cols, reqBytes);
-                B b2 = type.create(size.rows, size.cols, reqBytes);
-                B b3 = type.create(size.rows, size.cols, reqBytes);
-                B b4 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
-                B b5 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
-                B b6 = type.create(size.rows, size.cols, reqBytes);
-                B b7 = type.create(size.rows, size.cols, reqBytes);
-                B b8 = type.create(size.rows, size.cols, reqBytes);
-                b4.clear(size.cols*2);
-                b5.clear(size.cols*2);
-                b4.clear(size.cols);
-                b5.clear(size.cols);
+                int halfRows = size.rows/2, halfBytes = reqBytes/2;
+                B tiny       = type.create(1, size.cols, 1);
+                B half       = type.create(halfRows,  size.cols, halfBytes);
+                B full       = type.create(size.rows, size.cols , reqBytes);
+                B other      = type.create(halfRows,  size.cols , reqBytes);
+                B secondHalf = type.create(halfRows,  size.cols , reqBytes);
+                size.fill(other);
+                full.reserve(size.rows,  reqBytes);
+                half.reserve(halfRows,  halfBytes);
+                for (int r =        0; r <  halfRows; r++) half      .putRow(other, r);
+                for (int r = halfRows; r < size.rows; r++) secondHalf.putRow(other, r);
 
-                b1.reserve(size.rows, reqBytes);
-                b2.reserve(size.rows, reqBytes);
-                b3.reserve(size.rows, reqBytes);
-                b6.reserve(size.rows, reqBytes);
-                b7.reserve(size.rows, reqBytes);
-                b8.reserve(size.rows, reqBytes);
+                RecHolder tinyH = new RecHolder(), halfH = new RecHolder(), fullH = new RecHolder();
+                B tinyA = tiny.put(other,       REC, tinyH);
+                B halfA = half.put(secondHalf,  REC, halfH);
+                B fullA = full.put(other,       REC, fullH);
 
-                assertTrue(b1.hasCapacity(size.rows, reqBytes));
-                assertTrue(b2.hasCapacity(size.rows, reqBytes));
-                assertTrue(b3.hasCapacity(size.rows, reqBytes));
-                assertTrue(b6.hasCapacity(size.rows, reqBytes));
-                assertTrue(b7.hasCapacity(size.rows, reqBytes));
-                assertTrue(b8.hasCapacity(size.rows, reqBytes));
-                TermParser termParser = new TermParser();
-                for (int r = 0; r < size.rows; r++) {
-                    assertTrue(b1.beginOffer());
-                    for (int c = 0; c < size.cols; c++)
-                        assertTrue(b1.offerTerm(c, size.terms[r][c]), "r=, "+r+"c="+c);
-                    assertTrue(b1.commitOffer());
-                    assertTrue(b2.beginOffer());
-                    for (int c = 0; c < size.cols; c++)
-                        assertTrue(b2.offerTerm(c, b1, r, c), "r= "+r+",c="+c);
-                    assertTrue(b2.commitOffer());
+                // validate appended() outcomes
+                assertBatchesEquals(size, tinyA, ctx);
+                assertBatchesEquals(size, halfA, ctx);
+                assertBatchesEquals(size, fullA, ctx);
+                assertBatchesEquals(size, tinyA, ctx);
+                assertBatchesEquals(full, tinyA, ctx);
+                assertBatchesEquals(full, halfA, ctx);
+                assertBatchesEquals(full, fullA, ctx);
 
-                    assertTrue(b4.beginOffer());
-                    for (int c = 0; c < size.cols; c++)
-                        assertTrue(b4.offerTerm(c, size.terms[r][c]), "r=, "+r+"c="+c);
-                    assertTrue(b4.commitOffer());
-                    assertTrue(b5.beginOffer());
-                    for (int c = 0; c < size.cols; c++)
-                        assertTrue(b5.offerTerm(c, b1, r, c), "r= "+r+",c="+c);
-                    assertTrue(b5.commitOffer());
+                // validate recycling logic
+                assertSame(tinyA == tiny ? null : tiny, tinyH.rec);
+                assertSame(halfA == half ? null : half, halfH.rec);
+                if (tinyH.rec != null) tinyH.rec.requirePooled();
+                if (halfH.rec != null) halfH.rec.requirePooled();
+                assertNull(fullH.rec);
 
-                    b6.beginOffer();
-                    b7.beginOffer();
-                    b8.beginOffer();
-                    for (int c = 0; c < size.cols; c++) {
-                        Term t = size.terms[r][c];
-                        if (t == null) continue;
-                        byte[] u8 = ("("+t.local()+")").getBytes(UTF_8);
-                        MemorySegment u8Seg = MemorySegment.ofArray(u8);
-                        ByteRope rope = new ByteRope(t);
-                        assertTrue(termParser.parse(rope, 0, rope.len).isValid());
-                        assertTrue(b6.offerTerm(c,  t.shared(), u8, 1, u8.length-2, t.sharedSuffixed()));
-                        assertTrue(b7.offerTerm(c, t.shared(), u8Seg, 1, u8.length-2, t.sharedSuffixed()));
-                        assertTrue(b8.offerTerm(c, termParser));
-                        Arrays.fill(u8, (byte)'#');
-                    }
-                    b6.commitOffer();
-                    b7.commitOffer();
-                    b8.commitOffer();
-                }
-                assertTrue(b3.offer(b1), ctx);
-                assertBatchesEquals(size, b1, ctx);
-                assertBatchesEquals(size, b2, ctx);
-                assertBatchesEquals(size, b3, ctx);
-                assertBatchesEquals(size, b4, ctx);
-                assertBatchesEquals(size, b5, ctx);
-                assertBatchesEquals(b1, b2, ctx);
-                assertBatchesEquals(b2, b3, ctx);
-                assertBatchesEquals(b3, b4, ctx);
-                assertBatchesEquals(b4, b5, ctx);
-                assertBatchesEquals(b5, b6, ctx);
-                assertBatchesEquals(b6, b7, ctx);
-                assertBatchesEquals(b7, b8, ctx);
+                for (B b : List.of(tinyA, halfA, fullA, other))
+                    b.recycle();
             }
         });
+    }
+
+    @Test
+    void testConcurrentAppended() throws Exception {
+        try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
+            tasks.repeat(28, this::testAppended);
+        }
     }
 
     private static Vars mkVars(int n) {
@@ -586,14 +566,19 @@ class BatchTest {
                 BatchMerger<B> projector = type.projector(out, in);
                 if (out.equals(in)) {
                     assertNull(projector, ctx);
+                    full.recycle();
                 } else {
                     assertNotNull(projector, ctx);
                     B copyProjected = projector.project(null, full);
                     assertBatchesEquals(expected, copyProjected, ctx);
-                    assertBatchesEquals(size, full, ctx);
+                    copyProjected.recycle();
+                    assertBatchesEquals(size, full, ctx); // copy-projection does not change input
+
                     B inPlace = projector.projectInPlace(full);
                     assertBatchesEquals(expected, inPlace, ctx);
+                    inPlace.recycle();
                 }
+                expected.recycle();
             }
         });
     }
@@ -755,11 +740,16 @@ class BatchTest {
                                             : type.filter(out, in, rowFilter);
                 B copyFilter = filter.filter(null, full);
                 assertBatchesEquals(expected, copyFilter, ctx);
+                copyFilter.recycle();
                 assertBatchesEquals(fullBackup, full, ctx);
+
                 B inPlace = filter.filterInPlace(full);
                 if (inPlace != full)
                     assertBatchesEquals(fullBackup, full, ctx);
+                fullBackup.recycle();
                 assertBatchesEquals(inPlace, expected, ctx);
+                inPlace.recycle();
+                expected.recycle();
             }
         });
     }
@@ -806,6 +796,7 @@ class BatchTest {
             ByteRope dest = new ByteRope().append("@");
             b.write(dest, 1, 1, begin, end);
             assertEquals("@"+term.toString(begin, end), dest.toString(), "type="+type);
+            b.recycle();
         }
     }
 
@@ -851,6 +842,7 @@ class BatchTest {
             b.putRow(DUMMY_ROW);
             b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
             assertEquals(expected, b.lexEnd(1, 1));
+            b.recycle();
         }
     }
 
@@ -872,12 +864,12 @@ class BatchTest {
             b1.reserve(1, B_SP_LEN);
             b2.reserve(2, 2*B_SP_LEN);
             b3.reserve(4, 4*B_SP_LEN);
-            assertTrue(b1.beginOffer());
+            b1.beginPut();
             for (int c : permutation)
-                assertTrue(b1.offerTerm(c, DUMMY_ROW[c]));
-            assertTrue(b1.commitOffer());
+                b1.putTerm(c, DUMMY_ROW[c]);
+            b1.commitPut();
 
-            assertTrue(((Batch)b2).offerRow(b1, 0));
+            ((Batch)b2).putRow(b1, 0);
             ((Batch)b2).putRow(b1, 0);
 
             // put by term
@@ -885,16 +877,16 @@ class BatchTest {
             for (int c = 0; c < 3; c++)
                 b3.putTerm(c, b1.get(0, c));
             b3.commitPut();
-            assertTrue(b3.beginOffer());
+            b3.beginPut();
             // offer by term
             for (int c = 0; c < 3; c++)
-                assertTrue(b3.offerTerm(c, b1.get(0, c)));
-            assertTrue(b3.commitOffer());
+                b3.putTerm(c, b1.get(0, c));
+            b3.commitPut();
             // offer by term from b1
-            assertTrue(b3.beginOffer());
+            b3.beginPut();
             for (int c = 0; c < 3; c++)
-                assertTrue(((Batch)b3).offerTerm(c, b1, 0, c));
-            assertTrue(b3.commitOffer());
+                ((Batch)b3).putTerm(c, b1, 0, c);
+            b3.commitPut();
             // put by term from b1
             b3.beginPut();
             for (int c = 0; c < 3; c++)
@@ -905,7 +897,12 @@ class BatchTest {
             assertBatchesEquals((Batch)ex1, (Batch)b1, ctx);
             assertBatchesEquals((Batch)ex2, (Batch)b2, ctx);
             assertBatchesEquals((Batch)ex3, (Batch)b3, ctx);
+
+            for (var b : List.of(b1, b2, b3))
+                b.recycle();
         }
+        for (var b : List.of(ex1, ex2, ex3))
+            b.recycle();
     }
 
     @ParameterizedTest @MethodSource("types")
@@ -952,6 +949,9 @@ class BatchTest {
         assertBatchesEquals(expected, uo1, "uo1");
         assertBatchesEquals(expected, o0, "o0");
         assertBatchesEquals(expected, o1, "o1");
+
+        for (B b : List.of(n, uo0, uo1, o0, o1, expected))
+            b.recycle();
     }
 
 //    @Test void regressionHashC7() {
@@ -1010,6 +1010,8 @@ class BatchTest {
         assertTrue(ac.equals(0, ex, 0));
         assertTrue(ex.equals(0, ac, 0));
         assertEquals(ex.hash(0), ac.hash(0));
+        ac.recycle();
+        ex.recycle();
     }
 
 }

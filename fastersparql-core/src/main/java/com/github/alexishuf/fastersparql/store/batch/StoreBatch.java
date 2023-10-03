@@ -18,6 +18,7 @@ import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
@@ -106,7 +107,8 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
         requireUnpooled();
         //noinspection ConstantValue
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+        if (row < 0 || col < 0 || row >= rows || col >= cols)
+            throw new IndexOutOfBoundsException();
 
         // check for null
         int addr = row * cols + col;
@@ -309,17 +311,16 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         return StoreBatchType.INSTANCE.recycle(this);
     }
 
-    @Override public boolean offerTerm(int col, Term t) {
+    @Override public void putTerm(int destCol, Term t) {
         if (offerRowBase < 0) throw new IllegalStateException();
         if (TEST_DICT == 0)
             throw new UnsupportedOperationException("putTerm(int, Term) is only supported during testing.");
-        putTerm(col, t == null ? 0 : source(lookup(TEST_DICT).find(t), TEST_DICT));
-        return true;
+        putTerm(destCol, t == null ? 0 : source(lookup(TEST_DICT).find(t), TEST_DICT));
     }
 
     /**
-     * Similar to {@link Batch#putConverting(Batch)}, but converts {@link Term}s into
-     * {@code sourcedIds} referring to {@code dictId} rather than throwing
+     * Similar to {@link Batch#putConverting(Batch, VarHandle, Object)}, but converts
+     * {@link Term}s into {@code sourcedIds} referring to {@code dictId} rather than throwing
      * {@link UnsupportedOperationException}.
      *
      * @param other a {@link Batch} whose rows are to be added to {@code this}
@@ -327,21 +328,20 @@ public class StoreBatch extends IdBatch<StoreBatch> {
      *               that generated {@code sourcedId}s will point
      * @return {@code this}
      */
-    public StoreBatch putConverting(Batch<?> other, int dictId) {
-        int cols = other.cols;
+    public StoreBatch putConverting(Batch<?> other, int dictId, @Nullable VarHandle rec,
+                                    @Nullable Object holder) {
+        if (other.getClass() == getClass())
+            return put((StoreBatch) other, rec, holder);
+        int cols = other.cols, oRows = other.rows;
         if (cols != this.cols) throw new IllegalArgumentException("cols mismatch");
-        if (other.getClass() == getClass()) {
-            put((StoreBatch) other);
-        } else {
-            var lookup = lookup(dictId);
-            var tmp = TwoSegmentRope.pooled();
-            int rows = other.rows;
-            reserve(rows, other.localBytesUsed());
-            for (int r = 0; r < rows; r++)
-                putRowConverting(other, r, dictId, cols, tmp, lookup);
-            tmp.recycle();
-        }
-        return this;
+
+        var dst = choosePutDst(rows, oRows, cols, rec, holder, TYPE);
+        var lookup = lookup(dictId);
+        var tmp = TwoSegmentRope.pooled();
+        for (int r = 0; r < oRows; r++)
+            dst.putRowConverting(other, r, dictId, cols, tmp, lookup);
+        tmp.recycle();
+        return dst;
     }
 
     public @This StoreBatch putRowConverting(Batch<?> other, int row, int dictId) {
@@ -371,4 +371,12 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         commitPut();
     }
 
+    @Override public StoreBatch put(StoreBatch o, @Nullable VarHandle rec, @Nullable Object hld) {
+        return put0(o, rec, hld, TYPE);
+    }
+
+    @Override public StoreBatch putConverting(Batch<?> other, @Nullable VarHandle rec,
+                                              @Nullable Object holder) {
+        return putConverting0(other, rec, holder, TYPE);
+    }
 }

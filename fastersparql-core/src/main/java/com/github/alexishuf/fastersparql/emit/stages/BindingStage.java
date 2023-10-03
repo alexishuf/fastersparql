@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.BindListener;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.*;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
@@ -14,32 +13,39 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Pattern;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
-import static com.github.alexishuf.fastersparql.model.BindType.EXISTS;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.THREAD_JOURNAL;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 
 public abstract class BindingStage<B extends Batch<B>> extends Stateful implements Stage<B, B> {
     private static final Logger log = LoggerFactory.getLogger(BindingStage.class);
+    private static final VarHandle RECYCLED;
+    static {
+        try {
+            RECYCLED = MethodHandles.lookup().findVarHandle(BindingStage.class, "recycled", Batch.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
     private static final int LEFT_REQUESTED_CHUNK = 64;
     private static final int LEFT_REQUESTED_MAX   = LEFT_REQUESTED_CHUNK+16;
 
@@ -70,6 +76,10 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                     .flag(RIGHT_STARVED, "RIGHT_STARVED")
                     .flag(FILTER_BIND, "FILTER_BIND").build();
 
+    private static final byte PASSTHROUGH_NOT   = 0;
+    private static final byte PASSTHROUGH_LEFT  = 1;
+    private static final byte PASSTHROUGH_RIGHT = 2;
+
     protected final BatchType<B> batchType;
     protected final Vars outVars;
     private final Emitter<B> leftUpstream;
@@ -86,28 +96,20 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
     public static final class ForPlan<B extends Batch<B>> extends BindingStage<B> {
-        private final Plan right;
-        public ForPlan(EmitBindQuery<B> bq, boolean weakDedup, @Nullable Vars projection) {
+        public ForPlan(EmitBindQuery<B> bq, Vars rebindHint, boolean weakDedup,
+                       @Nullable Vars projection) {
             super(bq.bindings, bq.type, bq, projection == null ? bq.resultVars() : projection,
-                  bq.parsedQuery().emit(bq.bindings.batchType(), weakDedup));
-            this.right = bq.parsedQuery();
-        }
-        @Override protected Object rightDisplay() {
-            return sparqlDisplay(right.toString());
+                  bq.parsedQuery().emit(
+                          bq.bindings.batchType(),
+                          bq.bindings.vars().union(rebindHint),
+                          weakDedup));
         }
     }
 
     public static final class ForSparql<B extends Batch<B>> extends BindingStage<B> {
-        private final SparqlEndpoint endpoint;
-        private final SparqlQuery right;
-        public ForSparql(EmitBindQuery<B> bq, SparqlClient client) {
+        public ForSparql(EmitBindQuery<B> bq, Vars outerRebindHint, SparqlClient client) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
-                  client.emit(bq.batchType(), bq.query));
-            this.right = bq.query;
-            this.endpoint = client.endpoint();
-        }
-        @Override protected Object rightDisplay() {
-            return endpoint+"("+sparqlDisplay(right.toString())+")";
+                  client.emit(bq.batchType(), bq.query, bq.bindings.vars().union(outerRebindHint)));
         }
     }
 
@@ -128,51 +130,51 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
               BINDING_STAGE_FLAGS);
         batchType = bindings.batchType();
         this.outVars = outVars;
-        Vars leftVars = bindings.vars();
+        Vars lVars = bindings.vars(), rVars = rightUpstream.vars();
         rightUpstream.rebindAcquire();
-        var merger = batchType.merger(outVars, leftVars, rightUpstream.vars());
-        this.rightRecv = new RightReceiver(merger, type, rightUpstream, listener);
+        BatchMerger<B> merger;
+        byte passthrough = PASSTHROUGH_NOT;
+        if (type.isJoin()) {
+            if (outVars.equals(lVars)) {
+                passthrough = PASSTHROUGH_LEFT;
+                merger = null;
+            } else if (outVars.equals(rVars)) {
+                passthrough = PASSTHROUGH_RIGHT;
+                merger = null;
+            } else {
+                merger = batchType.merger(outVars, lVars, rVars);
+                merger.assumeThreadSafe();
+            }
+        } else {
+            merger = null;
+        }
+        this.rightRecv = new RightReceiver(merger, passthrough, type, rightUpstream, listener);
         this.leftUpstream = bindings;
-        this.intBinding = new BatchBinding(leftVars);
+        this.intBinding = new BatchBinding(lVars);
         bindings.subscribe(this);
         rightUpstream.subscribe(rightRecv);
+        if (ResultJournal.ENABLED)
+            ResultJournal.initEmitter(this, outVars);
     }
 
     @Override public Vars         vars()      { return outVars;   }
     @Override public BatchType<B> batchType() { return batchType; }
 
-    private static final Pattern PROLOG_RX = Pattern.compile("(?:PREFIX|BASE|#).*\n");
-    private static final Pattern STAR_RX = Pattern.compile("SELECT\\s*\\*\\s*WHERE\\s*\\{");
-    private static final Pattern WHERE_RX = Pattern.compile("SELECT\\s*([^{]+)\\s*WHERE\\s*\\{");
-    private static final Pattern N_SPACE_RX = Pattern.compile("(\\s)\\s+");
-    private static final Pattern S_SPACE_RX = Pattern.compile("\\s*([.<>(){}])\\s*");
-    private static final Pattern LONG_IRI_RX = Pattern.compile("<[^>]+([^>]{6})>");
-    private static final AtomicInteger sparqlDisplayInvocations=  new AtomicInteger(0);
-    protected static String sparqlDisplay(String sparql) {
-        if ((sparqlDisplayInvocations.incrementAndGet() & 0x3ff) == 0x3ff)
-            log.warn("Too many invocations of sparqlDisplay(), this should only be used for debug or for error reporting");
-        sparql = PROLOG_RX.matcher(sparql).replaceAll("");
-        sparql = STAR_RX.matcher(sparql).replaceAll("{");
-        sparql = WHERE_RX.matcher(sparql).replaceAll("SELECT$1{");
-        sparql = N_SPACE_RX.matcher(sparql).replaceAll("$1");
-        sparql = S_SPACE_RX.matcher(sparql).replaceAll("$1");
-        return LONG_IRI_RX.matcher(sparql).replaceAll("<...$1>");
-    }
-
-    protected abstract Object rightDisplay();
-
     @Override public String toString() {
-        return format("%s@%x[%s]{vars=%s, left=%s, right=%s}",
-                getClass().getSimpleName(), identityHashCode(this),
-                rightRecv.type.name(), outVars, leftUpstream, rightDisplay());
+        return label(StreamNodeDOT.Label.WITH_STATE_AND_STATS).replace("\n", " ");
     }
 
-    @Override public String nodeLabel() {
-        return format("%s@%x[%s] vars=%s requested=%s state=%s\nright=%s",
-                getClass().getSimpleName(), identityHashCode(this),
-                rightRecv.type.name(), outVars,
-                requested > 999_999 ? Long.toHexString(requested) : Long.toString(requested),
-                flags.render(state()), rightDisplay());
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(64), this);
+        if (type != StreamNodeDOT.Label.MINIMAL)
+            sb.append('[').append(rightRecv.type.name()).append("] vars=").append(outVars);
+        if (type.showState()) {
+            StreamNodeDOT.appendRequested(sb.append("\nrequested="), requested)
+                    .append(" state=").append(flags.render(state()));
+        }
+        if (type.showStats() && stats != null)
+            stats.appendToLabel(sb);
+        return sb.toString();
     }
 
     @Override public Stream<? extends StreamNode> upstream() {
@@ -211,7 +213,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         B offer = null;
         int state = lock(statePlain());
         try {
-            if (THREAD_JOURNAL)
+            if (ENABLED)
                 journal("onBatch", rows, "st=", state, flags, "bStage=", this);
             if (lb == null) {
                 lb = batch;
@@ -221,7 +223,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 B tmp = fillingLB;
                 fillingLB = null;
                 state = unlock(state);
-                tmp.put(batch);
+                tmp = tmp.put(batch, RECYCLED, this);
                 offer = batch;
                 state = lock(state);
                 if   (lb == null) lb        = tmp;
@@ -239,6 +241,37 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 unlock(state);
         }
         return offer;
+    }
+
+    @Override public void onRow(B b, int row) {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onRowReceived();
+        int state = lock(statePlain());
+        try {
+            if (ENABLED)
+                journal("onRow", row, "st=", state, flags, "bStage=", this);
+            B dst;
+            if (fillingLB != null) {
+                dst = fillingLB;
+                fillingLB = null;
+            } else {
+                dst = batchType.empty(asUnpooled(recycled), 1, b.cols, b.localBytesUsed(row));
+                recycled = null;
+            }
+            state = unlock(state);
+
+            dst.putRow(b, row);
+
+            state = lock(state);
+            if (lb == null) lb        = dst;
+            else            fillingLB = dst;
+            --leftPending;
+            if ((state&CAN_BIND_MASK) == CAN_BIND)
+                state = startNextBinding(state);
+        } finally {
+            if ((state&LOCKED_MASK) != 0)
+                unlock(state);
+        }
     }
 
     @Override public void onComplete()             { leftTerminated(LEFT_COMPLETED, null); }
@@ -280,6 +313,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 updateExtRebindVars(binding);
             extBinding = binding;
             intBinding.remainder = binding;
+            if (ResultJournal.ENABLED)
+                ResultJournal.rebindEmitter(this, binding);
             unlock(st);
         } catch (Throwable t) {
             this.error = t;
@@ -298,7 +333,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (rightRecv.downstream != null && rightRecv.downstream != receiver)
             throw new MultipleRegistrationUnsupportedException(this);
         rightRecv.downstream = receiver;
-        if (THREAD_JOURNAL)
+        if (ENABLED)
             journal("subscribed", receiver, "to", this);
     }
 
@@ -346,7 +381,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private void leftTerminated(int flag, @Nullable Throwable error) {
         int state = lock(statePlain());
         try {
-            if (THREAD_JOURNAL)
+            if (ENABLED)
                 journal("leftTerminated st=", state, flags, "flag=", flag, flags, "bStage=", this);
             if (error != null && this.error == UNSET_ERROR)
                 this.error = error;
@@ -369,7 +404,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private void rightTerminated(int flag, @Nullable Throwable error) {
         int state = lock(statePlain());
         try {
-            if (THREAD_JOURNAL)
+            if (ENABLED)
                 journal("rightTerminated st=", state, flags, "flag=", flag, flags, "bStage=", this);
             if (error != null && this.error == UNSET_ERROR)
                 this.error = error;
@@ -449,7 +484,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
                 rightRecv.listenerNotified = false;
-                if (THREAD_JOURNAL)
+                if (ENABLED)
                     journal("startNextBinding st=", st, flags, "seq=", rightRecv.bindingSeq, "stage=", this);
                 rightRecv.upstream.request((st & FILTER_BIND) == 0 ? requested : 2);
                 st = unlock(st, RIGHT_BINDING, 0); // rebind complete, allow upstream.request()
@@ -500,20 +535,24 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         private @MonotonicNonNull Receiver<B> downstream;
         private @Nullable B recycled;
         private final Emitter<B> upstream;
-        private final BatchMerger<B> merger;
+        private final @Nullable BatchMerger<B> merger;
         private final BindType type;
-        private final int downstreamCols;
         private final @Nullable BindListener bindingListener;
+        private final byte passThrough;
         private boolean upstreamEmpty, listenerNotified, rebindReleased;
         private long bindingSeq = -1;
 
-        public RightReceiver(BatchMerger<B> merger, BindType type, Emitter<B> rightUpstream,
-                             @Nullable BindListener bindingListener) {
+        public RightReceiver(@Nullable BatchMerger<B> merger, byte passThrough,
+                             BindType type, Emitter<B> rightUpstream, @Nullable BindListener bindingListener) {
             this.upstream = rightUpstream;
             this.merger = merger;
+            this.passThrough = passThrough;
             this.type = type;
             this.bindingListener = bindingListener;
-            this.downstreamCols = merger.vars.size();
+        }
+
+        @Override public Stream<? extends StreamNode> upstream() {
+            return Stream.of(upstream);
         }
 
         @Override public String toString() {
@@ -526,55 +565,138 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             upstream.rebindRelease();
         }
 
+        @Override public void onRow(B batch, int row) {
+            if (batch == null)
+                return;
+            if (passThrough == PASSTHROUGH_NOT) {
+                B tmp;
+                int st = lock(statePlain());
+                try {
+                    tmp = batchType.empty(asUnpooled(recycled), 1, batch.cols, batch.localBytesUsed(row));
+                    recycled = null;
+                } finally { st = unlock(st); }
+
+                tmp.putRow(batch, row);
+                tmp = onBatch(tmp);
+                if (tmp != null) {
+                    st = lock(st);
+                    try {
+                        if (recycled == null) recycled = asPooled(tmp);
+                        else                  tmp.recycle();
+                    } finally { unlock(st); }
+                }
+            } else {
+                upstreamEmpty = false;
+                switch (type) {
+                    case NOT_EXISTS,MINUS -> {
+                        if (!listenerNotified && bindingListener != null) {
+                            bindingListener.emptyBinding(bindingSeq);
+                            listenerNotified = true;
+                        }
+                        upstream.cancel();
+                    }
+                    default ->  {
+                        B b;
+                        int bRow;
+                        if (passThrough == PASSTHROUGH_LEFT) {
+                            b = lb;
+                            bRow = lr;
+                        } else {
+                            b = batch;
+                            bRow = row;
+                        }
+                        try {
+                            if (!listenerNotified && bindingListener != null) {
+                                bindingListener.nonEmptyBinding(bindingSeq);
+                                listenerNotified = true;
+                            }
+                            if (ResultJournal.ENABLED)
+                                ResultJournal.logRow(BindingStage.this, b, bRow);
+                            downstream.onRow(b, bRow);
+                            int st = lock(statePlain());
+                            --requested;
+                            unlock(st);
+                        } catch (Throwable t) {
+                            handleEmitError(downstream, BindingStage.this, false, t);
+                        }
+                    }
+                }
+            }
+        }
+
         @Override public B onBatch(B rb) {
             if (rb == null || rb.rows == 0)
                 return rb;
             upstreamEmpty = false;
-            switch (type) {
-                case JOIN,LEFT_JOIN,EXISTS -> merge(type == EXISTS ? null : rb);
+            return switch (type) {
+                case JOIN,LEFT_JOIN,EXISTS -> merge(rb);
                 case NOT_EXISTS,MINUS      -> {
                     if (!listenerNotified && bindingListener != null) {
                         bindingListener.emptyBinding(bindingSeq);
                         listenerNotified = true;
                     }
                     upstream.cancel();
+                    yield rb;
                 }
-            }
-            return rb;
+            };
         }
 
-        private void merge(@Nullable B rb) {
+        private @Nullable B merge(@Nullable B rb) {
             assert lb != null;
-            int rowsCap, localCap;
-            if (type.isJoin() || rb == null) {
-                rowsCap = 1;
-                localCap = lb.localBytesUsed(lr);
-            } else {
-                rowsCap = rb.rows;
-                localCap = rb.localBytesUsed();
+            B b = null;
+            boolean rightPassThrough = merger == null && passThrough == PASSTHROUGH_RIGHT;
+            if (rightPassThrough) {
+                b = rb;
+                assert rb != null;
+            } else if (merger != null) {
+                if (!merger.hasRecycled()) {
+                    merger.recycle(asUnpooled(recycled));
+                    recycled = null;
+                }
+                b = merger.merge(null, lb, lr, rb);
             }
-            B b = batchType.empty(asUnpooled(recycled), rowsCap, downstreamCols, localCap);
-            recycled = null;
-            if (type == EXISTS) b.putRow(lb, lr);
-            else                b = merger.merge(b, lb, lr, rb);
-            if (!listenerNotified && bindingListener != null) {
-                bindingListener.nonEmptyBinding(bindingSeq);
-                listenerNotified = true;
-            }
+
             try {
-                if (EmitterStats.ENABLED && stats != null)
-                    stats.onBatchDelivered(b);
-                recycled = asPooled(downstream.onBatch(b));
+                // notify binding is not empty
+                if (!listenerNotified && bindingListener != null) {
+                    bindingListener.nonEmptyBinding(bindingSeq);
+                    listenerNotified = true;
+                }
+
+                // update stats and requested
+                if (EmitterStats.ENABLED && stats != null) {
+                    if (b == null) stats.onRowDelivered();
+                    else           stats.onBatchDelivered(b);
+                }
+                int state = lock(statePlain());
+                requested -= b == null ? 1 : b.rows;
+                unlock(state);
+
+                // deliver batch/row
+                if (b == null) {
+                    if (ResultJournal.ENABLED)
+                        ResultJournal.logRow(BindingStage.this, lb, lr);
+                    downstream.onRow(lb, lr);
+                } else {
+                    if (ResultJournal.ENABLED)
+                        ResultJournal.logBatch(BindingStage.this, b);
+                    b = downstream.onBatch(b);
+                    if (!rightPassThrough && b != null) {
+                        if      (recycled          == null) recycled = asPooled(b);
+                        else if (merger.recycle(b) != null) b.recycle();
+                    }
+                }
             } catch (Throwable t) {
                 handleEmitError(downstream, BindingStage.this, false, t);
             }
+            return rightPassThrough ? b : rb;
         }
 
         @Override public void onComplete() {
             assert lb != null;
             try {
                 if (lexContinueRight(intBinding, upstream)) {
-                    if (THREAD_JOURNAL)
+                    if (ENABLED)
                         journal("lexContinueRight, bStage=", BindingStage.this);
                     upstream.request((statePlain()&FILTER_BIND) == 0 ? requested : 2);
                 } else {

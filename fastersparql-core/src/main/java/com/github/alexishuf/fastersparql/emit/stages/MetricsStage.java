@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.exceptions.NoDownstreamException;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public final class MetricsStage<B extends Batch<B>> extends AbstractStage<B, B> {
@@ -28,6 +29,15 @@ public final class MetricsStage<B extends Batch<B>> extends AbstractStage<B, B> 
         super.rebindRelease();
     }
 
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+        if (type.showState())
+            sb.append("\nrebindAcquired=").append(rebindAcquired);
+        if (type.showStats() && stats != null)
+            stats.appendToLabel(sb);
+        return sb.toString();
+    }
+
     @Override public @Nullable B onBatch(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchPassThrough(batch);
@@ -35,6 +45,15 @@ public final class MetricsStage<B extends Batch<B>> extends AbstractStage<B, B> 
         if (downstream == null) throw new NoDownstreamException(this);
         metrics.batch(batch.rows);
         return downstream.onBatch(batch);
+    }
+
+    @Override public void onRow(B batch, int row) {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onRowPassThrough();
+        if (batch == null) return;
+        if (downstream == null) throw new NoDownstreamException(this);
+        metrics.batch(1);
+        downstream.onRow(batch, row);
     }
 
     @Override public void onComplete() {

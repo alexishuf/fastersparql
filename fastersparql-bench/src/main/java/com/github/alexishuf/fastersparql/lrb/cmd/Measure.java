@@ -14,12 +14,16 @@ import com.github.alexishuf.fastersparql.lrb.query.QueryRunner;
 import com.github.alexishuf.fastersparql.lrb.query.QueryRunner.BatchConsumer;
 import com.github.alexishuf.fastersparql.lrb.sources.FederationHandle;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.OutputStreamSink;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -27,17 +31,16 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.SAVE;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.System.nanoTime;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 @Command(name = "measure", description = "Mediate queries and measure wall-clock time")
@@ -105,10 +108,12 @@ public class Measure implements Callable<Void>{
         int rep = -1, taskIdx = 0;
         for (int remMs = msrOp.warmupSecs*1_000, ms; remMs > 0; remMs -= ms) {
             var task = tasks.get(taskIdx);
-            log.info("Starting warmup {} of {}...", -rep, task);
+            log.info("Starting warmup {} of {}, src={}, flow={}...",
+                    -rep, task, task.source(), msrOp.flowModel);
             ms = run(client, task, rep, remMs);
             log.info("Warmup {} of {} in {}ms", -rep, task, ms);
-            if ((taskIdx = (taskIdx+1) % tasks.size()) == 0) --rep;
+            if ((taskIdx = (taskIdx+1) % tasks.size()) == 0)
+                --rep;
         }
         msrOp.warmupCooldown();
     }
@@ -125,8 +130,8 @@ public class Measure implements Callable<Void>{
                     log.warn("No time budget for rep {} of {}", rep, task);
                     continue;
                 }
-                log.info("Starting rep {} of {} with sel={} and src={}...",
-                         rep, task.query(), task.selector(), task.source());
+                log.info("Starting rep {} of {} with sel={}, src={}, flow={}...",
+                         rep, task.query(), task.selector(), task.source(), msrOp.flowModel);
                 int ms = run(client, task, rep, timeoutMs);
                 log.info("Measured rep {} of {} with sel={} and src={} in {}ms",
                         rep, task.query(), task.selector(), task.source(), ms);
@@ -139,6 +144,10 @@ public class Measure implements Callable<Void>{
     private int run(Federation fed, MeasureTask task, int rep, int timeoutMs) {
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
+//        Stateful.INSTANCES.clear();
+//        Plan debugPlan;
+//        ResultJournal.clear();
+//        ThreadJournal.closeThreadJournals();
         try {
             Object results;
             if (plans != null) {
@@ -147,28 +156,51 @@ public class Measure implements Callable<Void>{
                 fedMetrics = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
-                //System.out.println(resolveUris(fed, plan.toString()));
                 results = switch (msrOp.flowModel) {
                     case ITERATE -> plan.execute(msrOp.batchType);
-                    case EMIT    -> plan.emit(msrOp.batchType);
+                    case EMIT    -> plan.emit(msrOp.batchType, Vars.EMPTY);
                 };
             } else {
                 results = switch (msrOp.flowModel) {
                     case ITERATE -> fed.query(msrOp.batchType, task.parsed());
-                    case EMIT    -> fed.emit(msrOp.batchType, task.parsed());
+                    case EMIT    -> fed.emit(msrOp.batchType, task.parsed(), Vars.EMPTY);
                 };
             }
+//            if (debugPlan != null)
+//                System.out.println(debugPlan);
+//            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+//                DebugJournal.SHARED.closeAll();
+//                w.start(5_000_000_000L).andThen(() -> {
+//                    dump(task.query(), debugPlan, (StreamNode)results);
+//                    System.out.println("##");
+//                });
+//            }
             switch (msrOp.flowModel) {
                 case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
                 case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
             }
-            //try (var out = new PrintStream("/tmp/dump")) {
-            //    NettyChannelDebugger.dumpAndFlushActive(out);
-            //}
+//            try (var out = new PrintStream("/tmp/dump")) {
+//                NettyChannelDebugger.dumpAndFlushActive(out);
+//            }
         } catch (Throwable t) {
             consumer.finish(t);
         }
         return (int)((nanoTime()-start)/1_000_000L);
+    }
+
+    private void dump(QueryName qry, Plan debugPlan, StreamNode results) {
+        Async.uninterruptibleSleep(500);
+        System.out.println(qry.opaque().sparql());
+        if (debugPlan != null)
+            System.out.println(debugPlan);
+        File dot = new File("/tmp/"+qry.name()+".dot");
+        File svg = new File(dot.getPath().replace(".dot", ".svg"));
+        try (var writer = new FileWriter(dot, UTF_8)) {
+            ThreadJournal.dumpAndReset(System.out, 100);
+            ResultJournal.dump(System.out);
+            writer.append(results.toDOT(WITH_STATE_AND_STATS));
+            results.renderDOT(svg, WITH_STATE_AND_STATS);
+        } catch (IOException ignored) {}
     }
 
     /* --- --- --- metrics collection --- --- --- */
