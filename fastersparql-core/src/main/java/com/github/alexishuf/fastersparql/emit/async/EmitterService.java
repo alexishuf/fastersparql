@@ -80,7 +80,7 @@ public class EmitterService {
          */
         protected final void awake() {
             if ((short)SCHEDULED.getAndAddRelease(this, (short)1) == (short)0)
-                runner.add(this,  true);
+                runner.add(this);
         }
 
         /**
@@ -121,7 +121,7 @@ public class EmitterService {
         @Async.Execute private void run() {
             if (!compareAndSetFlagRelease(IS_RUNNING)) {
                 // runNow() active on another thread, return to queue
-                runner.add(this, false);
+                runner.add(this);
                 return;
             }
             short old = (short)SCHEDULED.getAcquire(this);
@@ -134,7 +134,7 @@ public class EmitterService {
             }
             if ((short)SCHEDULED.compareAndExchange(this, old, (short)0) != old) {
                 SCHEDULED.setRelease(this, (short)1);
-                runner.add(this, false); // do not unpark() itself
+                runner.add(this); // do not unpark() itself
             } // else: S == 0 and not enqueued, future awake() can enqueue
         }
 
@@ -143,6 +143,62 @@ public class EmitterService {
             else          log.error("Ignoring {} thrown by {}", t,    this);
         }
     }
+
+//    private final class StarvedDetector extends Thread {
+//        public StarvedDetector(ThreadGroup group) {
+//            super(group, "EmitterService-StaleDetector");
+//            setDaemon(true);
+//            start();
+//        }
+//
+//        @Override public void run() {
+//            long lastDumpNs = Timestamp.nanoTime();
+//            boolean[] starved = new boolean[workers.length];
+//            //noinspection InfiniteLoopStatement
+//            while (true) {
+//                for (int i = 0; i < workers.length; i++) {
+//                    int mdb = i << MD_BITS;
+//                    while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
+//                        Thread.onSpinWait();
+//                    int n, msg = 0;
+//                    try {
+//                        if ((n=md[mdb+MD_SIZE]) > 0 && md[mdb+MD_PARKED] != 0) {
+//                            if (!starved[i]) {
+//                                starved[i] = true;
+//                                msg = 1;
+//                            }
+//                        } else if (starved[i]) {
+//                            starved[i] = false;
+//                            msg = 2;
+//                        }
+//                    } finally {
+//                        MD.setRelease(md, mdb+MD_LOCK, 0);
+//                    }
+//                    if (msg == 1)
+//                        log.error("Worker {} has {} tasks starved", i, n);
+//                    else if (msg == 2)
+//                        log.error("Worker {} un-starved", i);
+//                }
+//                if (Timestamp.nanoTime()-lastDumpNs > 5_000_000_000L) {
+//                    lastDumpNs = Timestamp.nanoTime();
+//                    var sb = new StringBuilder();
+//                    for (int i = 0; i < workers.length; i++) {
+//                        int mdb = i<<MD_BITS;
+//                        while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
+//                            onSpinWait();
+//                        try {
+//                            sb.append(format("\nworker %02d %3d tasks, parked=%b",
+//                                             i, md[mdb+MD_SIZE], md[mdb+MD_PARKED]!=0));
+//                        } finally {
+//                            MD.setRelease(md, mdb+MD_LOCK, 0);
+//                        }
+//                    }
+//                    log.error("Worker queues: {}", sb);
+//                }
+//                LockSupport.parkNanos(1_000_000L);
+//            }
+//        }
+//    }
 
     private final class Worker extends Thread {
         private final int id;
@@ -230,7 +286,7 @@ public class EmitterService {
                         if ((short)Task.SCHEDULED.compareAndExchange(task, os, (short)0) != os) {
                             // got awake() calls during task.task(), enqueue task again
                             Task.SCHEDULED.setRelease(task, (short)1);
-                            add(task, task.preferredWorker == id);
+                            add(task);
                         }
                     }
                 }
@@ -300,6 +356,7 @@ public class EmitterService {
         sharedScheduler.setName("EmitterService-"+id+"-Scheduler");
         sharedScheduler.setDaemon(true);
         sharedScheduler.start();
+//        new StarvedDetector(grp);
     }
 
     @Override public String toString() {
@@ -427,13 +484,10 @@ public class EmitterService {
      * Tries adding {@code task} to the end of the queue of the {@code task.worker}-th worker.
      *
      * @param task the non-null {@link Task}
-     * @param canUnpark if true and adding to an empty queue, will
-     *                  {@link LockSupport#unpark(Thread)} the worker thread. Should be
-     *                  {@code true} unless the caller is the worker thread itself.
      * @return Whether {@code task} was added to the queue. Will return {@code false} if the
      *         queue was full or if there was too much contention on the spinlock.
      */
-    private boolean tryAdd(Task task, boolean canUnpark) {
+    private boolean tryAdd(Task task) {
         int mdb = task.preferredWorker <<MD_BITS, lockIdx = mdb+MD_LOCK;
         boolean got = false, unpark;
         for (int i = 0; i < 16; i++) {
@@ -460,12 +514,16 @@ public class EmitterService {
                 md[mdb+MD_PUT] = (putIdx+1) & QUEUE_MASK;
             }
             queues[md[mdb+MD_QUEUE_BASE]+putIdx] = task;
-            unpark = canUnpark && md[mdb+MD_PARKED] == 1;
+            unpark = md[mdb+MD_PARKED] == 1;
+            // since this thread will unpark(), subsequent tryAdd() calls will not need to
+            // (unless the queue gets drained by the worker thread or a neighbour).
+            if (unpark)
+                md[mdb+MD_PARKED] = 0;
         } finally {
             MD.setRelease(md, lockIdx, 0);
         }
         if (unpark)
-            LockSupport.unpark(workers[mdb>>MD_BITS]);
+            LockSupport.unpark(workers[mdb >> MD_BITS]);
         return true;
     }
 
@@ -474,24 +532,20 @@ public class EmitterService {
      * queue if the worker queue is full or under heavy contention.
      *
      * @param task the nonnull {@link Task} to add.
-     * @param external whether this is called from anywhere other than {@link Task#run()}.
-     *                 If {@code false} (calling from {@link Task#run()}, will not
-     *                 {@link LockSupport#unpark(Thread)} the preferred worker since the
-     *                 preferred worker thread is running this code
      */
-    private void add(@Async.Schedule Task task, boolean external) {
+    private void add(@Async.Schedule Task task) {
         int size = md[(task.preferredWorker << MD_BITS) + MD_SIZE];
         int overloaded = size < QUEUE_IMBALANCE_CHECK ? QUEUE_IMBALANCE_CHECK
                                                       : 2+(runnerMd[RMD_TASKS]>>threadMaskBits);
         // break affinity if queue is >2 tasks above ideal average, full or under heavy contention
-        if (size > overloaded || !tryAdd(task, external)) {
+        if (size > overloaded || !tryAdd(task)) {
             // before unpark()ing sharedScheduler(), try the right-side worker which is the least
             // likely to steal from this queue
             boolean added = false;
             int nextWorker = (task.preferredWorker +1) & threadsMask;
             if (md[(nextWorker<<MD_BITS) + MD_SIZE] < overloaded) {
                 task.preferredWorker = (short)nextWorker;
-                added = tryAdd(task, true);
+                added = tryAdd(task);
             }
             if (!added)
                 sharedAdd(task);
@@ -546,13 +600,13 @@ public class EmitterService {
             }
             try {
                 if (task != null) {
-                    boolean added = tryAdd(task, true);
+                    boolean added = tryAdd(task);
                     int acceptable = 2 + ((int) MD.getOpaque(runnerMd, RMD_TASKS) >> threadMaskBits);
                     for (int e = w; !added && w <= e; w = (w + 1) & threadsMask) {
                         if ((int) MD.getOpaque(md, (w << MD_BITS) + MD_SIZE) > acceptable)
                             continue; // do not assign to queue above average load
                         task.preferredWorker = (short)w;
-                        added = tryAdd(task, true);
+                        added = tryAdd(task);
                     }
                     if (!added) {
                         sharedPrepend(task); // let workers steal it
