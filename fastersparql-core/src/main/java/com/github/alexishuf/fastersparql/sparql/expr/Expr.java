@@ -397,7 +397,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class NeqEval extends Eval {
             public NeqEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                return l.evaluate(b, row).equals(r.evaluate(b, row)) ? FALSE : TRUE;
+                Term lTerm = l.evaluate(b, row);
+                Term rTerm = r.evaluate(b, row);
+                if (lTerm == rTerm || lTerm == null || rTerm == null) return FALSE;
+                return lTerm.equals(rTerm) ? FALSE : TRUE;
             }
         }
     }
@@ -416,7 +419,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class LtEval extends Eval {
             public LtEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                return l.evaluate(b, row).compareTo(r.evaluate(b, row)) < 0 ? TRUE : FALSE;
+                Term lTerm = l.evaluate(b, row);
+                Term rTerm = r.evaluate(b, row);
+                if (lTerm == rTerm || lTerm == null || rTerm == null) return FALSE;
+                return lTerm.compareTo(rTerm) < 0 ? TRUE : FALSE;
             }
         }
     }
@@ -435,7 +441,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class GtEval extends Eval {
             public GtEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                return l.evaluate(b, row).compareTo(r.evaluate(b, row)) > 0 ? TRUE : FALSE;
+                Term lTerm = l.evaluate(b, row);
+                Term rTerm = r.evaluate(b, row);
+                if (lTerm == rTerm || lTerm == null || rTerm == null) return FALSE;
+                return lTerm.compareTo(rTerm) > 0 ? TRUE : FALSE;
             }
         }
     }
@@ -454,7 +463,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class LteEval extends Eval {
             public LteEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                return l.evaluate(b, row).compareTo(r.evaluate(b, row)) <= 0 ? TRUE : FALSE;
+                Term lTerm = l.evaluate(b, row);
+                Term rTerm = r.evaluate(b, row);
+                if (lTerm == rTerm) return TRUE;
+                if (lTerm == null || rTerm == null) return FALSE;
+                return lTerm.compareTo(rTerm) <= 0 ? TRUE : FALSE;
             }
         }
     }
@@ -473,7 +486,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class GteEval extends Eval {
             public GteEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                return l.evaluate(b, row).compareTo(r.evaluate(b, row)) >= 0 ? TRUE : FALSE;
+                Term lTerm = l.evaluate(b, row);
+                Term rTerm = r.evaluate(b, row);
+                if (lTerm == rTerm) return TRUE;
+                if (lTerm == null || rTerm == null) return FALSE;
+                return lTerm.compareTo(rTerm) >= 0 ? TRUE : FALSE;
             }
         }
     }
