@@ -295,6 +295,8 @@ class BatchTest {
 
     @SuppressWarnings("SimplifiableAssertion")
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
+        expected.requireUnpooled();
+        batch.requireUnpooled();
         Term tmpTerm = Term.pooledMutable();
         TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = TwoSegmentRope.pooled();
         SegmentRope tmpSR = SegmentRope.pooled();
@@ -463,9 +465,9 @@ class BatchTest {
                 assertBatchesEquals(size, halfA, ctx);
                 assertBatchesEquals(size, fullA, ctx);
                 assertBatchesEquals(size, tinyA, ctx);
-                assertBatchesEquals(full, tinyA, ctx);
-                assertBatchesEquals(full, halfA, ctx);
-                assertBatchesEquals(full, fullA, ctx);
+                assertBatchesEquals(other, tinyA, ctx);
+                assertBatchesEquals(other, halfA, ctx);
+                assertBatchesEquals(other, fullA, ctx);
 
                 // validate recycling logic
                 assertSame(tinyA == tiny ? null : tiny, tinyH.rec);

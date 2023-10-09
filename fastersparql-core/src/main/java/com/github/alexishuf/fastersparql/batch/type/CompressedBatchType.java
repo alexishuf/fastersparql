@@ -4,57 +4,96 @@ import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
+import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.DEF_HUGE_LEVEL_CAPACITY;
+import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.LARGE_MAX_CAPACITY;
 
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
-    /**
-     * Offered and required {@link Batch#directBytesCapacity()} should be shifted left by this
-     * constant when determining the level in the {@link LevelPool}. A batch with 1 row and 1
-     * column with an 8-byte local segment in its only term would already report/require a
-     * capacity of 24 bytes.
-     */
-    private static final int POOL_SHIFT = 4;
-    private static final int MIN_TERM_LOCAL_SHIFT = 3;
     public static final CompressedBatchType INSTANCE = new CompressedBatchType();
+    /**
+     * A {@code (1, 1)} batch will report a {@link CompressedBatch#directBytesCapacity()} {@code == 12}.
+     * Shifting the bytes capacity by this ammount will reduce the value so that the tiny-capacity
+     * pool levels do get used.
+     */
+    private static final int POOL_SHIFT = 3;
+
+    static {
+        int offers = Runtime.getRuntime().availableProcessors();
+        int hugeOffers = Math.min(DEF_HUGE_LEVEL_CAPACITY, offers);
+        for (int cap = 1; cap < LARGE_MAX_CAPACITY; cap<<=1) {
+            int terms = cap<<POOL_SHIFT;
+            for (int i = 0; i < offers; i++) {
+                var b = new CompressedBatch(terms, 1, terms * 16);
+                b.markPooled();
+                INSTANCE.pool.offer(b, cap);
+            }
+            for (int i = 0; i < hugeOffers; i++) {
+                var b = new CompressedBatch(terms, 1, terms * 16);
+                b.markPooled();
+                INSTANCE.pool.offer(b, cap);
+            }
+        }
+    }
 
     private CompressedBatchType() {super(CompressedBatch.class);}
 
     public static CompressedBatchType get() { return INSTANCE; }
 
     @Override public CompressedBatch create(int rows, int cols, int bytes) {
-        int terms8 = ((rows*cols)<<3) + ((rows&cols) == 0 ? 1 : 0);
-        int capacity = terms8+(terms8>>1) + (rows<<2);
-
+        int terms = rows*cols, capacity = 12*terms;
+        if (bytes == 0)
+            bytes = capacity;
         var b = pool.getAtLeast(capacity>>POOL_SHIFT);
         if (b == null)
             return new CompressedBatch(rows, cols, bytes);
-        b.unmarkPooled();
-        b.hydrate(rows, cols, bytes);
         BatchEvent.Unpooled.record(capacity);
-        return b;
+        return b.clearAndUnpool(cols);
     }
 
-    static { assert Integer.bitCount(8&(1<<MIN_TERM_LOCAL_SHIFT)) == 1 : "update terms8 below"; }
     @Override public CompressedBatch poll(int rows, int cols, int bytes) {
-        int terms8 = ((rows*cols)<<3) + ((rows&cols) == 0 ? 1 : 0);
-        int capacity = terms8+(terms8>>1) + (rows<<2);
-
+        int terms = rows*cols, capacity = 12*terms;
         var b = pool.getAtLeast(capacity>>POOL_SHIFT);
         if (b != null) {
-            if (b.clearIfFits(rows, cols, bytes)) {
-                b.unmarkPooled();
+            if (b.hasTermsCapacity(terms)) {
                 BatchEvent.Unpooled.record(capacity);
-                return b;
+                return b.clearAndReserveAndUnpool(terms, cols, bytes);
             }
             if (pool.shared.offerToNearest(b, b.directBytesCapacity()) != null)
                 b.markGarbage();
         }
         return null;
+    }
+
+    @Override
+    public CompressedBatch empty(@Nullable CompressedBatch offer, int rows, int cols, int localBytes) {
+        if (offer != null) {
+            offer.clear(cols);
+            return offer;
+        }
+        return create(rows, cols, localBytes);
+    }
+
+    @Override
+    public CompressedBatch reserved(@Nullable CompressedBatch offer, int rows, int cols, int localBytes) {
+        int terms = rows*cols;
+        if (offer != null) {
+            if (offer.hasCapacity(terms, localBytes)) {
+                offer.clear(cols);
+                return offer;
+            } else {
+                recycle(offer);
+            }
+        }
+        int capacity = 12*terms;
+        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
+        if (b == null)
+            return new CompressedBatch(rows, cols, localBytes);
+        BatchEvent.Unpooled.record(capacity);
+        return b.clearAndReserveAndUnpool(terms, cols, localBytes);
     }
 
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
@@ -70,18 +109,29 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         return null;
     }
 
+    @Override public int localBytesRequired(Batch<?> b, int row) {
+        if (b instanceof CompressedBatch cb)
+            return (int)cb.rowOffsetAndLen(row);
+        return coldBytesRequired(b, row);
+    }
+
     @Override public int localBytesRequired(Batch<?> b) {
         if (b instanceof CompressedBatch cb)
             return cb.localBytesUsed();
         return coldBytesRequired(b);
     }
 
+    private static int coldBytesRequired(Batch<?> b, int row) {
+        int sum = 0;
+        if (row < 0 || row  >= b.rows)
+            return 0;
+        for (int c = 0, cols = b.cols; c < cols; c++)
+            sum += b.uncheckedLocalLen(row, c);
+        return sum;
+    }
+
     private static int coldBytesRequired(Batch<?> b) {
-        int required = 0;
-        for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-            for (int c = 0; c < cols; c++) required += b.localLen(r, c);
-        }
-        return required;
+        return b.rows * ((coldBytesRequired(b, 0)&~3) + 4);
     }
 
     @Override public RowBucket<CompressedBatch> createBucket(int rowsCapacity, int cols) {

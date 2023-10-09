@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -50,12 +51,17 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     protected final B doCopy(B dest) {
         int n = rows * cols;
-        dest.reserve(rows, 0);
         arraycopy(arr, 0, dest.arr, 0, n);
         arraycopy(hashes, 0, dest.hashes, 0, n);
         dest.rows = rows;
-        dest.cols = cols;
         return dest;
+    }
+    protected final B doCopy(int row, B dst) {
+        int cols = this.cols, srcPos = row*cols;
+        arraycopy(arr,    srcPos, dst.arr,    0, cols);
+        arraycopy(hashes, srcPos, dst.hashes, 0, cols);
+        dst.rows = 1;
+        return dst;
     }
 
     public void recycleInternals() {
@@ -72,8 +78,17 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public long[] arr() { return arr; }
 
-    @Override public int      directBytesCapacity()                            { return arr.length*8;}
-    @Override public int      rowsCapacity()                                   { return arr.length/Math.max(1, cols); }
+    @Override public int directBytesCapacity() { return arr.length*8;}
+    @Override public int rowsCapacity()        { return arr.length/Math.max(1, cols); }
+
+    @Override public boolean hasCapacity(int terms, int localBytes) {
+        return terms <= arr.length && terms <= hashes.length;
+    }
+
+    @Override public boolean hasCapacity(int rows, int cols, int localBytes) {
+        int terms = rows*cols;
+        return terms <= arr.length && terms <= hashes.length;
+    }
 
     /* --- --- --- helpers --- --- --- */
     protected Term cachedTerm(int addr) {
@@ -115,19 +130,33 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             hashes = grow(hashes, required);
     }
 
-    public boolean clearIfFitsTerms(int terms, int cols) {
-        if (terms <= arr.length && terms <= hashes.length) {
-            this.rows = 0;
-            this.cols = cols;
-            cacheTerm(-1, null);
-            return true;
-        }
-        return false;
+    @Override public void clear(int cols) {
+        this.cols       = cols;
+        this.rows       =    0;
+        this.cachedAddr =   -1;
+        this.cachedTerm = null;
     }
-    @Override public void clear(int newColumns) {
-        rows = 0;
-        cols = newColumns;
-        cacheTerm(-1, null);
+
+    public @This B clearAndUnpool(int cols) {
+        this.cols       = cols;
+        this.rows       =    0;
+        this.cachedAddr =   -1;
+        this.cachedTerm = null;
+        unmarkPooled();
+        //noinspection unchecked
+        return (B)this;
+    }
+
+    public @This B clearAndReserveAndUnpool(int rows, int cols) {
+        this.cols       = cols;
+        this.rows       =    0;
+        this.cachedAddr =   -1;
+        this.cachedTerm = null;
+        int terms = rows*cols;
+        if (terms >    arr.length) arr    = longsAtLeast(terms,    arr);
+        if (terms > hashes.length) hashes =  intsAtLeast(terms, hashes);
+        //noinspection unchecked
+        return (B)this;
     }
 
     public void dropCachedHashes() { Arrays.fill(hashes, 0, rows*cols, 0); }

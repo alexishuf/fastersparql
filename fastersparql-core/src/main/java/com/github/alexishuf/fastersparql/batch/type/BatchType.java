@@ -103,26 +103,14 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @return {@code offer}, cleared with {@code cols} columns or a new batch with space
      *         to fit {@code rows} and {@code localBytes} bytes of local segments.
      */
-    public B empty(@Nullable B offer, int rows, int cols, int localBytes) {
-        if (offer == null)
-            return create(rows, cols, localBytes);
-        offer.clear(cols);
-        return offer;
-    }
+    public abstract B empty(@Nullable B offer, int rows, int cols, int localBytes);
 
     /**
      * Analogous to {@link #empty(Batch, int, int, int)} but calls {@link Batch#reserve(int, int)}
      * on {@code offer}, if not null, to ensure it can fit the required {@code rows} and
      * {@code localBytes}.
      */
-    public B reserved(@Nullable B offer, int rows, int cols, int localBytes) {
-        if (offer == null)
-            offer = create(rows, cols, localBytes);
-        else
-            offer.clear(cols);
-        offer.reserve(rows, localBytes);
-        return offer;
-    }
+    public abstract B reserved(@Nullable B offer, int rows, int cols, int localBytes);
 
     /**
      * Create a batch that will very likely hold at most single row.
@@ -134,7 +122,7 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
 
     /**
      * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
-     * whose resulting batch will be target of a {@link Batch#putConverting(Batch)}.
+     * whose resulting batch will be the target of a {@link Batch#putConverting(Batch)}.
      *
      * <p>Example usage:</p>
      *
@@ -146,7 +134,24 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param b a batch for which bytes usage of local segments will be computed
      * @return the required number of bytes
      */
-    public int localBytesRequired(Batch<?> b) { return b.localBytesUsed(); }
+    public int localBytesRequired(Batch<?> b) { return 0; }
+
+    /**
+     * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
+     * whose resulting batch will be the target of a {@link Batch#putRowConverting(Batch, int)}.
+     *
+     * <p>Example usage:</p>
+     *
+     * <pre>{@code
+     *   B converted = type.create(b.rows, b.cols, type.bytesCapacity(b, row))
+     *   converted.putConverting(b, row)
+     * }</pre>
+     *
+     * @param b a batch for which bytes usage of local segments will be computed
+     * @param row the row of {@code b} that will be copied
+     * @return the required number of bytes
+     */
+    public int localBytesRequired(Batch<?> b, int row) { return 0; }
 
     /**
      * Convert/copy a single batch.

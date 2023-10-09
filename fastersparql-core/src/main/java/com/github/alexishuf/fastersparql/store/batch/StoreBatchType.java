@@ -14,15 +14,28 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
+import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.DEF_HUGE_LEVEL_CAPACITY;
+import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.LARGE_MAX_CAPACITY;
 
 public class StoreBatchType extends BatchType<StoreBatch> {
-    /**
-     * A batch with 1 row and 1 column will report/require a
-     * {@link StoreBatch#directBytesCapacity()} of 12. Applying {@code >> POOL_SHIFT}, turns
-     * ensures that the lower pool levels also get used.
-     */
-    private static final int POOL_SHIFT = 3;
     public static final StoreBatchType INSTANCE = new StoreBatchType();
+
+    static {
+        int offers = Runtime.getRuntime().availableProcessors();
+        int hugeOffers = Math.min(DEF_HUGE_LEVEL_CAPACITY, offers);
+        for (int cap = 1; cap < LARGE_MAX_CAPACITY; cap<<=1) {
+            for (int i = 0; i < offers; i++) {
+                var b = new StoreBatch(cap, 1);
+                b.markPooled();
+                INSTANCE.pool.offer(b, cap);
+            }
+            for (int i = 0; i < hugeOffers; i++) {
+                var b = new StoreBatch(cap, 1);
+                b.markPooled();
+                INSTANCE.pool.offer(b, cap);
+            }
+        }
+    }
 
     public StoreBatchType() {super(StoreBatch.class);}
 
@@ -31,9 +44,8 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         StoreBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new StoreBatch(rowsCapacity, cols);
-        b.unmarkPooled();
-        b.clear(cols);
-        BatchEvent.Unpooled.record(capacity<<POOL_SHIFT);
+        BatchEvent.Unpooled.record(12*capacity);
+        b.clearAndUnpool(cols);
         return b;
     }
 
@@ -41,10 +53,9 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         int terms = rowsCapacity * cols;
         var b = pool.getAtLeast(terms);
         if (b != null) {
-            if (b.clearIfFitsTerms(terms, cols)) {
-                b.unmarkPooled();
+            if (b.hasCapacity(terms, 0)) {
                 BatchEvent.Unpooled.record(terms);
-                return b;
+                return b.clearAndUnpool(cols);
             } else {
                 if (pool.shared.offerToNearest(b, terms) != null)
                     b.markGarbage();
@@ -53,15 +64,41 @@ public class StoreBatchType extends BatchType<StoreBatch> {
         return null;
     }
 
+    @Override
+    public StoreBatch empty(@Nullable StoreBatch offer, int rows, int cols, int localBytes) {
+        if (offer != null) {
+            offer.clear(cols);
+            return offer;
+        }
+        return create(rows, cols, localBytes);
+    }
+
+    @Override
+    public StoreBatch reserved(@Nullable StoreBatch offer, int rows, int cols, int localBytes) {
+        int terms = rows*cols;
+        if (offer != null) {
+            if (offer.hasCapacity(terms, 0)) {
+                offer.clear(cols);
+                return offer;
+            }
+            recycle(offer);
+        }
+        StoreBatch b = pool.getAtLeast(terms);
+        if (b == null)
+            return new StoreBatch(rows, cols);
+        BatchEvent.Unpooled.record(terms);
+        return b.clearAndReserveAndUnpool(rows, cols);
+    }
+
     @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
         if (batch == null) return null;
         int capacity = batch.directBytesCapacity();
         batch.markPooled();
-        if (pool.offerToNearest(batch, capacity>>POOL_SHIFT) == null) {
-            BatchEvent.Pooled.record(capacity);
+        if (pool.offerToNearest(batch, capacity) == null) {
+            BatchEvent.Pooled.record(12*capacity);
         } else {
             batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
-            BatchEvent.Garbage.record(capacity);
+            BatchEvent.Garbage.record(12*capacity);
         }
         return null;
     }

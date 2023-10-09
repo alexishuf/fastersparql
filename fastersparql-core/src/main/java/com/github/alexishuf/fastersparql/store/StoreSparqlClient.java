@@ -5,10 +5,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
-import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
@@ -992,19 +989,29 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     private final class FromStoreConverter<B extends Batch<B>> extends ConverterStage<StoreBatch, B> {
         private final LocalityCompositeDict.Lookup lookup;
+        private int avgRowLocalLen;
 
         public FromStoreConverter(BatchType<B> type, Emitter<StoreBatch> upstream) {
             super(type, upstream);
             this.lookup = dict.lookup();
+            avgRowLocalLen = 12*upstream.vars().size();
         }
 
         @Override protected B putConverting(B dst, StoreBatch src) {
-            int cols = src.cols, rows = src.rows;
+            int cols = src.cols, rows = src.rows, terms = rows*cols;
+            if (terms == 0) return dst;
             if (dst.cols != cols) throw new IllegalArgumentException("cols mismatch");
             long[] ids = src.arr;
-            dst.reserve(rows, 8*rows);
-            for (int base = 0, end = rows*cols; base < end; base += cols)
+            int rll = this.avgRowLocalLen;
+            if (dst instanceof CompressedBatch cb) {
+                //noinspection unchecked
+                dst =(B)cb.choosePutDst(rows, rows*rll);
+            } else {
+                dst.reserve(rows, rows*rll);
+            }
+            for (int base = 0; base < terms; base += cols)
                 putRowConverting(dst, ids, cols, base);
+            this.avgRowLocalLen = (7*rll + dst.localBytesUsed()/dst.rows)>>3;
             return dst;
         }
 
@@ -1013,25 +1020,29 @@ public class StoreSparqlClient extends AbstractSparqlClient
             putRowConverting(dest, input.arr, cols, cols*row);
         }
 
+        private SegmentRope shared(TwoSegmentRope t, byte fst) {
+            return switch (fst) {
+                case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+                case '<' -> {
+                    if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                    int slot = (int)(t.fstOff & PREFIXES_MASK);
+                    var cached = prefixes[slot];
+                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
+                        prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                    yield cached;
+                }
+                case '_' -> ByteRope.EMPTY;
+                default -> throw new IllegalArgumentException("Not an RDF term");
+            };
+        }
+
         private void putRowConverting(B dest, long[] ids, int cols, int base) {
             dest.beginPut();
             for (int c = 0; c < cols; c++) {
-                TwoSegmentRope t = lookup.get(unsource(ids[base + c]));
+                var t = lookup.get(unsource(ids[base + c]));
                 if (t == null) continue;
                 byte fst = t.get(0);
-                SegmentRope sh = switch (fst) {
-                    case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                    case '<' -> {
-                        if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
-                        int slot = (int)(t.fstOff & PREFIXES_MASK);
-                        var cached = prefixes[slot];
-                        if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
-                            prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
-                        yield cached;
-                    }
-                    case '_' -> ByteRope.EMPTY;
-                    default -> throw new IllegalArgumentException("Not an RDF term");
-                };
+                var sh = shared(t, fst);
                 int localOff = fst == '<' ? sh.len : 0;
                 dest.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
             }

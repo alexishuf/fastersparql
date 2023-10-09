@@ -193,12 +193,31 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract B copy(@Nullable B offer);
 
     /**
-     * How many bytes should be given to {@link #reserve(int, int)} {@code bytes}
-     * parameter so that {@code putRows(this, 0, rows)} does not trigger an allocation.
+     * The total number of bytes being actively used by this batch instance to store local
+     * segments of terms.
      *
-     * @return how many bytes are being currently used.
+     * <p>Batches that do not directly store local segments will return 0. {@link CompressedBatch}
+     * may return a value larger than the sum of all local segments if it has undergone an
+     * in-place projection.</p>
+     *
+     * @return the number of bytes being used to store local segments of terms in this batch.
      */
     public int localBytesUsed() { return 0; }
+
+    /**
+     * How many bytes are being used by the {@code row}-th row of this batch to store local
+     * segments of terms.
+     *
+     * <p>For implementations that do not store directly such segments, this will return 0. For
+     * {@link CompressedBatch}, this may return a value larger than the sum of
+     * {@link #localLen(int, int)} of all terms in case the local segments are not contiguous
+     * (which may happen due to an in-place projection).</p>
+     *
+     * @param row the row to compute the number of bytes reserved for
+     * @return the number of bytes reserved for locals segments of the given row.
+     *         Will return zero if {@code row} is out of bounds
+     */
+    public int localBytesUsed(int row) {  return 0; }
 
     /**
      * Total number of bytes that this batch directly holds.
@@ -221,6 +240,21 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract int directBytesCapacity();
 
     public abstract int rowsCapacity();
+
+    /**
+     * Equivalent to {@link #hasCapacity(int, int)} with {@code terms=rows*cols}
+     */
+    public abstract boolean hasCapacity(int rows, int cols, int localBytes);
+
+    /**
+     * Whether this batch, can hold {@code terms=rows*cols} terms summing {@code localBytes}
+     * UTF-8 bytes of local segments, including new rows and rows already in this batch.
+     *
+     * @param terms total number of terms: {@code rows*cols}
+     * @param localBytes sum of UTF-8 bytes of all local segments of all terms.
+     * @return true iff this batch can hold that many terms after a {@link #clear(int)}.
+     */
+    public abstract boolean hasCapacity(int terms, int localBytes);
 
     /**
      * <strong>USE ONLY FOR TESTING</strong>
@@ -299,14 +333,6 @@ public abstract class Batch<B extends Batch<B>> {
         return acc;
     }
 
-    /**
-     * How many bytes should be given to {@link #reserve(int, int)} {@code bytes}
-     * parameter so that {@code putRows(this, row, row+1)} does not trigger an allocation.
-     *
-     * @param row the row index
-     */
-    public int localBytesUsed(int row) { return cols<<3; }
-
     /** Whether rows {@code row} in {@code this} and {@code oRow} in {@code other} have the
      *  same number of columns with equal {@link Term}s in them. */
     public boolean equals(int row, B other, int oRow) {
@@ -345,6 +371,8 @@ public abstract class Batch<B extends Batch<B>> {
         sb.unAppend(2);
         return sb.append(']').toString();
     }
+
+    public abstract B copyRow(int row, @Nullable B offer);
 
     protected String mkOutOfBoundsMsg(int row) {
         return "row "+row+" is out of bounds for cols="+cols+")";
@@ -459,6 +487,11 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     public int localLen(@NonNegative int row, @NonNegative int col) {
+        Term t = get(row, col);
+        return t == null ? 0 : t.local().len;
+    }
+
+    public int uncheckedLocalLen(@NonNegative int row, @NonNegative int col) {
         Term t = get(row, col);
         return t == null ? 0 : t.local().len;
     }
@@ -705,14 +738,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param other source of a row to copy
      * @param row index of the row to copy from {@code other}
      */
-    public void putRow(B other, int row) {
-        int cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException();
-        reserve(1, other.localBytesUsed(row));
-        beginPut();
-        for (int c = 0; c < cols; c++) putTerm(c, other, row, c);
-        commitPut();
-    }
+    public abstract void putRow(B other, int row);
 
     /**
      * Equivalent to:

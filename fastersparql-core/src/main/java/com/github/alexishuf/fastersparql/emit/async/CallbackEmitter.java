@@ -108,10 +108,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 throw TerminatedException.INSTANCE;
             } else {
                 B dst;
-                if      (b1 != null) dst = b1;
-                else if (b0 != null) dst = b0;
-                else
-                    dst = b0 = batchType.create(avgRows, batch.cols, batch.localBytesUsed()/batch.rows);
+                if (b1 != null){
+                    dst = b1;
+                } else if (b0 != null) {
+                    dst = b0;
+                } else {
+                    int bytes = avgRows * (batch.localBytesUsed()/batch.rows);
+                    dst = b0 = batchType.create(avgRows, batch.cols, bytes);
+                }
                 dst.putRow(batch, row);
             }
         } finally {

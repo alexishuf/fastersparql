@@ -27,11 +27,8 @@ public interface Receiver<B extends Batch<B>> extends StreamNode {
      */
     default void onRow(B batch, int row) {
         if (batch == null) return;
-        B tmp = batch.type().create(1, batch.cols, batch.localBytesUsed(row));
-        tmp.putRow(batch, row);
-        tmp = onBatch(tmp);
-        if (tmp != null)
-            tmp.recycle();
+        B tmp = onBatch(batch.copyRow(row, null));
+        if (tmp != null) tmp.recycle();
     }
 
     /**

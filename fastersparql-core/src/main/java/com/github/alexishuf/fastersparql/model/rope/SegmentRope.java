@@ -160,8 +160,6 @@ public class SegmentRope extends PlainRope {
         int rLen = rangeLen(begin, end);
         if (U == null)
             return copySafe(begin, rLen, dest, offset);
-        if (offset+rLen > dest.length)
-            throw new IndexOutOfBoundsException("Copying [begin, end) to dest at offset overflows");
         U.copyMemory(utf8, segment.address()+this.offset+begin+(utf8==null ? 0 : U8_BASE),
                      dest, U8_BASE+offset, rLen);
         return dest;

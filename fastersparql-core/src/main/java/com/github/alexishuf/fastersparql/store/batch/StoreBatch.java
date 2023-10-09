@@ -48,6 +48,10 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         return doCopy(TYPE.reserved(offer, rows, cols, 0));
     }
 
+    @Override public StoreBatch copyRow(int row, @Nullable StoreBatch offer) {
+        return doCopy(row, TYPE.reserved(offer, 1, cols, 0));
+    }
+
     /* --- --- --- term-level accessors --- --- --- */
 
     @Override public int hash(int row, int col) {
@@ -238,14 +242,22 @@ public class StoreBatch extends IdBatch<StoreBatch> {
                 : 0;
     }
 
+    @Override public int uncheckedLocalLen(@NonNegative int row, @NonNegative int col) {
+        long sourcedId = arr[row * cols + col], id;
+        if ((id = unsource(sourcedId)) == NOT_FOUND)
+            return 0;
+        var lookup = lookup(dictId(sourcedId));
+        TwoSegmentRope tsr = lookup.get(id);
+        return tsr == null ? 0 : lookup.sharedSuffixed(id) ? tsr.fstLen : tsr.sndLen;
+    }
+
     @Override public int localLen(@NonNegative int row, @NonNegative int col) {
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
 
-        long sourcedId = arr[row * cols + col];
-        if (sourcedId == NOT_FOUND)
+        long sourcedId = arr[row * cols + col], id;
+        if ((id = unsource(sourcedId)) == NOT_FOUND)
             return 0;
-        long id = unsource(sourcedId);
         var lookup = lookup(dictId(sourcedId));
         TwoSegmentRope tsr = lookup.get(id);
         return tsr == null ? 0 : lookup.sharedSuffixed(id) ? tsr.fstLen : tsr.sndLen;

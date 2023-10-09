@@ -16,12 +16,6 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSou
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 
 public class HdtBatchType extends BatchType<HdtBatch> {
-    /**
-     * A batch with 1 row and 1 column will report/require a
-     * {@link HdtBatch#directBytesCapacity()} of 12. Applying {@code >> POOL_SHIFT}, turns
-     * ensures that the lower pool levels also get used.
-     */
-    private static final int POOL_SHIFT = 3;
     public static final HdtBatchType INSTANCE = new HdtBatchType();
 
     public HdtBatchType() {super(HdtBatch.class);}
@@ -31,20 +25,17 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         HdtBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new HdtBatch(rowsCapacity, cols);
-        b.unmarkPooled();
-        b.clear(cols);
-        BatchEvent.Unpooled.record(capacity<<POOL_SHIFT);
-        return b;
+        BatchEvent.Unpooled.record(12*capacity);
+        return b.clearAndUnpool(cols);
     }
 
     @Override public @Nullable HdtBatch poll(int rowsCapacity, int cols, int localBytes) {
         int terms = rowsCapacity*cols;
         var b = pool.getAtLeast(terms);
         if (b != null) {
-            if (b.clearIfFitsTerms(terms, cols)) {
-                b.unmarkPooled();
+            if (b.hasCapacity(terms, 0)) {
                 BatchEvent.Unpooled.record(terms);
-                return b;
+                return b.clearAndUnpool(cols);
             } else {
                 if (pool.shared.offerToNearest(b, terms) != null)
                     b.markGarbage();
@@ -53,15 +44,41 @@ public class HdtBatchType extends BatchType<HdtBatch> {
         return null;
     }
 
+    @Override public HdtBatch empty(@Nullable HdtBatch offer, int rows, int cols, int localBytes) {
+        if (offer != null) {
+            offer.clear(cols);
+            return offer;
+        }
+        return create(rows, cols, 0);
+    }
+
+    @Override
+    public HdtBatch reserved(@Nullable HdtBatch offer, int rows, int cols, int localBytes) {
+        int terms = rows*cols;
+        if (offer != null) {
+            if (offer.hasCapacity(terms, 0)) {
+                offer.clear(cols);
+                return offer;
+            } else {
+                recycle(offer);
+            }
+        }
+        var b = pool.getAtLeast(terms);
+        if (b == null)
+            return new HdtBatch(rows, cols);
+        BatchEvent.Unpooled.record(terms);
+        return b.clearAndReserveAndUnpool(rows, cols);
+    }
+
     @Override public @Nullable HdtBatch recycle(@Nullable HdtBatch batch) {
         if (batch == null) return null;
         batch.markPooled();
         int capacity = batch.directBytesCapacity();
-        if (pool.offerToNearest(batch, capacity>>POOL_SHIFT) == null) {
-            BatchEvent.Pooled.record(capacity);
+        if (pool.offerToNearest(batch, capacity) == null) {
+            BatchEvent.Pooled.record(12*capacity);
         } else {
             batch.recycleInternals();
-            BatchEvent.Garbage.record(capacity);
+            BatchEvent.Garbage.record(12*capacity);
         }
         return null;
     }

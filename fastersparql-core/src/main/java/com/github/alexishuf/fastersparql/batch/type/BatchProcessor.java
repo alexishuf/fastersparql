@@ -21,6 +21,9 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
+
 public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implements Stage<B, B> {
     protected static final VarHandle RECYCLED;
     static {
@@ -193,11 +196,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
 
     @Override public void onRow(B batch, int row) {
-        if (batch == null) return;
-        B tmp = batch.type().empty(Batch.asUnpooled(recycled), 1, batch.cols, batch.localBytesUsed(row));
-        recycled = null;
-        tmp.putRow(batch, row);
-        recycled = Batch.asPooled(onBatch(tmp));
+        if (batch != null)
+            recycled = asPooled(onBatch(batch.copyRow(row, asUnpooled(recycled))));
     }
 
     @Override public final void onComplete() {
@@ -284,7 +284,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     protected final B getBatch(int rows, int cols, int localBytes) {
         if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
-            var b = batchType.empty(Batch.asUnpooled(recycled), rows, cols, localBytes);
+            var b = batchType.empty(asUnpooled(recycled), rows, cols, localBytes);
             recycled = null;
             return b;
         } else {

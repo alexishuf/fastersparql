@@ -187,15 +187,15 @@ public class EmitterService {
 //                        while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
 //                            onSpinWait();
 //                        try {
-//                            sb.append(format("\nworker %02d %3d tasks, parked=%b",
-//                                             i, md[mdb+MD_SIZE], md[mdb+MD_PARKED]!=0));
+//                            sb.append(String.format("\nworker %02d %3d tasks, parked=%b",
+//                                                    i, md[mdb+MD_SIZE], md[mdb+MD_PARKED]!=0));
 //                        } finally {
 //                            MD.setRelease(md, mdb+MD_LOCK, 0);
 //                        }
 //                    }
 //                    log.error("Worker queues: {}", sb);
 //                }
-//                LockSupport.parkNanos(1_000_000L);
+//                LockSupport.parkNanos(1_000_000_000L);
 //            }
 //        }
 //    }

@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -24,10 +25,39 @@ public final class TermBatchType extends BatchType<TermBatch> {
         TermBatch b = pool.getAtLeast(capacity);
         if (b == null)
             return new TermBatch(rowsCapacity, cols);
-        b.unmarkPooled();
         BatchEvent.Unpooled.record(capacity);
         b.clear(cols);
+        b.unmarkPooled();
         return b;
+    }
+
+    @Override
+    public TermBatch empty(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
+        if (offer != null) {
+            offer.clear(cols);
+            return offer;
+        }
+        return create(rows, cols, 0);
+    }
+
+    @Override
+    public TermBatch reserved(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
+        int capacity = rows*cols;
+        if (offer != null) {
+            offer.clear(cols);
+            if (offer.arr.length >= capacity)
+                return offer;
+            recycle(offer);
+        }
+        var b = pool.getAtLeast(capacity);
+        if (b != null) {
+            if (b.arr.length < capacity)
+                b.arr = new Term[Math.min(capacity, b.arr.length<<1)];
+            b.clear(cols);
+            b.unmarkPooled();
+            return b;
+        }
+        return new TermBatch(capacity, cols);
     }
 
     @Override public @Nullable TermBatch poll(int rowsCapacity, int cols, int localBytes) {
@@ -35,9 +65,9 @@ public final class TermBatchType extends BatchType<TermBatch> {
         var b = pool.getAtLeast(capacity);
         if (b != null) {
             if (capacity <= b.arr.length) {
-                b.unmarkPooled();
-                b.clear(cols);
                 BatchEvent.Unpooled.record(capacity);
+                b.clear(cols);
+                b.unmarkPooled();
                 return b;
             } else {
                 if (pool.shared.offerToNearest(b, capacity) != null)

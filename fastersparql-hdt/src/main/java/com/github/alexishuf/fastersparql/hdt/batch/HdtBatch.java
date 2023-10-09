@@ -42,6 +42,10 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         return doCopy(TYPE.reserved(offer, rows, cols, 0));
     }
 
+    @Override public HdtBatch copyRow(int row, @Nullable HdtBatch offer) {
+        return doCopy(row, TYPE.reserved(offer, 1, cols, 0));
+    }
+
     /* --- --- --- term-level accessors --- --- --- */
 
     @Override public int hash(int row, int col) {

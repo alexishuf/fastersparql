@@ -54,14 +54,6 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                 | (d[i4+3] & 0xff) << 24;
     }
 
-    private static void write(byte[] d, int i, int val) {
-        int i4 = i<<2;
-        d[i4  ] = (byte)(val       );
-        d[i4+1] = (byte)(val >>>  8);
-        d[i4+2] = (byte)(val >>> 16);
-        d[i4+3] = (byte)(val >>> 24);
-    }
-
     private static void clearRowsData(byte[][] d) {
         int i = 0;
         for(; i < d.length; ++i) {
@@ -172,16 +164,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     }
 
     @Override public void set(int dst, CompressedBatch batch, int row) {
-        byte[] d = rowsData[dst];
-        int out = cols * 8, shOut = dst * cols;
-        d = bytesAtLeast(batch.localBytesUsed(row) + out, d);
-        for (int c = 0, c2, cols = this.cols; c < cols; c++) {
-            shared[shOut++] = batch.sharedUnchecked(row, c);
-            write(d, (c2=c<<1)+SL_OFF, out);
-            write(d, c2       +SL_LEN, batch.flaggedLen(row, c));
-            out += batch.copyLocal(row, c, d, out);
-        }
-        rowsData[dst] = d;
+        rowsData[dst] = batch.copyToBucket(rowsData[dst], shared, dst, row);
     }
 
     @Override public void set(int dst, int src) {

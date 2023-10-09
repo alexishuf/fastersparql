@@ -93,22 +93,31 @@ public final class TermBatch extends Batch<TermBatch> {
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public TermBatchType type() { return TERM; }
+    @Override public TermBatchType type()                { return TERM; }
+    @Override public int           directBytesCapacity() { return arr.length; }
+    @Override public int           rowsCapacity()        { return arr.length/Math.max(1, cols); }
+
+    @Override public boolean hasCapacity(int terms, int localBytes) {
+        return terms <= arr.length;
+    }
+
+    @Override public boolean hasCapacity(int rows, int cols, int localBytes) {
+        int terms = rows*cols;
+        return terms <= arr.length;
+    }
 
     @Override public TermBatch copy(@Nullable TermBatch dest) {
         dest = TERM.reserved(dest, rows, cols, 0);
         System.arraycopy(arr, 0, dest.arr, 0, rows*cols);
         dest.rows = rows;
-        dest.cols = cols;
         return dest;
     }
 
-    @Override public int directBytesCapacity() {
-        return arr.length;
-    }
-
-    @Override public int rowsCapacity() {
-        return arr.length/Math.max(1, cols);
+    @Override public TermBatch copyRow(int row, @Nullable TermBatch dst) {
+        dst = TERM.reserved(dst, 1, cols, 0);
+        arraycopy(arr, 0, dst.arr, 0, cols);
+        dst.rows = 1;
+        return dst;
     }
 
     /* --- --- --- term accessors --- --- --- */
