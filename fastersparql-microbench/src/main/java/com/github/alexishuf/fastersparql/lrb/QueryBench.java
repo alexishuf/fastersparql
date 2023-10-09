@@ -245,12 +245,15 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
         lastBenchResult = -1;
+        int slack = Math.min(2_000, 50+iterationMs);
+        if (slack > 600)
+            System.out.printf("dynamic thermal slack: %dms\n", slack);
         // do I/O, garbage collection and let the CPU cool down.
         PoolCleaner.INSTANCE.sync();
         IOUtils.fsync(50_000);
         if ((iterationNumber&1) == 0)
             System.gc();
-        Async.uninterruptibleSleep(Math.max(1_000, 50+iterationMs));
+        Async.uninterruptibleSleep(slack);
         iterationStart = Timestamp.nanoTime();
     }
 
