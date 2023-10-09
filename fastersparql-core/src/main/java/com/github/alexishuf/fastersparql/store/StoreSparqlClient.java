@@ -148,7 +148,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     }
 
     public class Guard extends RefGuard {
-        public Guard() { acquireRef(); }
+        public Guard() { }
         public StoreSparqlClient get() { return StoreSparqlClient.this; }
     }
 
