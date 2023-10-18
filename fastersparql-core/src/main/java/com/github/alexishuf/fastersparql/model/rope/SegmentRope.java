@@ -520,6 +520,16 @@ public class SegmentRope extends PlainRope {
         }
     }
 
+    @Override public boolean equals(Object o) {
+        if (o instanceof SegmentRope r) {
+            int rLen = r.len;
+            if (rLen != len) return false;
+            if (r.utf8 == utf8 && r.segment == segment && r.offset == offset) return true;
+            return has(0, r, 0, rLen);
+        }
+        return super.equals(o);
+    }
+
     @Override public boolean hasAnyCase(int position, byte[] uppercaseSequence) {
         if (position < 0) throw new IndexOutOfBoundsException(position);
         if (position + uppercaseSequence.length > len) return false;

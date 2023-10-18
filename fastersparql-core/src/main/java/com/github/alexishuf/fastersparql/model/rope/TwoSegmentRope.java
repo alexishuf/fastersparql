@@ -375,6 +375,30 @@ public class TwoSegmentRope extends PlainRope {
         }
     }
 
+    @Override public boolean equals(Object o) {
+        if (o instanceof TwoSegmentRope r) {
+            if (r.len != len) {
+                return false;
+            } else if (fst == r.fst && snd == r.snd && fstOff == r.fstOff && sndOff == r.sndOff
+                                             && fstLen == r.fstLen && sndLen == r.sndLen) {
+                return true;
+            } else if (HAS_UNSAFE) {
+                return compare2_2(fstU8, fstOff+fst.address(), fstLen,
+                                  sndU8, sndOff+snd.address(), sndLen,
+                                  r.fstU8, r.fstOff+r.fst.address(), r.fstLen,
+                                  r.sndU8, r.sndOff+r.snd.address(), r.sndLen) == 0;
+            } else {
+                return safeEqualsTSR(r);
+            }
+        }
+        return super.equals(o);
+    }
+
+    private boolean safeEqualsTSR(TwoSegmentRope r) {
+        return compare2_2(  fst,   fstOff,   fstLen, snd,   sndOff,   sndLen,
+                          r.fst, r.fstOff, r.fstLen, r.snd, r.sndOff, r.sndLen) == 0;
+    }
+
     @Override public int fastHash(int begin, int end) {
         int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
         if (begin+nFst < fstLen) {
