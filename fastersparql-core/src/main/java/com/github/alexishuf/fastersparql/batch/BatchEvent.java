@@ -74,13 +74,25 @@ public abstract class BatchEvent extends Event {
                      leaked,                  (int)CREATED.getOpaque(),  (int)GROWN.getOpaque());
     }
 
+    @DataAmount @Label("Capacity (terms)")
+    @Description("How many terms (rows*columns) the batch can hold after a clear() without " +
+                 "requiring re-allocation of internal data structures")
+    public int termsCapacity;
+
     @DataAmount @Label("Capacity (bytes)")
     @Description("How many bytes of storage the batch directly held. Note that a batch may " +
-                 "hold more bytes than required by its current number of rows and columns. Also " +
-                 "note that some batch implementations hold references to objects that hold the " +
-                 "actual string representation of RDF terms instead of holding the strings " +
-                 "directly.")
-    public int capacity;
+            "hold more bytes than required by its current number of rows and columns. Also " +
+            "note that some batch implementations hold references to objects that hold the " +
+            "actual string representation of RDF terms instead of holding the strings " +
+            "directly.")
+    public int bytesCapacity;
+
+    protected void fillCommitAndRecycle(Batch<?> b, int poolCol) {
+        termsCapacity = b.termsCapacity();
+        bytesCapacity = b.totalBytesCapacity();
+        commit();
+        GlobalAffinityShallowPool.offer(poolCol, this);
+    }
 
     @Label("Batch pooled")
     @Name("com.github.alexishuf.fastersparql.batch.Pooled")
@@ -89,14 +101,11 @@ public abstract class BatchEvent extends Event {
         private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
         /** Creates and {@link Event#commit()}s a {@link Pooled} event with given {@code capacity}. */
-        public static void record(int capacity) {
+        public static void record(Batch<?> batch) {
             if (!RECORD) return;
             POOLED.getAndAddRelease(1);
             Pooled e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Pooled();
-            e.capacity = capacity;
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            (e == null ? new Pooled() : e).fillCommitAndRecycle(batch, POOL_COL);
         }
     }
 
@@ -107,14 +116,11 @@ public abstract class BatchEvent extends Event {
         private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
         /** Creates and {@link #commit()}s a {@link Unpooled} event with given {@code capacity}. */
-        public static void record(int capacity) {
+        public static void record(Batch<?> batch) {
             if (!RECORD) return;
             UNPOOLED.getAndAddRelease(1);
             Unpooled e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Unpooled();
-            e.capacity = capacity;
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            (e == null ? new Unpooled() : e).fillCommitAndRecycle(batch, POOL_COL);
         }
     }
 
@@ -125,14 +131,11 @@ public abstract class BatchEvent extends Event {
         private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
         /** Creates and {@link #commit()}s a {@link Created} event for the given {@code batch}. */
-        public static void record(Batch<?> b) {
+        public static void record(Batch<?> batch) {
             if (!RECORD) return;
             CREATED.getAndAddRelease(1);
             Created e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Created();
-            e.capacity = b.directBytesCapacity();
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            (e == null ? new Created() : e).fillCommitAndRecycle(batch, POOL_COL);
         }
     }
 
@@ -150,10 +153,7 @@ public abstract class BatchEvent extends Event {
             if (!RECORD) return;
             LEAKED.getAndAddRelease(1);
             Leaked e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Leaked();
-            e.capacity = b.directBytesCapacity();
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            (e == null ? new Leaked() : e).fillCommitAndRecycle(b, POOL_COL);
         }
     }
 
@@ -164,35 +164,47 @@ public abstract class BatchEvent extends Event {
         private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
         /** Creates and {@link #commit()}s a {@link Garbage} event with given {@code capacity}. */
-        public static void record(int capacity) {
+        public static void record(Batch<?> batch) {
             if (!RECORD) return;
             GARBAGE.getAndAddRelease(1);
             Garbage e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Garbage();
-            e.capacity = capacity;
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            (e == null ? new Garbage() : e).fillCommitAndRecycle(batch, POOL_COL);
         }
     }
 
-    @Label("Batch internal storage grown")
-    @Name("com.github.alexishuf.fastersparql.batch.Grown")
-    @Description("A batch had its internal storage reallocate to hold more rows. " +
+    @Label("Batch internal storage for local segments grown")
+    @Name("com.github.alexishuf.fastersparql.batch.LocalsGrown")
+    @Description("A batch had its internal storage for local segments reallocated. " +
                  "The capacity represents the capacity after the growth.")
-    public static class Grown extends BatchEvent {
+    public static class LocalsGrown extends BatchEvent {
         private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
         /**
-         * Creates and {@link #commit()}s a {@link Grown} event.
+         * Creates and {@link #commit()}s a {@link LocalsGrown} event.
          * @param batch The {@link Batch} after it has grown.
          */
-        public static <B extends Batch<B>> void record(B batch) {
+        public static <B extends Batch<B>> void record(Batch<?> batch) {
             if (!RECORD) return;
-            Grown e = GlobalAffinityShallowPool.get(POOL_COL);
-            if (e == null) e = new Grown();
-            e.capacity = batch.directBytesCapacity();
-            e.commit();
-            GlobalAffinityShallowPool.offer(POOL_COL, e);
+            LocalsGrown e = GlobalAffinityShallowPool.get(POOL_COL);
+            (e == null ? new LocalsGrown() : e).fillCommitAndRecycle(batch, POOL_COL);
+        }
+    }
+
+    @Label("Batch contents moved to a new bigger batch")
+    @Name("com.github.alexishuf.fastersparql.batch.TermsGrown")
+    @Description("A batch had its internal storage reallocate to hold more terms. " +
+                 "The capacity represents the capacity after the growth.")
+    public static class TermsGrown extends BatchEvent {
+        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+
+        /**
+         * Creates and {@link #commit()}s a {@link TermsGrown} event.
+         * @param batch The {@link Batch} after it has grown.
+         */
+        public static <B extends Batch<B>> void record(Batch<?> batch) {
+            if (!RECORD) return;
+            TermsGrown e = GlobalAffinityShallowPool.get(POOL_COL);
+            (e == null ? new TermsGrown() : e).fillCommitAndRecycle(batch, POOL_COL);
         }
     }
 }

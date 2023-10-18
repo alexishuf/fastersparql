@@ -432,9 +432,9 @@ public class SparqlParser {
             require(')');
             int n = vars.size();
             require('{');
-            var batch = TERM.create(8, n, 0);
+            var batch = TERM.createForTerms(n<<3, n);
             while (poll('(')) {
-                batch.beginPut();
+                batch = batch.beginPut();
                 for (int c = 0; c < n; c++)
                     batch.putTerm(c, pTerm());
                 batch.commitPut();
@@ -461,8 +461,7 @@ public class SparqlParser {
             current = p == null ? current : p.projectInPlace(current);
             p = TERM.projector(union, v.publicVars());
             var b = v.values();
-            if (p == null) current = current.put(b);
-            else           p.project(current, b);
+            current = p == null ? current.put(b) : p.project(current, b);
             this.values = new Values(union, current);
         }
 

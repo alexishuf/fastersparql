@@ -121,7 +121,8 @@ class QueryNameTest {
             var parser = createParser(format, parsed);
             parser.feedShared(sink);
             parser.feedEnd();
-            B acc = type.create(expected.rows, expected.cols, expected.localBytesUsed());
+            B acc = type.create(expected.rows, expected.cols);
+            acc.reserveAddLocals(expected.localBytesUsed());
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
                 acc = acc.put(b);
             assertEquals(expected, acc);

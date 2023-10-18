@@ -39,9 +39,7 @@ public final class Values extends Plan {
 
     public void append(TermBatch other) {
         if (values == null)
-            values = TERM.create(other.rows, other.cols, 0);
-        else
-            assert other.cols == values.cols;
+            values = TERM.create(other.rows, other.cols);
         values = values.put(other);
     }
 

@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.IdBatch;
+import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -15,7 +15,6 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
@@ -35,8 +34,8 @@ public class StoreBatch extends IdBatch<StoreBatch> {
 
     /* --- --- --- lifecycle --- --- -- */
 
-    public StoreBatch(int rowsCapacity, int cols) {
-        super(rowsCapacity, cols);
+    StoreBatch(int terms, int cols) {
+        super(terms, cols);
         BatchEvent.Created.record(this);
     }
 
@@ -45,11 +44,34 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     @Override public StoreBatchType type() { return TYPE; }
 
     @Override public StoreBatch copy(@Nullable StoreBatch offer) {
-        return doCopy(TYPE.reserved(offer, rows, cols, 0));
+        int rows = this.rows, cols = this.cols;
+        return TYPE.emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols)
+                   .doAppend(this, 0, 0, rows, cols);
+    }
+
+    @Override
+    protected StoreBatch grown(int terms, @Nullable VarHandle rec, @Nullable Object holder) {
+        int c = this.cols;
+        var copy = TYPE.createForTerms(terms, c).doAppend(this, 0, 0, rows, c);
+        BatchEvent.TermsGrown.record(copy);
+        if (rec != null) {
+            if (rec.compareAndExchangeRelease(holder, null, markPooled()) == null)
+                return copy;
+            markUnpooledNoTrace();
+        }
+        TYPE.recycle(this);
+        return copy;
     }
 
     @Override public StoreBatch copyRow(int row, @Nullable StoreBatch offer) {
-        return doCopy(row, TYPE.reserved(offer, 1, cols, 0));
+        int cols = this.cols;
+        return TYPE.emptyForTerms(offer, cols, cols)
+                   .doAppend(this, row*cols, 0, 1, cols);
+    }
+
+    @Override public StoreBatch withCapacity(int addRows) {
+        int terms = (rows+addRows)*cols;
+        return terms > termsCapacity ? grown(terms, null, null) : this;
     }
 
     /* --- --- --- term-level accessors --- --- --- */
@@ -152,18 +174,25 @@ public class StoreBatch extends IdBatch<StoreBatch> {
         }
 
         // load from dict
-        TwoSegmentRope tsr = lookup(dictId(id)).get(id & ID_MASK);
-        if (tsr == null)
+        TwoSegmentRope r = lookup(dictId(id)).get(id&ID_MASK);
+        if (r == null || r.len <= 0)
             return false;
-        SegmentRope shared = new SegmentRope(tsr.fst, tsr.fstOff, tsr.fstLen);
-        SegmentRope local = new SegmentRope(tsr.snd, tsr.sndOff, tsr.sndLen);
-        boolean isLit = tsr.fstLen > 0 && tsr.get(0) == '"';
-        if (isLit) {
-            var tmp = shared;
-            shared = local;
-            local = tmp;
+        int fLen = r.fstLen, sLen = r.sndLen;
+        SegmentRope sh, local = SegmentRope.pooled();
+        boolean isLit = r.get(0) == '"';
+        if (isLit && fLen > 0) local.wrapSegment(r.fst, r.fstU8, r.fstOff, fLen);
+        else                   local.wrapSegment(r.snd, r.sndU8, r.sndOff, sLen);
+        if (!isLit) {
+            sh = new SegmentRope(r.fst, r.fstU8, r.fstOff, fLen);
+        } else if (fLen > 0) {
+            if (sLen == 0)                    sh = EMPTY;
+            else if (sLen < MIN_INTERNED_LEN) sh = new SegmentRope(r.snd, r.sndU8, r.sndOff, sLen);
+            else                              sh = SHARED_ROPES.internDatatype(r, fLen, r.len);
+        } else {
+            sh = EMPTY;
         }
-        dest.set(shared, local, isLit);
+        dest.set(sh, local, isLit);
+        local.recycle();
         return true;
     }
 
@@ -344,51 +373,149 @@ public class StoreBatch extends IdBatch<StoreBatch> {
                                     @Nullable Object holder) {
         if (other.getClass() == getClass())
             return put((StoreBatch) other, rec, holder);
-        int cols = other.cols, oRows = other.rows;
+        int cols = other.cols, oRows = other.rows, terms = (rows+oRows)*cols;
         if (cols != this.cols) throw new IllegalArgumentException("cols mismatch");
 
-        var dst = choosePutDst(rows, oRows, cols, rec, holder, TYPE);
+        var dst = terms > termsCapacity ? grown(terms, rec, holder) : this;
         var lookup = lookup(dictId);
-        var tmp = TwoSegmentRope.pooled();
-        for (int r = 0; r < oRows; r++)
-            dst.putRowConverting(other, r, dictId, cols, tmp, lookup);
-        tmp.recycle();
+        var t = TwoSegmentRope.pooled();
+        for (int r = 0; r < oRows; r++) {
+            dst = dst.beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (other.getRopeView(r, c, t))
+                    dst.putTerm(c, IdTranslator.source(lookup.find(t), dictId));
+            }
+            dst.commitPut();
+        }
+        t.recycle();
         return dst;
     }
 
-    public @This StoreBatch putRowConverting(Batch<?> other, int row, int dictId) {
-        if (type() == other.type()) {
-            putRow((StoreBatch) other, row);
-        } else {
-            int cols = this.cols;
-            if (row > other.rows) throw new IndexOutOfBoundsException(row);
-            if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+    public StoreBatch putRowConverting(Batch<?> other, int row, int dictId) {
+        if (type() == other.type())
+            return putRow((StoreBatch) other, row);
+        int cols = this.cols;
+        if (row > other.rows) throw new IndexOutOfBoundsException(row);
+        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
 
-            var lookup = lookup(dictId);
-            var tmp = TwoSegmentRope.pooled();
-            putRowConverting(other, row, dictId, cols, tmp, lookup);
-            tmp.recycle();
-        }
-        return this;
-    }
-
-    private void putRowConverting(Batch<?> other, int row, int dictId,
-                                  int cols, TwoSegmentRope tmp,
-                                  LocalityCompositeDict.Lookup lookup) {
-        beginPut();
+        var lookup = lookup(dictId);
+        var t = TwoSegmentRope.pooled();
+        var dst = beginPut();
         for (int c = 0; c < cols; c++) {
-            if (other.getRopeView(row, c, tmp))
-                putTerm(c, IdTranslator.source(lookup.find(tmp), dictId));
+            if (other.getRopeView(row, c, t))
+                dst.putTerm(c, IdTranslator.source(lookup.find(t), dictId));
         }
-        commitPut();
+        dst.commitPut();
+        t.recycle();
+        return dst;
     }
 
-    @Override public StoreBatch put(StoreBatch o, @Nullable VarHandle rec, @Nullable Object hld) {
-        return put0(o, rec, hld, TYPE);
+    /* -- --- --- merger --- --- --- */
+
+    public static final class Merger extends IdBatch.Merger<StoreBatch> {
+        public Merger(BatchType<StoreBatch> batchType, Vars outVars, int[] sources) {
+            super(batchType, outVars, sources);
+        }
+
+        @Override public StoreBatch projectInPlace(StoreBatch b) {
+            int[] cols = this.columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            int terms = b == null ? 0 : b.rows*cols.length;
+            if (terms == 0)
+                return projectInPlaceEmpty(b);
+            var dst = safeInPlaceProject ? b : TYPE.createForTerms(terms, cols.length);
+            projectInto(dst, cols, b);
+            if (dst != b)
+                TYPE.recycle(b);
+            return dst;
+        }
+
+        @Override public StoreBatch project(StoreBatch dst, StoreBatch in) {
+            int[] cols = columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            return projectInto(TYPE.withCapacity(dst, in.rows, cols.length), cols, in);
+        }
+
+        @Override public StoreBatch projectRow(@Nullable StoreBatch dst, StoreBatch in, int row) {
+            if (columns == null) throw new UnsupportedOperationException("not a projecting merger");
+            dst = TYPE.withCapacity(dst, 1, columns.length);
+            return projectRowInto(dst, in, row, columns);
+        }
+
+        @Override
+        public StoreBatch merge(@Nullable StoreBatch dst, StoreBatch left, int leftRow,
+                                @Nullable StoreBatch right) {
+            int rows = right == null ? 0 : right.rows;
+            dst = TYPE.withCapacity(dst, rows, sources.length);
+            if (rows == 0)
+                return mergeWithMissing(dst, left, leftRow);
+            return mergeInto(dst, left, leftRow, right);
+        }
     }
 
-    @Override public StoreBatch putConverting(Batch<?> other, @Nullable VarHandle rec,
-                                              @Nullable Object holder) {
-        return putConverting0(other, rec, holder, TYPE);
+    /* -- --- --- filter --- --- --- */
+    public final static class Filter extends IdBatch.Filter<StoreBatch> {
+        private final @Nullable Merger projector;
+        public Filter(BatchType<StoreBatch> batchType, Vars vars,
+                      @Nullable Merger projector, RowFilter<StoreBatch> rowFilter,
+                      @Nullable BatchFilter<StoreBatch> before) {
+            super(batchType, vars, rowFilter, before);
+            assert projector == null || projector.vars.equals(vars);
+            this.projector = projector;
+        }
+
+        @Override public StoreBatch filter(@Nullable StoreBatch dst, StoreBatch in) {
+            if (before != null)
+                in = before.filter(null, in);
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(dst, in);
+            StoreBatch garbage = null;
+            var projector = this.projector;
+            if (projector != null && rowFilter.targetsProjection()) {
+                in = projector.project(null, in);
+                projector = null;
+                if (dst == null || dst.rows == 0) {
+                    garbage = dst;
+                    dst = in;
+                } else {
+                    garbage = in;
+                }
+            }
+            dst = TYPE.withCapacity(dst, in.rows, outColumns);
+            dst = projector == null ? filterInto(dst, in)
+                                    : projectingFilterInto(dst, in, projector);
+            if (garbage != null)
+                TYPE.recycle(garbage);
+            return dst;
+        }
+
+        @Override public StoreBatch filterInPlace(StoreBatch in) {
+            if (before != null)
+                in = before.filterInPlace(in);
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(in, in);
+            var projector = this.projector;
+            if (projector != null && rowFilter.targetsProjection()) {
+                in = projector.projectInPlace(in);
+                projector = null;
+            }
+            return projector == null ? filterInto(in, in)
+                                     : filterInPlaceProjecting(in, projector);
+        }
+
+        private StoreBatch filterInPlaceProjecting(StoreBatch in, Merger projector) {
+            StoreBatch dst, garbage;
+            if (projector.safeInPlaceProject) {
+                garbage = null;
+                dst = in;
+            } else {
+                garbage = in;
+                dst = TYPE.createForTerms(in.rows*outColumns, outColumns);
+            }
+            dst = projectingFilterInto(dst, in, projector);
+            if (garbage != null)
+                TYPE.recycle(garbage);
+            return dst;
+        }
     }
 }

@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -53,8 +52,7 @@ public final class WsBindingSeq {
     }
 
     public Term toTerm(long seq) {
-        CompressedBatch batch = Batch.COMPRESSED.createSingleton(1);
-        batch.beginPut();
+        var batch = Batch.COMPRESSED.createSingleton(1).beginPut();
         write(seq, batch, 0);
         batch.commitPut();
         Term term = Objects.requireNonNull(batch.get(0, 0));

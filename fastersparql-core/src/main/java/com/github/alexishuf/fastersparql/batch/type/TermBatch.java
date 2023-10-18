@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -11,17 +10,14 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.VarHandle;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.KEEP;
-import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.TERMINATE;
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
 import static java.lang.System.arraycopy;
-import static java.lang.invoke.MethodHandles.lookup;
-import static java.util.Objects.requireNonNull;
 
 public final class TermBatch extends Batch<TermBatch> {
+    private static final Term[] EMPTY_TERMS = new Term[0];
+
     Term[] arr;
     private int offerRowBase = -1;
 
@@ -58,11 +54,12 @@ public final class TermBatch extends Batch<TermBatch> {
      * @throws IllegalArgumentException if {@code lst.size() < rows*cols}
      */
     public static TermBatch rowMajor(List<Term> lst, int rows, int cols) {
-        if (lst.size() != rows*cols)
-            throw new IllegalArgumentException("lst.size() < rows*cols");
-        TermBatch b = TERM.create(rows, cols, 0);
-        b.reserve(rows, 0);
-        b.arr = lst.toArray(b.arr);
+        int terms = rows*cols;
+        if (lst.size() != terms)
+            throw new IllegalArgumentException("lst.size() < terms");
+        TermBatch b = TERM.createForTerms(terms, cols);
+        for (int i = 0; i < terms; i++)
+            b.arr[i] = lst.get(i);
         b.rows = rows;
         return b;
     }
@@ -70,54 +67,95 @@ public final class TermBatch extends Batch<TermBatch> {
     /** Create a {@link TermBatch} with a single row and {@code row.size()} columns. */
     @SafeVarargs
     public static TermBatch of(List<Term>... rows) {
-        int cols = -1;
-        List<Term> flat = new ArrayList<>();
+        int cols = rows.length == 0 ? 0 : rows[0].size();
+        TermBatch b = TERM.createForTerms(rows.length*cols, cols);
+        Term[] arr = b.arr;
+        int out = 0;
         for (List<Term> row : rows) {
-            if (cols == -1)
-                cols = row.size();
-            else if (cols != row.size())
-                throw new IllegalArgumentException("Non-uniform columns counts");
-            flat.addAll(row);
+            for (int c = 0; c < cols; c++)
+                arr[out++] = row.get(c);
         }
-        TermBatch b = TERM.create(rows.length, cols, 0);
-        b.reserve(rows.length, 0);
-        b.arr = flat.toArray(b.arr);
         b.rows  = rows.length;
         return b;
     }
 
-    public TermBatch(int rowsCapacity, int cols) {
-        super(0, cols);
-        this.arr = new Term[Math.max(1, rowsCapacity)*cols];
+    public void markGarbage() {
+        if (MARK_POOLED && (int)P.getAndSetRelease(this, P_GARBAGE) != P_POOLED)
+            throw new IllegalStateException("marking not pooled as garbage");
+        arr = EMPTY_TERMS;
+        BatchEvent.Garbage.record(this);
+    }
+
+    @Override public boolean validate() {
+        if (!SELF_VALIDATE)
+            return true;
+        if (rows < 0 || cols < 0)
+            return false; // negative dimensions
+        if (rows*cols > termsCapacity())
+            return false;
+        if (!hasCapacity(rows*cols, localBytesUsed()))
+            return false;
+        if ((byte)P.getOpaque(this) != P_UNPOOLED)
+            return false; //pooled or garbage is not valid
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (!equals(r, c, this, r, c))
+                    return false;
+                Term term = get(r, c);
+                if (!equals(r, c, term))
+                    return false;
+                if (term != null && hash(r, c) != term.hashCode())
+                    return false;
+            }
+            if (!equals(r, this, r))
+                return false;
+        }
+        return true;
     }
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public TermBatchType type()                { return TERM; }
-    @Override public int           directBytesCapacity() { return arr.length; }
-    @Override public int           rowsCapacity()        { return arr.length/Math.max(1, cols); }
+    @Override public TermBatchType type()         { return TERM; }
+    @Override public int           rowsCapacity() { return arr.length/Math.max(1, cols); }
+    @Override public int          termsCapacity() { return arr.length; }
+    @Override public int     totalBytesCapacity() { return arr.length*4; }
 
-    @Override public boolean hasCapacity(int terms, int localBytes) {
-        return terms <= arr.length;
+    @Override public boolean hasCapacity(int terms, int localBytes) { return terms <= arr.length; }
+
+    @Override public TermBatch withCapacity(int addRows) {
+        requireUnpooled();
+        int cols = this.cols, terms = (rows+addRows)*cols;
+        return terms > arr.length ? grown(terms, cols, null, null) : this;
     }
 
-    @Override public boolean hasCapacity(int rows, int cols, int localBytes) {
-        int terms = rows*cols;
-        return terms <= arr.length;
+    private TermBatch grown(int terms, int cols, @Nullable VarHandle rec, @Nullable Object holder) {
+        var dst = TERM.createForTerms(terms, cols).doAppend(arr, 0, rows, cols);
+        if (rec != null) {
+            if (rec.compareAndExchangeRelease(holder, null, markPooled()) == null)
+                return dst;
+            markUnpooledNoTrace();
+        }
+        TERM.recycle(this);
+        return dst;
+    }
+
+    private TermBatch doAppend(Term[] arr, int row, int rowCount, int cols) {
+        arraycopy(arr, row*cols, this.arr, this.rows*cols, rowCount*cols);
+        this.rows += rowCount;
+        assert validate();
+        return this;
     }
 
     @Override public TermBatch copy(@Nullable TermBatch dest) {
-        dest = TERM.reserved(dest, rows, cols, 0);
-        System.arraycopy(arr, 0, dest.arr, 0, rows*cols);
-        dest.rows = rows;
-        return dest;
+        requireUnpooled();
+        int rows = this.rows, cols = this.cols;
+        return TERM.empty(dest, rows, cols).doAppend(arr, 0, rows, cols);
     }
 
     @Override public TermBatch copyRow(int row, @Nullable TermBatch dst) {
-        dst = TERM.reserved(dst, 1, cols, 0);
-        arraycopy(arr, 0, dst.arr, 0, cols);
-        dst.rows = 1;
-        return dst;
+        requireUnpooled();
+        int cols = this.cols;
+        return TERM.emptyForTerms(dst, cols, cols).doAppend(arr, row, 1, cols);
     }
 
     /* --- --- --- term accessors --- --- --- */
@@ -153,23 +191,18 @@ public final class TermBatch extends Batch<TermBatch> {
 
     /* --- --- --- mutators --- --- --- */
 
-    @Override public void reserve(int additionalRows, int addBytes) {
-        requireUnpooled();
-        int required = (rows+additionalRows) * cols;
-        if (arr.length < required)
-            arr = Arrays.copyOf(arr, Math.max(required, arr.length+(arr.length>>2)));
-    }
+    @Override public @Nullable TermBatch recycle() {return TERM.recycle(this);}
 
-    @Override public @Nullable TermBatch recycle() {
-        return TermBatchType.INSTANCE.recycle(this);
-    }
+    @Override public void clear() { rows = 0; }
 
-    @Override public void clear(int newColumns) {
+    @Override public @This TermBatch clear(int newColumns) {
         rows = 0;
         cols = newColumns;
+        return this;
     }
 
     @Override public void abortPut() throws IllegalStateException {
+        requireUnpooled();
         if (offerRowBase < 0) return;
         offerRowBase = -1;
     }
@@ -184,91 +217,72 @@ public final class TermBatch extends Batch<TermBatch> {
 //    }
 
     @Override
-    public TermBatch put(TermBatch other,
-                         @Nullable VarHandle rec, Object holder) {
+    public TermBatch put(TermBatch other, @Nullable VarHandle rec, Object holder) {
         int oRows = other.rows, cols = this.cols;
         if (oRows <= 0) return this; // no-op
         if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
-
         if (MARK_POOLED) {
-            requireUnpooled();
+            this .requireUnpooled();
             other.requireUnpooled();
         }
 
-        int rows = this.rows, nRows = rows+oRows;
-        TermBatch dst;
-        if (nRows*cols <= arr.length ) {
-            dst = this;
-        } else if ((dst=TERM.poll(nRows, cols, 0)) == null) {
-            dst = this;
-            reserve(oRows, 0);
-        } else {
-            dst.rows = rows;
-            arraycopy(arr, 0, dst.arr, 0, rows*cols);
-            markPooled();
-            if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
-                TERM.recycle(untracedUnmarkPooled());
-        }
-
-        arraycopy(other.arr, 0, dst.arr, rows*cols, oRows*cols);
-        dst.rows += oRows;
-        return dst;
+        int rows = this.rows, terms = (rows+oRows)*cols;
+        var dst = terms > arr.length ? grown(terms, cols, rec, holder) : this;
+        return dst.doAppend(other.arr, 0, oRows, cols);
     }
 
-    @Override public @This TermBatch putConverting(Batch<?> other, VarHandle rec,
-                                                   Object holder) {
-        int cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException();
+    @Override public TermBatch put(TermBatch other) { return put(other, null, null); }
 
-        int rows = this.rows, oRows = other.rows, nRows = rows+oRows;
-        TermBatch dst;
-        if (oRows == 0) {
-            return this;
-        } else if (nRows*cols <= arr.length) {
-            dst = this;
-        } else if ((dst=TERM.poll(nRows, cols, 0)) == null) {
-            dst = this;
-            reserve(oRows, 0);
-        } else {
-            arraycopy(arr, 0, dst.arr, 0, (dst.rows=rows)*cols);
-            markPooled();
-            if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
-                TERM.recycle(untracedUnmarkPooled());
+    @Override public @This TermBatch putConverting(Batch<?> other, @Nullable VarHandle rec,
+                                                   @Nullable Object holder) {
+        int cols = this.cols, oRows = other.rows;
+        if (cols != other.cols) throw new IllegalArgumentException();
+        if (oRows <= 0) return this;
+        if (MARK_POOLED) {
+            this .requireUnpooled();
+            other.requireUnpooled();
         }
 
+        int terms = (rows+oRows)*cols;
+        TermBatch dst = terms > arr.length ? grown(terms, cols, rec, holder) : this;
         Term[] arr = dst.arr;
         for (int r = 0, i = rows*cols; r < oRows; r++) {
             for (int c = 0; c < cols; c++)
                 arr[i++] = other.get(r, c);
         }
         dst.rows += oRows;
+        assert dst.validate();
         return dst;
     }
 
-    @Override public void putRowConverting(Batch<?> other, int row) {
-        if (other.type() == TERM) {
-            putRow((TermBatch) other, row);
-        } else {
-            int cols = this.cols, i = rows*cols;
-            if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
-            reserve(1, 0);
-            var arr = this.arr;
-            for (int c = 0; c < cols; c++)
-                arr[i++] = other.get(row, c);
+    @Override public TermBatch putRowConverting(Batch<?> other, int row) {
+        if (other.type() == TERM)
+            return putRow((TermBatch) other, row);
+        int cols = this.cols;
+        if (cols != other.cols)
+            throw new IllegalArgumentException("cols mismatch");
+        if (MARK_POOLED) {
+            this .requireUnpooled();
+            other.requireUnpooled();
         }
+
+        int terms = ++rows*cols;
+        var dst = terms > arr.length ? grown(terms, cols, null, null) : this;
+        var arr = dst.arr;
+        for (int c = 0, out = terms-cols; c < cols; c++)
+            arr[out+c] = other.get(row, c);
+        assert validate();
+        return dst;
     }
 
-    @Override public void beginPut() {
-        reserve(1, 0);
-        int base = rows*cols, required = base + cols;
-        if (arr.length < required) return;
-        Arrays.fill(arr, base, required, null);
-        offerRowBase = base;
-    }
-
-    @Override
-    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
-        super.putTerm(col, shared, local, localOff, localLen, sharedSuffix);
+    @Override public TermBatch beginPut() {
+        requireUnpooled();
+        int cols = this.cols, terms = (rows+1)*cols;
+        var dst = terms > arr.length ? grown(terms, cols, null, null) : this;
+        var arr = dst.arr;
+        for (int i = terms-cols; i < terms; i++) arr[i] = null;
+        dst.offerRowBase = terms-cols;
+        return dst;
     }
 
     @Override public void putTerm(int col, Term t) {
@@ -278,171 +292,208 @@ public final class TermBatch extends Batch<TermBatch> {
     }
 
     @Override public void commitPut() {
+        requireUnpooled();
         if (offerRowBase < 0) throw new IllegalStateException();
         ++rows;
         offerRowBase = -1;
+        assert validate();
     }
 
-    @Override public void putRow(TermBatch other, int row) {
+    @Override public TermBatch putRow(TermBatch other, int row) {
         if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-        if (row >= other.rows) throw new IndexOutOfBoundsException("row >= other.rows");
-        reserve(1, 0);
-        arraycopy(other.arr, row*other.cols, arr, cols*rows++, cols);
+        if (row < 0 || row >= other.rows) throw new IndexOutOfBoundsException("row out of bounds");
+        if (MARK_POOLED) {
+            this .requireUnpooled();
+            other.requireUnpooled();
+        }
+
+        int cols = this.cols, terms = (rows+1)*cols;
+        var dst = terms > arr.length ? grown(terms, cols, null, null) : this;
+        return dst.doAppend(other.arr, row, 1, cols);
     }
 
     /* --- --- --- operation objects --- --- --- */
-    private static final VarHandle REC_TMP;
-    @SuppressWarnings("unused") // access through REC_TMP
-    private static Term[] recTmp;
-
-    static {
-        try {
-            REC_TMP = lookup().findStaticVarHandle(TermBatch.class, "recTmp", Term[].class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-    /** Get a {@code Term[]} with {@code length >= required} possibly filled with garbage */
-    private static Term[] swapTmp(Term @Nullable [] offer, int required) {
-        Term[] old = (Term[])REC_TMP.getOpaque();
-        int oLen = old == null ? 0 : old.length;
-        boolean hasCapacity = oLen >= required;
-        if (hasCapacity || (offer != null && offer.length > oLen)) {
-            if (offer != null) Arrays.fill(offer, null);
-            if (REC_TMP.compareAndSet(old, offer) && hasCapacity) return old;
-        }
-        return new Term[required];
-    }
-
 
     public static final class Merger extends BatchMerger<TermBatch> {
-        private Term @Nullable [] tmp;
-
         public Merger(BatchType<TermBatch> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
         }
 
-        @Override protected void doRelease() {
-            if (tmp != null && REC_TMP.compareAndExchangeRelease(null, tmp) == null)
-                tmp = null;
-            super.doRelease();
+        @Override
+        public TermBatch merge(@Nullable TermBatch dst, TermBatch left, int leftRow,
+                               @Nullable TermBatch right) {
+            int rows = right == null ? 0 : right.rows;
+            dst = TERM.withCapacity(dst, rows, sources.length);
+            if (rows == 0)
+                return mergeWithMissing(dst, left, leftRow);
+            int l = leftRow*left.cols, d = dst.rows*dst.cols, dEnd = rows*dst.cols;
+            dst.rows += rows;
+            Term[] arr = dst.arr, rArr = right.arr, lArr = left.arr;
+            for (int rt = 0, rc = right.cols; d < dEnd; rt+=rc) {
+                for (int c = 0, src; c < sources.length; c++, d++) {
+                    arr[d] = (src=sources[c]) == 0 ? null
+                           : src > 0 ? lArr[l+src-1] : rArr[rt-src-1];
+                }
+            }
+            assert dst.validate();
+            return dst;
+        }
+
+        private TermBatch mergeWithMissing(TermBatch dst, TermBatch left, int leftRow) {
+            Term[] dIds = dst.arr, lIds = left.arr;
+            int d = dst.rows*dst.cols, l = leftRow*left.cols;
+            ++dst.rows;
+            for (int c = 0, src; c < sources.length; c++)
+                dIds[d+c] = (src=sources[c]) < 0 ? null : lIds[l+src];
+            return dst;
+        }
+
+        @Override public TermBatch project(TermBatch dst, TermBatch in) {
+            int[] cols = this.columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            return projectInto(TERM.withCapacity(dst, in.rows, cols.length), cols, in);
+        }
+
+        @Override public TermBatch projectRow(@Nullable TermBatch dst, TermBatch in, int row) {
+            if (columns == null) throw new UnsupportedOperationException("not a projecting merger");
+            dst = TERM.withCapacity(dst, 1, columns.length);
+            Term[] dArr = dst.arr, iArr = in.arr;
+            int i = row*in.cols, d = dst.rows*dst.cols;
+            ++dst.rows;
+            for (int c = 0, src; c < columns.length; c++)
+                dArr[d+c] = (src=columns[c]) < 0 ? null : iArr[i+src];
+            assert dst.validate();
+            return dst;
+        }
+
+        private TermBatch projectInto(TermBatch dst, int[] cols, TermBatch in) {
+            Term[] dArr = dst.arr, iArr = in.arr;
+            int iCols = in.cols, iEnd = in.rows*iCols, d;
+            if (dst == in) {
+                d = 0;
+                dst.cols = cols.length;
+            } else {
+                d = dst.rows*dst.cols;
+                dst.rows += in.rows;
+            }
+            for (int it=0; it < iEnd; it+=iCols, d+=cols.length) {
+                for (int c = 0, src; c < cols.length; c++)
+                    dArr[d+c] = (src=cols[c]) < 0 ? null : iArr[it+src];
+            }
+            assert dst.validate();
+            return dst;
         }
 
         @Override public TermBatch projectInPlace(TermBatch b) {
-            int w = b.cols;
-            if (columns == null || columns.length > w) {
-                var projected = project(null, b);
-                if (projected != b && recycle(b) != null) batchType.recycle(b);
-                return projected;
-            }
-            Term[] tmp = this.tmp;
-            if (tmp == null || tmp.length < w)
-                this.tmp = tmp = swapTmp(tmp, w);
-            b.cols = columns.length;
-            Term[] arr = b.arr;
-            for (int in = 0, out = 0, inEnd = w*b.rows; in < inEnd; in += w) {
-                arraycopy(arr, in, tmp, 0, w);
-                for (int src : columns)
-                    arr[out++] = src >= 0 ? tmp[src] : null;
-            }
-            return b;
+            int[] cols = this.columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            int terms = b == null ? 0 : b.rows*cols.length;
+            if (terms == 0)
+                return projectInPlaceEmpty(b);
+            var dst = safeInPlaceProject ? b : TERM.createForTerms(terms, cols.length);
+            projectInto(dst, cols, b);
+            if (dst != b)
+                TERM.recycle(b);
+            return dst;
         }
     }
 
     public static final class Filter extends BatchFilter<TermBatch> {
-        private Term @Nullable [] tmp;
+        private final @Nullable Merger projector;
 
         public Filter(BatchType<TermBatch> batchType, Vars vars,
-                      @Nullable BatchMerger<TermBatch> projector,
-                      RowFilter<TermBatch> rowFilter, @Nullable BatchFilter<TermBatch> before) {
-            super(batchType, vars, projector, rowFilter, before);
+                      @Nullable Merger projector, RowFilter<TermBatch> rowFilter,
+                      @Nullable BatchFilter<TermBatch> before) {
+            super(batchType, vars, rowFilter, before);
+            assert projector == null || projector.vars.equals(vars);
+            this.projector = projector;
         }
 
-        @Override protected void doRelease() {
-            if (tmp != null && REC_TMP.compareAndExchangeRelease(null, tmp) == null)
-                tmp = null;
-            super.doRelease();
+        private TermBatch filterInto(TermBatch dst, TermBatch in) {
+            Term[] dArr = dst.arr, iArr = in.arr;
+            RowFilter.Decision decision = DROP;
+            int r = 0, rows = in.rows, cols = in.cols;
+            int dTerm = dst == in ? 0 : dst.rows*cols;
+            for (int start = 0, nTerms; r < rows && decision != TERMINATE; start = ++r) {
+                while (r < rows && (decision=rowFilter.drop(in, r)) == KEEP)
+                    ++r;
+                if (r > start) {
+                    arraycopy(iArr, start*cols, dArr, dTerm, nTerms=(r-start)*cols);
+                    dTerm += nTerms;
+                }
+            }
+            return endFilter(dst, dTerm, cols, decision == TERMINATE);
         }
 
-        private TermBatch filterInPlaceEmpty(TermBatch b) {
-            int survivors = 0, rows = b.rows;
+        private TermBatch projectingFilterInto(TermBatch dst, TermBatch in, Merger projector) {
+            int[] cols = projector.columns;
+            assert cols != null;
+            Term[] dArr = dst.arr, iArr = in.arr;
+            int rows = in.rows, inCols = in.cols, dTerm = dst == in ? 0 : dst.rows*dst.cols;
             for (int r = 0; r < rows; r++) {
-                switch (rowFilter.drop(b, r)) {
-                    case KEEP -> ++survivors;
-                    case DROP -> {}
+                switch (rowFilter.drop(in, r)) {
+                    case KEEP -> {
+                        for (int c = 0, src; c < cols.length; c++)
+                            dArr[dTerm+c] = (src=cols[c]) < 0 ? null : iArr[r*inCols+src];
+                        dTerm += cols.length;
+                    }
                     case TERMINATE -> rows = -1;
                 }
             }
-            if (rows == -1) {
-                cancelUpstream();
-                if (survivors == 0) return batchType.recycle(b);
-            }
-            if (projector != null)
-                b.cols = requireNonNull(projector.columns).length;
-            b.rows = survivors;
-            Arrays.fill(b.arr, null);
-            return b;
+            return endFilter(dst, dTerm, cols.length, rows == -1);
         }
 
-        @Override public TermBatch filterInPlace(TermBatch b, BatchMerger<TermBatch> projector) {
+        @Override public TermBatch filter(@Nullable TermBatch dst, TermBatch in) {
             if (before != null)
-                b = before.filterInPlace(b);
-            Term[] arr = b.arr;
-            int r = 0, rows = b.rows, w = b.cols, out = 0;
-            int @Nullable [] columns = projector == null ? null : projector.columns;
-            if (rows == 0 || w == 0 || (columns != null && columns.length == 0))
-                return filterInPlaceEmpty(b);
-            if (columns != null && rowFilter.targetsProjection()) {
-                b = projector.projectInPlace(b);
-                columns = null;
-            }
-            if (columns == null) {
-                RowFilter.Decision decision = null;
-                //move r until we find a gap start (1+ rows that must be dropped)
-                while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
-                out = r*w; // rows in [0, r) must be kept
-                ++r; // r==rows or must be dropped, do not call drop(b, r) again
-                for (int keep, kTerms; r < rows && decision != TERMINATE; out += kTerms) {
-                    // skip over rows to be dropped
-                    while (r < rows && (decision = rowFilter.drop(b, r)) != KEEP) ++r;
-                    // find keep region [keep, keep+kTerms). ++r because either r==rows or is a keep
-                    kTerms = (keep = r++) < rows ? w : 0;
-                    for (; r < rows && (decision = rowFilter.drop(b, r)) == KEEP; ++r) kTerms += w;
-                    // copy keep rows
-                    arraycopy(arr, keep*w, arr, out, kTerms);
+                in = before.filter(null, in);
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(dst, in);
+            var projector = this.projector;
+            TermBatch garbage = null;
+            if (projector != null && rowFilter.targetsProjection()) {
+                in = projector.project(null, in);
+                projector = null;
+                if (dst == null || dst.rows == 0) {
+                    garbage = dst;
+                    dst = in;
+                } else {
+                    garbage = in;
                 }
-                if (decision == TERMINATE) rows = -1;
-                b.rows = out/w;
+            }
+            dst = TERM.withCapacity(dst, in.rows, outColumns);
+            dst = projector == null ? filterInto(dst, in)
+                                    : projectingFilterInto(dst, in, projector);
+            if (garbage != null)
+                TERM.recycle(garbage);
+            return dst;
+        }
+
+        @Override public TermBatch filterInPlace(TermBatch in) {
+            if (before != null)
+                in = before.filterInPlace(in);
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(in, in);
+            var projector = this.projector;
+            if (projector != null && rowFilter.targetsProjection()) {
+                in = projector.projectInPlace(in);
+                projector = null;
+            }
+            return projector == null ? filterInto(in, in) : filterInPlaceProjecting(in, projector);
+        }
+
+        private TermBatch filterInPlaceProjecting(TermBatch in, Merger projector) {
+            TermBatch dst, garbage;
+            if (projector.safeInPlaceProject) {
+                garbage = null;
+                dst = in;
             } else {
-                Term[] tmp = this.tmp;
-                if (tmp == null || tmp.length < w)
-                    this.tmp = tmp = swapTmp(tmp, w);
-                boolean mayGrow = columns.length*rows > arr.length;
-                // when projecting and filtering, there is no gain in copying regions
-                for (int inRowStart = 0; r < rows; ++r, inRowStart += w) {
-                    switch (rowFilter.drop(b, r)) {
-                        case DROP -> {}
-                        case KEEP -> {
-                            arraycopy(arr, inRowStart, tmp, 0, w);
-                            if (mayGrow && out+columns.length > arr.length) {
-                                int newLen = Math.max(columns.length*rows, arr.length+(arr.length>>1));
-                                b.arr = arr = Arrays.copyOf(arr, newLen);
-                            }
-                            for (int src : columns)
-                                arr[out++] = src >= 0 ? tmp[src] : null;
-                        }
-                        case TERMINATE -> rows = -1;
-                    }
-                }
-                b.cols = columns.length;
-                b.rows = out/columns.length;
+                dst = TERM.createForTerms(in.rows*outColumns, outColumns);
+                garbage = in;
             }
-            if (rows == -1) {
-                cancelUpstream();
-                if (out == 0) b = batchType.recycle(b);
-            }
-            return b;
+            dst = projectingFilterInto(dst, in, projector);
+            if (garbage != null)
+                TERM.recycle(garbage);
+            return dst;
         }
     }
 }

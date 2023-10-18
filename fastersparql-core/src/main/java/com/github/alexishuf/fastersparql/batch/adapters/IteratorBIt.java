@@ -51,18 +51,20 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
         }
         T next = it.next();
         return switch (next) {
-            case Term[] a -> { dest.putRow(a);  yield dest; }
+            case Term[] a -> dest.putRow(a);
             case Batch<?> b ->
                 dest.putConverting(b);
-            case Collection<?> coll -> { dest.putRow(coll); yield dest; }
-            case Integer i when dest.cols == 1 -> { // test cases compatibility
-                dest.beginPut();
+            case Collection<?> coll -> dest.putRow(coll);
+            case Integer i -> { // test cases compatibility
+                if (dest.cols != 1)
+                    throw new IllegalArgumentException("expected >1 column, cannot feed integer");
+                dest = dest.beginPut();
                 dest.putTerm(0, Term.splitAndWrap(Rope.of('"', i, SharedRopes.DT_integer)));
                 dest.commitPut();
                 yield dest;
             }
             case Term term -> {
-                dest.beginPut();
+                dest = dest.beginPut();
                 dest.putTerm(0, term);
                 dest.commitPut();
                 yield dest;

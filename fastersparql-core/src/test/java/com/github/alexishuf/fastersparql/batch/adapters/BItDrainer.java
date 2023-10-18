@@ -138,38 +138,25 @@ public sealed abstract class BItDrainer {
         return c.cropped();
     }
 
-    protected static <B extends Batch<B>> void invalidate(B b) {
-        b.clear(b.cols + 1);
-        b.beginPut();
-        for (int c = 0; c < b.cols; c++) b.putTerm(c, IntsBatch.INVALID_MARKER);
-        b.commitPut();
-    }
-
-    protected static <B extends Batch<B>> void consumeAndInvalidate(Consumer<B> consumer, B b) {
-        consumer.accept(b);
-        invalidate(b);
-    }
-
     private static final class NotRecycling extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
-            for (B b; (b = it.nextBatch(null)) != null;)  consumeAndInvalidate(consumer, b);
+            for (B b; (b = it.nextBatch(null)) != null;) consumer.accept(b);
         }
     }
 
     private static final class Recycling extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
-            for (B b = null; (b = it.nextBatch(b)) != null;) consumeAndInvalidate(consumer, b);
+            for (B b = null; (b = it.nextBatch(b)) != null;) consumer.accept(b);
         }
-
     }
 
     private static final class RecyclingFirstEager extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
             it.tempEager();
-            for (B b = null; (b = it.nextBatch(b)) != null;) consumeAndInvalidate(consumer, b);
+            for (B b = null; (b = it.nextBatch(b)) != null;) consumer.accept(b);
         }
     }
 }

@@ -123,7 +123,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 };
                 bindingEmpty &= (action&PUB_MASK) == 0;
                 if      ((action&PUB_MERGE) != 0) b = merger.merge(b, lb, leftRow, rb);
-                else if ((action&PUB_LEFT)  != 0) b.putRow(lb, leftRow);
+                else if ((action&PUB_LEFT)  != 0) b = b.putRow(lb, leftRow);
                 if ((action&CANCEL) != 0) {
                     inner.close();
                     inner = empty;

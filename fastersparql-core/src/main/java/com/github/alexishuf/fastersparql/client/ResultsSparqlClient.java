@@ -271,8 +271,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             Vars allVars = expected.vars();
-            var batch = this.batch;
-            this.batch = batch = Batch.TERM.empty(batch, 1, allVars.size(), 0);
+            var batch = this.batch = TERM.empty(this.batch, 1, allVars.size());
             List<List<Term>> rows = expected.expected();
             outer:
             for (var row : rows) {
@@ -281,17 +280,15 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                     if (i >= 0 && !Objects.equals(row.get(i), binding.get(bIdx)))
                         continue outer; // rows does not match binding
                 }
-                batch.putRow(row); // row matches binding
+                this.batch = batch = batch.putRow(row); // row matches binding
             }
             Boolean askResult = switch (expected.bindType()) {
                 case JOIN,LEFT_JOIN   -> null;
                 case EXISTS           -> batch.rows > 0;
                 case NOT_EXISTS,MINUS -> batch.rows == 0;
             };
-            if (askResult != null) {
-                batch.clear(0);
-                batch.rows = askResult ? 1 : 0;
-            }
+            if (askResult != null)
+                batch.clear(0).rows = askResult ? 1 : 0;
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {

@@ -326,20 +326,22 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         if (batch == null) return null;
         batch.markPooled();
         if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null) return null;
-        return batch.untracedUnmarkPooled();
+        return batch.markUnpooledNoTrace();
     }
 
     /** Get an empty batch using {@code offer}, {@link #stealRecycled()} or
-     *  {@link BatchType#create(int, int, int)}. */
+     *  {@link BatchType#create(int, int)}. */
     protected final B getBatch(@Nullable B offer) {
-        return batchType.empty(offer == null ? stealRecycled() : offer,
-                               rowsCapacity, vars.size(), bytesCapacity);
+        B b = batchType.empty(offer == null ? stealRecycled() : offer,
+                               rowsCapacity, vars.size());
+        b.reserveAddLocals(bytesCapacity);
+        return b;
     }
 
     @Override public @Nullable B stealRecycled() {
         //noinspection unchecked
         B b = (B) RECYCLED.getAndSetAcquire(this, null);
-        return b == null ? null : b.untracedUnmarkPooled();
+        return b == null ? null : b.markUnpooledNoTrace();
     }
 
     @Override public void close() {

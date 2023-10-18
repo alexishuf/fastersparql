@@ -40,11 +40,11 @@ public class WsBindingSeqBench {
         ropeTypeHolder = new RopeTypeHolder(ropeType);
         var wbs = new WsBindingSeq();
         ByteRope filler = new ByteRope("\"123456789012345678901\"");
-        CompressedBatch seedBatch = COMPRESSED.create(N_ROWS, 2, N_ROWS*32);
+        CompressedBatch seedBatch = COMPRESSED.create(N_ROWS, 2);
         ByteRope seedRope = new ByteRope(N_ROWS * 32);
         TwoSegmentRope tsr = new TwoSegmentRope();
         for (int i = 0; i < N_ROWS; i++) {
-            seedBatch.beginPut();
+            seedBatch = seedBatch.beginPut();
             wbs.write(i, seedBatch, 0);
             seedBatch.putTerm(1, null, filler.utf8, 0, filler.len, true);
             seedBatch.commitPut();
@@ -57,6 +57,7 @@ public class WsBindingSeqBench {
         batches.clear();
         for (int i = 0; i < N_BATCHES; i++)
             batches.add(seedBatch.copy(null));
+        seedBatch.recycle();
         for (int i = 0, begin = 0, len = seedRope.len; begin < len; ++i) {
             begins[i] = begin;
             ends[i] = seedRope.skipUntil(begin, len, '\t');

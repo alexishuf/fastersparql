@@ -43,8 +43,7 @@ public class BItCTest {
     }
 
     static TermBatch batch(int i) {
-        TermBatch b = Batch.TERM.createSingleton(1);
-        b.beginPut();
+        TermBatch b = Batch.TERM.createSingleton(1).beginPut();
         b.putTerm(0, INTS[i]);
         b.commitPut();
         return b;
@@ -57,8 +56,7 @@ public class BItCTest {
         } catch (BatchQueue.TerminatedException|BatchQueue.CancelledException ignored) {}
         if (mine != null) {
             mine.clear();
-            mine.beginPut();
-            mine.putTerm(0, INTS[999]);
+            mine.beginPut().putTerm(0, INTS[999]);
             mine.commitPut();
         }
     }

@@ -114,17 +114,17 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
 
         public It() {
             int rows = Math.min(64, rowsData.length);
-            batch = CompressedBatchType.INSTANCE.create(rows, cols, rows*32);
+            batch = COMPRESSED.create(rows, cols);
         }
 
         @Override public boolean hasNext() {
             boolean has = batch != null;
             if (!filled && has) {
                 filled = true;
-                row = fill(batch, row);
+                row = fill(this, row);
                 has = batch.rows != 0;
                 if (!has)
-                    batch = CompressedBatchType.INSTANCE.recycle(batch);
+                    batch = COMPRESSED.recycle(batch);
             }
             return has;
         }
@@ -140,14 +140,14 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         return new It();
     }
 
-    private int fill(CompressedBatch b, int row) {
+    private int fill(It it, int row) {
         int cols = this.cols;
-        b.clear(cols);
+        var b = it.batch.clear(cols);
         while (row < rowsData.length && !has(row)) ++row;
         while (b.localsFreeCapacity() >= 32 && row < rowsData.length) {
             // add row
             byte[] d = rowsData[row];
-            b.beginPut();
+            b = b.beginPut();
             for (int c = 0, c2, shIdx = row*cols; c < cols; c++) {
                 int len = read(d, (c2=c<<1)+SL_LEN);
                 boolean suffix = (len&SH_SUFF_MASK) != 0;
@@ -160,6 +160,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             // find next non-empty row
             do { ++row; } while (row < rowsData.length && !has(row));
         }
+        it.batch = b;
         return row; // return possible next non-empty row
     }
 
@@ -173,11 +174,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             if (d != null)
                 BYTE.offer(d, d.length);
             rowsData[dst] = null;
-        } else {
-            d = bytesAtLeast(s.length, d);
+        } else if (s != d) {
+            rowsData[dst] = d = bytesAtLeast(s.length, d);
             arraycopy(s, 0, d, 0, s.length);
-            arraycopy(shared, src * cols, shared, dst * cols, cols);
-            rowsData[dst] = d;
+            arraycopy(shared, src*cols, shared, dst*cols, cols);
         }
     }
 
@@ -191,9 +191,9 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                 BYTE.offer(d, d.length);
             rowsData[dst] = null;
         } else {
-            d = bytesAtLeast(s.length, d);
+            rowsData[dst] = d = bytesAtLeast(s.length, d);
             arraycopy(s, 0, d, 0, s.length);
-            arraycopy(bucket.shared, src*bucket.cols, shared, dst* cols, cols);
+            arraycopy(bucket.shared, src*bucket.cols, shared, dst*cols, cols);
         }
     }
 

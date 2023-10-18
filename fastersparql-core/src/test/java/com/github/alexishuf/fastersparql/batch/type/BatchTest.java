@@ -98,7 +98,7 @@ class BatchTest {
 
         public <B extends Batch<B>> B fill(B batch) {
             for (int r = 0; r < rows; r++) {
-                batch.beginPut();
+                batch = batch.beginPut();
                 for (int c = 0; c < cols; c++) batch.putTerm(c, terms[r][c]);
                 batch.commitPut();
             }
@@ -107,7 +107,7 @@ class BatchTest {
 
         public <B extends Batch<B>> B reverseFill(B batch) {
             for (int r = 0; r < rows; r++) {
-                batch.beginPut();
+                batch = batch.beginPut();
                 for (int c = 0; c < cols; c++) batch.putTerm(c, terms[rows-1-r][cols-1-c]);
                 batch.commitPut();
             }
@@ -208,8 +208,10 @@ class BatchTest {
                 if (s.rows == 0) return;
                 assertTrue(b.rowsCapacity() >= s.rows, ctx);
             };
-            check.accept(new TermBatch(s.rows, s.cols));
-            check.accept(new CompressedBatch(s.rows, s.cols, s.requiredBytesAligned));
+            check.accept(new TermBatch(new Term[s.rows*s.cols], s.rows, s.cols));
+            var b = new CompressedBatch(s.rows * s.cols, s.cols);
+            b.reserveAddLocals(s.requiredBytesAligned);
+            check.accept(b);
         }
     }
 
@@ -217,8 +219,8 @@ class BatchTest {
         forEachSize(new ForEachSizeTest() {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                int reqBytes = size.requiredBytes(type);
-                var b = type.create(size.rows, size.cols, reqBytes);
+                var b = type.create(size.rows, size.cols);
+                b.reserveAddLocals(size.requiredBytes(type));
                 assertEquals(size.cols, b.cols, ctx);
                 assertEquals(0, b.rows(), ctx);
                 assertEquals(size.cols, b.hashCode(), ctx);
@@ -231,9 +233,11 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                B b1 = size.fill(type.create(size.rows, size.cols, reqBytes));
-                B b2 = size.fill(type.create(size.rows, size.cols, reqBytes));
-                B b3 = size.fill(type.create(1, size.cols, 0));
+                B b1 = size.fill(type.create(size.rows, size.cols));
+                B b2 = size.fill(type.create(size.rows, size.cols));
+                B b3 = size.fill(type.create(1, size.cols));
+                b1.reserveAddLocals(reqBytes);
+                b2.reserveAddLocals(reqBytes);
                 assertBatchesEquals(b1, b2, ctx);
                 assertBatchesEquals(b1, b3, ctx);
                 assertBatchesEquals(b2, b3, ctx);
@@ -347,29 +351,34 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 ThreadJournal.closeThreadJournals();
                 int reqBytes = size.requiredBytes(type);
-                B b1  = type.create(1, size.cols, 1);
-                B b2  = type.create(1, size.cols, 0);
-                B b3  = type.create(0, size.cols, 0);
-                B b6  = type.create(0, size.cols, 0);
-                B b6_ = type.create(0, size.cols, 0);
-                B b4 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
-                B b5 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
-                B b7 = size.reverseFill(type.create(size.rows, size.cols, reqBytes));
-                B b8 = type.create(1, size.cols, 1);
-                B b9 = type.create(1, size.cols, 0);
-                B bA = type.create(1, size.cols, 4);
+                B b1  = type.create(1, size.cols);
+                B b2  = type.create(1, size.cols);
+                B b3  = type.create(0, size.cols);
+                B b6  = type.create(0, size.cols);
+                B b6_ = type.create(0, size.cols);
+                B b4 = size.reverseFill(type.create(size.rows, size.cols));
+                B b5 = size.reverseFill(type.create(size.rows, size.cols));
+                B b7 = size.reverseFill(type.create(size.rows, size.cols));
+                B b8 = type.create(1, size.cols);
+                B b9 = type.create(1, size.cols);
+                B bA = type.create(1, size.cols);
                 b4.clear(size.cols*2);
                 b5.clear(size.cols*2);
                 b4.clear(size.cols);
                 b5.clear(size.cols);
                 b7.clear(size.cols);
-                TermBatch bT = Batch.TERM.create(size.rows, size.cols, reqBytes);
+                TermBatch bT = Batch.TERM.create(size.rows, size.cols);
+                bT.reserveAddLocals(reqBytes);
                 size.fill(bT);
                 TermParser termParser = new TermParser();
-                List<B> putBatches = List.of(b2, b4, b5, b7, b8, b9);
                 for (int r = 0; r < size.rows; r++) {
-                    b1.beginPut();
-                    for (B b : putBatches) b.beginPut();
+                    b1 = b1.beginPut();
+                    b2 = b2.beginPut();
+                    b4 = b4.beginPut();
+                    b5 = b5.beginPut();
+                    b7 = b7.beginPut();
+                    b8 = b8.beginPut();
+                    b9 = b9.beginPut();
                     for (int c = 0; c < size.cols; c++) {
                         Term t = size.terms[r][c];
                         b1.putTerm(c, t);
@@ -392,14 +401,18 @@ class BatchTest {
                             b9.putTerm(c, termParser);
                         }
                     }
-                    for (B b : putBatches)
-                        b.commitPut();
+                    b2.commitPut();
+                    b4.commitPut();
+                    b5.commitPut();
+                    b7.commitPut();
+                    b8.commitPut();
+                    b9.commitPut();
                 }
                 b3 = b3.put(b1);
                 if (size.rows > 0)
-                    b6.putRow(b1, 0);
+                    b6 = b6.putRow(b1, 0);
                 for (int r = 1; r < size.rows; r++)
-                    b6_.putRow(size.terms[r]);
+                    b6_ = b6_.putRow(size.terms[r]);
                 b6 = b6.put(b6_);
                 bA = bA.putConverting(bT, null, null);
                 assertBatchesEquals(size, b1, ctx);
@@ -444,21 +457,20 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
                 int halfRows = size.rows/2, halfBytes = reqBytes/2;
-                B tiny       = type.create(1, size.cols, 1);
-                B half       = type.create(halfRows,  size.cols, halfBytes);
-                B full       = type.create(size.rows, size.cols , reqBytes);
-                B other      = type.create(halfRows,  size.cols , reqBytes);
-                B secondHalf = type.create(halfRows,  size.cols , reqBytes);
-                size.fill(other);
-                full.reserve(size.rows,  reqBytes);
-                half.reserve(halfRows,  halfBytes);
-                for (int r =        0; r <  halfRows; r++) half      .putRow(other, r);
-                for (int r = halfRows; r < size.rows; r++) secondHalf.putRow(other, r);
+                B tiny       = type.create(1, size.cols);
+                B half       = type.create(halfRows,  size.cols);
+                B full       = type.create(size.rows, size.cols);
+                B sndHalf    = type.create(halfRows,  size.cols);
+                B other      = size.fill(type.create(halfRows,  size.cols));
+                half   .reserveAddLocals(halfBytes);
+                sndHalf.reserveAddLocals(reqBytes);
+                for (int r =        0; r <  halfRows; r++) half    =    half.putRow(other, r);
+                for (int r = halfRows; r < size.rows; r++) sndHalf = sndHalf.putRow(other, r);
 
                 RecHolder tinyH = new RecHolder(), halfH = new RecHolder(), fullH = new RecHolder();
-                B tinyA = tiny.put(other,       REC, tinyH);
-                B halfA = half.put(secondHalf,  REC, halfH);
-                B fullA = full.put(other,       REC, fullH);
+                B tinyA = tiny.put(other,    REC, tinyH);
+                B halfA = half.put(sndHalf,  REC, halfH);
+                B fullA = full.put(other,    REC, fullH);
 
                 // validate appended() outcomes
                 assertBatchesEquals(size, tinyA, ctx);
@@ -487,6 +499,45 @@ class BatchTest {
         try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
             tasks.repeat(28, this::testAppended);
         }
+    }
+
+    @Test void testBucket() {
+        forEachSize(new ForEachSizeTest() {
+            @Override
+            public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
+                int halfRows = size.rows/2, offRows = size.rows+1;
+                var bucket0 =           type.createBucket(offRows  , size.cols);
+                var bucket1 =           type.createBucket(halfRows , size.cols);
+                var batch   = size.fill(type.create      (size.rows, size.cols));
+
+                for (int r = 0; r < size.rows; r++)
+                    bucket0.set(r+1, batch, r);
+                for (int r = 0; r < halfRows; r++)
+                    bucket1.set(r, batch, r);
+                bucket1.grow(size.rows-halfRows);
+                for (int r = halfRows; r < size.rows; r++)
+                    bucket1.set(r, batch, r);
+
+                for (int r = 0; r < size.rows; r++) {
+                    String rCtx = "r=" + r + ", ctx=" + ctx;
+                    assertTrue(bucket0.equals(r+1, batch, r), rCtx);
+                    assertTrue(bucket1.equals(r, batch, r), rCtx);
+                }
+
+                for (int r = 0; r < halfRows; r++)
+                    bucket0.set(r, r+1);
+                for (int r = halfRows; r < size.rows; r++)
+                    bucket0.set(r, bucket1, r);
+
+                for (int r = 0; r < size.rows; r++) {
+                    String rCtx = "r=" + r + ", ctx=" + ctx;
+                    assertTrue(bucket0.equals(r, batch, r), rCtx);
+                    assertTrue(bucket1.equals(r, batch, r), rCtx);
+                }
+
+                assertBatchesEquals(size, batch, ctx); // batch was not changed
+            }
+        });
     }
 
     private static Vars mkVars(int n) {
@@ -558,13 +609,13 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
                 Vars in = mkVars(size.cols), out = generateOutVars.apply(in);
-                B expected = type.create(0, out.size(), 0);
+                B expected = type.create(0, out.size());
                 for (int r = 0; r < size.rows; r++) {
-                    expected.beginPut();
-                    projectExpected.accept(size.terms[r], expected);
+                    projectExpected.accept(size.terms[r], expected = expected.beginPut());
                     expected.commitPut();
                 }
-                B full = size.fill(type.create(size.rows, size.cols, reqBytes));
+                B full = size.fill(type.create(size.rows, size.cols));
+                full.reserveAddLocals(reqBytes);
                 BatchMerger<B> projector = type.projector(out, in);
                 if (out.equals(in)) {
                     assertNull(projector, ctx);
@@ -723,13 +774,14 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
                 Vars in = mkVars(size.cols), out = genOutVars.apply(in);
-                B full = size.fill(type.create(size.rows, size.cols, reqBytes));
-                B fullBackup = size.fill(type.create(size.rows, size.cols, reqBytes));
-                B expected = type.create(0, out.size(), 0);
+                B full = size.fill(type.create(size.rows, size.cols));
+                B fullBackup = size.fill(type.create(size.rows, size.cols));
+                full      .reserveAddLocals(reqBytes);
+                fullBackup.reserveAddLocals(reqBytes);
+                B expected = type.create(1, out.size());
                 var survivors = survivorsGetter.apply(size);
                 for (int r : survivors) {
-                    expected.beginPut();
-                    projectExpected.accept(size.terms[r], expected);
+                    projectExpected.accept(size.terms[r], expected = expected.beginPut());
                     expected.commitPut();
                 }
                 RowFilter<B> rowFilter = new RowFilter<>() {
@@ -747,7 +799,7 @@ class BatchTest {
 
                 B inPlace = filter.filterInPlace(full);
                 if (inPlace != full)
-                    assertBatchesEquals(fullBackup, full, ctx);
+                    full.requirePooled();
                 fullBackup.recycle();
                 assertBatchesEquals(inPlace, expected, ctx);
                 inPlace.recycle();
@@ -791,9 +843,9 @@ class BatchTest {
 
     @ParameterizedTest @MethodSource void testWrite(Term term, int begin, int end) {
         for (BatchType<?> type : TYPES) {
-            var b = type.create(2, 3, 0);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            var b = type.create(2, 3);
+            b = b.putRow(DUMMY_ROW);
+            b = b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
 
             ByteRope dest = new ByteRope().append("@");
             b.write(dest, 1, 1, begin, end);
@@ -813,9 +865,9 @@ class BatchTest {
     void testLen(String termString) {
         Term term = termString.equals("null") ? null : Term.array(termString)[0];
         for (BatchType<?> type : TYPES) {
-            var b = type.create(2, 3, 0);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            var b = type.create(2, 3);
+            b = b.putRow(DUMMY_ROW);
+            b = b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
             assertEquals(term == null ? 0 : term.len, b.len(1, 1));
         }
     }
@@ -840,57 +892,55 @@ class BatchTest {
     @ParameterizedTest @MethodSource
     void testLexEnd(Term term, int expected) {
         for (BatchType<?> type : TYPES) {
-            var b = type.create(2, 3, 0);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            var b = type.create(2, 3);
+            b = b.putRow(DUMMY_ROW);
+            b = b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
             assertEquals(expected, b.lexEnd(1, 1));
             b.recycle();
         }
     }
 
-    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
-
     @SuppressWarnings({"unchecked", "rawtypes"}) @ParameterizedTest @MethodSource("types")
     void testOutOfOrderOffer(BatchType<?> type) {
-        Batch<?> ex1 = type.create(1, 3, 0);
-        Batch<?> ex2 = type.create(2, 3, 0);
-        Batch<?> ex3 = type.create(4, 3, 0);
-        ex1.putRow(DUMMY_ROW);
-        for (int i = 0; i < 2; i++) ex2.putRow(DUMMY_ROW);
-        for (int i = 0; i < 4; i++) ex3.putRow(DUMMY_ROW);
+        Batch<?> ex1 = type.create(1, 3);
+        Batch<?> ex2 = type.create(2, 3);
+        Batch<?> ex3 = type.create(4, 3);
+        ex1 = ex1.putRow(DUMMY_ROW);
+        for (int i = 0; i < 2; i++) ex2 = ex2.putRow(DUMMY_ROW);
+        for (int i = 0; i < 4; i++) ex3 = ex3.putRow(DUMMY_ROW);
 
         for (var permutation : List.of(List.of(2, 1, 0), List.of(1, 2, 0), List.of(0, 2, 1))) {
-            Batch<?> b1 = type.create(1, 3, B_SP_LEN);
-            Batch<?> b2 = type.create(2, 3, 2*B_SP_LEN);
-            Batch<?> b3 = type.create(4, 3, 4*B_SP_LEN);
-            b1.reserve(1, B_SP_LEN);
-            b2.reserve(2, 2*B_SP_LEN);
-            b3.reserve(4, 4*B_SP_LEN);
-            b1.beginPut();
+            Batch<?> b1 = type.create(1, 3);
+            Batch<?> b2 = type.create(2, 3);
+            Batch<?> b3 = type.create(4, 3);
+            b1 = b1.withCapacity(1);
+            b2 = b2.withCapacity(2);
+            b3 = b3.withCapacity(4);
+            b1 = b1.beginPut();
             for (int c : permutation)
                 b1.putTerm(c, DUMMY_ROW[c]);
             b1.commitPut();
 
-            ((Batch)b2).putRow(b1, 0);
-            ((Batch)b2).putRow(b1, 0);
+            b2 = ((Batch)b2).putRow(b1, 0);
+            b2 = ((Batch)b2).putRow(b1, 0);
 
             // put by term
-            b3.beginPut();
+            b3 = b3.beginPut();
             for (int c = 0; c < 3; c++)
                 b3.putTerm(c, b1.get(0, c));
             b3.commitPut();
-            b3.beginPut();
+            b3 = b3.beginPut();
             // offer by term
             for (int c = 0; c < 3; c++)
                 b3.putTerm(c, b1.get(0, c));
             b3.commitPut();
             // offer by term from b1
-            b3.beginPut();
+            b3 = b3.beginPut();
             for (int c = 0; c < 3; c++)
                 ((Batch)b3).putTerm(c, b1, 0, c);
             b3.commitPut();
             // put by term from b1
-            b3.beginPut();
+            b3 = b3.beginPut();
             for (int c = 0; c < 3; c++)
                 ((Batch)b3).putTerm(c, b1, 0, c);
             b3.commitPut();
@@ -910,40 +960,40 @@ class BatchTest {
     @ParameterizedTest @MethodSource("types")
     <B extends Batch<B>> void testNullRow(BatchType<B> type) {
         Size sz = new Size(4, 2);
-        B n = type.create(1, 2, 0);
-        n.putRow(new Term[]{null, null});
+        B n = type.create(1, 2);
+        n = n.putRow(new Term[]{null, null});
 
-        B uo0 = type.create(1, 2, 0);
-        uo0.beginPut();
+        B uo0 = type.create(1, 2);
+        uo0 = uo0.beginPut();
         uo0.putTerm(1, sz.terms[0][1]);
         uo0.putTerm(0, sz.terms[0][0]);
         uo0.commitPut();
-        uo0.putRow(n, 0);
+        uo0 = uo0.putRow(n, 0);
         if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)uo0).validate());
 
-        B uo1 = type.create(2, 2, 0);
-        uo1.beginPut();
+        B uo1 = type.create(2, 2);
+        uo1 = uo1.beginPut();
         uo1.putTerm(1, sz.terms[0][1]);
         uo1.putTerm(0, sz.terms[0][0]);
         uo1.commitPut();
-        uo1.beginPut();
+        uo1 = uo1.beginPut();
         uo1.commitPut();
-        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)uo1).validate());
+        if (type == Batch.COMPRESSED) assertTrue(uo1.validate());
 
-        B o0 = type.create(2, 2, 0);
-        o0.putRow(sz.terms[0]);
-        o0.putRow(n, 0);
-        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)o0).validate());
+        B o0 = type.create(2, 2);
+        o0 = o0.putRow(sz.terms[0]);
+        o0 = o0.putRow(n, 0);
+        if (type == Batch.COMPRESSED) assertTrue(o0.validate());
 
-        B o1 = type.create(1, 2, 0);
-        o1.putRow(sz.terms[0]);
-        o1.beginPut();
+        B o1 = type.create(1, 2);
+        o1 = o1.putRow(sz.terms[0]);
+        o1 = o1.beginPut();
         o1.commitPut();
-        if (type == Batch.COMPRESSED) assertTrue(((CompressedBatch)o1).validate());
+        if (type == Batch.COMPRESSED) assertTrue(o1.validate());
 
-        B expected = type.create(2, 2, 0);
-        expected.putRow(sz.terms[0]);
-        expected.beginPut();
+        B expected = type.create(2, 2);
+        expected = expected.putRow(sz.terms[0]);
+        expected = expected.beginPut();
         expected.commitPut();
         assertEquals(2, expected.rows);
 
@@ -991,14 +1041,14 @@ class BatchTest {
     @Test void  regressionHashS6() {
         String name = "\"Michael Bartels\"";
         Term place = Term.valueOf("<http://sws.geonames.org/2911297/>");
-        var ex = Batch.COMPRESSED.create(1, 2, 0);
-        ex.beginPut();
+        var ex = Batch.COMPRESSED.create(1, 2);
+        ex = ex.beginPut();
         ex.putTerm(0, EMPTY, name.getBytes(UTF_8), 0, name.length(), false);
         ex.putTerm(1, place);
         ex.commitPut();
 
-        var ac = Batch.COMPRESSED.create(1, 2, 0);
-        ac.beginPut();
+        var ac = Batch.COMPRESSED.create(1, 2);
+        ac = ac.beginPut();
         ac.putTerm(0, EMPTY, (".."+name).getBytes(UTF_8), 2, name.length(), true);
         ac.putTerm(1, SegmentRope.of("<http://sws.geonames.org/"),
                     "2911297/>".getBytes(UTF_8), 0, 9, false);

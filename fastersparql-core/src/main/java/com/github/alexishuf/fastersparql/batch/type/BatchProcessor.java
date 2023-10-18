@@ -249,13 +249,13 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         batch.markPooled();
         if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
             if (recycled != null)
-                return batch;
+                return batch.markUnpooledNoTrace();
             recycled = batch;
             return null;
         } else {
            if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null)
                return null;
-           return batch.untracedUnmarkPooled();
+           return batch.markUnpooledNoTrace();
         }
     }
 
@@ -270,7 +270,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     public final @Nullable B stealRecycled() {
         //noinspection unchecked
         B b = (B) RECYCLED.getAndSetAcquire(this, null);
-        if (b != null) b.unmarkPooled();
+        if (b != null) b.markUnpooled();
         return b;
     }
 
@@ -283,16 +283,19 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
 
     protected final B getBatch(int rows, int cols, int localBytes) {
+        B b;
         if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
-            var b = batchType.empty(asUnpooled(recycled), rows, cols, localBytes);
+            b = batchType.empty(asUnpooled(recycled), rows, cols);
             recycled = null;
             return b;
         } else {
             //noinspection unchecked
-            B b = (B) RECYCLED.getAndSetAcquire(this, null);
+            b = (B)RECYCLED.getAndSetAcquire(this, null);
             if (b != null)
-                b.unmarkPooled();
-            return batchType.empty(b, rows, cols, localBytes);
+                b.markUnpooled();
+            b = batchType.empty(b, rows, cols);
         }
+        b.reserveAddLocals(localBytes);
+        return b;
     }
 }

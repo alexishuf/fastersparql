@@ -12,7 +12,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 
@@ -27,20 +26,19 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
     }
 
-    public final @Nullable BatchMerger<B> projector;
     public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
+    protected final int outColumns;
     @SuppressWarnings("unused") protected long requestLimit, plainUpRequested;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public BatchFilter(BatchType<B> batchType, Vars outVars,
-                       @Nullable BatchMerger<B> projector,
                        RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
         super(batchType, outVars, CREATED, PROC_FLAGS);
-        this.projector = projector;
         this.rowFilter = rowFilter;
         this.before = before;
+        this.outColumns = outVars.size();
         requestLimit = Long.MAX_VALUE;
         for (var bf = this; bf != null && requestLimit == Long.MAX_VALUE; bf = bf.before)
             requestLimit = bf.rowFilter.upstreamRequestLimit();
@@ -152,60 +150,47 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- BatchProcessor methods --- --- --- */
 
-    @Override public final B processInPlace(B b) { return filterInPlace(b, projector); }
+    @Override public final B processInPlace(B b) { return filterInPlace(b); }
 
     public final boolean isDedup() {
         return rowFilter instanceof Dedup<B> || (before != null && before.isDedup());
     }
 
-    public abstract B filterInPlace(B in, @Nullable BatchMerger<B> projector);
+    public abstract B filter(B dst, B in);
 
-    public final B filterInPlace(B in) { return filterInPlace(in, projector); }
+    public abstract B filterInPlace(B in);
 
-    public B filter(@Nullable B dest, B in) {
-        if (before != null)
-            in = before.filter(null, in);
-        if (in == null)
-            return null;
-        int rows = in.rows;
-        BatchMerger<B> projector = this.projector;
-        if (dest == null) {
-            int cols = projector == null ? in.cols : projector.sources.length;
-            dest = getBatch(rows, cols, in.localBytesUsed());
-        }
-        if (rowFilter.targetsProjection() && projector != null) {
-            dest = projector.project(dest, in);
-            return filterInPlace(dest, null);
-        }
-        if (projector == null) {
-            for (int r = 0; r < rows; r++) {
-                switch (rowFilter.drop(in, r)) {
-                    case KEEP      -> dest.putRow(in, r);
-                    case DROP      -> {}
-                    case TERMINATE -> rows = -1;
-                }
+    protected B filterEmpty(@Nullable B dst, B in) {
+        if (in == null) return null;
+        int survivors = 0;
+        for (int r = 0, rows = in.rows; r < rows; r++) {
+            switch (rowFilter.drop(in, r)) {
+                case KEEP      -> ++survivors;
+                case TERMINATE -> rows = -1;
             }
+        }
+        if (dst == in) {
+            dst.rows = survivors;
         } else {
-            int[] columns = Objects.requireNonNull(projector.columns);
-            for (int r = 0; r < rows; r++) {
-                switch (rowFilter.drop(in, r)) {
-                    case KEEP -> {
-                        dest.beginPut();
-                        for (int c = 0, s; c < columns.length; c++) {
-                            if ((s = columns[c]) >= 0)
-                                dest.putTerm(c, in, r, s);
-                        }
-                        dest.commitPut();
-                    }
-                    case DROP      -> {}
-                    case TERMINATE -> rows = -1;
-                }
-            }
+            if (dst == null)
+                dst = in.type().createForTerms(outColumns, outColumns);
+            else if (dst.rows > 0 && dst.cols != outColumns)
+                throw new IllegalArgumentException("dst not empty and dst.cols != outColumns");
+            dst.rows += survivors;
         }
-        if (rows == -1) {
+        dst.cols = outColumns;
+        return dst;
+    }
+
+    protected final B endFilter(B b, int terms, int cols, boolean cancel) {
+        b.rows = terms/cols;
+        b.cols = cols;
+        assert b.validate();
+        if (cancel) {
             cancelUpstream();
-            if (dest.rows == 0) dest = batchType.recycle(dest);
+            if (b.rows == 0)
+                return b.recycle();
         }
-        return dest;
+        return b;
     }
 }

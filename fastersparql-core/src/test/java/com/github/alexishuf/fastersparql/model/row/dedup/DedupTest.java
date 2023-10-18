@@ -31,12 +31,12 @@ class DedupTest {
     private static final String[] DOMAINS = {"example.org", "www.informatik.de", "somewhere.com"};
     private static final String[] PATHS = {"/#", "/ns#", "/d/", "/ontology/", "/graph/"};
     TermBatch generateRows(int n) {
-        TermBatch batch = Batch.TERM.create(n, 1, 0);
+        TermBatch batch = Batch.TERM.create(n, 1);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < n; i++) {
             sb.setLength(0);
             int type = i & 7;
-            switch (type) {
+            batch = switch (type) {
                 case 0, 1, 2, 3 -> //IRI
                     batch.putRow(new Term[]{Term.valueOf(sb.append("<http://")
                                                        .append(DOMAINS[i % DOMAINS.length])
@@ -48,15 +48,16 @@ class DedupTest {
                     for (int j = 0; j < type; j++)
                         sb.append(Long.toString((long)(Math.random()*Long.MAX_VALUE), MAX_RADIX));
                     sb.append(type == 4 ? "\"" : "\"@en");
-                    batch.putRow(new Term[]{Term.valueOf(sb)});
+                    yield batch.putRow(new Term[]{Term.valueOf(sb)});
                 }
                 case 7 -> { // typed literal
                     String lit = sb.append("\"").append(Math.random())
                                    .append("\"^^<http://www.w3.org/2001/XMLSchema#double>")
                                    .toString();
-                    batch.putRow(new Term[]{Term.valueOf(lit)});
+                    yield batch.putRow(new Term[]{Term.valueOf(lit)});
                 }
-            }
+                default -> batch;
+            };
         }
         return batch;
     }

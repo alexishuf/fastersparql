@@ -27,7 +27,7 @@ public abstract class IdConverterBIt<B extends Batch<B>, S extends Batch<S>> ext
         if (out != null || (out = stealRecycled()) != null)
             out.clear(in.cols);
         else
-            out = batchType.create(in.rows, in.cols, batchType.localBytesRequired(in));
+            out = batchType.create(in.rows, in.cols);
         out = putConverting(out, in);
         lastIn = in;
         if (metrics != null) metrics.batch(out.rows);

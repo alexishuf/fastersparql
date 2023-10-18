@@ -15,6 +15,7 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static java.lang.System.identityHashCode;
+import static java.lang.Thread.onSpinWait;
 
 public class ResultJournal {
     public static final boolean ENABLED = false;
@@ -44,19 +45,29 @@ public class ResultJournal {
             serializer.init(vars, vars, vars.isEmpty(), log);
         }
 
+        void clear() {
+            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            try {
+                log.recycleUtf8();
+            } finally {
+                LOCK.setRelease(this, 0);
+            }
+        }
+
         void add(Batch<?> b, int fromRow, int nRows) {
             int tick = DebugJournal.SHARED.tick();
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             try {
                 serializer.serialize(b, fromRow, nRows, log);
                 log.append("tick=").append(tick)
                         .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
-                        .append(", fromRow=").append(fromRow).append('\n');
+                        .append(", fromRow=").append(fromRow)
+                        .append(", nRows=").append(nRows).append('\n');
             } finally { LOCK.setRelease(this, 0); }
         }
 
         void add(BatchBinding rebind) {
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             try {
                 log.append(rebind.toString()).append('\n');
             } finally { LOCK.setRelease(this, 0); }
@@ -96,7 +107,7 @@ public class ResultJournal {
     public static void clear() {
         for (var it = JOURNALS.entrySet().iterator(); it.hasNext(); ) {
             try {
-                it.next().getValue().log.recycleUtf8();
+                it.next().getValue().clear();
                 it.remove();
             } catch (NoSuchElementException ignored) {  }
         }

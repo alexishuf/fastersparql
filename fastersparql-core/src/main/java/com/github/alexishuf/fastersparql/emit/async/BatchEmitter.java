@@ -48,13 +48,14 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             return COMPLETED;
         int n = (int)Math.min(limit, b.rows-nextRow);
         REQUESTED.getAndAddRelease(this, (long)-n);
-        B copy = batchType.empty(Batch.asUnpooled(recycled), n, b.cols, b.localBytesUsed());
+        B copy = batchType.empty(Batch.asUnpooled(recycled), n, b.cols);
         recycled = null;
+        copy.reserveAddLocals(b.localBytesUsed());
         if (nextRow == 0 && n == b.rows) {
             copy = copy.put(b);
         } else {
             for (int r = nextRow, end = nextRow+n; r < end; r++)
-                copy.putRow(b, r);
+                copy = copy.putRow(b, r);
         }
         nextRow += n;
         recycled = Batch.asPooled(deliver(copy));

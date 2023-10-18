@@ -37,7 +37,7 @@ public abstract class RecyclingDelegatedControlBIt<B extends Batch<B>, S extends
             return null;
         batch.markPooled();
         if (RECYCLED.compareAndExchange(this, null, batch) == null) return null;
-        return batch.untracedUnmarkPooled();
+        return batch.markUnpooledNoTrace();
     }
 
     @Override public @Nullable B stealRecycled() {

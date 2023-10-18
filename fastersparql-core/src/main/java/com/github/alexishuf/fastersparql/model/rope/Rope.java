@@ -749,7 +749,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
                 throw new UnsupportedOperationException("equals() between Rope and CharSequence not implemented");
             return false;
         }
-        return r.len() == len && has(0, r, 0, len);
+        return r.len == len && has(0, r, 0, len);
     }
 
     @Override public int compareTo(@NonNull Rope o) {

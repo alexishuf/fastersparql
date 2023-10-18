@@ -31,23 +31,23 @@ class BindingTest {
     private static <B extends Batch<B>>
     void addCases(BatchType<B> bt, List<Arguments> argsList) {
         var b = bt.createSingleton(1);
-        b.putRow(List.of(one));
+        b = b.putRow(List.of(one));
         argsList.add(arguments(new BatchBinding(Vars.of("x")).attach(b, 0),
                                List.of(one)));
 
         b = bt.createSingleton(2);
-        b.putRow(Arrays.asList(one, null));
+        b = b.putRow(Arrays.asList(one, null));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y")).attach(b, 0),
                                asList(one, null)));
 
         b = bt.createSingleton(2);
-        b.putRow(Arrays.asList(null, two));
+        b = b.putRow(Arrays.asList(null, two));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y")).attach(b, 0),
                 asList(null, two)));
 
-        b = bt.create(2, 3, 0);
-        b.putRow(asList(null, null, null));
-        b.putRow(Arrays.asList(one, two, three));
+        b = bt.create(2, 3);
+        b = b.putRow(asList(null, null, null));
+        b = b.putRow(Arrays.asList(one, two, three));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y", "z")).attach(b, 1),
                                asList(one, two, three)));
     }
@@ -80,8 +80,7 @@ class BindingTest {
         for (var bt : List.of(Batch.TERM, Batch.COMPRESSED)) {
             var b1 = bt.createSingleton(1);
             var b2 = bt.createSingleton(2);
-            var c1 = bt.createSingleton(1);
-            c1.putRow(new Term[]{one});
+            var c1 = bt.createSingleton(1).putRow(new Term[]{one});
             BatchBinding bb1 = new BatchBinding(Vars.of("x"));
             BatchBinding bb2 = new BatchBinding(Vars.of("x", "y"));
             assertThrows(IndexOutOfBoundsException.class, () -> bb1.attach(b1, 0));

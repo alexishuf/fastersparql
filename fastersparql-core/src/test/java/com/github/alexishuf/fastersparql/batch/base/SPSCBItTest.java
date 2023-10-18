@@ -108,9 +108,9 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testDoNotOfferToFillingWhenThereIsExcessCapacity() {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 8)) {
-            TermBatch b1 = tightIntsBatch(1, 2), b2 = tightIntsBatch(3, 4);
-            b1.reserve(3, 0);
-            assertEquals(5, b1.rowsCapacity());
+            TermBatch b1 = tightIntsBatch(1, 2).withCapacity(3);
+            TermBatch b2 = tightIntsBatch(3, 4);
+            assertTrue(b1.rowsCapacity() >= 5);
 
             assertNull(assertDoesNotThrow(() -> it.offer(b1)));
             assertNull(assertDoesNotThrow(() -> it.offer(b2))); // do not offer() to b1, queue is mostly empty
@@ -119,14 +119,16 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testOfferToFilling() {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), maxItems)) {
-            TermBatch b1 = tightIntsBatch(1), b2 = tightIntsBatch(2, 3), b3 = tightIntsBatch(4, 5);
-            assertEquals(2, b2.rowsCapacity());
-            b2.reserve(2, 0);
+            TermBatch b1 = tightIntsBatch(1), b2_ = tightIntsBatch(2, 3), b3 = tightIntsBatch(4, 5);
+            assertEquals(2, b2_.rowsCapacity());
+            var b2 = b2_.withCapacity(2);
 
             assertNull(assertDoesNotThrow(() -> it.offer(b1)));
             assertNull(assertDoesNotThrow(() -> it.offer(b2)));
-            assertSame(b3, assertDoesNotThrow(() -> it.offer(b3))); // rows copied to b2, we own b3
-            b3.clear(); b3.putRow(Term.termList("23")); // invalidate b3
+            var b3_ = b3;
+            assertSame(b3, assertDoesNotThrow(() -> it.offer(b3_))); // rows copied to b2, we own b3
+            b3.clear();
+            b3 = b3.putRow(Term.termList("23")); // invalidate b3
 
             assertSame(b1, it.nextBatch(b3));
             assertEquals(tightIntsBatch(1), b1);
@@ -219,7 +221,7 @@ class SPSCBItTest extends CallbackBItTest {
         TermBatch[] stolen    = new TermBatch[threads*chunk];
         int[] stolenCount     = new int[batches.length];
         for (int i = 0, n = chunk*threads; i < n; i++)
-            IntsBatch.fill(batches[i] = new TermBatch(1, 1), i+1);
+            batches[i] = IntsBatch.fill(new TermBatch(new Term[1], 0, 1), i+1);
         try (var tasks = new TestTaskSet("testRecyclingRace", newFixedThreadPool(threads));
              var it = new SPSCBIt<>(TERM, X, queueCap)) {
             for (int round = 0, rounds = 20; round < rounds; round++) {

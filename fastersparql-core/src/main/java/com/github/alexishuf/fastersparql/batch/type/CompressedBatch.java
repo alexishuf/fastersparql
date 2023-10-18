@@ -16,15 +16,15 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
-import java.util.Arrays;
 
+import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
-import static java.lang.Integer.numberOfLeadingZeros;
+import static java.lang.Math.max;
 import static java.lang.System.arraycopy;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -36,8 +36,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     static final int     LEN_MASK = 0x7fffffff;
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
-
-    public static boolean DISABLE_VALIDATE = false;
 
     /**
      * For the term at row {@code r} and column {@code c}:
@@ -56,6 +54,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
      * {@code (row, col)} is stored at index {@code row*cols + col}.
      */
     private SegmentRope[] shared;
+
+    /**
+     * Equivalent to {@code shared.length}. This field exists to reduce cache misses from
+     * checking {@code shared.length}, which requires de-referencing the pointer.
+     */
+    private int termsCapacity;
 
     /** Storage for local parts of terms. */
     private byte[] locals;
@@ -106,61 +110,34 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     public boolean validate() {
-        if (cols == 0 || DISABLE_VALIDATE)
+        if (!SELF_VALIDATE)
             return true;
-        if (rows < 0 || cols < 0)
+        if (termsCapacity != shared.length)
+            return false; // termCapacity out of sync
+        if (rows*cols > termsCapacity)
+            return false; // not enough capacity
+        if (termsCapacity<<1 > slices.length)
             return false;
-        var ropeView = TwoSegmentRope.pooled();
-        var termView = Term.pooledMutable();
-        try {
-            int lastRowEnd = 0, slw = (cols<<1);
-            for (int r = 0, candidateRowEnd = 0; r < rows; r++) {
-                for (int c = 0, sli = r*slw; c < cols; c++, sli += 2) {
-                    int off = slices[sli+SL_OFF], end = off+slices[sli+SL_LEN]&LEN_MASK;
-                    if (end > locals.length)
-                        return false; // out-of-bounds off or len
-                    if (end > off) {
-                        if (end > candidateRowEnd) candidateRowEnd = end;
-                        if (off < lastRowEnd)
-                            return false; // term local segment not from this row
-                        // check if term intersects with other term in same row
-                        for (int p = 0, pSli = r * slw; p < c; p++) {
-                            int pOff = slices[pSli+SL_OFF], pEnd = pOff+slices[pSli+SL_LEN] & LEN_MASK;
-                            if (pEnd == pOff) continue;
-                            if ((pOff >= off && pOff < end) || (off >= pOff && off < pEnd))
-                                return false; // terms local segments overlap
-                        }
-                    }
-                    if (!equals(r, c, this, r, c))
-                        return false; // batch self-equality failed
-                    if (getView(r, c, termView)) {
-                        if (!equals(r, c, termView))
-                            return false; // self-equality with term failed
-                        if (!getRopeView(r, c, ropeView))
-                            return false; // has term but no rope!?
-                        //noinspection EqualsBetweenInconvertibleTypes
-                        if (!termView.equals(ropeView))
-                            return false; // term and rope view do not match
-                        if (termView.hashCode() != hash(r, c))
-                            return false; // term hash mismatch
-                    } else if (!equals(r, c, null) || getRopeView(r, c, ropeView)) {
-                        return false; // no term view but != null or has rope view
+        int slw = (cols<<1);
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0, i = r*slw; c < cols; c++, i += 2) {
+                int off = slices[i+SL_OFF], fLen = slices[i+SL_LEN], end = off+fLen&LEN_MASK;
+                if (off < 0 || (fLen&LEN_MASK) < 0 || end > locals.length)
+                    return false; // out-of-bounds off or len
+                if (end > off) {
+                    if ((fLen&SH_SUFF_MASK) != 0 && locals[off] != '"')
+                        return false; // non-literal with shared suffix
+                    // check if term intersects with other term in same row
+                    for (int p = 0, pi = r*slw; p < c; p++, pi+=2) {
+                        int pOff = slices[pi+SL_OFF], pEnd = pOff+slices[pi+SL_LEN] & LEN_MASK;
+                        if (pEnd == pOff) continue;
+                        if ((pOff >= off && pOff < end) || (off >= pOff && off < pEnd))
+                            return false; // terms local segments overlap
                     }
                 }
-                if (!equals(r, this, r))
-                    return false; // row self-equality failed
-                lastRowEnd = candidateRowEnd;
             }
-        } finally {
-            termView.recycle();
-            ropeView.recycle();
         }
-        return true;
-    }
-
-    private void growLocals(int required) {
-        this.localsSeg = MemorySegment.ofArray(this.locals = grow(this.locals, required));
-        BatchEvent.Grown.record(this);
+        return super.validate();
     }
 
     private int slBase(int row, int col) {
@@ -195,8 +172,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (len > 0) {
             int required  = dest+len;
             if (required > locals.length)
-                growLocals(required);
-            offerNextLocals = dest+len;
+                growLocals(dest, required);
+            offerNextLocals = required;
         } else if (shared != null && shared.len > 0) {
             throw new IllegalArgumentException("Empty local with non-empty shared");
         }
@@ -208,65 +185,61 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     /* --- --- --- lifecycle --- --- --- */
 
-    CompressedBatch(int rowsCapacity, int cols, int bytesCapacity) {
+    CompressedBatch(int terms, int cols) {
         super(0, cols);
-        this.locals = bytesAtLeast(Math.max(bytesCapacity, 16));
-        this.localsSeg = MemorySegment.ofArray(this.locals);
-        int terms = Math.max(1, rowsCapacity*cols);
-        this.shared = segmentRopesAtLeast(terms);
-        this.slices = intsAtLeast(terms<<1);
+        this.locals        = EMPTY.utf8;
+        this.localsSeg     = EMPTY.segment;
+        this.shared        = segmentRopesAtLeast(terms);
+        this.termsCapacity = shared.length;
+        this.slices        = intsAtLeast(termsCapacity<<1);
         BatchEvent.Created.record(this);
     }
 
-    public void recycleInternals() {
-        rows            =  0;
-        offerNextLocals = -1;
+
+    void markGarbage() {
+        if (MARK_POOLED && (int)P.getAndSetRelease(this, P_GARBAGE) != P_POOLED)
+            throw new IllegalStateException("non-pooled marked garbage");
         INT     .offer(slices, slices.length);
+        SEG_ROPE.offer(shared, termsCapacity);
         BYTE    .offer(locals, locals.length);
-        SEG_ROPE.offer(shared, shared.length);
-        slices    = EMPTY_INT;
-        locals    = EMPTY.utf8;
-        localsSeg = EMPTY.segment;
-        shared    = EMPTY_SEG_ROPE;
+        slices        = EMPTY_INT;
+        shared        = EMPTY_SEG_ROPE;
+        termsCapacity = 0;
+        locals        = EMPTY.utf8;
+        localsSeg     = EMPTY.segment;
+        BatchEvent.Garbage.record(this);
     }
 
     /* --- --- --- batch-level accessors --- --- --- */
 
     @Override public CompressedBatchType type() { return COMPRESSED; }
 
-    public CompressedBatch copy(@Nullable CompressedBatch dst) {
-        int  cols = this.cols, rows = this.rows;
-        dst = COMPRESSED.reserved(dst, rows, cols, localsLen);
-        dst.rows        = rows;
-        dst.localsBegin = 0;
-        dst.localsLen   = localsLen;
-        arraycopy(locals, localsBegin, dst.locals, 0, localsLen);
-        int terms = rows*cols;
-        arraycopy(shared, 0,    dst.shared, 0, terms);
-        arraycopy(slices, 0,    dst.slices, 0, terms<<1);
+    @Override public CompressedBatch copy(@Nullable CompressedBatch dst) {
+        int cols = this.cols, rows = this.rows;
+        dst = COMPRESSED.emptyForTerms(dst, rows > 0 ? rows*cols : cols, cols);
+        dst.doAppend(this, rows, localsBegin, localsLen);
         return dst;
+    }
+
+    @Override public CompressedBatch withCapacity(int addRows) {
+        int rows = this.rows, terms = (rows+addRows)*cols;
+        if (terms <= termsCapacity)
+            return this;
+        return grown(terms, cols, localsLen, null, null);
     }
 
     public int localsFreeCapacity() { return locals.length-(localsBegin+localsLen); }
 
     @Override public int      localBytesUsed() { return localsLen; }
-    @Override public int directBytesCapacity() { return (slices.length + shared.length)<<2; }
-
-    boolean hasTermsCapacity(int terms) {
-        return terms <= shared.length && terms<<1 <= slices.length;
-    }
+    @Override public int       termsCapacity() { return termsCapacity; }
+    @Override public int  totalBytesCapacity() { return termsCapacity*12 + locals.length; }
 
     @Override public boolean hasCapacity(int terms, int localBytes) {
-        return terms <= shared.length && terms<<1 <= slices.length && localBytes <= locals.length;
-    }
-
-    @Override public boolean hasCapacity(int rows, int cols, int localBytes) {
-        int terms = rows*cols;
-        return terms <= shared.length && terms<<1 <= slices.length && localBytes <= locals.length;
+        return terms <= termsCapacity && localBytes <= locals.length;
     }
 
     @Override public int rowsCapacity() {
-        return cols == 0 ? Integer.MAX_VALUE : shared.length/cols;
+        return cols == 0 ? Integer.MAX_VALUE : termsCapacity/cols;
     }
 
     /* --- --- --- row-level accessors --- --- --- */
@@ -320,33 +293,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return h;
     }
 
-    @Override public int localBytesUsed(int row) { return (int)rowOffsetAndLen(row); }
-
-    long rowOffsetAndLen(int row) {
-        if (row >= rows)
-            throw new IndexOutOfBoundsException("row >= rows");
-        int off = Integer.MAX_VALUE, end = 0, slw = cols<<1;
-        int[] sl = slices;
-        for (int i = row*slw, slEnd = i+slw; i < slEnd; i+=2) {
-            int o = sl[i+SL_OFF], e = o + (sl[i+SL_LEN]&LEN_MASK);
-            if (o < off) off = o;
-            if (e > end) end = e;
-        }
-        return ((long)off<<32) | Math.max(0, end-off);
-    }
-
-    public void updateLocalsBeginAndLen() {
-        int rows = this.rows;
-        if (rows == 0 || cols == 0) {
-            localsBegin = 0;
-            localsLen = 0;
-        } else {
-            long offAndLen = rowOffsetAndLen(0);
-            localsBegin = (int)(offAndLen>>>32);
-            if (rows > 1)
-                offAndLen = rowOffsetAndLen(rows-1);
-            localsLen = ((int)(offAndLen>>>32) + (int)offAndLen) - localsBegin;
-        }
+    @Override public int localBytesUsed(int row) {
+        if (row >= rows) throw new IndexOutOfBoundsException("row >= rows");
+        int sum = 0, slw = cols<<1;
+        int[] slices = this.slices;
+        for (int i = row*slw+SL_LEN, end = i+slw; i < end; i += 2)
+            sum += slices[i]&LEN_MASK;
+        return sum;
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int oRow) {
@@ -402,19 +355,9 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public CompressedBatch copyRow(int row, @Nullable CompressedBatch offer) {
-        int cols = this.cols, srcTerm = row*cols;
-        long offAndLen = rowOffsetAndLen(row);
-        int lSrc = (int)(offAndLen>>>32), lLen = (int)offAndLen;
-        var dst = COMPRESSED.reserved(offer, 1, cols, lLen);
-        int[] dsl = dst.slices, ssl = slices;
-        for (int i = 0, slw = cols<<1, base = srcTerm<<1; i < slw; i += 2) {
-            dsl[i+SL_OFF] = ssl[base+i+SL_OFF] - lSrc;
-            dsl[i+SL_LEN] = ssl[base+i+SL_LEN];
-        }
-        dst.rows = 1;
-        arraycopy(shared, srcTerm, dst.shared, 0, cols);
-        arraycopy(locals, lSrc, dst.locals, 0, lLen);
-        return dst;
+        offer = COMPRESSED.emptyForTerms(offer, cols, cols);
+        offer.putRow(this, row);
+        return offer;
     }
 
     /* --- --- --- term-level accessors --- --- --- */
@@ -527,25 +470,24 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     byte[] copyToBucket(byte[] rowData, SegmentRope[] bucketShared, @NonNegative int dstRow,
                         @NonNegative int srcRow) {
-        int cols = this.cols, rowDataSlicesEnd = cols<<3;
-        long offAndLen = rowOffsetAndLen(srcRow);
-        int delta = -(int)(offAndLen>>>32)+rowDataSlicesEnd, localsLen = (int)offAndLen;
-        rowData = bytesAtLeast(rowDataSlicesEnd+localsLen, rowData);
-        int[] sl = slices;
-        for (int o = 0, i = (srcRow*cols)<<1; o < rowDataSlicesEnd; o+=8, i+=2) {
-            final int off = sl[i+SL_OFF]+delta;
-            rowData[o  ] = (byte)(off       );
-            rowData[o+1] = (byte)(off >>>  8);
-            rowData[o+2] = (byte)(off >>> 16);
-            rowData[o+3] = (byte)(off >>> 24);
-            final int len = sl[i+SL_LEN];
+        int cols = this.cols, lBegin = cols<<3;
+        arraycopy(shared, srcRow*cols, bucketShared, dstRow*cols, cols);
+        int [] slices = this.slices;
+        byte[] locals = this.locals;
+        rowData = bytesAtLeast(lBegin+localBytesUsed(srcRow), rowData);
+        for (int o = 0, lDst = lBegin, i = (srcRow*cols)<<1; o < lBegin; o += 8, i+=2) {
+            rowData[o  ] = (byte)(lDst       );
+            rowData[o+1] = (byte)(lDst >>>  8);
+            rowData[o+2] = (byte)(lDst >>> 16);
+            rowData[o+3] = (byte)(lDst >>> 24);
+            int len = slices[i+SL_LEN];
             rowData[o+4] = (byte)(len       );
             rowData[o+5] = (byte)(len >>>  8);
             rowData[o+6] = (byte)(len >>> 16);
             rowData[o+7] = (byte)(len >>> 24);
+            arraycopy(locals, slices[i+SL_OFF], rowData, lDst, len&=LEN_MASK);
+            lDst += len;
         }
-        arraycopy(locals, -delta+rowDataSlicesEnd, rowData, rowDataSlicesEnd, localsLen);
-        arraycopy(shared, srcRow*cols, bucketShared, dstRow*cols, cols);
         return rowData;
     }
 
@@ -678,8 +620,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (begin < fstLen)
             dest.append(fst, fstU8, fstOff+begin, Math.min(fstLen, end)-begin);
         if (end > fstLen) {
-            begin = Math.max(0, begin-fstLen);
-            dest.append(snd, sndU8, sndOff+begin, Math.max(0, (end-fstLen)-begin));
+            begin = max(0, begin-fstLen);
+            dest.append(snd, sndU8, sndOff+begin, max(0, (end-fstLen)-begin));
         }
     }
 
@@ -837,108 +779,84 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     /* --- --- --- mutators --- --- --- */
 
-    @Override public void reserve(int additionalRows, int additionalBytes) {
-        boolean grown = false;
-        int req = (rows+additionalRows)*cols;
-        if (req > shared.length) {
-            grown = true;
-            shared = grow(shared, req);
-        }
-        if ((req <<= 1) > slices.length) {
-            grown = true;
-            slices = grow(slices, req);
-        }
-        if ((req = localsBegin+localsLen+additionalBytes) > locals.length)  {
-            grown = false;
-            growLocals(req);
-        }
-        if (grown)
-            BatchEvent.Grown.record(this);
-    }
-
-    @Override public @Nullable CompressedBatch recycle() {
-        return CompressedBatchType.INSTANCE.recycle(this);
-    }
+    @Override public @Nullable CompressedBatch recycle() { return COMPRESSED.recycle(this); }
 
     @Override public void clear() {
         rows            =  0;
+        localsBegin     =  0;
+        localsLen       =  0;
         offerNextLocals = -1;
-        localsBegin     = 0;
-        localsLen       = 0;
-        if (slices == null)
-            slices = intsAtLeast(cols<<1);
-        if (shared == null)
-            shared = segmentRopesAtLeast(cols);
     }
 
-
-    @Override public void clear(int cols) {
+    @Override public @This CompressedBatch clear(int cols) {
         this.cols            = cols;
         this.rows            =    0;
         this.localsBegin     =    0;
         this.localsLen       =    0;
         this.offerNextLocals =   -1;
-        if (shared.length < cols   ) shared = segmentRopesAtLeast(cols, shared);
-        if (slices.length < cols<<1) slices = intsAtLeast(cols<<1, slices);
-    }
-
-    @This CompressedBatch clearAndUnpool(int cols) {
-        this.cols            = cols;
-        this.rows            =    0;
-        this.localsBegin     =    0;
-        this.localsLen       =    0;
-        this.offerNextLocals =   -1;
-        if (shared.length < cols   ) shared = segmentRopesAtLeast(cols, shared);
-        if (slices.length < cols<<1) slices = intsAtLeast(cols<<1, slices);
-        unmarkPooled();
+        if (termsCapacity < cols)
+            growForCols(cols);
         return this;
     }
 
-    @This CompressedBatch clearAndReserveAndUnpool(int terms, int cols, int localBytes) {
-        this.cols = cols;
-        this.rows = 0;
-        this.localsBegin = 0;
-        this.localsLen = 0;
-        this.offerNextLocals = -1;
+    private void growForCols(int cols) {
+        shared        = segmentRopesAtLeast(cols, shared);
+        termsCapacity = shared.length;
+        if (slices.length < termsCapacity<<1)
+            slices = intsAtLeast(termsCapacity<<1, slices);
+        BatchEvent.TermsGrown.record(this);
+    }
 
-        boolean grown = false;
-        if (terms > shared.length) {
-            grown = true;
-            shared  = segmentRopesAtLeast(terms, shared );
-        }
-        if (terms<<1 > slices.length) {
-            grown = true;
-            slices = intsAtLeast(terms<<1, slices);
-        }
-        if (localBytes > locals.length) {
-            grown = true;
-            localsSeg = MemorySegment.ofArray(locals = bytesAtLeast(localBytes, locals));
-        }
-        if (grown)
-            BatchEvent.Grown.record(this);
-        unmarkPooled();
-        return this;
+    protected void swapLocals(CompressedBatch other) {
+        var otherLocals    = other.locals;
+        var otherLocalsSeg = other.localsSeg;
+        other.locals       =  this.locals;
+        other.localsSeg    =  this.localsSeg;
+        this .locals       = otherLocals;
+        this .localsSeg    = otherLocalsSeg;
+    }
+
+    @Override public void reserveAddLocals(int addBytes) {
+        int req = localsBegin+localsLen+addBytes;
+        if (req <= locals.length)
+            growLocals(req-addBytes, req);
+    }
+
+    private void growLocals(int currentEnd, int reqLen) {
+        byte[] bigger = bytesAtLeast(reqLen);
+        if (currentEnd > 0)
+            arraycopy(locals, localsBegin, bigger, 0, currentEnd-localsBegin);
+        BYTE.offer(locals, locals.length);
+        localsBegin = 0;
+        locals      = bigger;
+        localsSeg   = MemorySegment.ofArray(bigger);
+        BatchEvent.LocalsGrown.record(this);
     }
 
     @Override public void abortPut() throws IllegalStateException {
+        requireUnpooled();
         if (offerNextLocals < 0)
             return; // not inside an uncommitted offer/put
         fill(locals, localsLen, locals.length, (byte)0);
         offerNextLocals = -1;
     }
 
-    @Override public void beginPut() {
+    @Override public CompressedBatch beginPut() {
+        requireUnpooled();
+        int terms = (rows+1)*cols;
+        var dst = terms <= termsCapacity ? this
+                : grown(terms, cols, localsLen+64, null, null);
+        dst.beginPut0();
+        return dst;
+    }
+
+    private void beginPut0() {
         offerNextLocals = localsBegin+localsLen;
-
-        boolean grown = false;
-        int cols = this.cols, req = (rows+1)*cols;
-        if (req > shared.length) { grown = true; shared = grow(shared, req); }
-        fill(shared, req-cols, req, null);
-
-        if ((req <<= 1) > slices.length) { grown = true; slices = grow(slices, req); }
-        fill(slices, req-(cols<<1), req, 0);
-        if (grown)
-            BatchEvent.Grown.record(this);
+        int begin = rows*cols, end = begin+cols;
+        var shared = this.shared;
+        var slices = this.slices;
+        for (int i = begin                  ; i < end ; i++) shared[i] = null;
+        for (int i = begin<<1, end2 = end<<1; i < end2; i++) slices[i] = 0;
     }
 
     @Override public void putTerm(int col, Term t) {
@@ -988,11 +906,16 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override public void commitPut() {
+        requireUnpooled();
         if (offerNextLocals < 0) throw new IllegalStateException();
+        commitPut0();
+        assert validate() : "corrupted";
+    }
+
+    public void commitPut0() {
         ++rows;
         localsLen       = offerNextLocals-localsBegin;
         offerNextLocals = -1;
-        assert validate() : "corrupted";
     }
 
 //    /** Mask true for SL_OFF and false for SL_LEN */
@@ -1038,64 +961,66 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 //        assert validate() : "corrupted";
 //    }
 
-    public CompressedBatch choosePutDst(int oRows, int oLocals) {
-        return choosePutDst(oRows, localsBegin+localsLen, oLocals, null, null);
-    }
 
-    private CompressedBatch choosePutDst(int oRows, int lDst, int oLocals,
-                                         @Nullable VarHandle rec, @Nullable Object holder) {
-        int cols = this.cols, nRows = rows+oRows, terms = nRows*cols, localsReq = lDst+oLocals;
-        CompressedBatch dst;
-        if (terms <= shared.length && terms<<1  <= slices.length
-                                   && localsReq <= locals.length) {
-            return this;
-        } else if ((dst = COMPRESSED.poll(nRows, cols, localsReq)) == null) {
-            reserve(oRows, oLocals);
-            return this;
-        } else {
-            if (rows > 0)
-                dst.putRangeUnsafe(this, rows, localsBegin, localsLen, 0);
-            markPooled();
-            if (rec == null || rec.compareAndExchangeRelease(holder, null, this) != null)
-                COMPRESSED.recycle(untracedUnmarkPooled());
-        }
-        return dst;
-    }
-
-    static { assert Integer.bitCount(SL_OFF) == 0 : "update lastOff/rowOff below"; }
-    @Override public CompressedBatch put(CompressedBatch other,
-                                         @Nullable VarHandle rec, @Nullable Object holder) {
-        int oRows = other.rows;
-        if (cols != other.cols) {
+    @Override public CompressedBatch
+    put(CompressedBatch o, @Nullable VarHandle rec, @Nullable Object holder) {
+        final int oRows = o.rows, cols = this.cols, terms = (rows+oRows)*cols;
+        if (cols != o.cols) {
             throw new IllegalArgumentException("cols != other.cols");
         } else if (cols == 0 || oRows == 0) {
-            rows += Math.max(0, oRows);
+            this.rows += oRows;
             return this;
         } else if (MARK_POOLED) {
             this .requireUnpooled();
-            other.requireUnpooled();
+            o    .requireUnpooled();
         }
 
-        int lDst = localsBegin+localsLen, lSrc = other.localsBegin, lLen = other.localsLen;
-        var dst = choosePutDst(oRows, lDst, lLen, rec, holder);
-        dst.putRangeUnsafe(other, oRows, lSrc, lLen, lDst);
+        var dst = terms <= termsCapacity ? this
+                : grown(terms, cols, localsLen+o.localsLen, rec, holder);
+        dst.doAppend(o, oRows, o.localsBegin, o.localsLen);
         assert dst.validate() : "corrupted";
         return dst;
     }
 
-    private void putRangeUnsafe(CompressedBatch other, int oRows,
-                                int lSrc, int lLen, int lDst) {
-        arraycopy(other.locals, lSrc, locals, lDst, lLen);
-        localsLen += lLen;
-        int terms = rows*cols, oTerms = oRows*cols;
-        arraycopy(other.shared, 0, shared, terms, oTerms);
-        rows += oRows; // set early to help the compiler
+    @Override public CompressedBatch put(CompressedBatch other) {
+        return put(other, null, null);
+    }
 
-        final int slDst = terms<<1, slLen = oTerms<<1;
-        int[] sl = slices;
-        arraycopy(other.slices, 0, slices, slDst, slLen);
-        for (int i = slDst, slEnd = slDst+slLen, d = lDst-lSrc; i < slEnd; i += 2)
+    private CompressedBatch
+    grown(int terms, int cols, int localReq, @Nullable VarHandle rec, @Nullable Object holder) {
+        var b = COMPRESSED.createForTerms(terms, cols);
+        if (b.locals.length < localReq)
+            b.growLocals(0, localReq);
+        b.doAppend(this, rows, localsBegin, localsLen);
+        BatchEvent.TermsGrown.record(b);
+        if (rec != null) {
+            if (rec.compareAndExchangeRelease(holder, null, markPooled()) == null)
+                return b;
+            markUnpooledNoTrace();
+        }
+        COMPRESSED.recycle(this);
+        return b;
+    }
+
+    private void doAppend(CompressedBatch o, int rowCount, int lSrc, int lLen) {
+        int dstTerm = rows*cols, nTerms = rowCount*cols;
+        this.rows += rowCount;
+        int        [] isl = o.slices, sl = slices;
+        SegmentRope[] ish = o.shared, sh = shared;
+        int lDst = doAppendLocals(o.locals, lSrc, lLen);
+        arraycopy(ish, 0, sh, dstTerm, nTerms);
+        arraycopy(isl, 0, sl, dstTerm<<=1, nTerms<<=1);
+        for (int i = dstTerm+SL_OFF, e = dstTerm+nTerms, d = lDst-lSrc; i < e; i += 2)
             sl[i] += d;
+    }
+
+    private int doAppendLocals(byte[] other, int begin, int len) {
+        int lDst = localsBegin+localsLen;
+        if (lDst+len > locals.length)
+            growLocals(lDst, lDst+len);
+        this.localsLen += len;
+        arraycopy(other, begin, locals, lDst, len);
+        return lDst;
     }
 
     //    private void scalarPut(CompressedBatch o) {
@@ -1122,54 +1047,67 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 //        assert !corrupted() : "corrupted";
 //    }
 
-    @Override public void putRow(CompressedBatch o, int row) {
-        final int cols = this.cols;
+    @Override public CompressedBatch putRow(CompressedBatch o, int row) {
+        int cols = this.cols, dstTerm = rows*cols, srcTerm = row*cols;
         if (cols != o.cols) {
             throw new IllegalArgumentException("o.cols != cols");
         } else if (cols == 0) {
-            ++rows; return;
+            this.rows++;
+            return this;
         } else if (MARK_POOLED) {
             this.requireUnpooled();
             o   .requireUnpooled();
         }
 
-        long srcAndLen = o.rowOffsetAndLen(row);
-        int lSrc = (int)(srcAndLen>>>32), lLen = (int)srcAndLen, lDst = localsBegin+localsLen;
-        reserve(1, lLen);
-
-        int slw = cols<<1, b = rows*slw, ob = row*slw;
-        int[] sl = slices, osl = o.slices;
-        for (int i = 0, d = lDst-lSrc; i < slw; i+=2) {
-            sl[b+i+SL_OFF] = osl[ob+i+SL_OFF] + d;
-            sl[b+i+SL_LEN] = osl[ob+i+SL_LEN];
+        int lLen = o.localBytesUsed(row);
+        var dst = dstTerm+cols <= termsCapacity ? this
+                : grown(dstTerm+cols, cols, localsLen+lLen, null, null);
+        int lDst = dst.localsBegin+dst.localsLen;
+        if (lDst+lLen > dst.locals.length)
+            dst.growLocals(lDst, dst.localsLen+lLen);
+        dst.localsLen = lDst+lLen-dst.localsBegin;
+        ++dst.rows;
+        int [] osl = o.slices, dsl = dst.slices;
+        byte[] olo = o.locals, dlo = dst.locals;
+        arraycopy(o.shared, srcTerm, dst.shared, dstTerm, cols);
+        for (int c = 0, fLen; c < cols; c++) {
+            int dPos = (dstTerm+c)<<1, oPos = (srcTerm+c)<<1;
+            dsl[dPos+SL_OFF] = lDst;
+            dsl[dPos+SL_LEN] = fLen = osl[oPos+SL_LEN];
+            arraycopy(olo, osl[oPos+SL_OFF], dlo, lDst, fLen&LEN_MASK);
+            lDst += fLen&LEN_MASK;
         }
-        arraycopy(o.shared, ob>>1, shared, b>>1, cols);
 
-        ++rows;
-        localsLen += lLen;
-        arraycopy(o.locals, lSrc, locals, lDst, lLen);
-
-        assert validate() : "corrupted";
+        assert dst.validate() : "corrupted";
+        return dst;
     }
 
     static { assert Integer.bitCount(SL_OFF) == 0 : "update lastOff/rowOff"; }
     @Override public @This CompressedBatch putConverting(Batch<?> other, VarHandle rec,
                                                          Object holder) {
-        int cols = this.cols, oRows = other.rows;
+        int cols = this.cols, oRows = other.rows, terms = (rows+oRows)*cols;
         if (other instanceof CompressedBatch cb) {
             return put(cb, rec, holder);
         } else if (cols != other.cols) {
             throw new IllegalArgumentException();
         } else if (cols == 0 || oRows <= 0) {
-            rows += Math.max(0, oRows);
+            rows += oRows;
             return this;
         } else if (MARK_POOLED) {
             this .requireUnpooled();
             other.requireUnpooled();
         }
 
-        var dst = choosePutDst(oRows, localsBegin+localsLen,
-                               (rows+oRows)*(cols<<4), rec, holder);
+        int localReq = localsLen+max(cols << 4, rows == 0 ? 0 : localsLen/rows);
+        CompressedBatch dst;
+        if (terms > termsCapacity) {
+            dst = grown(terms, cols, localReq, rec, holder);
+        } else {
+            dst = this;
+            if ((localReq += localsBegin) > locals.length)
+                dst.growLocals(localsBegin+localsLen, localReq);
+        }
+
         var t = TwoSegmentRope.pooled();
         for (int r = 0; r < oRows; r++)
             dst.putRowConverting(other, r, t, cols);
@@ -1177,27 +1115,29 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return dst;
     }
 
-    @Override public void putRowConverting(Batch<?> other, int row) {
-        int cols = this.cols;
+    @Override public CompressedBatch putRowConverting(Batch<?> other, int row) {
+        int cols = this.cols, rows = this.rows, terms = (rows+1)*cols;
         if (other instanceof CompressedBatch cb) {
-            putRow(cb, row);
-            return;
+            return putRow(cb, row);
         } else if (cols != other.cols) {
             throw new IllegalArgumentException("cols mismatch");
         } else if (cols == 0) {
-            ++rows; return;
+            this.rows = rows+1; return this;
         } else if (MARK_POOLED) {
             this .requireUnpooled();
             other.requireUnpooled();
         }
 
         var t = TwoSegmentRope.pooled();
-        putRowConverting(other, row, t, cols);
+        var dst = terms <= termsCapacity ? this
+                : grown(terms, cols, localsLen+64, null, null);
+        dst.putRowConverting(other, row, t, cols);
         t.recycle();
+        return dst;
     }
 
     private void putRowConverting(Batch<?> other, int row, TwoSegmentRope t, int cols) {
-        beginPut();
+        beginPut0();
         for (int c = 0; c < cols; c++) {
             if (other.getRopeView(row, c, t)) {
                 byte fst = t.get(0);
@@ -1213,233 +1153,309 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 t.copy(localOff, localOff+localLen, locals, dest);
             }
         }
-        commitPut();
+        commitPut0();
     }
 
     /* --- --- --- operation objects --- --- --- */
 
     public static final class Merger extends BatchMerger<CompressedBatch> {
-        private int @Nullable [] tsl;
-        private SegmentRope @Nullable [] tsh;
+        private static final SegmentRope[] NULL_SHARED = {null};
+        private static final int        [] NULL_SLICES = {0, 0};
+        private final int[] leftSlices;
+        private final SegmentRope[] leftShared;
 
         public Merger(BatchType<CompressedBatch> batchType, Vars outVars, int[] sources) {
             super(batchType, outVars, sources);
+            this.leftShared  = new SegmentRope[sources.length];
+            this.leftSlices  = new int        [sources.length<<1];
         }
 
-        @Override public void doRelease() {
-            if (tsl != null) tsl =      INT.offer(tsl, tsl.length);
-            if (tsh != null) tsh = SEG_ROPE.offer(tsh, tsh.length);
-            super.doRelease();
-        }
-
-        @Override protected int[] makeColumns(int[] sources) {
-            int[] columns = new int[sources.length];
-            for (int i = 0; i < sources.length; i++)
-                columns[i] = sources[i]-1;
-            return columns;
-        }
-
-        @Override public CompressedBatch projectInPlace(CompressedBatch b) {
-            final int[] columns = this.columns;
-            assert columns != null;
-            final int terms = b.rows*columns.length, bCols = b.cols;
-            b.cols = columns.length;
-            if (terms == 0)  // early exit allow to elide checks for underflow
-                return b;
-
-
-            // allocate new shared, prefer same size as b.shared
-            var bsh = b.shared;
-            var tsh = this.tsh;
-            this.tsh = bsh;
-            int preferred = Math.max(terms, 31-numberOfLeadingZeros(bsh.length));
-            if (tsh != null && tsh.length < preferred) {
-                SegmentRope[] bigger = SEG_ROPE.getAtLeast(preferred);
-                if (bigger != null || tsh.length < terms) {
-                    SEG_ROPE.offer(tsh, tsh.length);
-                    tsh = bigger;
+        @Override
+        public CompressedBatch merge(@Nullable CompressedBatch dst, CompressedBatch left, int leftRow, @Nullable CompressedBatch right) {
+            int rows = right == null ? 0 : right.rows;
+            dst = COMPRESSED.withCapacity(dst, rows, sources.length);
+            if (rows == 0)
+                return mergeWithMissing(dst, left, leftRow);
+            int[] sources = this.sources;
+            int lAdj = appendLocalsAndPrepareLeftPointers(dst, left, leftRow, right);
+            int d = dst.rows*dst.cols, dEnd = d+rows*sources.length;
+            dst.rows += rows;
+            int        [] dsl = dst.slices, rsl = right.slices, osl;
+            SegmentRope[] dsh = dst.shared, rsh = right.shared, osh;
+            int rCols = right.cols;
+            for (int rt = 0; d < dEnd; d+=sources.length, rt+=rCols) {
+                for (int c = 0, src; c < sources.length; c++) {
+                    int dPos = d+c;
+                    if ((src=sources[c]) > 0) {
+                        osh = leftShared;  osl = leftSlices;  src =    src-1;
+                    } else if (src < 0) {
+                        osh = rsh;         osl = rsl;         src = rt-src-1;
+                    } else {
+                        osh = NULL_SHARED; osl = NULL_SLICES;
+                    }
+                    dsh[dPos    ] = osh[src    ];
+                    dsl[dPos<<=1] = osl[src<<=1]+lAdj;
+                    dsl[dPos + 1] = osl[src + 1];
                 }
             }
-            if (tsh == null) tsh = new SegmentRope[preferred];
-            b.shared = tsh;
+            assert dst.validate();
+            return dst;
+        }
 
-            //project shared
-            for (int o = 0, bo = 0; o < terms; o += columns.length, bo += bCols) {
-                for (int c = 0, src; c < columns.length; c++)
-                    tsh[o+c] = (src = columns[c]) < 0 ? null : bsh[bo+src];
+        private CompressedBatch
+        mergeWithMissing(CompressedBatch dst, CompressedBatch left, int leftRow) {
+            dst.beginPut0();
+            for (int c = 0, src; c < sources.length; c++) {
+                if ((src = sources[c]) > 0)
+                    dst.putTerm(c, left, leftRow, src-1);
             }
+            dst.commitPut0();
+            return dst;
+        }
 
-            // allocate new slices array, prefer compatible length to b.slices
-            var bsl = b.slices;
-            var tsl = this.tsl;
-            this.tsl = bsl;
-            preferred = Math.max(terms<<1, bsl.length);
-            if (tsl != null && tsl.length < preferred) {
-                var bigger = INT.getAtLeast(preferred);
-                if (bigger != null || tsl.length < terms<<1) {
-                    INT.offer(tsl, tsl.length);
-                    tsl = bigger;
-                }
+        private int appendLocalsAndPrepareLeftPointers(CompressedBatch dst, CompressedBatch left, int leftRow,
+                                                       @Nullable CompressedBatch right) {
+            int lReq = dst.localsLen + left.localBytesUsed(leftRow)
+                                     + (right == null ? 0 : right.localsLen);
+            if (dst.localsBegin+lReq > dst.locals.length)
+                dst.growLocals(dst.localsBegin+dst.localsLen, lReq);
+            int lDst = dst.localsBegin+dst.localsLen;
+            SegmentRope[] sh = left.shared;
+            int        [] sl = left.slices;
+            byte       [] dLocals= dst.locals, lLocals = left.locals;
+            int base = leftRow*left.cols;
+            for (int c = 0, lc, len; c < sources.length; c++) {
+                if ((lc=sources[c]-1) < 0) continue;
+                int i = base+lc;
+                leftShared[lc] = sh[i];
+                leftSlices[(lc<<=1)+SL_OFF] = lDst;
+                leftSlices[ lc     +SL_LEN] = len = sl[(i<<=1)+SL_LEN];
+                arraycopy(lLocals, sl[i+SL_OFF], dLocals, lDst, len&=LEN_MASK);
+                lDst += len;
             }
-            if (tsl == null) tsl = new int[preferred];
-            b.slices = tsl;
+            dst.localsLen = lDst-dst.localsBegin;
+            if (right != null) {
+                int rBegin = right.localsBegin, lAdj = lDst-rBegin;
+                dst.doAppendLocals(right.locals, rBegin, right.localsLen);
+                for (int i = SL_OFF; i < leftSlices.length; i+=2) leftSlices[i] -= lAdj;
+                return lAdj;
+            }
+            return 0;
+        }
+
+        private void projectInto(CompressedBatch dst, CompressedBatch in, int[] cols, int lAdjust) {
+            int inCols = in.cols, inTerms = in.rows*inCols, dZero;
+            if (dst == in) {
+                dZero = 0;
+                dst.cols = cols.length;
+            } else {
+                dZero = dst.rows*dst.cols;
+                dst.rows += in.rows;
+            }
+            SegmentRope[] dsh = dst.shared, ish = in.shared;
+            int        [] dsl = dst.slices, isl = in.slices;
+
+            // project shared
+            for (int i=0, d=dZero; i < inTerms; i+=inCols, d+=cols.length) {
+                for (int c = 0, src; c < cols.length; c++)
+                    dsh[d+c] = (src=cols[c]) < 0 ? null : ish[i+src];
+            }
 
             // project slices
-            for (int o = 0, bo = 0; o < terms; o += columns.length, bo += bCols) {
-                for (int c = 0, dst = o<<1; c < columns.length; c++, dst += 2) {
-                    int srcCol = columns[c];
-                    if (srcCol < 0) {
-                        tsl[dst  ] = 0;
-                        tsl[dst+1] = 0;
+            for (int i = 0, d = dZero; i < inTerms; i+=inCols, d+=cols.length) {
+                for (int c = 0, dstPos = d<<1, src; c < cols.length; c++, dstPos += 2) {
+                    if ((src = cols[c]) < 0) {
+                        dsl[dstPos  ] = 0;
+                        dsl[dstPos+1] = 0;
                     } else {
-                        int src = (bo+srcCol)<<1;
-                        tsl[dst  ] = bsl[src  ];
-                        tsl[dst+1] = bsl[src+1];
+                        int inPos = (i+src)<<1;
+                        dsl[dstPos  ] = isl[inPos  ]+lAdjust;
+                        dsl[dstPos+1] = isl[inPos+1];
                     }
                 }
             }
-            b.updateLocalsBeginAndLen();
+            assert dst.validate();
+        }
 
-            assert b.validate() : "corrupted";
-            return b;
+        @Override public CompressedBatch project(CompressedBatch dst, CompressedBatch in) {
+            int[] cols = columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            dst = COMPRESSED.withCapacity(dst, in.rows, cols.length);
+            int lBegin = in.localsBegin;
+            projectInto(dst, in, cols,
+                    dst.doAppendLocals(in.locals, lBegin, in.localsLen)-lBegin);
+            return dst;
+        }
+
+        @Override
+        public CompressedBatch projectRow(@Nullable CompressedBatch dst, CompressedBatch in, int row) {
+            int[] cols = columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            dst = COMPRESSED.withCapacity(dst, 1, cols.length);
+            dst.beginPut0();
+            for (int c = 0, src; c < cols.length; c++) {
+                if ((src=cols[c]) >= 0)
+                    dst.putTerm(c, in, row, src);
+            }
+            dst.commitPut0();
+            return dst;
+        }
+
+        @Override public CompressedBatch projectInPlace(CompressedBatch in) {
+            final int[] cols = this.columns;
+            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
+            final int terms = in.rows*cols.length;
+            if (terms == 0) // early exit allows eliding checks for underflow
+                return projectInPlaceEmpty(in);
+
+            CompressedBatch dst;
+            if (safeInPlaceProject)
+                dst = in;
+            else
+                in.swapLocals(dst = COMPRESSED.createForTerms(terms, cols.length));
+            projectInto(dst, in, cols, 0);
+            if (dst != in)
+                COMPRESSED.recycle(in);
+            return dst;
         }
     }
 
     public static final class Filter extends BatchFilter<CompressedBatch> {
-        private int @Nullable [] tsl;
-        private SegmentRope @Nullable [] tsh;
-        private final boolean bogusProjection;
-
+        private final Merger projector;
         public Filter(BatchType<CompressedBatch> batchType, Vars outVars,
-                      BatchMerger<CompressedBatch> projector,
-                      RowFilter<CompressedBatch> rowFilter,
+                      Merger projector, RowFilter<CompressedBatch> rowFilter,
                       @Nullable BatchFilter<CompressedBatch> before) {
-            super(batchType, outVars, projector, rowFilter, before);
-            if (projector != null && projector.columns != null) {
-                boolean bogus = true;
-                for (int c : projector.columns) {
-                    if (c != -1) { bogus = false; break; }
-                }
-                bogusProjection = bogus;
-            } else  {
-                bogusProjection = false;
-            }
+            super(batchType, outVars, rowFilter, before);
             assert projector == null || projector.vars.equals(outVars);
+            this.projector = projector;
         }
 
-        @Override public void doRelease() {
-            if (tsl != null) tsl =      INT.offer(tsl, tsl.length);
-            if (tsh != null) tsh = SEG_ROPE.offer(tsh, tsh.length);
-            super.doRelease();
-        }
-
-        private CompressedBatch filterInPlaceEmpty(CompressedBatch in, int cols) {
-            int rows = in.rows, survivors = 0;
-            for (int r = 0; r < rows; r++) {
-                switch (rowFilter.drop(in, r)) {
-                    case KEEP -> survivors++;
-                    case DROP -> {}
-                    case TERMINATE -> rows = -1;
+        private CompressedBatch filterInto(CompressedBatch dst, CompressedBatch in) {
+            RowFilter.Decision decision = DROP;
+            int rows = in.rows, cols = in.cols;
+            int r = 0, dstTerm, lDelta;
+            int        [] isl = in.slices, dsl = dst.slices;
+            SegmentRope[] ish = in.shared, dsh = dst.shared;
+            if (dst == in) { // avoid no-op arraycopy if first rows are kept
+                while (r < rows && (decision = rowFilter.drop(in, r)) == KEEP)
+                    ++r;
+                dstTerm = r*cols;
+                ++r; // do not re-evaluate the non-KEEP row
+                lDelta = 0;
+            } else {
+                dstTerm = dst.rows*cols;
+                int lSrc = in.localsBegin;
+                lDelta = dst.doAppendLocals(in.locals, lSrc, in.localsLen)-lSrc;
+            }
+            for (; r < rows && (decision != TERMINATE); r++) {
+                int start = r;
+                while (r < rows && (decision = rowFilter.drop(in, r)) == KEEP) ++r;
+                if (r > start) {
+                    int nTerms = (r-start)*cols, srcTerm = start*cols;
+                    arraycopy(ish, srcTerm, dsh, dstTerm, nTerms);
+                    arraycopy(isl, srcTerm<<1, dsl, dstTerm<<1, nTerms<<1);
+                    if (lDelta > 0) {
+                        for (int i = (dstTerm<<1)+SL_OFF, e = i+nTerms<<1; i < e; i+=2)
+                            dsl[i] += lDelta;
+                    }
+                    dstTerm += nTerms;
                 }
             }
-            if (rows == -1) {
-                cancelUpstream();
-                if (survivors == 0) return batchType.recycle(in);
-            }
-            in.clear(cols);
-            if (cols > 0 && survivors > 0) {
-                in.reserve(survivors, 0);
-                Arrays.fill(in.slices, 0, ((cols<<1)+2)*survivors, 0);
-                Arrays.fill(in.shared, 0, survivors, null);
-            }
-            in.rows = survivors;
-            assert in.validate() : "filterInPlaceEmpty corrupted batch";
-            return in;
+            return endFilter(dst, dstTerm, cols, decision==TERMINATE);
         }
 
-        @Override public CompressedBatch filterInPlace(CompressedBatch in,
-                                                       BatchMerger<CompressedBatch> projector) {
+        private CompressedBatch projectingFilterInto(CompressedBatch dst, CompressedBatch in,
+                                                     Merger projector) {
+            int[] columns = projector.columns;
+            assert columns != null;
+            RowFilter.Decision decision = DROP;
+            int rows = in.rows, inCols = in.cols, dstTerm;
+            int        [] isl = in.slices, dsl = dst.slices;
+            SegmentRope[] ish = in.shared, dsh = dst.shared;
+            int lDelta;
+            if (dst == in) {
+                lDelta = 0;
+                dstTerm = 0;
+            } else {
+                int lBegin = in.localsBegin;
+                lDelta = dst.doAppendLocals(in.locals, lBegin, in.localsLen)-lBegin;
+                dstTerm = dst.rows*dst.cols;
+            }
+            for (int r = 0; r < rows && decision != TERMINATE; r++) {
+                if ((decision = rowFilter.drop(in, r)) == KEEP)  {
+                    int srcTerm = r*inCols;
+                    for (int c = 0, srcCol; c < columns.length; c++) {
+                        int dstPos = dstTerm+c;
+                        if ((srcCol = columns[c]) < 0) {
+                            dsh[dstPos    ] = null;
+                            dsl[dstPos<<=1] = 0;
+                            dsl[dstPos + 1] = 0;
+                        } else {
+                            int srcPos      = srcTerm+srcCol;
+                            dsh[dstPos    ] = ish[srcPos    ];
+                            dsl[dstPos<<=1] = isl[srcPos<<=1] + lDelta;
+                            dsl[dstPos + 1] = isl[srcPos + 1];
+                        }
+                    }
+                    dstTerm += columns.length;
+                }
+            }
+            return endFilter(dst, dstTerm, columns.length, decision==TERMINATE);
+        }
+
+        @Override public CompressedBatch filter(@Nullable CompressedBatch dst, CompressedBatch in) {
+            if (before != null)
+                in = before.filter(null, in);
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(dst, in);
+            var projector = this.projector;
+            CompressedBatch garbage = null;
+            if (projector != null && rowFilter.targetsProjection()) {
+                in = projector.project(null, in);
+                projector = null;
+                if (dst == null || dst.rows == 0) {
+                    garbage = dst;
+                    dst = in;
+                } else {
+                    garbage = in;
+                }
+            }
+            dst = COMPRESSED.withCapacity(dst, in.rows, outColumns);
+            dst = projector == null ? filterInto(dst, in)
+                                    : projectingFilterInto(dst, in, projector);
+            if (garbage != null)
+                COMPRESSED.recycle(garbage);
+            return dst;
+        }
+
+        @Override public CompressedBatch filterInPlace(CompressedBatch in) {
             if (before != null)
                 in = before.filterInPlace(in);
-            if (in == null)
-                return null;
-            int @Nullable[] columns = projector == null ? null : projector.columns;
-            int rows = in.rows, iCols = in.cols, cols = columns == null ? iCols : columns.length;
-
-            //project if filter requires
-            if (columns != null && rowFilter.targetsProjection()) {
+            if (in == null || (in.rows*outColumns) == 0)
+                return filterEmpty(in, in);
+            var projector = this.projector;
+            if (projector != null && rowFilter.targetsProjection()) {
                 in = projector.projectInPlace(in);
-                columns = null;
+                projector = null;
             }
+            return projector == null ? filterInto(in, in)
+                                     : filterInPlaceProjecting(in, projector);
+        }
 
-            if (cols == 0 || rows == 0 || bogusProjection)
-                return filterInPlaceEmpty(in, cols);
-
-            // get working arrays
-            int tSlw=cols<<1, slOut = 0, shOut = 0;
-            var isl = in.slices;
-            var tsl = intsAtLeast(rows*tSlw, this.tsl);
-            var ish = in.shared;
-            var tsh = segmentRopesAtLeast(rows*cols, this.tsh);
-
-            if (columns == null) { // faster code if we don't need to concurrently project
-                for (int r = 0; r < rows; r++) {
-                    switch (rowFilter.drop(in, r)) {
-                        case KEEP -> {
-                            arraycopy(ish, r*cols, tsh, shOut, cols);
-                            arraycopy(isl, r*tSlw, tsl, slOut, tSlw);
-                            shOut += cols;
-                            slOut += tSlw;
-                        }
-                        case DROP -> {}
-                        case TERMINATE -> rows = -1;
-                    }
-                }
+        private CompressedBatch
+        filterInPlaceProjecting(CompressedBatch in, Merger p) {
+            CompressedBatch dst, garbage;
+            if (p.safeInPlaceProject) {
+                garbage = null;
+                dst = in;
             } else {
-                for (int r = 0; r < rows; r++) {
-                    switch (rowFilter.drop(in, r)) {
-                        case KEEP -> {
-                            for (int src : columns) {
-                                if (src < 0) {
-                                    tsh[shOut] = null;
-                                    tsl[slOut  ] = 0;
-                                    tsl[slOut+1] = 0;
-                                } else {
-                                    int base = (r*iCols)+src;
-                                    tsh[shOut  ] = ish[base    ];
-                                    tsl[slOut  ] = isl[base<<=1];
-                                    tsl[slOut+1] = isl[base+1  ];
-                                }
-                                shOut += 1;
-                                slOut += 2;
-                            }
-                        }
-                        case DROP      -> {}
-                        case TERMINATE -> rows = -1;
-                    }
-                }
+                garbage = in;
+                dst = COMPRESSED.createForTerms(in.rows*outColumns, outColumns);
             }
-
-            if (rows == -1) { //TERMINATED
-                cancelUpstream();
-                if (slOut == 0) {
-                    this.tsl = tsl;
-                    this.tsh = tsh;
-                    return batchType.recycle(in);
-                }
-            }
-            //update metadata
-            in.rows = slOut/tSlw;
-            in.slices = tsl;
-            in.shared = tsh;
-            if (columns != null)
-                in.cols = columns.length;
-            this.tsl = isl;
-            this.tsh = ish;
-            in.updateLocalsBeginAndLen();
-            // use original isl on next call
-            assert in.validate() : "corrupted by projection";
-            return in;
+            dst = projectingFilterInto(dst, in, p);
+            if (garbage != null)
+                COMPRESSED.recycle(garbage);
+            return dst;
         }
     }
 

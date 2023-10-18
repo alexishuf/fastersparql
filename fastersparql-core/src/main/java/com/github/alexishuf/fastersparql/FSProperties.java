@@ -34,6 +34,7 @@ public class FSProperties {
     public static final String BATCH_MIN_SIZE            = "fastersparql.batch.min-size";
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
+    public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
     public static final String WS_SERVER_BINDINGS        = "fastersparql.ws.server.bindings";
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
@@ -97,6 +98,7 @@ public class FSProperties {
     private static Boolean CACHE_BATCH_POOLED_MARK     = null;
     private static Boolean CACHE_BATCH_POOLED_TRACE    = null;
     private static Boolean CACHE_BATCH_JFR_ENABLED     = null;
+    private static Boolean CACHE_BATCH_SELF_VALIDATE   = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_BIND = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_HASH = null;
@@ -192,6 +194,7 @@ public class FSProperties {
         CACHE_EMIT_LOG_STATS            = null;
         CACHE_BATCH_POOLED_MARK         = null;
         CACHE_BATCH_POOLED_TRACE        = null;
+        CACHE_BATCH_SELF_VALIDATE       = null;
         CACHE_OP_JOIN_REORDER           = null;
         CACHE_OP_JOIN_REORDER_BIND      = null;
         CACHE_OP_JOIN_REORDER_HASH      = null;
@@ -432,6 +435,26 @@ public class FSProperties {
         if (v == null) {
             boolean def = FSProperties.class.desiredAssertionStatus();
             CACHE_BATCH_JFR_ENABLED = v = readBoolean(BATCH_JFR_ENABLED, def);
+        }
+        return v;
+    }
+
+    /**
+     * Whether {@link Batch} implementations should perform self-tests to ensure
+     * that implementation-specific invariants are preserved after every mutation. Such checks
+     * may be expensive. <strong>The default is to enable this only if assertions are
+     * enabled</strong> ({@code -ea} JVM flag).
+     *
+     * <p>Changing this property at runtime, after may have no effect if the classes implementing
+     * {@link Batch} have already been loaded.</p>
+     *
+     * @return {@code true} iff {@link Batch} implementations should self-test after every mutation.
+     */
+    public static boolean batchSelfValidate() {
+        Boolean v = CACHE_BATCH_SELF_VALIDATE;
+        if (v == null) {
+            boolean def = FSProperties.class.desiredAssertionStatus();
+            CACHE_BATCH_SELF_VALIDATE = v = readBoolean(BATCH_SELF_VALIDATE, def);
         }
         return v;
     }

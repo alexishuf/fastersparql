@@ -53,6 +53,8 @@ class MergerTest {
         Vars rightFreeVars = rightVars.minus(leftVars);
         Vars outVars = bindType.resultVars(leftVars, rightVars);
         var merger = TERM.merger(outVars, leftVars, rightFreeVars);
-        assertEquals(eb, merger.merge(null, lb, lr, rb));
+        TermBatch ac = merger.merge(null, lb, lr, rb);
+        assertEquals(eb, ac);
+        ac.recycle();
     }
 }

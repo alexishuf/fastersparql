@@ -59,16 +59,15 @@ class QueryCheckerTest {
                         tmp = bt.createSingleton(ex.cols);
                     else
                         tmp.clear();
-                    tmp.putRow(ex, r);
+                    tmp = tmp.putRow(ex, r);
                     tmp = it.offer(tmp);
                 }
                 if (variant == Variant.EMIT_NULL) {
                     if (tmp == null && (tmp = it.stealRecycled()) == null)
                         tmp = bt.createSingleton(ex.cols);
                     else tmp.clear(ex.cols);
-                    tmp.beginPut();
-                    tmp.commitPut();
-                    it.offer(tmp);
+                    (tmp = tmp.beginPut()).commitPut();
+                    bt.recycle(it.offer(tmp));
                 }
                 it.complete(null);
             } catch (Throwable t) {

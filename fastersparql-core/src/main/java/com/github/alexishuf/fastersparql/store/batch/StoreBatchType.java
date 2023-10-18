@@ -4,14 +4,14 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
-import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
-import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
 import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.DEF_HUGE_LEVEL_CAPACITY;
@@ -39,67 +39,63 @@ public class StoreBatchType extends BatchType<StoreBatch> {
 
     public StoreBatchType() {super(StoreBatch.class);}
 
-    @Override public StoreBatch create(int rowsCapacity, int cols, int localBytes) {
-        int capacity = rowsCapacity*cols;
-        StoreBatch b = pool.getAtLeast(capacity);
+    @Override public StoreBatch create(int rows, int cols) {
+        return createForTerms(rows > 0 ? rows*cols : cols, cols);
+    }
+
+    @Override public StoreBatch createForTerms(int terms, int cols) {
+        StoreBatch b = pool.getAtLeast(terms);
         if (b == null)
-            return new StoreBatch(rowsCapacity, cols);
-        BatchEvent.Unpooled.record(12*capacity);
-        b.clearAndUnpool(cols);
+            return new StoreBatch(terms, cols);
+        BatchEvent.Unpooled.record(b);
+        return b.clear(cols).markUnpooled();
+    }
+
+    @Override
+    public StoreBatch empty(@Nullable StoreBatch offer, int rows, int cols) {
+        return emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols);
+    }
+    @Override
+    public StoreBatch emptyForTerms(@Nullable StoreBatch offer, int terms, int cols) {
+        var b = offer == null ? null : terms > offer.termsCapacity() ? recycle(offer) : offer;
+        if (b == null && (b = pool.getAtLeast(terms)) == null)
+            return new StoreBatch(terms, cols);
+        b.clear(cols);
+        if (b != offer)
+            BatchEvent.Unpooled.record(b.markUnpooled());
         return b;
     }
 
-    @Override public @Nullable StoreBatch poll(int rowsCapacity, int cols, int localBytes) {
-        int terms = rowsCapacity * cols;
-        var b = pool.getAtLeast(terms);
-        if (b != null) {
-            if (b.hasCapacity(terms, 0)) {
-                BatchEvent.Unpooled.record(terms);
-                return b.clearAndUnpool(cols);
-            } else {
-                if (pool.shared.offerToNearest(b, terms) != null)
-                    b.markGarbage();
-            }
-        }
-        return null;
+    @Override public StoreBatch withCapacity(@Nullable StoreBatch offer, int rows, int cols) {
+        if (offer      == null) return createForTerms(rows > 0 ? rows*cols : cols, cols);
+        if (offer.cols != cols) throw new IllegalArgumentException("offer.cols != cols");
+        int req = Math.max(1, rows+offer.rows)*cols;
+        return offer.termsCapacity() >= req ? offer : offer.grown(req, null, null);
     }
 
-    @Override
-    public StoreBatch empty(@Nullable StoreBatch offer, int rows, int cols, int localBytes) {
-        if (offer != null) {
-            offer.clear(cols);
-            return offer;
-        }
-        return create(rows, cols, localBytes);
-    }
+    //    @Override
+//    public StoreBatch reserved(@Nullable StoreBatch offer, int rows, int cols, int localBytes) {
+//        int terms = rows*cols;
+//        if (offer != null) {
+//            if (offer.hasCapacity(terms, 0)) {
+//                offer.clear(cols);
+//                return offer;
+//            }
+//            recycle(offer);
+//        }
+//        StoreBatch b = pool.getAtLeast(terms);
+//        if (b == null)
+//            return new StoreBatch(rows, cols);
+//        BatchEvent.Unpooled.record(terms);
+//        return b.clearAndReserveAndUnpool(rows, cols);
+//    }
 
-    @Override
-    public StoreBatch reserved(@Nullable StoreBatch offer, int rows, int cols, int localBytes) {
-        int terms = rows*cols;
-        if (offer != null) {
-            if (offer.hasCapacity(terms, 0)) {
-                offer.clear(cols);
-                return offer;
-            }
-            recycle(offer);
-        }
-        StoreBatch b = pool.getAtLeast(terms);
+    @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch b) {
         if (b == null)
-            return new StoreBatch(rows, cols);
-        BatchEvent.Unpooled.record(terms);
-        return b.clearAndReserveAndUnpool(rows, cols);
-    }
-
-    @Override public @Nullable StoreBatch recycle(@Nullable StoreBatch batch) {
-        if (batch == null) return null;
-        int capacity = batch.directBytesCapacity();
-        batch.markPooled();
-        if (pool.offerToNearest(batch, capacity) == null) {
-            BatchEvent.Pooled.record(12*capacity);
-        } else {
-            batch.recycleInternals(); // could not pool batch, try recycling arr and hashes
-            BatchEvent.Garbage.record(12*capacity);
-        }
+            return null;
+        BatchEvent.Pooled.record(b.markPooled());
+        if (pool.offerToNearest(b, b.termsCapacity()) != null)
+            b.markGarbage();
         return null;
     }
 
@@ -163,12 +159,24 @@ public class StoreBatchType extends BatchType<StoreBatch> {
             this.dictId = dictId;
         }
 
-        @Override protected StoreBatch putConverting(StoreBatch dest, I input) {
-            return dest.putConverting(input, dictId, null, null);
+        @Override public @Nullable I onBatch(I batch) {
+            if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(batch);
+            int rows = batch == null ? 0 : batch.rows;
+            if (rows == 0) return batch;
+            StoreBatch dst = INSTANCE.emptyForTerms(asUnpooled(recycled), rows*cols, cols);
+            recycled = null;
+            dst = dst.putConverting(batch, dictId, null, null);
+            recycled = Batch.asPooled(downstream.onBatch(dst));
+            return batch;
         }
 
-        @Override protected void putRowConverting(StoreBatch dest, I input, int row) {
-            dest.putRowConverting(input, row, dictId);
+        @Override public void onRow(I batch, int row) {
+            if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
+            if (batch == null) return;
+            var dst = INSTANCE.emptyForTerms(asUnpooled(recycled), row*cols, cols);
+            recycled = null;
+            dst = dst.putRowConverting(batch, row, dictId);
+            recycled = Batch.asPooled(downstream.onBatch(dst));
         }
     }
 
@@ -177,23 +185,23 @@ public class StoreBatchType extends BatchType<StoreBatch> {
     }
 
 
-    @Override public @Nullable Merger<StoreBatch> projector(Vars out, Vars in) {
+    @Override public StoreBatch.@Nullable Merger projector(Vars out, Vars in) {
         int[] sources = projectorSources(out, in);
-        return sources == null ? null : new Merger<>(this, out, sources);
+        return sources == null ? null : new StoreBatch.Merger(this, out, sources);
     }
 
-    @Override public @NonNull Merger<StoreBatch> merger(Vars out, Vars left, Vars right) {
-        return new Merger<>(this, out, mergerSources(out, left, right));
+    @Override public StoreBatch.@NonNull Merger merger(Vars out, Vars left, Vars right) {
+        return new StoreBatch.Merger(this, out, mergerSources(out, left, right));
     }
 
-    @Override public Filter<StoreBatch> filter(Vars out, Vars in, RowFilter<StoreBatch> filter,
-                                               BatchFilter<StoreBatch> before) {
-        return new Filter<>(this, out, projector(out, in), filter, before);
+    @Override public StoreBatch.Filter filter(Vars out, Vars in, RowFilter<StoreBatch> filter,
+                                              BatchFilter<StoreBatch> before) {
+        return new StoreBatch.Filter(this, out, projector(out, in), filter, before);
     }
 
-    @Override public Filter<StoreBatch> filter(Vars vars, RowFilter<StoreBatch> filter,
-                                               BatchFilter<StoreBatch> before) {
-        return new Filter<>(this, vars, null, filter, before);
+    @Override public StoreBatch.Filter filter(Vars vars, RowFilter<StoreBatch> filter,
+                                              BatchFilter<StoreBatch> before) {
+        return new StoreBatch.Filter(this, vars, null, filter, before);
     }
 
 }

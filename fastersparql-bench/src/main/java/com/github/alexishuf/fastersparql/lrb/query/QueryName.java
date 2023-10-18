@@ -104,7 +104,7 @@ public enum QueryName {
                     throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
                 }
             });
-            B acc = batchType.create(64, vars.size(), 64*32);
+            B acc = batchType.create(64, vars.size());
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
                 acc = acc.put(b);
             return acc;
@@ -136,18 +136,19 @@ public enum QueryName {
     public Plan parsed() { return SparqlParser.parse(opaque()); }
 
     public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
-        return amputateNumbers(type, b, 0, b.rows);
+        return b == null ? null : amputateNumbers(type, b, 0, b.rows);
     }
 
     public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b, int beginRow, int endRow) {
         if (this != C7 && this != C8 && this != C10)
             return b;
         boolean changed = false;
-        B fixed = type.create(b.rows, b.cols, b.localBytesUsed());
+        B fixed = type.create(b.rows, b.cols);
+        fixed.reserveAddLocals(b.localBytesUsed());
         var tmp = Term.pooledMutable();
         var tr = new ByteRope();
         for (int r = beginRow, cols = b.cols; r < endRow; r++) {
-            fixed.beginPut();
+            fixed = fixed.beginPut();
             for (int c = 0; c < cols; c++) {
                 if (Term.isNumericDatatype(b.shared(r, c))) {
                     changed = true;
@@ -164,11 +165,9 @@ public enum QueryName {
             fixed.commitPut();
         }
         tmp.recycle();
-        if (changed) {
-            b.clear();
-            b = b.put(fixed);
-        }
-        type.recycle(fixed);
+        if (changed)
+            b = b.clear(b.cols).put(fixed);
+        fixed.recycle();
         return b;
     }
 }

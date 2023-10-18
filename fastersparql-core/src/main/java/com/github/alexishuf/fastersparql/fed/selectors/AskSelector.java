@@ -44,7 +44,7 @@ public class AskSelector extends Selector {
     private static TermBatch triple(Term s, Term p, Term o) {
         TermBatch b = TRIPLE_POOL.get();
         if (b == null) b = TERM.createSingleton(3);
-        b.beginPut();
+        b = b.beginPut();
         b.putTerm(0, s);
         b.putTerm(1, p);
         b.putTerm(2, o);

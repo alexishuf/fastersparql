@@ -248,7 +248,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             Connector<B> c = connectors[i];
             B b = c.plainRecycled;
             if (b != null) {
-                b.untracedUnmarkPooled().recycle();
+                b.markUnpooledNoTrace().recycle();
                 c.plainRecycled = null;
             }
             if (c.projector != null)
@@ -336,7 +336,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             else if (recycled == null)
                 recycled = b;
             else
-                b.untracedUnmarkPooled().recycle();
+                b.markUnpooledNoTrace().recycle();
         }
     }
 
@@ -479,7 +479,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                             return recycleOffer ? null : in;
                         } else if (offer == null && (offer = plainRecycled) != null) {
                             plainRecycled = null;
-                            offer.unmarkPooled();
+                            offer.markUnpooled();
                         }
                         return offer;
                     } finally {
@@ -516,7 +516,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                                 && (merged=takeClearLocalRecycled()) == null
                                 && (merged=down.recycled) != null) {
                             down.recycled = null;
-                            merged.unmarkPooled();
+                            merged.markUnpooled();
                             merged.clear();
                         }
                     } finally {  down.endDelivery(this); }
@@ -528,7 +528,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         private B takeClearLocalRecycled() {
             var b = plainRecycled;
             if (b != null) {
-                b.unmarkPooled();
+                b.markUnpooled();
                 b.clear();
             }
             return b;
@@ -543,8 +543,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                         return;
                     } finally { down.endDelivery(this); }
                 } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                    f.putRow(batch, row);
-                    onBatch0(f, true);
+                    onBatch0(f.putRow(batch, row), true);
                     return;
                 } else {
                     EMITTER_SVC.yieldToTaskOnce();

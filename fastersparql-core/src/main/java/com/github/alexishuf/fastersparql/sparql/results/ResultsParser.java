@@ -104,7 +104,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     protected ResultsParser(CompletableBatchQueue<B> dst) {
         this.dst = dst;
-        this.batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size(), 0);
+        this.batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size());
     }
 
     /**
@@ -244,7 +244,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     protected final void beginRow() {
         incompleteRow = true;
-        batch.beginPut();
+        batch = batch.beginPut();
     }
 
     /*  --- --- --- private helpers --- --- --- */
@@ -281,7 +281,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
         } else if (batch != null && batch.rows > 0) {
             eager = false;
             if ((batch = dst.offer(batch)) == null)
-                batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size(), 0);
+                batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size());
             else
                 batch.clear();
         }

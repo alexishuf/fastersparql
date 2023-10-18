@@ -55,9 +55,7 @@ class CallbackEmitterTest {
                 canFeed.release();
                 try {
                     if ((r & 1) == 0) {
-                        var b = COMPRESSED.create(1, 1, 0);
-                        b.putRow(expected, r);
-                        COMPRESSED.recycle(offer(b));
+                        COMPRESSED.recycle(offer(expected.copyRow(r, null)));
                     } else {
                         putRow(expected, r);
                     }
@@ -96,17 +94,16 @@ class CallbackEmitterTest {
     record D(int height, int cancelAt, int failAt) implements Runnable {
         @Override public void run() {
             ByteRope local = new ByteRope();
-            var expected = COMPRESSED.create(height, 1, 0);
+            var expected = COMPRESSED.create(height, 1);
             for (int r = 0, n = Math.min(height, Math.min(failAt, cancelAt)); r < n; r++) {
-                expected.beginPut();
+                expected = expected.beginPut();
                 local.clear().append(r).append('>');
                 expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
                 expected.commitPut();
             }
             var copy = expected.copy(null);
-            CompressedBatch[] actual = {
-                    COMPRESSED.create(height, 1, expected.localBytesUsed())
-            };
+            CompressedBatch[] actual = {COMPRESSED.create(height, 1)};
+            actual[0].reserveAddLocals(expected.localBytesUsed());
             try {
                 Cb cb = new Cb(copy, failAt <= height, cancelAt <= height);
                 Semaphore ready = new Semaphore(0);
@@ -121,7 +118,7 @@ class CallbackEmitterTest {
                         return batch;
                     }
                     @Override public void onRow(CompressedBatch batch, int row) {
-                        actual[0].putRow(batch, row);
+                        actual[0] = actual[0].putRow(batch, row);
                         cb.request(1);
                     }
                     @Override public void onComplete() {

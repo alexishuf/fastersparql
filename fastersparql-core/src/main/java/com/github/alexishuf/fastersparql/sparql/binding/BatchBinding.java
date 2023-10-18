@@ -16,8 +16,7 @@ public class BatchBinding extends Binding {
     private static final BatchBinding[] EMPTY = new BatchBinding[BatchType.MAX_BATCH_TYPE_ID];
     static {
         for (var t : List.of(Batch.TERM, Batch.COMPRESSED, StoreBatchType.INSTANCE)) {
-            var b = t.create(1, 0, 0);
-            b.beginPut();
+            var b = t.create(1, 0).beginPut();
             b.commitPut();
             EMPTY[t.id] = new BatchBinding(Vars.EMPTY).attach(b, 0);
         }
@@ -32,9 +31,7 @@ public class BatchBinding extends Binding {
         var bb = EMPTY[type.id];
         var b = bb == null ? null : bb.batch;
         if (b == null || b.rows != 1  || b.cols != 0) {
-            b = type.create(1, 0, 0);
-            b.beginPut();
-            b.commitPut();
+            (b = type.create(1, 0).beginPut()).commitPut();
             EMPTY[type.id] = bb = new BatchBinding(Vars.EMPTY).attach(b, 0);
         }
         return bb;

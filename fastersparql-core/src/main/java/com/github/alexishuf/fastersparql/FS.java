@@ -147,14 +147,14 @@ public class FS {
         if (rowsSize == 0) {
             b = null;
         } else {
-            b = TERM.create(rows.size(), cols, 0);
+            b = TERM.create(rows.size(), cols);
             for (Object row : rows) {
-                switch (row) {
+                b = switch (row) {
                     case Term[] a -> b.putRow(a);
                     case Collection<?> c -> b.putRow(c);
                     case null -> throw new IllegalArgumentException("Unexpected null in rows");
                     default -> throw new UnsupportedOperationException("Unexpected row type");
-                }
+                };
             }
         }
         return new Values(vars, b);

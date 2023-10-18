@@ -232,7 +232,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             leftPending -= rows;
             if (offer == null && (offer = recycled) != null) {
                 recycled = null;
-                offer.unmarkPooled();
+                offer.markUnpooled();
             }
             if ((state&CAN_BIND_MASK) == CAN_BIND)
                 state = startNextBinding(state);
@@ -255,12 +255,12 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 dst = fillingLB;
                 fillingLB = null;
             } else {
-                dst = batchType.empty(asUnpooled(recycled), 1, b.cols, b.localBytesUsed(row));
+                dst = batchType.emptyForTerms(asUnpooled(recycled), b.cols, b.cols);
                 recycled = null;
             }
             state = unlock(state);
 
-            dst.putRow(b, row);
+            dst = dst.putRow(b, row);
 
             state = lock(state);
             if (lb == null) lb        = dst;
@@ -572,12 +572,11 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 B tmp;
                 int st = lock(statePlain());
                 try {
-                    tmp = batchType.empty(asUnpooled(recycled), 1, batch.cols, batch.localBytesUsed(row));
+                    tmp = batchType.empty(asUnpooled(recycled), batch.cols, batch.cols);
                     recycled = null;
                 } finally { st = unlock(st); }
 
-                tmp.putRow(batch, row);
-                tmp = onBatch(tmp);
+                tmp = onBatch(tmp.putRow(batch, row));
                 if (tmp != null) {
                     st = lock(st);
                     try {

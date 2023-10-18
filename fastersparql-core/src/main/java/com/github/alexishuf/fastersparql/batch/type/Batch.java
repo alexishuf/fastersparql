@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
@@ -22,10 +23,11 @@ import static java.lang.invoke.MethodHandles.lookup;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
-    private static final VarHandle P;
-    private static final byte P_UNPOOLED = 0;
-    private static final byte P_POOLED   = 1;
-    private static final byte P_GARBAGE  = 2;
+    protected static final VarHandle P;
+    protected static final byte P_UNPOOLED = 0;
+    protected static final byte P_POOLED   = 1;
+    protected static final byte P_GARBAGE  = 2;
+    public static boolean SELF_VALIDATE = FSProperties.batchSelfValidate();
 
     static {
         try {
@@ -64,7 +66,13 @@ public abstract class Batch<B extends Batch<B>> {
         public UnpooledEvent(PoolEvent cause) {super("unpooled here", cause);}
     }
 
-    public void markPooled() {
+    /**
+     * Marks the batch as pooled. After this, any interaction that is not
+     * {@link #markUnpooled()}, {@link #markUnpooledNoTrace()} or {@code markGarbage()} is an error.
+     * @return {@code this}
+     * @throws IllegalStateException if this batch is pooled or marked as garbage
+     */
+    public final @This B markPooled() {
         if (MARK_POOLED) {
             if ((byte)P.compareAndExchangeRelease(this, P_UNPOOLED, P_POOLED) != P_UNPOOLED) {
                 throw new IllegalStateException("pooling batch that is not unpooled",
@@ -81,17 +89,17 @@ public abstract class Batch<B extends Batch<B>> {
                 poolTraces[0] = new PooledEvent(cause);
             }
         }
+        //noinspection unchecked
+        return (B)this;
     }
 
-    @SuppressWarnings("unused") public void markGarbage() {
-        if (MARK_POOLED) {
-            byte old = (byte) P.getAndSetRelease(this, P_GARBAGE);
-            if (old == P_GARBAGE)
-                throw new IllegalStateException("garbage batch marked as garbage again");
-        }
-    }
-
-    public B untracedUnmarkPooled() {
+    /**
+     * Undoes a {@link #markPooled()} without storing a stack trace as {@link #markUnpooled()}
+     * could.
+     * @return {@code this}
+     * @throws IllegalStateException if this batch is not pooled.
+     */
+    public final B markUnpooledNoTrace() {
         if (MARK_POOLED && (byte)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) != P_POOLED) {
             throw new IllegalStateException("un-pooling batch that is not pooled",
                                             poolTraces == null ? null : poolTraces[1]);
@@ -100,7 +108,12 @@ public abstract class Batch<B extends Batch<B>> {
         return (B)this;
     }
 
-    public void unmarkPooled() {
+    /**
+     * Marks the batch as not pooled.
+     * @return {@code this}
+     * @throws IllegalStateException if this batch is not marked as pooled
+     */
+    public final @This B markUnpooled() {
         if (MARK_POOLED) {
             if ((byte)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) != P_POOLED)
                 throw new IllegalStateException("un-pooling batch that is not pooled",
@@ -116,30 +129,27 @@ public abstract class Batch<B extends Batch<B>> {
                 poolTraces[1] = new UnpooledEvent(cause);
             }
         }
+        //noinspection unchecked
+        return (B)this;
     }
 
-    @SuppressWarnings("unused") public void unmarkGarbage() {
-        if (MARK_POOLED) {
-            if ((byte)P.compareAndExchangeAcquire(this, P_GARBAGE, P_UNPOOLED) != P_GARBAGE)
-                throw new IllegalStateException("batch not marked as garbage");
-        }
-    }
-
+    /** Equivalent to {@code b == null ? null : b.}{@link #markUnpooled()}. */
     public static <B extends Batch<B>> @Nullable B asUnpooled(@Nullable B b) {
-        if (b != null) b.unmarkPooled();
-        return b;
+        return b == null ? null : b.markUnpooled();
     }
 
+    /** Equivalent to {@code b == null ? null : b.}{@link #markPooled()}. */
     public static <B extends Batch<B>> @Nullable B asPooled(@Nullable B b) {
-        if (b != null) b.markPooled();
-        return b;
+        return b == null ? null : b.markPooled();
     }
 
+    /** Equivalent to {@code b == null ? null : b.}{@link #markUnpooledNoTrace()}{@code .}{@link #recycle()}. */
     public static <B extends Batch<B>> @Nullable B recyclePooled(@Nullable Batch<?> b) {
         //noinspection unchecked
-        return b == null ? null : (B)b.untracedUnmarkPooled().recycle();
+        return b == null ? null : (B)b.markUnpooledNoTrace().recycle();
     }
 
+    /** Throws {@link IllegalStateException} if this batch is not pooled. */
     @SuppressWarnings("unused") public void requirePooled() {
         if (MARK_POOLED && (byte)P.getOpaque(this) != P_POOLED) {
             throw new IllegalStateException("batch is not pooled",
@@ -148,6 +158,7 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
 
+    /** Throws {@link IllegalStateException} if this batch is pooled or marked garbage. */
     public void requireUnpooled() {
         if (MARK_POOLED && (byte)P.getOpaque(this) != P_UNPOOLED) {
             throw new IllegalStateException("batch is pooled",
@@ -176,6 +187,62 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public abstract @Nullable B recycle();
 
+    /**
+     * Perform self-test to verify if implementation-specific invariants are valid for
+     * this Batch instance.
+     *
+     * <p> This operation is expensive and should only be done inside {@code assert} statements.
+     * Implementations of this method must honor {@link #SELF_VALIDATE}, which is
+     * initialized with {@link FSProperties#batchSelfValidate()}.</p>
+     *
+     * @return {@code true} iff this {@link Batch} instance has not been corrupted.
+     */
+    public boolean validate() {
+        if (!SELF_VALIDATE)
+            return true;
+        if (rows < 0 || cols < 0)
+            return false; // negative dimensions
+        if (rows*cols > termsCapacity())
+            return false;
+        if (!hasCapacity(rows*cols, localBytesUsed()))
+            return false;
+        if ((byte)P.getOpaque(this) != P_UNPOOLED)
+            return false; //pooled or garbage is not valid
+        //noinspection unchecked
+        B self = (B)this;
+        var ropeView = TwoSegmentRope.pooled();
+        var termView = Term.pooledMutable();
+        try {
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    boolean hasTerm = getView(r, c, termView);
+                    boolean hasRope = getRopeView(r, c, ropeView);
+                    if (hasTerm != hasRope) {
+                        return false;
+                    } else if (hasTerm) {
+                        if (!equals(r, c, termView))
+                            return false; // failed to compare with term view
+                        //noinspection EqualsBetweenInconvertibleTypes
+                        if (!termView.equals(ropeView))
+                            return false; // string-equality failed
+                        if (termView.hashCode() != hash(r, c))
+                            return false; // inconsistent hash
+                    } else if (!equals(r, c, self, r, c)) {
+                        return false;
+                    } else if (!equals(r, c, null)) {
+                        return false;
+                    }
+                }
+                if (!equals(r, self, r))
+                    return false; // reflexive equality failed for row
+            }
+        } finally {
+            ropeView.recycle();
+            termView.recycle();
+        }
+        return true;
+    }
+
     /* --- --- --- batch-level accessors --- --- --- */
 
     public abstract BatchType<B> type();
@@ -191,6 +258,27 @@ public abstract class Batch<B extends Batch<B>> {
      * into {@code offer} or the new batch and return such destination batch.
      */
     public abstract B copy(@Nullable B offer);
+
+    /**
+     * Get a batch with same contents as {@code this} that can hold at least more {@code addRows}
+     * rows.
+     *
+     * <p>If possible, this method will return {@code this}. If {@code this} does not have
+     * sufficient internal capacity and allocating a new batch is more efficient, a new batch
+     * containing a copy of {@code this} will be returned and {@code this} will be
+     * {@link #recycle()}d. Therefore {@code this} <strong>MUST NOT be used after this method
+     * returns.</strong>. Instead do:</p>
+     *
+     * <pre>{@code
+     *   batch = batch.withCapacity(addRows, addLocal);
+     *   // use possibly new batch
+     * }</pre>
+     *
+     * @param addRows additional number of rows that may be added
+     * @return If possible, {@code this}, else a new batch with same contents as {@code this}
+     *         but with the requested <strong>free</strong> capacity
+     */
+    public abstract B withCapacity(int addRows);
 
     /**
      * The total number of bytes being actively used by this batch instance to store local
@@ -219,32 +307,31 @@ public abstract class Batch<B extends Batch<B>> {
      */
     public int localBytesUsed(int row) {  return 0; }
 
-    /**
-     * Total number of bytes that this batch directly holds.
-     *
-     * <p>This value is intended to be used in conjunction with pooling: batches can be mapped
-     * to specific buckets according to their capacity while pool lookup can use the expected
-     * direct byte usage to obtain a batch that can handle the demand without triggering internal
-     * re-allocations. </p>
-     *
-     * <p>The relation between {@link #rows()} and {@link #cols()} to this capacity
-     * is implementation dependent, but for all implementations, increasing {@code rows} or
-     * {@code cols} by {@code }O(n)} will require an {@code O(n)} increase in direct
-     * bytes capacity. The length of shared segments of stored terms generally have no impact on
-     * direct bytes capacity by the definition of <strong>shared</strong>. Local segments have
-     * an impact only if the batch directly stores the local parts, which is the case of
-     * {@link CompressedBatch} but is not the case for {@link TermBatch} and {@link IdBatch}.</p>
-     *
-     * @return the number of bytes that this batch directly owns for storing terms.
-     */
-    public abstract int directBytesCapacity();
-
     public abstract int rowsCapacity();
 
     /**
-     * Equivalent to {@link #hasCapacity(int, int)} with {@code terms=rows*cols}
+     * How many terms (rows*cols) can this batch hold after a {@link #clear(int)} without
+     * requiring re-allocation of internal data structures.
+     *
+     * @return capacity of this batch in terms.
      */
-    public abstract boolean hasCapacity(int rows, int cols, int localBytes);
+    public abstract int termsCapacity();
+
+    /**
+     * How many bytes are held by this batch directly.
+     *
+     * <p>The value reported by this method is independent from {@link #rows} and {@link #cols},
+     * since it counts memory held by the batch and {@link #clear()} does not effectively
+     * release memory.</p>
+     *
+     * <p>Objects that can be shared by several batches are not included in this count, only
+     * 4 bytes (corresponding to the references) will be counted. {@link Term} and
+     * {@link SegmentRope}s are the main examples of this rule. However batch metadata and
+     * UTF-8 bytes managed by the batch are counted.</p>
+     *
+     * @return number of bytes held exclusively by this batch.
+     */
+    public abstract int totalBytesCapacity();
 
     /**
      * Whether this batch, can hold {@code terms=rows*cols} terms summing {@code localBytes}
@@ -585,23 +672,8 @@ public abstract class Batch<B extends Batch<B>> {
 
     /* --- --- --- mutators --- --- --- */
 
-    /**
-     * Checks if the internal structures of {@code this} batch can hold
-     * {@code additionalRows} more rows that together sum {@code additionalBytes} in
-     * local segments. If this is not true, perform a re-alloc <strong>now</strong> to ensure
-     * that the aforementioned capability holds.
-     *
-     * @param additionalRows expected number of subsequent row offers/puts. Implementations may
-     *                       ignore this in favor of {@code additionalBytes}.
-     * @param additionalBytes expected number of additional bytes to be used by
-     *                        subsequent offers/puts. Implementations may ignore this in favor of
-     *                        {@code additionalRows}.
-     */
-    public abstract void reserve(int additionalRows, int additionalBytes);
-
-
     /** Remove all rows from this batch.*/
-    public void clear() { clear(cols); }
+    public abstract void clear();
 
     /**
      * Remove all rows from this batch and sets columns to {@code newColumns}
@@ -609,23 +681,39 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * @param newColumns new number of columns
      */
-    public abstract void clear(int newColumns);
+    public abstract @This B clear(int newColumns);
 
     /**
-     * Starts adding a new whose terms will be added via {@code putTerm()} and the row will
-     * become visible upon {@link #commitPut()}.
+     * Ensure that this batch can receive new terms whose local segments sum to {@code addBytes}
+     * without triggering an internal reallocation.
+     *
+     * @param addBytes expected sum of local segments UTF-8 bytes in new additions to this
+     *                 batch via future {@code put*()} or {@link #beginPut()} calls
+     */
+    public void reserveAddLocals(int addBytes) {}
+
+    /**
+     * Starts adding a new row, whose terms will be added via {@code putTerm()} and the row will
+     * become visible upon {@link #commitPut()} on the batch returned by this method.
+     *
+     * <p>Since {@code this} may lack capacity to store an additional row, implementations of
+     * this method internally invoke {@link #withCapacity(int)} and the result of that call
+     * (a batch with same contents as this, but with sufficient capacity) is returned to the
+     * caller of this method. In case {@code this} did not have enough capacity, it will be
+     * {@link #recycle()} internally. Therefore, callers <strong>MUST ALWAYS reassign the
+     * variable holding the reference to {@code this}</strong>.</p>
      *
      * <p>Example usage:</p>
      *
      * <pre>{@code
-     * batch.beginRowPut();
-     * for (int c = 0; c < row.length; c++) batch.offer(row[c]);
-     * // row is not visible yet
-     * batch.commitRowPut();
+     * batch = batch.beginPut(expectedLocalBytes);
+     * for (int c = 0; c < row.length; c++) batch.put(row[c]);
+     * // row is not visible yet in batch
+     * batch.commitPut();
      * // batch.rows incremented and row is now visible.
      * }</pre>
      */
-    public abstract void beginPut();
+    public abstract B beginPut();
 
     /**
      * Writes {@code t} to the {@code col}-th column of the row being filled.
@@ -738,7 +826,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param other source of a row to copy
      * @param row index of the row to copy from {@code other}
      */
-    public abstract void putRow(B other, int row);
+    public abstract B putRow(B other, int row);
 
     /**
      * Equivalent to:
@@ -752,16 +840,13 @@ public abstract class Batch<B extends Batch<B>> {
      * @param row array with terms for the new row
      * @throws IllegalArgumentException if {@code row.length != this.cols}
      */
-    public final void putRow(Term[] row) {
+    public final B putRow(Term[] row) {
         if (row.length != cols) throw new IllegalArgumentException();
-        int bytes = 0;
-        for (Term t : row)
-            bytes += t == null ? 0 : t.local().len;
-        reserve(1, bytes);
-        beginPut();
+        B dst = beginPut();
         for (int c = 0; c < row.length; c++)
-            putTerm(c, row[c]);
-        commitPut();
+            dst.putTerm(c, row[c]);
+        dst.commitPut();
+        return dst;
     }
 
     /**
@@ -775,15 +860,15 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws InvalidTermException if {@link Term#valueOf(CharSequence)} fails to convert a non-null,
      *                              non-Term row item
      */
-    public final void putRow(Collection<?> row) {
+    public final B putRow(Collection<?> row) {
         if (row.size() != cols)
             throw new IllegalArgumentException();
-        reserve(1, 0);
-        beginPut();
+        B dst = beginPut();
         int c = 0;
         for (Object o : row)
-            putTerm(c++, o instanceof Term t ? t : Term.valueOf(Rope.of(o)));
-        commitPut();
+            dst.putTerm(c++, o instanceof Term t ? t : Term.valueOf(Rope.of(o)));
+        dst.commitPut();
+        return dst;
     }
 
     /**
@@ -812,7 +897,7 @@ public abstract class Batch<B extends Batch<B>> {
     public abstract B put(B other, @Nullable VarHandle recycled, Object receiver);
 
     /** Equivalent to {@link #put(Batch, VarHandle, Object)} without a recycled {@link VarHandle}.*/
-    public final B put(B other) { return put(other, null, null); }
+    public abstract B put(B other);
 
     /**
      * Equivalent to {@link #put(Batch, VarHandle, Object)} but accepts {@link Batch} implementations
@@ -838,5 +923,5 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IllegalArgumentException  if {@code other.cols != cols}
      * @throws IndexOutOfBoundsException if {@code row < 0 || row >= other.rows}
      */
-    public abstract void putRowConverting(Batch<?> other, int row);
+    public abstract B putRowConverting(Batch<?> other, int row);
 }

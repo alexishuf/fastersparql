@@ -26,6 +26,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -393,9 +394,9 @@ public final class Results {
     public Emitter<TermBatch> bindingsEmitter() {
         if (bindingsList == null)
             return Emitters.empty(TERM, bindingsVars);
-        var b = TERM.create(bindingsList.size(), bindingsVars.size(), 0);
+        var b = TERM.create(bindingsList.size(), bindingsVars.size());
         for (List<Term> row : bindingsList)
-            b.putRow(row);
+            b = b.putRow(row);
         return Emitters.ofBatch(bindingsVars, b);
     }
     public ItBindQuery<TermBatch> asBindQuery() {
@@ -603,9 +604,14 @@ public final class Results {
         public void assertNoError() {
             Throwable error = getSimple();
             if (error != null) {
-                if (ThreadJournal.ENABLED)
+                AssertionError assertionError = new AssertionError(error);
+                try {
                     ThreadJournal.dumpAndReset(System.err, 80);
-                throw new AssertionError(error);
+                    ResultJournal.dump(System.err);
+                } catch (Throwable e) {
+                    throw new AssertionError(e.toString(), assertionError);
+                }
+                throw assertionError;
             }
         }
 

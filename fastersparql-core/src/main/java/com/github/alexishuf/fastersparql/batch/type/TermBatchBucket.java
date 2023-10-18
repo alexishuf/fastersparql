@@ -17,45 +17,26 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
     private static final Term NULL = Term.splitAndWrap(new ByteRope("<urn:fastersparql:null>"));
     private TermBatch b;
 
-    public TermBatchBucket(int rowsCapacity, int cols) {
-        TermBatch b = TERM.create(rowsCapacity, cols, 0);
-        this.b = b;
-        b.reserve(rowsCapacity, 0);
-        b.rows = rowsCapacity;
-        Arrays.fill(b.arr, NULL);
+    public TermBatchBucket(int rows, int cols) {
+        (b = TERM.create(rows, cols)).rows = rows;
+        Arrays.fill(b.arr, 0, rows*cols, NULL);
     }
 
     @Override public void recycleInternals() { b = TERM.recycle(b); }
 
-    @Override public void grow(int additionalRows) {
-        if (additionalRows <= 0) return;
-        TermBatch b = this.b;
-        int cols = b.cols, oldRows = b.rows, newRows = oldRows+additionalRows;
-        if (b.rowsCapacity() < newRows) {
-            var old = b;
-            b = TERM.create(newRows, cols, 0);
-            b.reserve(newRows, 0);
-            arraycopy(old.arr, 0, b.arr, 0, old.arr.length);
-            this.b = b;
-            old.recycle();
-        }
-        Arrays.fill(b.arr, oldRows*cols, b.arr.length, NULL);
-        b.rows = newRows;
+    @Override public void grow(int addRows) {
+        if (addRows <= 0)
+            return;
+        int begin = b.rows*b.cols, end = begin+addRows*b.cols;
+        if (b.arr.length < end)
+            b = b.withCapacity(addRows);
+        Arrays.fill(b.arr, begin, end, NULL);
+        b.rows += addRows;
     }
 
-    @Override public void clear(int rowsCapacity, int cols) {
-        var b = this.b;
-        int required = rowsCapacity*cols, len = b.arr.length;
-        if (len < required) {
-            var old = b;
-            b = TERM.create(rowsCapacity, cols, 0);
-            b.reserve(rowsCapacity, 0);
-            this.b = b;
-            TERM.recycle(old);
-        }
-        Arrays.fill(b.arr, NULL);
-        b.rows = rowsCapacity;
-        b.cols = cols;
+    @Override public void clear(int rows, int cols) {
+        Arrays.fill(b.arr, 0, b.rows*b.cols, NULL);
+        (b = b.clear(cols).withCapacity(rows)).rows = rows;
     }
 
     @Override public boolean has(int row) {
@@ -148,7 +129,7 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
                 if (!hasNext()) throw new NoSuchElementException();
                 tmp.clear();
                 var b = TermBatchBucket.this.b;
-                tmp.putRow(b, row);
+                tmp = tmp.putRow(b, row);
                 if ((row = skipEmpty(++row)) >= b.rows)
                     row = Integer.MAX_VALUE;
                 return tmp;

@@ -38,11 +38,11 @@ class BatchBindingTest {
 
         );
         return list.stream().map(d -> {
-            TermBatch b = Batch.TERM.create(2, d.vars.size(), 0);
-            b.beginPut();
+            TermBatch b = Batch.TERM.create(2, d.vars.size());
+            b = b.beginPut();
             for (int i = 0; i < d.vars.size(); i++) b.putTerm(i, (Term)null);
             b.commitPut();
-            b.putRow(d.terms);
+            b = b.putRow(d.terms);
             return arguments(d.vars, b);
         });
     }

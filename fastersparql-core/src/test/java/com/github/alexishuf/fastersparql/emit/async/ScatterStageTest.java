@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.CollectingReceiver;
@@ -32,7 +33,7 @@ class ScatterStageTest {
     private static final Vars XY = Vars.of("x", "y");
     private static final int MAX_HEIGHT = 1024;
     private static final Term[] INTEGERS, URIS;
-    private static boolean oldDisableValidate;
+    private static boolean oldSelfValidate;
 
     static {
         INTEGERS = new Term[MAX_HEIGHT];
@@ -44,12 +45,12 @@ class ScatterStageTest {
     }
 
     @BeforeAll static void beforeAll() {
-        oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
-        CompressedBatch.DISABLE_VALIDATE = true;
+        oldSelfValidate = Batch.SELF_VALIDATE;
+        Batch.SELF_VALIDATE = false;
     }
 
     @AfterAll static void afterAll() {
-        CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
+        Batch.SELF_VALIDATE = oldSelfValidate;
     }
 
     private static final class P extends TaskEmitter<CompressedBatch> {
@@ -81,9 +82,7 @@ class ScatterStageTest {
             if ((row&1) == 0) {
                 deliverRow(expected, row);
             } else {
-                var b = COMPRESSED.create(1, expected.cols, 0);
-                b.putRow(expected, row);
-                COMPRESSED.recycle(deliver(b));
+                COMPRESSED.recycle(deliver(expected.copyRow(row, null)));
             }
             ++row;
             return state|MUST_AWAKE;
@@ -128,9 +127,9 @@ class ScatterStageTest {
         }
 
         private CompressedBatch makeExpected() {
-            var expected = COMPRESSED.create(height, 2, 0);
+            var expected = COMPRESSED.create(height, 2);
             for (int r = 0; r < height; r++) {
-                expected.beginPut();
+                expected = expected.beginPut();
                 expected.putTerm(0, INTEGERS[r]);
                 expected.putTerm(1, URIS[r]);
                 expected.commitPut();

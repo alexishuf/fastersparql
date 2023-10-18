@@ -20,71 +20,68 @@ public final class TermBatchType extends BatchType<TermBatch> {
 
     private TermBatchType() {super(TermBatch.class);}
 
-    @Override public TermBatch create(int rowsCapacity, int cols, int localBytes) {
-        int capacity = rowsCapacity * cols;
-        TermBatch b = pool.getAtLeast(capacity);
+    @Override public TermBatch create(int rows, int cols) {
+        return createForTerms(rows > 0 ? rows*cols : cols, cols);
+    }
+
+    @Override public TermBatch createForTerms(int terms, int cols) {
+        TermBatch b = pool.getAtLeast(terms);
         if (b == null)
-            return new TermBatch(rowsCapacity, cols);
-        BatchEvent.Unpooled.record(capacity);
+            return new TermBatch(new Term[terms], 0, cols);
+        BatchEvent.Unpooled.record(b);
+        return b.clear(cols).markUnpooled();
+    }
+
+    @Override
+    public TermBatch empty(@Nullable TermBatch offer, int rows, int cols) {
+        return emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols);
+    }
+
+    @Override
+    public TermBatch emptyForTerms(@Nullable TermBatch offer, int terms, int cols) {
+        var b = offer == null ? null : offer.hasCapacity(terms, 0) ? offer : recycle(offer);
+        if (b == null && (b = pool.getAtLeast(terms)) == null)
+            return new TermBatch(new Term[terms], 0, cols);
         b.clear(cols);
-        b.unmarkPooled();
+        if (b != offer)
+            BatchEvent.Unpooled.record(b.markUnpooled());
         return b;
     }
 
-    @Override
-    public TermBatch empty(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
-        if (offer != null) {
-            offer.clear(cols);
-            return offer;
-        }
-        return create(rows, cols, 0);
+    @Override public TermBatch withCapacity(@Nullable TermBatch offer, int rows, int cols) {
+        if (offer      == null) return createForTerms(rows > 0 ? rows*cols : cols, cols);
+        if (offer.cols != cols) throw new IllegalArgumentException("offer.cols != cols");
+        return offer.withCapacity(rows);
     }
 
-    @Override
-    public TermBatch reserved(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
-        int capacity = rows*cols;
-        if (offer != null) {
-            offer.clear(cols);
-            if (offer.arr.length >= capacity)
-                return offer;
-            recycle(offer);
-        }
-        var b = pool.getAtLeast(capacity);
-        if (b != null) {
-            if (b.arr.length < capacity)
-                b.arr = new Term[Math.min(capacity, b.arr.length<<1)];
-            b.clear(cols);
-            b.unmarkPooled();
-            return b;
-        }
-        return new TermBatch(capacity, cols);
-    }
+    //    @Override
+//    public TermBatch reserved(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
+//        int capacity = rows*cols;
+//        if (offer != null) {
+//            offer.clear(cols);
+//            if (offer.arr.length >= capacity)
+//                return offer;
+//            recycle(offer);
+//        }
+//        var b = pool.getAtLeast(capacity);
+//        if (b != null) {
+//            if (b.arr.length < capacity)
+//                b.arr = new Term[Math.min(capacity, b.arr.length<<1)];
+//            b.clear(cols);
+//            b.unmarkPooled();
+//            return b;
+//        }
+//        return new TermBatch(capacity, cols);
 
-    @Override public @Nullable TermBatch poll(int rowsCapacity, int cols, int localBytes) {
-        int capacity = rowsCapacity * cols;
-        var b = pool.getAtLeast(capacity);
-        if (b != null) {
-            if (capacity <= b.arr.length) {
-                BatchEvent.Unpooled.record(capacity);
-                b.clear(cols);
-                b.unmarkPooled();
-                return b;
-            } else {
-                if (pool.shared.offerToNearest(b, capacity) != null)
-                    b.markGarbage();
-            }
-        }
-        return null;
-    }
+//    }
 
-    @Override public @Nullable TermBatch recycle(@Nullable TermBatch batch) {
-        if (batch == null) return null;
-        Arrays.fill(batch.arr, null); // allow collection of Terms
-        batch.rows = 0;
-        batch.markPooled();
-        int capacity = batch.directBytesCapacity();
-        if (pool.offerToNearest(batch, capacity) == null) BatchEvent. Pooled.record(capacity);
-        else                                              BatchEvent.Garbage.record(capacity);
+    @Override public @Nullable TermBatch recycle(@Nullable TermBatch b) {
+        if (b == null)
+            return null;
+        Arrays.fill(b.arr, null); // allow collection of Terms
+        BatchEvent.Pooled.record(b.markPooled());
+        if (pool.offerToNearest(b, b.arr.length) != null)
+            b.markGarbage();
         return null;
     }
 

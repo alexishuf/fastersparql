@@ -47,10 +47,9 @@ public class MergeBench {
 
     private <B extends Batch<B>> B makeBatch(int rows, int value) {
         BatchType<B> type = (BatchType<B>) batchKind.asType();
-        B b = type.create(rows, 1, 0);
+        B b = type.create(rows, 1);
         for (int r = 0; r < rows; r++) {
-            b.beginPut();
-            b.putTerm(0, Term.valueOf("\""+(value++)+"\""));
+            (b = b.beginPut()).putTerm(0, Term.valueOf("\""+(value++)+"\""));
             b.commitPut();
         }
         return b;
@@ -70,7 +69,7 @@ public class MergeBench {
         for (int i = 0; i < nTall; i++, next += tallHeight)
             columns.add(makeBatch(tallHeight, next));
         for (int i = 0; i < nEmpty; i++, next += tallHeight)
-            columns.add(type.create(1, 1, 0));
+            columns.add(type.create(1, 1));
         Async.uninterruptibleSleep(100); // thermal slack
     }
 
@@ -87,10 +86,8 @@ public class MergeBench {
         }
 
         @Override protected B fetch(B dest) {
-            if (row == source.rows)
-                exhausted = true;
-            else
-                dest.putRow(source, row++);
+            if (row == source.rows) exhausted = true;
+            else                    dest = dest.putRow(source, row++);
             return dest;
         }
     }
@@ -149,12 +146,12 @@ public class MergeBench {
         @Override protected int produceAndDeliver(int state) {
             int r = row;
             int limit = (int)Math.min(source.rows-r, (long)REQUESTED.getOpaque(this));
-            B b = batchType.empty(Batch.asUnpooled(recycled), limit, 1, 0);
+            B b = batchType.empty(Batch.asUnpooled(recycled), limit, 1);
             recycled = null;
             int end = r+limit;
             long deadline = Timestamp.nextTick(1);
             while (r < end) {
-                b.putRow(source, r++);
+                b = b.putRow(source, r++);
                 if (Timestamp.nanoTime() > deadline) break;
             }
             row = r;

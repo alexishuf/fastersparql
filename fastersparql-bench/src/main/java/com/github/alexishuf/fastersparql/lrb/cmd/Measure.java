@@ -170,10 +170,7 @@ public class Measure implements Callable<Void>{
 //                System.out.println(debugPlan);
 //            try (var w = ThreadJournal.watchdog(System.out, 100)) {
 //                DebugJournal.SHARED.closeAll();
-//                w.start(5_000_000_000L).andThen(() -> {
-//                    dump(task.query(), debugPlan, (StreamNode)results);
-//                    System.out.println("##");
-//                });
+//                w.start(5_000_000_000L).andThen(() -> dump(task.query(), debugPlan, (StreamNode)results));
 //            }
             switch (msrOp.flowModel) {
                 case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);

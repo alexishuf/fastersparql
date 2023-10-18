@@ -295,7 +295,7 @@ class MergeBItTest extends AbstractMergeBItTest {
                     batches[i] = b = TERM.createSingleton(1);
                 }
                 b.clear();
-                b.beginPut();
+                batches[i] = b = b.beginPut();
                 b.putTerm(0, IntsBatch.term(val));
                 b.commitPut();
                 //journal.write("&batches[i]=", System.identityHashCode(batches[i]), "val=", val, "[0][0]=", batches[i].get(0, 0));

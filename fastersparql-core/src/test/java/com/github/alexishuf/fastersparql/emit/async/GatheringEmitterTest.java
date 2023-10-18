@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.CollectingReceiver;
@@ -35,10 +36,10 @@ class GatheringEmitterTest {
 
     private static CompressedBatch makeExpected(int id, int height, int cancelAt, int failAt) {
         int rows = Math.min(height, Math.min(failAt, cancelAt));
-        var expected = COMPRESSED.create(rows, 1, 0);
+        var expected = COMPRESSED.create(rows, 1);
         ByteRope local = new ByteRope();
         for (int i = 0; i < rows; i++) {
-            expected.beginPut();
+            expected = expected.beginPut();
             local.clear().append((long)id*height + i).append('>');
             expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
             expected.commitPut();
@@ -71,9 +72,7 @@ class GatheringEmitterTest {
                 throw new RuntimeException("failAt");
             if (row == expected.rows)
                 return COMPLETED;
-            var b = COMPRESSED.create(1, 1, 0);
-            b.putRow(expected, row++);
-            COMPRESSED.recycle(deliver(b));
+            COMPRESSED.recycle(deliver(expected.copyRow(row++, null)));
             return state|MUST_AWAKE;
         }
     }
@@ -154,13 +153,13 @@ class GatheringEmitterTest {
         }
     }
 
-    private static final boolean originalDisableValidate = CompressedBatch.DISABLE_VALIDATE;
+    private static final boolean originalSelfValidate = Batch.SELF_VALIDATE;
     @BeforeAll static void beforeAll() {
-        CompressedBatch.DISABLE_VALIDATE = true;
+        Batch.SELF_VALIDATE = false;
     }
 
     @AfterAll static void afterAll() {
-        CompressedBatch.DISABLE_VALIDATE = originalDisableValidate;
+        Batch.SELF_VALIDATE = originalSelfValidate;
     }
 
     static Stream<Arguments> test() {

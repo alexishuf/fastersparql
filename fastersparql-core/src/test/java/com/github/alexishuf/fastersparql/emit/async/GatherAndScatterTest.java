@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.ChildJVM;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -112,10 +112,10 @@ class GatherAndScatterTest {
                 if (failAt >= next && failAt < next + n) {
                     throw new DummyException(id, next);
                 } else {
-                    B b = batchType.empty(Batch.asUnpooled(recycled), n, 1, n*12);
+                    B b = batchType.empty(Batch.asUnpooled(recycled), n, 1);
                     recycled = null;
                     for (long e = Math.min(end, next+n); next < e; next++) {
-                        b.beginPut();
+                        b = b.beginPut();
                         nt.clear().append('"').append(next);
                         b.putTerm(0, DT_integer, nt.u8(), 0, nt.len, true);
                         b.commitPut();
@@ -314,7 +314,7 @@ class GatherAndScatterTest {
                 for (int i = 0; i < nConsumers; i++)
                     consumers.add(new C<>(gatherScatter, consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
-                boolean oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
+                boolean oldSelfValidate = Batch.SELF_VALIDATE;
                 try (var w = ThreadJournal.watchdog(System.out, 100)) {
                     w.start(10_000_000_000L).andThen(() -> {
                         try {
@@ -326,11 +326,11 @@ class GatherAndScatterTest {
                             throw new RuntimeException(e);
                         }
                     });
-                    CompressedBatch.DISABLE_VALIDATE = oldDisableValidate || requestSize > 1_024;
+                    Batch.SELF_VALIDATE = oldSelfValidate && requestSize < 1_024;
                     gatherScatter.request(requestSize);
                     consumerBarrier.await();
                 } finally {
-                    CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
+                    Batch.SELF_VALIDATE = oldSelfValidate;
                 }
                 assertTerminationStatus(consumerBarrier);
                 assertHistory(consumers.iterator().next());
@@ -518,7 +518,7 @@ class GatherAndScatterTest {
 
     @AfterEach
     void tearDown() {
-        CompressedBatch.DISABLE_VALIDATE = false;
+        Batch.SELF_VALIDATE = FSProperties.batchSelfValidate();
     }
 
     @ParameterizedTest @MethodSource
@@ -600,7 +600,7 @@ class GatherAndScatterTest {
     @RepeatedTest(4)
     void testConcurrent() throws Exception {
         System.gc();
-        CompressedBatch.DISABLE_VALIDATE = true;
+        Batch.SELF_VALIDATE = false;
         String name = getClass().getSimpleName();
         try (TestTaskSet tasks = new TestTaskSet(name, newFixedThreadPool(THREADS))) {
             test().map(a -> (D) a.get()[0]).forEach(tasks::add);

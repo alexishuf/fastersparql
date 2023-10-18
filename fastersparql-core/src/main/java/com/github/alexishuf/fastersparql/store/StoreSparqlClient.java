@@ -5,7 +5,10 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
-import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
+import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
@@ -43,10 +46,7 @@ import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -60,6 +60,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
@@ -152,6 +153,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
     public Guard retain() { return new Guard(); }
 
     @Override protected void doClose() {
+        if (ThreadJournal.ENABLED)
+            ThreadJournal.journal("Closing dictId=", dictId, "endpoint=", endpoint);
         log.debug("Closing {}", this);
         IdTranslator.deregister(dictId, dict);
         dict.close();
@@ -461,8 +464,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return switch (varRoles) {
             case EMPTY -> {
                 if (spo.contains(si, pi, oi)) {
-                    var b = TYPE.createSingleton(vars.size());
-                    b.beginPut();
+                    var b = TYPE.createSingleton(vars.size()).beginPut();
                     b.commitPut();
                     yield new SingletonBIt<>(b, TYPE, vars);
                 }
@@ -708,6 +710,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private byte outCol0, outCol1, outCol2;
         private final short dictId = (short)StoreSparqlClient.this.dictId;
         private byte freeRoles;
+        private boolean retry;
         private Object it;
         private final long[] rowSkel;
         // ---------- fields below this line are accessed only on construction/rebind()
@@ -866,16 +869,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (limit <= 0)
                 return state;
             int termState = state;
-            StoreBatch b = TYPE.empty(asUnpooled(recycled), MIN_ROWS, cols, 0);
+            StoreBatch b = TYPE.empty(asUnpooled(recycled), MIN_ROWS, cols);
             recycled = null;
             int iLimit = (int)Math.min(MAX_BATCH, limit);
-            boolean retry = switch (freeRoles) {
+            retry = false;
+            b = switch (freeRoles) {
                 case                             EMPTY_BITS ->    fillAsk(b);
                 case                      OBJ_BITS,SUB_BITS ->  fillValue(b, iLimit);
                 case                               PRE_BITS -> fillSubKey(b, iLimit);
                 case PRE_OBJ_BITS,SUB_OBJ_BITS,SUB_PRE_BITS ->   fillPair(b, iLimit);
                 case                       SUB_PRE_OBJ_BITS ->   fillScan(b, iLimit);
-                default                                     -> true; // unreachable
+                default                                     ->            b; // unreachable
             };
             if (!retry)
                 termState = COMPLETED;
@@ -890,98 +894,99 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return termState;
         }
 
-        @SuppressWarnings("SameReturnValue") private boolean fillAsk(StoreBatch b) {
+        @SuppressWarnings("SameReturnValue") private StoreBatch fillAsk(StoreBatch b) {
             if (it == TRUE) {
-                b.reserve(1, 0);
-                ++b.rows;
                 if ((statePlain()&HAS_UNSET_OUT) != 0)
                     fillSkel(b.arr, b.rows*cols);
-                b.dropCachedHashes();
+                (b = b.beginPut()).commitPut();
             }
-            return false;
+            return b;
+        }
+        private static StoreBatch growFilling(StoreBatch b, int rows) {
+            b.rows = rows;
+            return b.withCapacity(1);
         }
 
-        private boolean fillValue(StoreBatch b, int limit) {
+        private StoreBatch fillValue(StoreBatch b, int limit) {
             int rows = b.rows;
+            long[] a = b.arr;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
-            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0;
             var it = (Triples.ValueIt)this.it;
             for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
-                b.reserve(rows+1, 0);
-                long[] a = b.arr;
-                if (hasUnset) fillSkel(a, base);
-                if (outCol0 >= 0) a[cols*rows + outCol0] = source(it.valueId, dictId);
+                if (base+cols >  a.length) a = (b = growFilling(b, rows)).arr;
+                if (hasUnset             ) fillSkel(a, base);
+                if (outCol0   >=        0) a[base + outCol0] = source(it.valueId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
             b.dropCachedHashes();
-            return retry;
+            return b;
         }
 
-        private boolean fillPair(StoreBatch b, int limit) {
+        private StoreBatch fillPair(StoreBatch b, int limit) {
             int rows = b.rows;
+            long[] a = b.arr;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
-            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0, outCol1 = this.outCol1;
             var it = (Triples.PairIt) this.it;
             for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
-                b.reserve(rows+1, 0);
-                long[] a = b.arr;
-                if (hasUnset) fillSkel(a, base);
-                if (outCol0 >= 0) a[base + outCol0] = source(it.subKeyId, dictId);
-                if (outCol1 >= 0) a[base + outCol1] = source(it.valueId,  dictId);
+                if (base+cols > a.length) a = (b = growFilling(b, rows)).arr;
+                if (hasUnset            ) fillSkel(a, base);
+                if (outCol0   >=       0) a[base + outCol0] = source(it.subKeyId, dictId);
+                if (outCol1   >=       0) a[base + outCol1] = source(it.valueId,  dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
             b.dropCachedHashes();
-            return retry;
+            return b;
         }
 
-        private boolean fillSubKey(StoreBatch b, int limit) {
+        private StoreBatch fillSubKey(StoreBatch b, int limit) {
             int rows = b.rows;
+            long[] a = b.arr;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
-            boolean retry = true, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0;
             var it = (Triples.SubKeyIt)this.it;
             for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
-                b.reserve(rows+1, 0);
-                long[] a = b.arr;
-                if (hasUnset) fillSkel(a, base);
-                if (outCol0 >= 0) a[base + outCol0] = source(it.subKeyId, dictId);
+                if (base+cols > a.length) a = (b = growFilling(b, rows)).arr;
+                if (hasUnset            ) fillSkel(a, base);
+                if (outCol0   >=       0) a[base + outCol0] = source(it.subKeyId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
             b.dropCachedHashes();
-            return retry;
+            return b;
         }
 
-        private boolean fillScan(StoreBatch b, int limit) {
+        private StoreBatch fillScan(StoreBatch b, int limit) {
             int rows = b.rows;
+            long[] a = b.arr;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
-            boolean retry = false, hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
+            boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0, outCol1 = this.outCol1, outCol2 = this.outCol2;
             var it = (Triples.ScanIt) this.it;
             for (int base = rows*cols; rows < limit && (retry = it.advance()); base += cols) {
-                b.reserve(rows+1, 0);
-                long[] a = b.arr;
-                if (hasUnset) fillSkel(a, base);
-                if (outCol0 >= 0) a[base + outCol0] = source(it.keyId,    dictId);
-                if (outCol1 >= 0) a[base + outCol1] = source(it.subKeyId, dictId);
-                if (outCol2 >= 0) a[base + outCol2] = source(it.valueId,  dictId);
+                if (base+cols > a.length) a = (b = growFilling(b, rows)).arr;
+                if (hasUnset            ) fillSkel(a, base);
+                if (outCol0   >=       0) a[base + outCol0] = source(it.keyId,    dictId);
+                if (outCol1   >=       0) a[base + outCol1] = source(it.subKeyId, dictId);
+                if (outCol2   >=       0) a[base + outCol2] = source(it.valueId,  dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
             b.dropCachedHashes();
-            return retry;
+            return b;
         }
 
-        private void fillSkel(long[] dest, int base) {
-            //noinspection ManualArrayCopy
+        private void fillSkel(long[] dest, int base) {//noinspection ManualArrayCopy
             for (int i = 0; i < cols; i++)
                 dest[base+i] = rowSkel[i];
         }
@@ -997,27 +1002,31 @@ public class StoreSparqlClient extends AbstractSparqlClient
             avgRowLocalLen = 12*upstream.vars().size();
         }
 
-        @Override protected B putConverting(B dst, StoreBatch src) {
-            int cols = src.cols, rows = src.rows, terms = rows*cols;
-            if (terms == 0) return dst;
-            if (dst.cols != cols) throw new IllegalArgumentException("cols mismatch");
-            long[] ids = src.arr;
-            int rll = this.avgRowLocalLen;
-            if (dst instanceof CompressedBatch cb) {
-                //noinspection unchecked
-                dst =(B)cb.choosePutDst(rows, rows*rll);
-            } else {
-                dst.reserve(rows, rows*rll);
-            }
-            for (int base = 0; base < terms; base += cols)
-                putRowConverting(dst, ids, cols, base);
-            this.avgRowLocalLen = (7*rll + dst.localBytesUsed()/dst.rows)>>3;
-            return dst;
+        @Override public @Nullable StoreBatch onBatch(StoreBatch batch) {
+            if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(batch);
+            int rows = batch == null ? 0 : batch.rows;
+            if (rows == 0)
+                return batch;
+            int rll = avgRowLocalLen;
+            B dst = batchType.emptyForTerms(asUnpooled(recycled), rows*cols, cols);
+            recycled = null;
+            dst.reserveAddLocals(rows*rll);
+            long[] ids = batch.arr;
+            for (int base = 0, terms=rows*cols; base < terms; base+=cols)
+                dst = putRowConverting(dst, ids, cols, base);
+            avgRowLocalLen = (7*rll + dst.localBytesUsed()/dst.rows)>>3;
+            recycled = asPooled(downstream.onBatch(dst));
+            return batch;
         }
 
-        @Override protected void putRowConverting(B dest, StoreBatch input, int row) {
-            int cols = input.cols;
-            putRowConverting(dest, input.arr, cols, cols*row);
+        @Override public void onRow(StoreBatch batch, int row) {
+            if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
+            if (batch == null) return;
+            B dst = batchType.emptyForTerms(asUnpooled(recycled), cols, cols);
+            dst.reserveAddLocals(avgRowLocalLen);
+            recycled = null;
+            dst = putRowConverting(dst, batch.arr, cols, row*cols);
+            recycled = asPooled(downstream.onBatch(dst));
         }
 
         private SegmentRope shared(TwoSegmentRope t, byte fst) {
@@ -1036,8 +1045,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             };
         }
 
-        private void putRowConverting(B dest, long[] ids, int cols, int base) {
-            dest.beginPut();
+        private B putRowConverting(B dest, long[] ids, int cols, int base) {
+            dest = dest.beginPut();
             for (int c = 0; c < cols; c++) {
                 var t = lookup.get(unsource(ids[base + c]));
                 if (t == null) continue;
@@ -1047,6 +1056,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 dest.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
             }
             dest.commitPut();
+            return dest;
         }
     }
 
@@ -1365,7 +1375,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 Vars rightBindingVars = lexJoinBinding.vars;
                 int nVars = leftVars.size();
                 assert rightBindingVars.size() == nVars;
-                nextLexBatch = batchType.create(1, nVars, 0);
+                nextLexBatch = batchType.createForTerms(nVars, nVars);
                 lookup = dict.lookup();
                 int lexJoins = 0;
                 for (int i = 0; i < nVars; i++) {
@@ -1408,8 +1418,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             term.recycle();
             if (rightBindingVars != null) {
                 BatchBinding lexJoinBinding = new BatchBinding(rightBindingVars);
-                B b = batchType().create(1, rightBindingVars.size(), 0);
-                b.beginPut();
+                B b = batchType().create(1, rightBindingVars.size()).beginPut();
                 b.commitPut();
                 lexJoinBinding.attach(b, 0);
                 return lexJoinBinding;
@@ -1440,7 +1449,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             assert nextLexBatch != null && lookup != null && lexView != null && lexBatch != null;
             int nVars = lexBatch.cols;
 
-            clearAndCopyNonLexBindings(lexBatch, 0, nextLexBatch);
+            nextLexBatch = clearAndCopyNonLexBindings(lexBatch, 0, nextLexBatch);
             if (nVars > 64)
                 copyNonLexBindingsExtra(nextLexBatch, 0, lexBatch);
             putLex(nextLexBatch, i, lookup);
@@ -1461,13 +1470,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return true;
         }
 
-        private void clearAndCopyNonLexBindings(B src, int srcRow, B dst) {
+        private B clearAndCopyNonLexBindings(B src, int srcRow, B dst) {
             dst.clear();
-            dst.beginPut();
+            dst = dst.beginPut();
             for (int c = 0, n = Math.min(64, dst.cols); c < n; c++) {
                 if ((lexBindingCols & (1L << c)) == 0)
                     dst.putTerm(c, src, srcRow, c);
             }
+            return dst;
         }
 
         private void copyNonLexBindingsExtra(B src, int srcRow, B dst) {
@@ -1502,14 +1512,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (bBatch.type().equals(batchType)) {//noinspection unchecked
                 leftBatch = (B)bBatch;
             } else {
-                leftBatch = batchType.empty(convLeftBatch, 1, bBatch.cols, 0);
+                leftBatch = batchType.emptyForTerms(convLeftBatch, bBatch.cols, bBatch.cols);
                 convLeftBatch = leftBatch = leftBatch.putConverting(bBatch);
             }
 
             @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
             assert lexBatch != null && lexView != null && lookup != null;
             int leftRow = binding.row, nVars = leftBatch.cols;
-            clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
+            lexBatch = clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
+            lexJoinBinding.batch = lexBatch;
             if (nVars > 64)
                 copyNonLexBindingsExtra(leftBatch, leftRow, lexBatch);
             for (int i = 0; i < lexIts.length; i++) {
@@ -1566,7 +1577,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected StoreBatch fetch(StoreBatch dest) {
             if (vit.advance()) {
-                dest.beginPut();
+                dest = dest.beginPut();
                 if (term0Col >= 0) dest.putTerm(term0Col, source(vit.valueId, dictId));
                 dest.commitPut();
             } else {
@@ -1586,7 +1597,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected StoreBatch fetch(StoreBatch dest) {
             if (pit.advance()) {
-                dest.beginPut();
+                dest = dest.beginPut();
                 if (term0Col >= 0) dest.putTerm(term0Col, source(pit.subKeyId, dictId));
                 if (term1Col >= 0) dest.putTerm(term1Col, source(pit.valueId, dictId));
                 dest.commitPut();
@@ -1607,7 +1618,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected StoreBatch fetch(StoreBatch dest) {
             if (sit.advance()) {
-                dest.beginPut();
+                dest = dest.beginPut();
                 if (term0Col >= 0) dest.putTerm(term0Col, source(sit.subKeyId, dictId));
                 dest.commitPut();
             } else {
@@ -1643,7 +1654,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected StoreBatch fetch(StoreBatch dest) {
             if (sit.advance()) {
-                dest.beginPut();
+                dest = dest.beginPut();
                 if (sCol >= 0) dest.putTerm(sCol, source(sit.keyId, dictId));
                 if (pCol >= 0) dest.putTerm(pCol, source(sit.subKeyId, dictId));
                 if (oCol >= 0) dest.putTerm(oCol, source(sit.valueId, dictId));
@@ -1801,7 +1812,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (oLeftCol < 0 && tp.o.isVar()) { tpFreeRolesBits |= 1; tpFree.add(tp.o); }
             tpFreeRoles = TripleRoleSet.fromBitset(tpFreeRolesBits);
             this.tpFreeCols = (byte) tpFree.size();
-            this.rb = batchType.create(BIt.PREFERRED_MIN_BATCH, tpFreeCols, 0);
+            this.rb = batchType.create(BIt.PREFERRED_MIN_BATCH, tpFreeCols);
 
             // setup index iterators for tp
             byte sCol = (byte)tpFree.indexOf(tp.s);
@@ -1861,7 +1872,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (needsLeftVars) {
                     procRightFree = leftVars.union(tpFree);
                     preFilterMerger = batchType.merger(procRightFree, leftVars, tpFree);
-                    fb = batchType.create(PREFERRED_MIN_BATCH, procRightFree.size(), PREFERRED_MIN_BATCH*32);
+                    fb = batchType.create(PREFERRED_MIN_BATCH, procRightFree.size());
                 } else {
                     procRightFree = tpFree;
                     preFilterMerger = null;
@@ -1885,8 +1896,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.rEmpty = true;
             this.merger = !bindType.isJoin() || procRightFree.equals(projection) ? null
                     : batchType.merger(projection, leftVars, procRightFree);
-            this.lb = batchType.create(PREFERRED_MIN_BATCH, leftVars.size(),
-                                       PREFERRED_MIN_BATCH*32);
+            this.lb = batchType.create(PREFERRED_MIN_BATCH, leftVars.size());
             acquireRef();
         }
 
@@ -1931,8 +1941,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     switch (tpFreeRoles) {
                         case EMPTY -> {
                             if (rIt == TRUE) {
-                                rb.beginPut();
-                                rb.commitPut();
+                                (rb = rb.beginPut()).commitPut();
                                 rIt = FALSE;
                             }
                         }
@@ -1964,10 +1973,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     rEnd = rb.rows == 0;
                     B prb = rb;
                     if (!rEnd && rightFilter != null) {
-                        if (preFilterMerger != null) {//noinspection DataFlowIssue fb != null
-                            fb.clear(prbCols);
-                            prb = fb = preFilterMerger.merge(fb, lb, lr, rb);
-                        }
+                        if (preFilterMerger != null) //noinspection DataFlowIssue fb != null
+                            prb = fb = preFilterMerger.merge(fb.clear(prbCols), lb, lr, rb);
                         prb = rightFilter.filterInPlace(prb);
                         if (prb.rows == 0)
                             continue;
@@ -1990,7 +1997,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                     b = merger.merge(b, lb, lr, prb);
                                 }
                             }
-                            case EXISTS,NOT_EXISTS,MINUS -> b.putRow(lb, lr);
+                            case EXISTS,NOT_EXISTS,MINUS -> b = b.putRow(lb, lr);
                         }
                     }
                     if (rightSingleRow && !rEmpty) {
@@ -2019,7 +2026,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void putRow(long kId, long skId, long vId) {
-            rb.beginPut();
+            rb = rb.beginPut();
             if (rb instanceof StoreBatch sb) {
                 if ( kCol >= 0) sb.putTerm(kCol,  source( kId, dictId));
                 if (skCol >= 0) sb.putTerm(skCol, source(skId, dictId));

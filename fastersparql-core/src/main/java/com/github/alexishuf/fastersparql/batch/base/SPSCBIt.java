@@ -289,8 +289,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;
                     if (offer != null) {
-                        offer.clear(vars.size());
-                        this.filling = offer;
+                        this.filling = offer.clear(vars.size());
                         offer = null;
                     }
                     if (needsStartTime) fillingStart = nanoTime();

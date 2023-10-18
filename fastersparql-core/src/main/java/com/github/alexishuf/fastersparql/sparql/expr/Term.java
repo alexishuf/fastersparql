@@ -1155,11 +1155,14 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         if (type() != Type.LIT) return -1;
         int endLex = 0xff&cachedEndLex;
         if (endLex == 0) {
-            endLex = reverseSkipUntil(1, len, '"');
+            endLex = second.len == 0 ? first.reverseSkipUntil(1, first.len, '"')
+                   : second.get(0) == '"' ? first.len : coldEndLex();
             cachedEndLex = endLex > 0xff ? 0 : (byte)endLex;
         }
         return endLex;
     }
+
+    private int coldEndLex() { return reverseSkipUntil(1, len, '"'); }
 
     /**
      * If {@link #type()} is {@link Type#LIT}, get the explicit or implicit (i.e.,

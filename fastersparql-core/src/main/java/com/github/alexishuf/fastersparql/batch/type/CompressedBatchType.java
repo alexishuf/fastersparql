@@ -14,27 +14,20 @@ import static com.github.alexishuf.fastersparql.util.concurrent.LevelPool.LARGE_
 
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
     public static final CompressedBatchType INSTANCE = new CompressedBatchType();
-    /**
-     * A {@code (1, 1)} batch will report a {@link CompressedBatch#directBytesCapacity()} {@code == 12}.
-     * Shifting the bytes capacity by this ammount will reduce the value so that the tiny-capacity
-     * pool levels do get used.
-     */
-    private static final int POOL_SHIFT = 3;
 
     static {
         int offers = Runtime.getRuntime().availableProcessors();
         int hugeOffers = Math.min(DEF_HUGE_LEVEL_CAPACITY, offers);
-        for (int cap = 1; cap < LARGE_MAX_CAPACITY; cap<<=1) {
-            int terms = cap<<POOL_SHIFT;
+        for (int terms = 1; terms < LARGE_MAX_CAPACITY; terms<<=1) {
             for (int i = 0; i < offers; i++) {
-                var b = new CompressedBatch(terms, 1, terms * 16);
+                var b = new CompressedBatch(terms, 1);
                 b.markPooled();
-                INSTANCE.pool.offer(b, cap);
+                INSTANCE.pool.offer(b, terms);
             }
             for (int i = 0; i < hugeOffers; i++) {
-                var b = new CompressedBatch(terms, 1, terms * 16);
+                var b = new CompressedBatch(terms, 1);
                 b.markPooled();
-                INSTANCE.pool.offer(b, cap);
+                INSTANCE.pool.offer(b, terms);
             }
         }
     }
@@ -43,76 +36,67 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
 
     public static CompressedBatchType get() { return INSTANCE; }
 
-    @Override public CompressedBatch create(int rows, int cols, int bytes) {
-        int terms = rows*cols, capacity = 12*terms;
-        if (bytes == 0)
-            bytes = capacity;
-        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
-        if (b == null)
-            return new CompressedBatch(rows, cols, bytes);
-        BatchEvent.Unpooled.record(capacity);
-        return b.clearAndUnpool(cols);
+    @Override public CompressedBatch create(int rows, int cols) {
+        return createForTerms(rows > 0 ? rows*cols : cols, cols);
     }
 
-    @Override public CompressedBatch poll(int rows, int cols, int bytes) {
-        int terms = rows*cols, capacity = 12*terms;
-        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
-        if (b != null) {
-            if (b.hasTermsCapacity(terms)) {
-                BatchEvent.Unpooled.record(capacity);
-                return b.clearAndReserveAndUnpool(terms, cols, bytes);
-            }
-            if (pool.shared.offerToNearest(b, b.directBytesCapacity()) != null)
-                b.markGarbage();
-        }
-        return null;
+    @Override public CompressedBatch createForTerms(int terms, int cols) {
+        CompressedBatch b = pool.getAtLeast(terms);
+        if (b == null)
+            return new CompressedBatch(terms, cols);
+        BatchEvent.Unpooled.record(b);
+        return b.clear(cols).markUnpooled();
     }
 
     @Override
-    public CompressedBatch empty(@Nullable CompressedBatch offer, int rows, int cols, int localBytes) {
-        if (offer != null) {
-            offer.clear(cols);
-            return offer;
-        }
-        return create(rows, cols, localBytes);
+    public CompressedBatch empty(@Nullable CompressedBatch offer, int rows, int cols) {
+        return emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols);
     }
 
     @Override
-    public CompressedBatch reserved(@Nullable CompressedBatch offer, int rows, int cols, int localBytes) {
-        int terms = rows*cols;
-        if (offer != null) {
-            if (offer.hasCapacity(terms, localBytes)) {
-                offer.clear(cols);
-                return offer;
-            } else {
-                recycle(offer);
-            }
-        }
-        int capacity = 12*terms;
-        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
-        if (b == null)
-            return new CompressedBatch(rows, cols, localBytes);
-        BatchEvent.Unpooled.record(capacity);
-        return b.clearAndReserveAndUnpool(terms, cols, localBytes);
+    public CompressedBatch emptyForTerms(@Nullable CompressedBatch offer, int terms, int cols) {
+        var b = offer == null ? null : terms > offer.termsCapacity() ? recycle(offer) : offer;
+        if (b == null && (b = pool.getAtLeast(terms)) == null)
+            return new CompressedBatch(terms, cols);
+        b.clear(cols);
+        if (b != offer)
+            BatchEvent.Unpooled.record(b.markUnpooled());
+        return b;
     }
+
+    @Override
+    public CompressedBatch withCapacity(@Nullable CompressedBatch offer, int rows, int cols) {
+        if (offer      == null) return createForTerms(rows > 0 ? rows*cols : cols, cols);
+        if (offer.cols != cols) throw new IllegalArgumentException("offer.cols != cols");
+        return offer.withCapacity(rows);
+    }
+
+    //    @Override
+//    public CompressedBatch reserved(@Nullable CompressedBatch offer, int rows, int cols, int localBytes) {
+//        int terms = rows*cols;
+//        if (offer != null) {
+//            if (offer.hasCapacity(terms, localBytes)) {
+//                offer.clear(cols);
+//                return offer;
+//            } else {
+//                recycle(offer);
+//            }
+//        }
+//        int capacity = 12*terms;
+//        var b = pool.getAtLeast(capacity>>POOL_SHIFT);
+//        if (b == null)
+//            return new CompressedBatch(rows, cols, localBytes);
+//        BatchEvent.Unpooled.record(capacity);
+//        return b.clearAndReserveAndUnpool(terms, cols, localBytes);
+//    }
 
     @Override public @Nullable CompressedBatch recycle(@Nullable CompressedBatch b) {
-        if (b == null) return null;
-        b.markPooled();
-        int capacity = b.directBytesCapacity();
-        if (pool.offerToNearest(b, capacity>>POOL_SHIFT) == null) {
-            BatchEvent.Pooled.record(capacity);
-        } else {
-            b.recycleInternals();
-            BatchEvent.Garbage.record(capacity);
-        }
+        if (b == null)
+            return null;
+        BatchEvent.Pooled.record(b.markPooled());
+        if (pool.offerToNearest(b, b.termsCapacity()) != null)
+            b.markGarbage();
         return null;
-    }
-
-    @Override public int localBytesRequired(Batch<?> b, int row) {
-        if (b instanceof CompressedBatch cb)
-            return (int)cb.rowOffsetAndLen(row);
-        return coldBytesRequired(b, row);
     }
 
     @Override public int localBytesRequired(Batch<?> b) {
@@ -121,17 +105,18 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
         return coldBytesRequired(b);
     }
 
-    private static int coldBytesRequired(Batch<?> b, int row) {
+    private static int coldBytesRequired(Batch<?> b) {
+        if (b.rows == 0) return 0;
         int sum = 0;
-        if (row < 0 || row  >= b.rows)
-            return 0;
         for (int c = 0, cols = b.cols; c < cols; c++)
-            sum += b.uncheckedLocalLen(row, c);
-        return sum;
+            sum += b.uncheckedLocalLen(0, c);
+        return b.rows * ((sum &~3) + 4);
     }
 
-    private static int coldBytesRequired(Batch<?> b) {
-        return b.rows * ((coldBytesRequired(b, 0)&~3) + 4);
+    @Override public <O extends Batch<O>> CompressedBatch convert(O src) {
+        var cb = create(src.rows, src.cols);
+        cb.reserveAddLocals(localBytesRequired(src));
+        return cb.putConverting(src);
     }
 
     @Override public RowBucket<CompressedBatch> createBucket(int rowsCapacity, int cols) {

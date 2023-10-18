@@ -25,6 +25,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     private final QueryName queryName;
     private final @Nullable StrongDedup<B> expected;
     private final @Nullable StrongDedup<B> observed;
+    private final int expectedRows;
     public B unexpected;
     private int rows;
     private @Nullable String explanation;
@@ -35,14 +36,16 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         this.queryName = queryName;
         B b = queryName.amputateNumbers(batchType, queryName.expected(batchType));
         if (b == null) {
+            expectedRows = 0;
             expected = observed = null;
             unexpected = batchType.createSingleton(vars.size());
         } else {
+            expectedRows = b.rows;
             expected = StrongDedup.strongForever(batchType, b.rows, b.cols);
             for (int r = 0; r < b.rows; r++)
                 expected.add(b, r);
             observed = StrongDedup.strongForever(batchType, b.rows, b.cols);
-            unexpected = batchType.create(PREFERRED_MIN_BATCH, b.cols, PREFERRED_MIN_BATCH*32);
+            unexpected = batchType.create(PREFERRED_MIN_BATCH, b.cols);
         }
     }
 
@@ -67,7 +70,9 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     private String validate() {
         if (expected != null && observed != null) {
             int[] missing = {0};
-            StringBuilder sb = new StringBuilder().append("Missing rows:");
+            StringBuilder sb = new StringBuilder()
+                    .append("Expected rows: ").append(expectedRows)
+                    .append("\nMissing rows:");
             forEachMissing((b, r) -> {
                 boolean stop = ++missing[0] >= 10;
                 if (!stop) sb.append("\n  ").append(b.toString(r));
@@ -145,7 +150,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         explanation = null;
         if (observed != null) {
             if (unexpected == null)//noinspection unchecked
-                unexpected = (B)batchType.create(PREFERRED_MIN_BATCH, vars.size(), 0);
+                unexpected = (B)batchType.create(PREFERRED_MIN_BATCH, vars.size());
             else
                 unexpected.clear();
             observed.clear(observed.cols());
@@ -160,7 +165,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         if (expected == null || observed == null) return;
         for (int r = 0, rows = b.rows; r < rows; r++) {
             if (!expected.contains(b, r))
-                unexpected.putRow(b, r);
+                unexpected = unexpected.putRow(b, r);
             else
                 observed.add(b, r);
         }
@@ -172,7 +177,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         ++rows;
         if (expected == null || observed == null) return;
         if (!expected.contains(b, 0))
-            unexpected.putRow(b, 0);
+            unexpected = unexpected.putRow(b, 0);
         else
             observed.add(b, 0);
     }

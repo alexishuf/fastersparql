@@ -6,7 +6,7 @@ public final class CollectingReceiver<B extends Batch<B>> extends ReceiverFuture
     private B collected;
 
     public CollectingReceiver(Emitter<B> upstream) {
-        collected = upstream.batchType().create(64, upstream.vars().size(), 0);
+        collected = upstream.batchType().create(64, upstream.vars().size());
         subscribeTo(upstream);
     }
 
@@ -17,6 +17,6 @@ public final class CollectingReceiver<B extends Batch<B>> extends ReceiverFuture
         return batch;
     }
 
-    @Override public void onRow(B batch, int row) { collected.putRow(batch, row); }
+    @Override public void onRow(B batch, int row) { collected = collected.putRow(batch, row); }
     @Override public void onComplete()            { complete(collected); }
 }

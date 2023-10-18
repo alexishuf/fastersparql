@@ -82,21 +82,21 @@ class StoreBatchTest {
 
     @ParameterizedTest @MethodSource
     void testFill(boolean grow, int rows, int cols) {
-        StoreBatch b0 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        StoreBatch b2 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
-        StoreBatch b4 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols, 0);
+        StoreBatch b0 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
+        StoreBatch b2 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
+        StoreBatch b4 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
         var lookup = IdTranslator.lookup(dictId);
-        List<StoreBatch> batches = List.of(b0, b2, b4);
+        List<StoreBatch> batches = new ArrayList<>(List.of(b0, b2, b4));
         for (int r = 0; r < rows; r++) {
-            b0.beginPut();
+            batches.set(0, b0 = b0.beginPut());
             for (int c = 0; c < cols; c++) b0.putTerm(c, sourcedIds[r*c]);
             b0.commitPut();
 
-            b2.beginPut();
+            batches.set(1, b2 = b2.beginPut());
             for (int c = cols-1; c >= 0; c--) b2.putTerm(c, sourcedIds[r*c]);
             b2.commitPut();
 
-            b4.putRow(b0, r);
+            batches.set(2, b4 = b4.putRow(b0, r));
 
             for (int i = 0; i <= r; i++) {
                 for (int c = 0; c < cols; c++) {
@@ -120,14 +120,15 @@ class StoreBatchTest {
             }
 
             assertTrue(batches.stream().allMatch(b0::equals));
-            assertTrue(batches.stream().allMatch(b -> b.equals(b0)));
+            var b0_ = b0;
+            assertTrue(batches.stream().allMatch(b -> b.equals(b0_)));
         }
     }
 
     private StoreBatch mk(int cols, int... ids) {
-        StoreBatch b = TYPE.create(ids.length / cols, cols, 0);
+        StoreBatch b = TYPE.create(ids.length / cols, cols);
         for (int i = 0; i < ids.length; i += cols) {
-            b.beginPut();
+            b = b.beginPut();
             for (int c = 0; c < cols; c++)
                 b.putTerm(c, source(ids[i+c], dictId));
             b.commitPut();

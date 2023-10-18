@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
-import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -42,19 +41,20 @@ class HdtBatchTest {
 
     @RepeatedTest(2)
     public void testSingletonOfferId() {
-        HdtBatch b = HdtBatch.TYPE.create(1, 1, 0);
+        HdtBatch b = HdtBatch.TYPE.create(1, 1);
         assertEquals(1, b.rowsCapacity());
-        b.beginPut();
+        b = b.beginPut();
         b.putTerm(0, Alice);
         b.commitPut();
         assertEquals(1, b.rows);
         assertEquals(1, b.cols);
         assertEquals(ALICE_T, b.get(0, 0));
 
-        assertThrows(IndexOutOfBoundsException.class, () -> b.get(-1, 0));
-        assertThrows(IndexOutOfBoundsException.class, () -> b.get(0, -1));
-        assertThrows(IndexOutOfBoundsException.class, () -> b.get(0, 1));
-        assertThrows(IndexOutOfBoundsException.class, () -> b.get(1, 0));
+        var b_ = b;
+        assertThrows(IndexOutOfBoundsException.class, () -> b_.get(-1, 0));
+        assertThrows(IndexOutOfBoundsException.class, () -> b_.get(0, -1));
+        assertThrows(IndexOutOfBoundsException.class, () -> b_.get(0, 1));
+        assertThrows(IndexOutOfBoundsException.class, () -> b_.get(1, 0));
 
         HdtBatch copy0 = b.copy(null), copy1 = b.copy(null);
         assertEquals(b, copy0);
@@ -66,34 +66,34 @@ class HdtBatchTest {
     @RepeatedTest(2)
     public void testOfferThenPut() {
         HdtBatch two = HdtBatch.TYPE.createSingleton(2);
-        two.beginPut();
+        two = two.beginPut();
         two.putTerm(0, Alice);
         two.putTerm(1, charlie);
         two.commitPut();
         assertEquals(ALICE_T, two.get(0, 0));
         assertEquals(CHARLIE_T, two.get(0, 1));
 
-        HdtBatch b = HdtBatch.TYPE.create(1, 1, 0);
-        b.beginPut();
+        HdtBatch b = HdtBatch.TYPE.create(1, 1);
+        b = b.beginPut();
         b.putTerm(0, two, 0, 0);
         b.commitPut();
         assertEquals(1, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
 
-        b.beginPut();
+        b = b.beginPut();
         b.putTerm(0, two, 0, 1);
         b.commitPut();
         assertEquals(2, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
         assertEquals(CHARLIE_T, b.get(1, 0));
 
-        b.putRow(new HdtBatch(new long[]{Bob}, 1, 1), 0);
+        b = b.putRow(new HdtBatch(1, 1, Bob), 0);
         assertEquals(3, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
         assertEquals(CHARLIE_T, b.get(1, 0));
         assertEquals(BOB_T, b.get(2, 0));
 
-        b = b.putConverting(new HdtBatch(new long[]{knows}, 1, 1));
+        b = b.putConverting(new HdtBatch(1, 1, knows));
         assertEquals(4, b.rows);
         assertEquals(ALICE_T, b.get(0, 0));
         assertEquals(CHARLIE_T, b.get(1, 0));
@@ -103,61 +103,64 @@ class HdtBatchTest {
 
     @Test
     public void testProjectInPlace() {
-        var x = new IdBatch.Merger<>(HdtBatch.TYPE, Vars.of("x"), new int[]{1});
-        var y = new IdBatch.Merger<>(HdtBatch.TYPE, Vars.of("y"), new int[]{2});
+        var x = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("x"), new int[]{1});
+        var y = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("y"), new int[]{2});
         HdtBatch in, ac;
 
-        in = new HdtBatch(new long[]{Alice, Bob}, 1, 2);
+        in = new HdtBatch(1, 2, Alice, Bob);
         assertSame(in, ac = x.projectInPlace(in));
-        assertEquals(new HdtBatch(new long[]{Alice}, 1, 1), ac);
+        assertEquals(new HdtBatch(1, 1, Alice), ac);
 
-        in = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);
+        in = new HdtBatch(2, 2, Alice, Bob, charlie, knows);
         assertSame(in, ac = x.projectInPlace(in));
-        assertEquals(new HdtBatch(new long[]{Alice, charlie}, 2, 1), ac);
+        assertEquals(new HdtBatch(2, 1, Alice, charlie), ac);
 
-        in = new HdtBatch(new long[]{Alice, Bob}, 1, 2);
+        in = new HdtBatch(1, 2, Alice, Bob);
         assertSame(in, ac = y.projectInPlace(in));
-        assertEquals(new HdtBatch(new long[]{Bob}, 1, 1), ac);
+        assertEquals(new HdtBatch(1, 1, Bob), ac);
     }
 
     @Test public void testMerge() {
-        var merger = new HdtBatch.Merger<>(HdtBatch.TYPE, Vars.of("x", "u", "y", "z"),
+        var merger = new HdtBatch.Merger(HdtBatch.TYPE, Vars.of("x", "u", "y", "z"),
                                                         new int[]{1, 0, -1, 2});
-        var l = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);
-        var r = new HdtBatch(new long[]{knows, charlie, Bob}, 3, 1);
-        assertEquals(new HdtBatch(new long[]{Alice, 0, knows,   Bob,
-                                             Alice, 0, charlie, Bob,
-                                             Alice, 0, Bob,     Bob}, 3, 4),
-                     merger.merge(null, l, 0, r));
-        assertEquals(new HdtBatch(new long[]{charlie, 0, knows,   knows,
-                                             charlie, 0, charlie, knows,
-                                             charlie, 0, Bob,     knows}, 3, 4),
-                merger.merge(null, l, 1, r));
+        var l = new HdtBatch(2, 2, Alice, Bob, charlie, knows);
+        var r = new HdtBatch(3, 1, knows, charlie, Bob);
+        HdtBatch ac = merger.merge(null, l, 0, r);
+        assertEquals(new HdtBatch(3, 4,
+                        Alice, 0, knows,   Bob,
+                             Alice, 0, charlie, Bob,
+                             Alice, 0, Bob,     Bob), ac);
+        ac = merger.merge(ac, l, 1, r);
+        assertEquals(new HdtBatch(3, 4,
+                        charlie, 0, knows,   knows,
+                             charlie, 0, charlie, knows,
+                             charlie, 0, Bob,     knows), ac);
+        ac.recycle();
     }
 
 
     @Test public void testFiler() {
-        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, null, new RowFilter<>() {
+        var filter = new HdtBatch.Filter(HdtBatch.TYPE, X, null, new RowFilter<>() {
             int calls = 0;
             @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
             @Override public void rebind(BatchBinding binding) throws RebindException {}
         }, null);
 
-        var b = new HdtBatch(new long[]{Alice, Bob, charlie}, 3, 1);
+        var b = new HdtBatch(3, 1, Alice, Bob, charlie);
         assertSame(b, filter.filterInPlace(b));
-        assertEquals(new HdtBatch(new long[]{Bob, charlie}, 2, 1), b);
+        assertEquals(new HdtBatch(2, 1, Bob, charlie), b);
     }
 
     @Test public void testFilterProjecting() {
         var projector = HdtBatch.TYPE.projector(Vars.of("x"), Vars.of("x", "y"));
-        var filter = new HdtBatch.Filter<>(HdtBatch.TYPE, X, projector, new RowFilter<>() {
+        var filter = new HdtBatch.Filter(HdtBatch.TYPE, X, projector, new RowFilter<>() {
             int calls = 0;
             @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }
             @Override public void rebind(BatchBinding binding) throws RebindException {}
         }, null);
 
-        var b = new HdtBatch(new long[]{Alice, Bob, charlie, knows}, 2, 2);
+        var b = new HdtBatch(2, 2, Alice, Bob, charlie, knows);
         assertSame(b, filter.filterInPlace(b));
-        assertEquals(new HdtBatch(new long[]{charlie}, 1, 1), b);
+        assertEquals(new HdtBatch(1, 1, charlie), b);
     }
 }

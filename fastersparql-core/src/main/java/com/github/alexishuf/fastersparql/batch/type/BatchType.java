@@ -70,47 +70,45 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      *
      * @param rowsCapacity hints the number of rows that the batch is expected to hold
      * @param cols desired {@link Batch#cols} of the returned batch
-     * @param localBytes hints the total number of bytes collectively held for local segments of
-     *                  terms to be stored in the batch. Some implementations may ignore this
-     *                   hint completely.
      * @return an empty {@link Batch}
      */
-    public abstract B create(int rowsCapacity, int cols, int localBytes);
+    public abstract B create(int rowsCapacity, int cols);
 
     /**
-     * Similar to {@link #create(int, int, int)}, but will return {@code null} if there is no
-     * suitable batch pooled, instead of creating a new instance.
-     *
-     * @param rowsCapacity minimum value for {@link Batch#rowsCapacity()} of the returned batch
-     * @param cols desired {@link Batch#cols()} of returned batch
-     * @param localBytes if this method returns non-null, the returned batch will be able to
-     *                   hold this many bytes in total local segments of terms. This value may
-     *                   be meaningless for some batch types.
-     * @return a batch that satisfies the {@code rowsCapacity}, {@code cols} and {@code localBytes}
-     *         constraints or null if there is no pooled batch that satisfies all three constraints.
+     * Equivalent to {@code create(terms, 1).clear(cols))}.
      */
-    public abstract @Nullable B poll(int rowsCapacity, int cols, int localBytes);
+    public abstract B createForTerms(int terms, int cols);
 
     /**
-     * Equivalent to {@link #create(int, int, int)} if {@code offer == null},
+     * Equivalent to {@link #create(int, int)} if {@code offer == null},
      * else return {@code offer} after {@link Batch#clear(int)}.
      *
      * @param offer possibly null batch to be used before trying the global pool.
      * @param rows if offer is {@code null}, how many rows should fit in the new batch.
      * @param cols number of columns in the batch returned by this method.
-     * @param localBytes if {@code offer is null}, how many local segment bytes should
-     *                   fit in the new batch.
      * @return {@code offer}, cleared with {@code cols} columns or a new batch with space
      *         to fit {@code rows} and {@code localBytes} bytes of local segments.
      */
-    public abstract B empty(@Nullable B offer, int rows, int cols, int localBytes);
+    public abstract B empty(@Nullable B offer, int rows, int cols);
 
     /**
-     * Analogous to {@link #empty(Batch, int, int, int)} but calls {@link Batch#reserve(int, int)}
-     * on {@code offer}, if not null, to ensure it can fit the required {@code rows} and
-     * {@code localBytes}.
+     * If offer is {@code null}, check that {@link Batch#cols}{@code == cols} and ensure it
+     * can fit more {@code rows} new rows. Unlike {@link #empty(Batch, int, int)} this method
+     * <strong>WILL NOT</strong> call {@link Batch#clear(int)}. If {@code offer} is {@code null}
+     * a new batch with capacity for {@code rows} rows and {@code cols} columns will be created.
+     *
+     * @param offer {@code null} or a batch with {@code cols} columns. Will not be cleared.
+     * @param rows number of additional rows that {@code offer} must have free capacity for
+     *             (if {@code offer != null})
+     * @param cols expected {@code offer.cols} and desired {@link Batch#cols} of the
+     *             batch returned by this method.
+     * @return {@code offer} (if non-null) or a new empty batch with {@code cols} columns and
+     *          capacity for {@code rows} rows.
      */
-    public abstract B reserved(@Nullable B offer, int rows, int cols, int localBytes);
+    public abstract B withCapacity(@Nullable B offer, int rows, int cols);
+
+    /** Equivalent to {@code empty(offer, terms, 1, localBytes).clear(cols)}. */
+    public abstract B emptyForTerms(@Nullable B offer, int terms, int cols);
 
     /**
      * Create a batch that will very likely hold at most single row.
@@ -118,10 +116,10 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param cols number of columns for the new batch
      * @return a new empty batch that can hold @{code cols} columns.
      */
-    public B createSingleton(int cols) { return create(1, cols, 0); }
+    public B createSingleton(int cols) { return create(1, cols); }
 
     /**
-     * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
+     * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int)} call
      * whose resulting batch will be the target of a {@link Batch#putConverting(Batch)}.
      *
      * <p>Example usage:</p>
@@ -137,35 +135,18 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
     public int localBytesRequired(Batch<?> b) { return 0; }
 
     /**
-     * What should be {@code bytesCapacity} for a {@link BatchType#create(int, int, int)} call
-     * whose resulting batch will be the target of a {@link Batch#putRowConverting(Batch, int)}.
-     *
-     * <p>Example usage:</p>
-     *
-     * <pre>{@code
-     *   B converted = type.create(b.rows, b.cols, type.bytesCapacity(b, row))
-     *   converted.putConverting(b, row)
-     * }</pre>
-     *
-     * @param b a batch for which bytes usage of local segments will be computed
-     * @param row the row of {@code b} that will be copied
-     * @return the required number of bytes
-     */
-    public int localBytesRequired(Batch<?> b, int row) { return 0; }
-
-    /**
      * Convert/copy a single batch.
      *
      * @param src original batch
      * @return a batch of this type ({@code B}) with the same rows as {@code src}
      */
-    public final <O extends Batch<O>> B convert(O src) {
-        return create(src.rows, src.cols, localBytesRequired(src)).putConverting(src, null, null);
+    public <O extends Batch<O>> B convert(O src) {
+        return create(src.rows, src.cols).putConverting(src);
     }
 
     /**
      * Offer a batch for recycling so that it may be returned in future
-     * {@link BatchType#create(int, int, int)}/{@link BatchType#createSingleton(int)} calls.
+     * {@link BatchType#create(int, int)}/{@link BatchType#createSingleton(int)} calls.
      *
      * @param batch the {@link Batch} to be recycled
      * @return {@code null}, for conveniently setting recycled references to null:

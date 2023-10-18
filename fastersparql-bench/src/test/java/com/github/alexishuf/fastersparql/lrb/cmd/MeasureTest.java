@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.emit.Emitters;
@@ -46,12 +46,12 @@ class MeasureTest {
     private static File dataDir;
     private static boolean hasHDT, hasStore;
     private static boolean hasAllHDT, hasAllStore;
-    private static boolean oldDisableValidate;
+    private static boolean oldSelfValidate;
 
     @BeforeAll
     static void beforeAll() {
-        oldDisableValidate = CompressedBatch.DISABLE_VALIDATE;
-        CompressedBatch.DISABLE_VALIDATE = true;
+        oldSelfValidate = Batch.SELF_VALIDATE;
+        Batch.SELF_VALIDATE = false;
         String prop = System.getProperty(DATA_DIR_PROP);
         dataDir = prop != null && !prop.isEmpty() ? new File(prop) : new File("");
         hasHDT = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
@@ -68,7 +68,7 @@ class MeasureTest {
     }
 
     @AfterAll static void afterAll() {
-        CompressedBatch.DISABLE_VALIDATE = oldDisableValidate;
+        Batch.SELF_VALIDATE = oldSelfValidate;
         System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY,
                            String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY));
         FSProperties.refresh();
@@ -112,7 +112,7 @@ class MeasureTest {
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer,
                         MeasureOptions.FlowModel flowModel) throws IOException {
-        int nReps = 2;
+        int nReps = 50;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",

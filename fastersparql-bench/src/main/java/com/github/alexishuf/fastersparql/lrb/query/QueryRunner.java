@@ -179,7 +179,7 @@ public final class QueryRunner {
         public B batch;
         public Accumulator(BatchType<B> batchType) {
             super(batchType);
-            this.batch = batchType.create(64*BIt.PREFERRED_MIN_BATCH, 3, 0);
+            this.batch = batchType.createForTerms(64*BIt.PREFERRED_MIN_BATCH, 1);
         }
         @Override public void start(Vars vars) { batch.clear(vars.size()); }
         @Override public void accept(Batch<?> batch) {
@@ -188,7 +188,7 @@ public final class QueryRunner {
         }
         @Override public void accept(Batch<?> batch, int row) {
             //noinspection unchecked
-            this.batch.putRow((B)batch, row);
+            this.batch = this.batch.putRow((B)batch, row);
         }
     }
 

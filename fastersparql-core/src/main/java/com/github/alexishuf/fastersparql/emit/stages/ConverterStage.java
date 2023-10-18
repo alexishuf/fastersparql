@@ -12,8 +12,8 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 
 public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends AbstractStage<I, O> {
-    private final int cols;
-    private @Nullable O recycled;
+    protected final int cols;
+    protected @Nullable O recycled;
 
     public ConverterStage(BatchType<O> type, Emitter<I> upstream) {
         super(type, upstream.vars());
@@ -36,34 +36,20 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
     }
 
     @Override public @Nullable I onBatch(I batch) {
-        if (EmitterStats.ENABLED && stats != null)
-            stats.onBatchPassThrough(batch);
+        if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(batch);
         int rows = batch == null ? 0 : batch.rows;
-        if (rows == 0)
-            return batch;
-        int localsRequired = batchType.localBytesRequired(batch);
-        O o = batchType.empty(asUnpooled(recycled), batch.rows, cols, localsRequired);
+        if (rows == 0) return batch;
+        O o = batchType.empty(asUnpooled(recycled), batch.rows, cols);
         recycled = null;
-        o = putConverting(o, batch);
-        recycled = asPooled(downstream.onBatch(o));
+        recycled = asPooled(downstream.onBatch(o.putConverting(batch)));
         return batch;
     }
 
     @Override public void onRow(I batch, int row) {
-        if (EmitterStats.ENABLED && stats != null)
-            stats.onRowPassThrough();
-        if (batch == null)
-            return;
-        O o = batchType.empty(asUnpooled(recycled), 1, cols, 0);
+        if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
+        if (batch == null) return;
+        O o = batchType.emptyForTerms(asUnpooled(recycled), cols, cols);
         recycled = null;
-        putRowConverting(o, batch, row);
-        recycled = asPooled(downstream.onBatch(o));
-    }
-
-    protected O putConverting(O dest, I input) {
-        return dest.putConverting(input);
-    }
-    protected void putRowConverting(O dest, I input, int row) {
-        dest.putRowConverting(input, row);
+        recycled = asPooled(downstream.onBatch(o.putRowConverting(batch, row)));
     }
 }

@@ -32,7 +32,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
 
     @Override protected void doRelease() {
         if (recycled != null)
-            recycled = recycled.untracedUnmarkPooled().recycle();
+            recycled = recycled.markUnpooledNoTrace().recycle();
         super.doRelease();
     }
 
@@ -86,7 +86,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 if (b0 == null) b0 = b;
                 else            b1 = b;
                 if ((b = recycled) != null) {
-                    b.unmarkPooled();
+                    b.markUnpooled();
                     recycled = null;
                 }
             } else {
@@ -113,10 +113,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 } else if (b0 != null) {
                     dst = b0;
                 } else {
-                    int bytes = avgRows * (batch.localBytesUsed()/batch.rows);
-                    dst = b0 = batchType.create(avgRows, batch.cols, bytes);
+                    dst = b0 = batchType.create(avgRows, batch.cols);
+                    dst.reserveAddLocals(avgRows * (batch.localBytesUsed()/batch.rows));
                 }
-                dst.putRow(batch, row);
+                B grown = dst.putRow(batch, row);
+                if (grown != dst) {
+                    if   (b1 != null) b1 = grown;
+                    else              b0 = grown;
+                }
             }
         } finally {
             unlock(st);

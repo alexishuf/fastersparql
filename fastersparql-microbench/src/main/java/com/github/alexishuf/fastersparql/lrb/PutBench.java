@@ -35,7 +35,7 @@ public class PutBench {
         in = Workloads.fromName(bt, sizeName);
         out = new ArrayList<>();
         for (Batch batch : in)
-            out.add(bt.create(BIt.PREFERRED_MIN_BATCH, batch.cols, 0));
+            out.add(bt.create(BIt.PREFERRED_MIN_BATCH, batch.cols));
 //        if (bt == Batch.COMPRESSED) {
 //            inC  = (List<CompressedBatch>)(List<?>)in;
 //            outC = (List<CompressedBatch>)(List<?>)out;
@@ -48,10 +48,8 @@ public class PutBench {
     @Benchmark
     public List<Batch> put() {
         for (int i = 0, n = in.size(); i < n; i++) {
-            Batch outBatch = out.get(i);
-            Batch inBatch = in.get(i);
-            outBatch.clear(inBatch.cols);
-            out.set(i, outBatch.put(inBatch));
+            Batch outBatch = out.get(i), inBatch = in.get(i);
+            out.set(i, outBatch.clear(inBatch.cols).put(inBatch));
         }
         return out;
     }
@@ -71,11 +69,11 @@ public class PutBench {
     @Benchmark
     public List<Batch> putRow() {
         for (int i = 0, n = in.size(); i < n; i++) {
-            Batch outBatch = out.get(i);
             Batch inBatch = in.get(i);
-            outBatch.clear(inBatch.cols);
+            Batch outBatch = out.get(i).clear(inBatch.cols);
             for (int r = 0, rows = inBatch.rows; r < rows; r++)
-                outBatch.putRow(inBatch, r);
+                outBatch = outBatch.putRow(inBatch, r);
+            out.set(i, outBatch);
         }
         return out;
     }

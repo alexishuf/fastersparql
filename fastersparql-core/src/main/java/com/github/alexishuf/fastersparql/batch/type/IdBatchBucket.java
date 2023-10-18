@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.NonNull;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
@@ -16,41 +15,36 @@ public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B
     private B b;
 
     public IdBatchBucket(B b, int rows) {
-        this.b = b;
-        b.reserve(rows, 0);
-        Arrays.fill(b.arr, NULL);
+        b.rows = 0;
+        this.b = b.withCapacity(rows);
         b.rows = rows;
+        int terms  = rows*b.cols;
+        var arr    = b.arr;
+        var hashes = b.hashes;
+        for (int i = 0; i < terms; i++)    arr[i] = 0;
+        for (int i = 0; i < terms; i++) hashes[i] = 0;
     }
 
     @Override public void grow(int additionalRows) {
-        if (additionalRows <= 0) return;
-        B old = this.b, b = old;
-        int cols = b.cols, oldRows = b.rows, newRows = oldRows+additionalRows;
-        if (b.rowsCapacity() < additionalRows) {
-            b = b.type().create(newRows, cols, 0);
-            b.reserve(newRows, 0);
-            this.b = old.doCopy(b);
-            old.recycle();
-        }
-        Arrays.fill(b.arr, oldRows*cols, b.arr.length, NULL);
-        Arrays.fill(b.hashes, oldRows*cols, b.hashes.length, 0);
-        b.rows = newRows;
+        if (additionalRows <= 0)
+            return;
+        int begin  = b.rows*b.cols, end = additionalRows*b.cols;
+        b          = b.withCapacity(additionalRows);
+        b.rows    += additionalRows;
+        var arr    = b.arr;
+        var hashes = b.hashes;
+        for (int i = begin; i < end; i++)    arr[i] = 0;
+        for (int i = begin; i < end; i++) hashes[i] = 0;
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
-        var b = this.b;
-        int required = rowsCapacity*cols;
-        if (b.arr.length < required) {
-            var old = b;
-            b = b.type().create(rowsCapacity, cols, 0);
-            b.reserve(rowsCapacity, cols);
-            this.b = b;
-            old.recycle();
-        }
-        Arrays.fill(b.arr, 0, required, NULL);
-        Arrays.fill(b.hashes, 0, required, 0);
+        b = b.clear(cols).withCapacity(rowsCapacity);
         b.rows = rowsCapacity;
-        b.cols = cols;
+        int terms = rowsCapacity*cols;
+        var arr = b.arr;
+        var hashes = b.hashes;
+        for (int i = 0; i < terms; i++)    arr[i] = 0;
+        for (int i = 0; i < terms; i++) hashes[i] = 0;
     }
 
     @Override public void recycleInternals()        { b = b.recycle(); }

@@ -104,20 +104,20 @@ class WsSerializerTest {
 
         //feed single batch with first row
         if (!rows.isEmpty()) {
-            b.putRow(rows.get(0));
+            b = b.putRow(rows.get(0));
             serializer.serialize(batchType.convert(b), buffer);
         }
         // feed a batch with rows [1,rows.size()-1)
         if (rows.size() > 2) {
             b.clear();
             for (int i = 1; i < rows.size()-1; i++)
-                b.putRow(rows.get(i));
+                b = b.putRow(rows.get(i));
             serializer.serialize(batchType.convert(b), buffer);
         }
         // feed a batch with the last row if it is not also the first
         if (rows.size() > 1) {
             b.clear();
-            b.putRow(rows.get(rows.size()-1));
+            b = b.putRow(rows.get(rows.size()-1));
             serializer.serialize(batchType.convert(b), buffer);
         }
         // feeding a terminal batch has no effect
