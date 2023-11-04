@@ -88,8 +88,10 @@ public class ResultJournal {
 
     public static void logBatch(Object emitter, Batch<?> b) {
         EmitterJournal j;
-        if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null)
-            j.add(b, 0, b.rows);
+        if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null) {
+            for (var n = b; n != null; n = n.next)
+                j.add(b, 0, b.rows);
+        }
     }
 
     public static void logRow(Object emitter, Batch<?> b, int row) {

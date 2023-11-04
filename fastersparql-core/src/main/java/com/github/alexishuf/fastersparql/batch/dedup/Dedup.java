@@ -30,9 +30,9 @@ public abstract class Dedup<B extends Batch<B>> extends ReentrantLock implements
     }
 
     protected void checkBatchType(B b) {
-        if (!DEBUG || b == null || b.getClass() == bt.batchClass) return;
+        if (!DEBUG || b == null || b.getClass() == bt.batchClass()) return;
         throw new IllegalArgumentException("Unexpected batch of class "+b.getClass()+
-                                          ", expected "+bt.batchClass);
+                                          ", expected "+bt.batchClass());
     }
 
     public abstract int capacity();

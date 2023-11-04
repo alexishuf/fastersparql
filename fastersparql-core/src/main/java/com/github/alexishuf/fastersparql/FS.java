@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.UnboundSparqlClient.UNBOUND_CLIENT;
 import static com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.EMPTY;
 
@@ -147,7 +147,7 @@ public class FS {
         if (rowsSize == 0) {
             b = null;
         } else {
-            b = TERM.create(rows.size(), cols);
+            b = TERM.create(cols);
             for (Object row : rows) {
                 b = switch (row) {
                     case Term[] a -> b.putRow(a);
@@ -197,10 +197,10 @@ public class FS {
         return flat;
     }
 
-    static Plan[] flattenUnion(int crossDedupCapacity, Plan... ops) {
+    static Plan[] flattenUnion(boolean crossDedup, Plan... ops) {
         int flatSize = -1;
         for (Plan o : ops) {
-            if (o instanceof Union u && u.crossDedupCapacity == crossDedupCapacity)
+            if (o instanceof Union u && u.crossDedup == crossDedup)
                 flatSize = Math.max(0, flatSize) + o.opCount()-1;
         }
         if (flatSize == -1) return ops;
@@ -208,7 +208,7 @@ public class FS {
         Plan[] flat = new Plan[ops.length+flatSize];
         flatSize = 0;
         for (Plan o : ops) {
-            if (o instanceof Union u && u.crossDedupCapacity == crossDedupCapacity) {
+            if (o instanceof Union u && u.crossDedup == crossDedup) {
                 for (int i = 0, n = o.opCount(); i < n; i++)
                     flat[flatSize++] = o.op(i);
             } else {
@@ -219,7 +219,7 @@ public class FS {
     }
 
     public static Union union(Plan... operands) {
-        return new Union(0, flattenUnion(0, operands));
+        return new Union(false, flattenUnion(false, operands));
     }
 
     /**
@@ -231,17 +231,17 @@ public class FS {
      * generate bogus duplicates.</p>
      *
      * @param operands the union operands
-     * @param crossDedupCapacity at most {@code operands.size()crossDedupCapacity} rows will
+     * @param crossDedup at most {@code operands.size()crossDedupCapacity} rows will
      *                           be kept in main memory to perform the de-duplication.
      */
-    public static Union union(int crossDedupCapacity, Plan... operands) {
-        return new Union(crossDedupCapacity, flattenUnion(crossDedupCapacity, operands));
+    public static Union union(boolean crossDedup, Plan... operands) {
+        return new Union(crossDedup, flattenUnion(crossDedup, operands));
     }
 
-    /** Equivalent to {@link FS#union(int, Plan...)} with {@link FSProperties#dedupCapacity()} */
+    /** Equivalent to {@link FS#union(boolean, Plan...)} with {@link FSProperties#crossDedup()} */
     public static Union crossDedupUnion(Plan... operands) {
-        int cdc = FSProperties.crossDedupCapacity();
-        return new Union(cdc, flattenUnion(cdc, operands));
+        boolean crossDedup = FSProperties.crossDedup();
+        return new Union(crossDedup, flattenUnion(crossDedup, operands));
     }
 
     public static LeftJoin leftJoin(Plan left, Plan right) {
@@ -352,9 +352,9 @@ public class FS {
         return distinct(input, FSProperties.reducedCapacity());
     }
 
-    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#dedupCapacity()}. */
+    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#opportunisticDedupCapacity()}. */
     public static Modifier dedup(Plan input) {
-        return distinct(input, FSProperties.dedupCapacity());
+        return distinct(input, FSProperties.opportunisticDedupCapacity());
     }
 
     /**
@@ -366,7 +366,7 @@ public class FS {
      *                 de-duplication. {@link Integer#MAX_VALUE} will implement a proper
      *                 DISTINCT. See also {@link FSProperties#distinctCapacity()},
      *                 {@link FSProperties#reducedCapacity()} and
-     *                 {@link FSProperties#dedupCapacity()}.
+     *                 {@link FSProperties#opportunisticDedupCapacity()}.
      */
     public static Modifier distinct(Plan input, int capacity) {
         if (input instanceof Modifier m) {

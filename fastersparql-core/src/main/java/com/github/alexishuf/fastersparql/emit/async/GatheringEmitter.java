@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +25,6 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleTerminationError;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
@@ -45,27 +45,21 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static int globalAvgFillingCap = 64;
-
     @SuppressWarnings("unused") private int plainLock;
     @SuppressWarnings("unused") private @Nullable B plainFilling;
     private Receiver<B> downstream;
-    /** Moving average of FILLING.rows when delivered */
-    private short avgFillingCap;
-    private byte state = CREATED, delayRelease;
-    private short connectorCount, connectorTerminatedCount;
-    private @Nullable Receiver<B>[] extraDown;
-    private int extraDownCount;
-    private @Nullable B scatterTmp, recycled;
+    private short extraDownCount, connectorCount;
+    private @MonotonicNonNull Receiver<B>[] extraDown;
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[10];
-    private final Vars vars;
+    private byte state = CREATED, delayRelease;
+    private short connectorTerminatedCount;
     private final BatchType<B> batchType;
+    private final Vars vars;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
     public GatheringEmitter(BatchType<B> batchType, Vars vars) {
         this.vars = vars;
         this.batchType = batchType;
-        this.avgFillingCap = (short)Math.min(Short.MAX_VALUE, globalAvgFillingCap);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
@@ -81,7 +75,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 connectors = Arrays.copyOf(connectors, connectorCount*2);
             connectors[connectorCount++] = new Connector<>(upstream, this);
         } finally {
-            endDelivery(null);
+            endDelivery();
         }
     }
 
@@ -146,7 +140,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 extraDown[extraDownCount++] = receiver;
             }
         } finally {
-            endDelivery(null);
+            endDelivery();
         }
     }
 
@@ -237,25 +231,15 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 }
             }
         } finally {
-            endDelivery(null);
+            endDelivery();
         }
     }
 
     private void doRelease() {
-        recycled   = Batch.recyclePooled(recycled);
-        scatterTmp = Batch.recyclePooled(scatterTmp);
         for (int i = 0; i < connectorCount; i++) {
-            Connector<B> c = connectors[i];
-            B b = c.plainRecycled;
-            if (b != null) {
-                b.markUnpooledNoTrace().recycle();
-                c.plainRecycled = null;
-            }
-            if (c.projector != null)
-                c.projector.release();
+            if (connectors[i].projector != null)
+                connectors[i].projector.release();
         }
-        int global = globalAvgFillingCap;
-        globalAvgFillingCap = ((global<<3) - global + avgFillingCap)>>3;
         if (EmitterStats.ENABLED && stats != null)
             stats.report(log, this);
     }
@@ -269,7 +253,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if ((i&31) == 31) Thread.yield();
             else              Thread.onSpinWait();
         }
-        deliverFilling(null);
+        deliverFilling();
     }
 
     /**
@@ -277,29 +261,25 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
      *
      * @return {@code true} iff this thread is the only one delivering to downstream
      */
-    private boolean tryBeginDelivery(Connector<B> connector) {
+    private boolean tryBeginDelivery() {
         if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) {
             // CAE does not suffer from sporadic failures. Nevertheless, try at least twice
             Thread.onSpinWait();
             if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
                 return false; // another thread is delivering
         }
-
         // got the mutex, we are obligated to deliver FILLING.
-        deliverFilling(connector);
+        deliverFilling();
         return true; // this thread is the only one delivering
     }
 
     /** If {@code FILLING != null}, delivers it. Assumes calling thread owns {@code LOCK}. */
-    private void deliverFilling(@Nullable Connector<B> connector) {
+    private void deliverFilling() {
         try {
             //noinspection unchecked
             B b = (B) FILLING.getAndSetRelease(this, null);
-            if (b != null) {
-                int avg = avgFillingCap;
-                avgFillingCap = (short)Math.max(Short.MAX_VALUE, ((avg << 4) - avg + b.rows) >> 4);
-                recycle(connector, deliver(b));
-            }
+            if (b != null)
+                batchType.recycle(deliver(b));
         } catch (Throwable t) {
             LOCK.setRelease(this, 0);
             throw t;
@@ -315,29 +295,13 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
      *         is thus obliged to deliver it.</li>
      * </ul>
      */
-    private void endDelivery(@Nullable Connector<B> conn) {
+    private void endDelivery() {
         do {
             // release LOCK before checking FILLING again, this allows another thread to
             // acquire LOCK and thus become responsible for delivery of the FILLING batch
             LOCK.setRelease(this, 0);
-        } while (FILLING.getAcquire(this) != null && tryBeginDelivery(conn));
+        } while (FILLING.getAcquire(this) != null && tryBeginDelivery());
         // (LOCK==0 && FILLING==null) || LOCK==1 (but not owned by this thread)
-    }
-
-    /**
-     * Recycles {@code b} into {@code this.recycled} or the global pool. Assumes caller
-     * thread owns the delivery {@code LOCK}.
-     */
-    private void recycle(@Nullable Connector<B> conn, B b) {
-        if (b != null) {
-            b.markPooled();
-            if (conn != null && conn.plainRecycled == null)
-                conn.plainRecycled = b;
-            else if (recycled == null)
-                recycled = b;
-            else
-                b.markUnpooledNoTrace().recycle();
-        }
     }
 
     /**
@@ -347,15 +311,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private @Nullable B deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
-        if (extraDown != null)  {
-            B copy = b.copy(Batch.asUnpooled(scatterTmp));
-            scatterTmp = null;
-            for (int i = 0, last = extraDownCount -1; i <= last; i++) {
-                B offer = deliver(extraDown[i], copy);
-                copy = offer == copy || i == last ? offer : b.copy(offer);
-            }
-            scatterTmp = asPooled(copy);
-        }
+        B copy = null;
+        for (int i = 0, n = extraDownCount; i < n; i++)
+            copy = deliver(extraDown[i], copy == null ? b.dup() : copy);
         return deliver(downstream, b);
     }
 
@@ -365,11 +323,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private void deliver(B b, int row) {
         if (ResultJournal.ENABLED)
             ResultJournal.logRow(this, b, row);
-        if (extraDown != null) {
-            for (int i = 0, n = extraDownCount; i < n; i++)
-                deliver(extraDown[i], b, row);
-        }
         deliver(downstream, b, row);
+        for (int i = 0, n = extraDownCount; i < n; i++)
+            deliver(extraDown[i], b, row);
     }
 
     /**
@@ -428,26 +384,18 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
      * Receives events from one upstream and safely queue or deliver them via {@code down.deliver*()}
      */
     private static final class Connector<B extends Batch<B>> implements Receiver<B> {
-        private static final VarHandle RECYCLED;
-        static {
-            try {
-                RECYCLED = MethodHandles.lookup().findVarHandle(Connector.class, "plainRecycled", Batch.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
-
         final Emitter<B> up;
         final GatheringEmitter<B> down;
+        final BatchType<B> bt;
         final BatchMerger<B> projector;
-        @Nullable B plainRecycled;
         private @Nullable Throwable error;
         private boolean completed, cancelled;
 
         public Connector(Emitter<B> upstream, GatheringEmitter<B> downstream) {
             (this.up = upstream).subscribe(this);
             this.down = downstream;
-            projector = downstream.batchType.projector(downstream.vars, upstream.vars());
+            bt        = downstream.batchType;
+            projector = bt.projector(downstream.vars, upstream.vars());
         }
 
         @Override public Stream<? extends StreamNode> upstream() { return Stream.of(up); }
@@ -459,46 +407,35 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         @Override public @Nullable B onBatch(B in) {
             if (EmitterStats.ENABLED && down.stats != null)
                 down.stats.onBatchReceived(in);
-            if (projector != null)
+            if (projector != null) {
                 in = projector.projectInPlace(in);
-            if (in.rows == 1) {
+            }
+            if (in.rows == 1 && in.next == null) {
                 onRow0(in, 0); // will avoid setting FILLING to a singleton
                 return in;
             }
-            return onBatch0(in, false);
+            return onBatch0(in);
         }
 
-        @SuppressWarnings("unchecked") private @Nullable B onBatch0(B in, boolean recycleOffer) {
+        @SuppressWarnings("unchecked") private @Nullable B onBatch0(B in) {
             B f, b = in;
             while (true) {
-                if (down.tryBeginDelivery(this)) {
+                if (down.tryBeginDelivery()) {
                     try {
-                        B offer = down.deliver(b);
-                        if (recycleOffer || b != in) { // b != in implies previous f.put(in)
-                            down.recycle(this, offer);
-                            return recycleOffer ? null : in;
-                        } else if (offer == null && (offer = plainRecycled) != null) {
-                            plainRecycled = null;
-                            offer.markUnpooled();
-                        }
-                        return offer;
-                    } finally {
-                        down.endDelivery(this);
-                    }
+                        if ((b = down.deliver(b)) != in)
+                            b = bt.recycle(b);
+                        return b;
+                    } finally { down.endDelivery(); }
                 } else if (FILLING.compareAndExchangeRelease(down, null, b) == null) {
                     // deliver our write to FILLING in case LOCK was released
-                    if (down.tryBeginDelivery(this)) // else: thread owning LOCK will deliver
-                        down.endDelivery(this);
-                    return b == in ? null : in; // if original in got put into b, return in
-                } else if (!EMITTER_SVC.yieldToTaskOnce() // retry locking if we could yield
-                        && (f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                    // had no task to yield to and stole a FILLING batch, merge b into it
-                    f = f.put(b, RECYCLED, this);
-                    if (b != in || recycleOffer) { // if b is irrevocably owned by this stack frame
-                        if (plainRecycled == null) plainRecycled = asPooled(b);
-                        else                       b.recycle();
+                    if (down.tryBeginDelivery())  // else: thread owning LOCK will deliver
+                        down.endDelivery();
+                    return null;
+                } else if (!EMITTER_SVC.yieldToTaskOnce()) { // try yielding before FILLING.put()
+                    if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
+                        f.append(b); // preserve in, try delivering combined batch
+                        b = f;
                     }
-                    b = f; // continue delivering the merged batch
                 }
             }
         }
@@ -507,47 +444,25 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (projector == null) {
                 onRow0(batch, row);
             } else { // projection requires writing batch[row] into a new batch
-                //preferred projection destinations: FILLING, plainRecycled, down.recycle
-                B merged = (B)FILLING.getAndSetRelease(down, null);
-                if (merged == null && (merged=takeClearLocalRecycled()) == null
-                                   && down.tryBeginDelivery(this)) {
-                    try {
-                        if ((merged=(B)FILLING.getAndSetRelease(down, null)) == null
-                                && (merged=takeClearLocalRecycled()) == null
-                                && (merged=down.recycled) != null) {
-                            down.recycled = null;
-                            merged.markUnpooled();
-                            merged.clear();
-                        }
-                    } finally {  down.endDelivery(this); }
-                }
-                onBatch0(projector.projectRow(merged, batch, row), true);
+                B f = (B)FILLING.getAndSetRelease(down, null);
+                bt.recycle(onBatch0(projector.projectRow(f, batch, row)));
             }
-        }
-
-        private B takeClearLocalRecycled() {
-            var b = plainRecycled;
-            if (b != null) {
-                b.markUnpooled();
-                b.clear();
-            }
-            return b;
         }
 
         @SuppressWarnings("unchecked") private void onRow0(B batch, int row) {
             B f;
             while (true) {
-                if (down.tryBeginDelivery(this)) {
+                if (down.tryBeginDelivery()) {
                     try {
                         down.deliver(batch, row);
                         return;
-                    } finally { down.endDelivery(this); }
+                    } finally { down.endDelivery(); }
                 } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                    onBatch0(f.putRow(batch, row), true);
+                    f.putRow(batch, row);
+                    bt.recycle(onBatch0(f));
                     return;
-                } else {
-                    EMITTER_SVC.yieldToTaskOnce();
                 }
+                EMITTER_SVC.yieldToTaskOnce();
             }
         }
 

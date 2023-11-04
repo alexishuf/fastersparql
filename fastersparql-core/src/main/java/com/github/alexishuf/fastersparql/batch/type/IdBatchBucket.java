@@ -3,53 +3,78 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
 import static java.lang.System.arraycopy;
 
-public abstract class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
-    protected static final long NULL = 0;
-    private B b;
+public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
+    private static final long NULL            = 0;
 
-    public IdBatchBucket(B b, int rows) {
-        b.rows = 0;
-        this.b = b.withCapacity(rows);
-        b.rows = rows;
-        int terms  = rows*b.cols;
-        var arr    = b.arr;
-        var hashes = b.hashes;
-        for (int i = 0; i < terms; i++)    arr[i] = 0;
-        for (int i = 0; i < terms; i++) hashes[i] = 0;
+    private B b;
+    private final IdBatchType<B> type;
+
+    public IdBatchBucket(IdBatchType<B> type, int rows, int cols) {
+        if (rows > Short.MAX_VALUE || cols > Short.MAX_VALUE)
+            throw new IllegalArgumentException("rows or cols overflow 2-byte short");
+        this.type = type;
+        int terms = rows * cols;
+        var b = type.createSpecial(terms);
+        this.b = b;
+        b.rows = (short)rows;
+        b.cols = (short)cols;
+        Arrays.fill(b.arr,    0, terms, NULL);
+        Arrays.fill(b.hashes, 0, terms, 0);
+    }
+
+    @Override public IdBatchType<B> batchType() { return type; }
+
+    @Override public void maximizeCapacity() {
+        short old = b.rows;
+        if ((b.rows = (short)(b.termsCapacity/b.cols)) > old) {
+            int begin = old*b.cols, end = b.rows*b.cols;
+            Arrays.fill(b.arr,    begin, end, NULL);
+            Arrays.fill(b.hashes, begin, end, 0);
+        }
     }
 
     @Override public void grow(int additionalRows) {
         if (additionalRows <= 0)
             return;
-        int begin  = b.rows*b.cols, end = additionalRows*b.cols;
-        b          = b.withCapacity(additionalRows);
-        b.rows    += additionalRows;
-        var arr    = b.arr;
-        var hashes = b.hashes;
-        for (int i = begin; i < end; i++)    arr[i] = 0;
-        for (int i = begin; i < end; i++) hashes[i] = 0;
+        var b = this.b;
+        int nRows = b.rows+additionalRows, begin = b.rows*b.cols, end = nRows*b.cols;
+        if (nRows > Short.MAX_VALUE)
+            throw new IllegalArgumentException("new rows will overflow 2-byte short");
+        if (end > b.termsCapacity)
+            b = reAlloc(b, end);
+        b.rows = (short)nRows;
+        Arrays.fill(b.arr,    begin, end, NULL);
+        Arrays.fill(b.hashes, begin, end, 0);
+    }
+
+    private B reAlloc(B b, int terms) {
+        var bigger = type.createSpecial(terms).clear(b.cols);
+        bigger.copy(b);
+        type.recycleSpecial(b);
+        this.b = b = bigger;
+        return b;
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
-        b = b.clear(cols).withCapacity(rowsCapacity);
-        b.rows = rowsCapacity;
-        int terms = rowsCapacity*cols;
-        var arr = b.arr;
-        var hashes = b.hashes;
-        for (int i = 0; i < terms; i++)    arr[i] = 0;
-        for (int i = 0; i < terms; i++) hashes[i] = 0;
+        b = b.clear(cols);
+        grow(rowsCapacity);
     }
 
-    @Override public void recycleInternals()        { b = b.recycle(); }
-    @Override public int              cols()        { return b.cols; }
-    @Override public int          capacity()        { return b.rowsCapacity(); }
+    @Override public @Nullable IdBatchBucket<B> recycleInternals() {
+        b = type.recycleSpecial(b);
+        return null;
+    }
+    @Override public int            cols() { return b.cols; }
+    @Override public int        capacity() { return b.rowsCapacity(); }
     @Override public int hashCode(int row) { return b.hash(row); }
 
     @Override public boolean has(int row) {

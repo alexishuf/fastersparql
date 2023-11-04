@@ -20,12 +20,13 @@ class RowBucketTest {
     private static final Term i4 = Term.typed("4", SharedRopes.DT_integer);
 
     static Stream<Arguments> test() {
-        return Stream.of(Batch.TERM, Batch.COMPRESSED).map(Arguments::arguments);
+        return Stream.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED).map(Arguments::arguments);
     }
 
     @ParameterizedTest @MethodSource() <B extends Batch<B>> void test(BatchType<B> bt) {
         RowBucket<B> bucket = bt.createBucket(57, 2);
-        assertEquals(57, bucket.capacity());
+        assertTrue(bucket.capacity() <= 128);
+        assertTrue(bucket.capacity() >= 57);
         // else: other implementations hold a Batch<?>, which may be bigger due to offerToNearest()
         bucket.grow(128-bucket.capacity());
         assertEquals(128, bucket.capacity());
@@ -64,7 +65,7 @@ class RowBucketTest {
         assertEquals(b__12.hash(0), bucket.hashCode(1));
         assertEquals(b__12.hash(1), bucket.hashCode(0));
 
-        bt.recycleBucket(bucket);
+        bucket.recycleInternals();
     }
 
 }

@@ -23,13 +23,10 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -38,16 +35,6 @@ import static java.lang.System.identityHashCode;
 
 public abstract class BindingStage<B extends Batch<B>> extends Stateful implements Stage<B, B> {
     private static final Logger log = LoggerFactory.getLogger(BindingStage.class);
-    private static final VarHandle RECYCLED;
-    static {
-        try {
-            RECYCLED = MethodHandles.lookup().findVarHandle(BindingStage.class, "recycled", Batch.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-    private static final int LEFT_REQUESTED_CHUNK = 64;
-    private static final int LEFT_REQUESTED_MAX   = LEFT_REQUESTED_CHUNK+16;
 
     /* flags embedded in plainState|S */
 
@@ -63,7 +50,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private static final int CAN_REQ_RIGHT_MASK = RIGHT_BINDING|RIGHT_STARVED;
     private static final int CAN_REQ_RIGHT      = 0;
     private static final int CAN_BIND_MASK      = RIGHT_STARVED|RIGHT_BINDING;
-    private static final int CAN_BIND           = RIGHT_STARVED;
+    private static final int LEFT_CAN_BIND      = RIGHT_STARVED;
+    private static final int RIGHT_CAN_BIND     = 0;
     private static final int FILTER_BIND        = 0x00010000;
     private static final Flags BINDING_STAGE_FLAGS =
             Flags.DEFAULT.toBuilder()
@@ -85,10 +73,10 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private final Emitter<B> leftUpstream;
     private final RightReceiver rightRecv;
     private @Nullable B fillingLB;
-    private @Nullable B recycled;
     private int lr = -1;
     private @Nullable B lb;
-    private int leftPending;
+    private short leftPending;
+    private final short leftChunk;
     private long requested;
     private final BatchBinding intBinding;
     private @Nullable BatchBinding extBinding;
@@ -150,6 +138,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         }
         this.rightRecv = new RightReceiver(merger, passthrough, type, rightUpstream, listener);
         this.leftUpstream = bindings;
+        this.leftChunk = (short)(batchType.preferredTermsPerBatch()/bindings.vars().size());
         this.intBinding = new BatchBinding(lVars);
         bindings.subscribe(this);
         rightUpstream.subscribe(rightRecv);
@@ -169,8 +158,13 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (type != StreamNodeDOT.Label.MINIMAL)
             sb.append('[').append(rightRecv.type.name()).append("] vars=").append(outVars);
         if (type.showState()) {
-            StreamNodeDOT.appendRequested(sb.append("\nrequested="), requested)
-                    .append(" state=").append(flags.render(state()));
+            appendRequested(sb.append("\nrequested=" ), requested);
+            appendRequested(sb.append(" leftPending="), leftPending);
+            B lb = this.lb, fillingLB = this.fillingLB;
+            int lQueued = (lb        == null ? 0 :        lb.totalRows() - lr)
+                        + (fillingLB == null ? 0 : fillingLB.totalRows());
+            appendRequested(sb.append(" leftQueued="), lQueued);
+            sb.append(" state=").append(flags.render(state()));
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -185,10 +179,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (EmitterStats.ENABLED && stats != null)
             stats.report(log, this);
         rightRecv.rebindRelease();
-        rightRecv.recycled = Batch.recyclePooled(rightRecv.recycled);
-        recycled = Batch.recyclePooled(recycled);
-        lb                 = batchType.recycle(lb);
-        fillingLB          = batchType.recycle(fillingLB);
+        lb        = batchType.recycle(lb);
+        fillingLB = batchType.recycle(fillingLB);
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
@@ -207,40 +199,36 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     @Override public @Nullable B onBatch(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(batch);
-        int rows = batch == null ? 0 : batch.rows;
+        int rows = batch == null ? 0 : batch.totalRows();
         if (rows == 0)
             return batch;
-        B offer = null;
         int state = lock(statePlain());
         try {
             if (ENABLED)
                 journal("onBatch", rows, "st=", state, flags, "bStage=", this);
             if (lb == null) {
                 lb = batch;
+                batch = null;
             } else if (fillingLB == null) {
                 fillingLB = batch;
+                batch = null;
             } else {
                 B tmp = fillingLB;
                 fillingLB = null;
                 state = unlock(state);
-                tmp = tmp.put(batch, RECYCLED, this);
-                offer = batch;
+                tmp.copy(batch);
                 state = lock(state);
                 if   (lb == null) lb        = tmp;
                 else              fillingLB = tmp;
             }
-            leftPending -= rows;
-            if (offer == null && (offer = recycled) != null) {
-                recycled = null;
-                offer.markUnpooled();
-            }
-            if ((state&CAN_BIND_MASK) == CAN_BIND)
+            leftPending -= (short)rows;
+            if ((state&CAN_BIND_MASK) == LEFT_CAN_BIND)
                 state = startNextBinding(state);
         } finally {
             if ((state&LOCKED_MASK) != 0)
                 unlock(state);
         }
-        return offer;
+        return batch;
     }
 
     @Override public void onRow(B b, int row) {
@@ -255,18 +243,19 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 dst = fillingLB;
                 fillingLB = null;
             } else {
-                dst = batchType.emptyForTerms(asUnpooled(recycled), b.cols, b.cols);
-                recycled = null;
+                dst = batchType.create(b.cols);
             }
+
             state = unlock(state);
-
-            dst = dst.putRow(b, row);
-
+            dst.putRow(b, row);
             state = lock(state);
-            if (lb == null) lb        = dst;
-            else            fillingLB = dst;
+
+            if      (lb        == null) lb        = dst;
+            else if (fillingLB == null) fillingLB = dst;
+            else                        throw new IllegalStateException("fillingLB!=null");
+
             --leftPending;
-            if ((state&CAN_BIND_MASK) == CAN_BIND)
+            if ((state&CAN_BIND_MASK) == LEFT_CAN_BIND)
                 state = startNextBinding(state);
         } finally {
             if ((state&LOCKED_MASK) != 0)
@@ -368,13 +357,19 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private void maybeRequestLeft() {
         B lb = this.lb, fillingLB = this.fillingLB;
         // count queued left rows into LEFT_REQUESTED_MAX limit
-        int queued = (lb == null ? 0 : lb.rows-lr) + (fillingLB == null ? 0 : fillingLB.rows);
-        // do not request more from left if downstream is not expecting more rows.
-        // leftPending+queued must never exceed LEFT_REQUESTED_MAX.
-        // always request LEFT_REQUESTED_CHUNK rows.
-        if (requested > 0 && LEFT_REQUESTED_MAX - leftPending - queued >= LEFT_REQUESTED_CHUNK) {
-            leftPending += LEFT_REQUESTED_CHUNK;
-            leftUpstream.request(LEFT_REQUESTED_CHUNK);
+        int queued = (       lb == null ? 0 :        lb.totalRows()-lr)
+                   + (fillingLB == null ? 0 : fillingLB.totalRows());
+        int pendingOrQueued = leftPending + queued;
+        // - request at most leftChunk (a full default-sized batch) from upstream
+        // - never request from left upstream more than downstream has requested
+        // - prefer issuing requests >= leftChunk/2
+        if (requested > pendingOrQueued && pendingOrQueued < leftChunk
+                                        && leftPending <= leftChunk<<1) {
+            short n = (short)Math.min(requested-pendingOrQueued, leftChunk);
+            leftPending += n;
+            leftUpstream.request(n);
+        } else if (ENABLED) {
+            journal("skip leftUpstream.request(): queued=", queued, " leftPending=", leftPending);
         }
     }
 
@@ -389,7 +384,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 state = setFlagsRelease(state, flag);
                 if ((state & (RIGHT_TERM|RIGHT_STARVED)) != 0) {
                     state = terminateStage(state);
-                } else if (lr == (lb == null ? -1 : lb.rows-1)
+                } else if ((lb == null ? lr == -1 : lr == lb.rows-1 && lb.next == null)
                            && (fillingLB == null || fillingLB.rows == 0)
                            && (state&DELAY_RELEASE_MASK) == 0) {
                     rightRecv.rebindRelease();
@@ -401,17 +396,19 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         }
     }
 
-    private void rightTerminated(int flag, @Nullable Throwable error) {
+    private void rightFailedOrCancelled(int flag, @Nullable Throwable error) {
         int state = lock(statePlain());
         try {
             if (ENABLED)
-                journal("rightTerminated st=", state, flags, "flag=", flag, flags, "bStage=", this);
-            if (error != null && this.error == UNSET_ERROR)
+                journal("rightFailedOrCancelled", state, flags, "flag=", flag, flags, "on", this);
+            if (error != null && this.error == UNSET_ERROR) {
+                if (ENABLED) journal("error=", error);
                 this.error = error;
+            }
             if ((state & RIGHT_TERM) == 0) {
                 state = setFlagsRelease(state, flag);
-                if ((state & LEFT_TERM) != 0)
-                    state = terminateStage(state);
+                if ((state & LEFT_TERM) == 0) leftUpstream.cancel(); // if right failed, cancel
+                else                          state = terminateStage(state);
             }
         } finally {
             if ((state&LOCKED_MASK) != 0)
@@ -447,14 +444,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         return (state&FLAGS_MASK)|termState;
     }
 
-    @SuppressWarnings("SameReturnValue") private @Nullable B recycle(B b) {
-        if (recycled != null)
-            return b.recycle();
-        b.markPooled();
-        recycled = b;
-        return null;
-    }
-
     /* --- --- --- right-side processing --- --- --- */
 
     private int startNextBinding(int st) {
@@ -464,13 +453,20 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             if (lb == null) {
                 lr = -1;
             } else if (lr >= lb.rows) {
-                recycle(lb);
-                this.lb = lb = fillingLB;
-                fillingLB = null;
-                if (lb != null && lb.rows == 0) this.lb = lb = recycle(lb);
-                lr = lb == null ? -1 : 0;
+                lb = lb.dropHead();
+                if (lb != null) {
+                    lr = 0;
+                } else {
+                    lb = fillingLB;
+                    fillingLB = null;
+                    if (lb != null && lb.rows == 0) lb = lb.recycle();
+                    lr = lb == null ? -1 : 0;
+                }
+                this.lb = lb;
             }// else: lb != null && lr < lb.rows
             this.lr = lr;
+            if (ENABLED)
+                journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
             maybeRequestLeft();
             if (lb == null) {
                 if ((st & LEFT_TERM) == 0) st = unlock(st, 0, RIGHT_STARVED);
@@ -484,8 +480,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
                 rightRecv.listenerNotified = false;
-                if (ENABLED)
-                    journal("startNextBinding st=", st, flags, "seq=", rightRecv.bindingSeq, "stage=", this);
                 rightRecv.upstream.request((st & FILTER_BIND) == 0 ? requested : 2);
                 st = unlock(st, RIGHT_BINDING, 0); // rebind complete, allow upstream.request()
             }
@@ -493,7 +487,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             log.error("{}.startNextBinding() failed after seq={}", this, rightRecv.bindingSeq, t);
             if ((st&LOCKED_MASK) != 0)
                 st = unlock(st); // avoid self-deadlock on rightTerminated/lock()
-            rightTerminated(RIGHT_FAILED, t);
+            rightFailedOrCancelled(RIGHT_FAILED, t);
             rightRecv.upstream.cancel();
         }
         return st;
@@ -533,17 +527,18 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
     private final class RightReceiver implements Receiver<B> {
         private @MonotonicNonNull Receiver<B> downstream;
-        private @Nullable B recycled;
         private final Emitter<B> upstream;
         private final @Nullable BatchMerger<B> merger;
         private final BindType type;
         private final @Nullable BindListener bindingListener;
         private final byte passThrough;
         private boolean upstreamEmpty, listenerNotified, rebindReleased;
+        private final BatchType<B> bt;
         private long bindingSeq = -1;
 
         public RightReceiver(@Nullable BatchMerger<B> merger, byte passThrough,
                              BindType type, Emitter<B> rightUpstream, @Nullable BindListener bindingListener) {
+            this.bt = rightUpstream.batchType();
             this.upstream = rightUpstream;
             this.merger = merger;
             this.passThrough = passThrough;
@@ -569,21 +564,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             if (batch == null)
                 return;
             if (passThrough == PASSTHROUGH_NOT) {
-                B tmp;
-                int st = lock(statePlain());
-                try {
-                    tmp = batchType.empty(asUnpooled(recycled), batch.cols, batch.cols);
-                    recycled = null;
-                } finally { st = unlock(st); }
-
-                tmp = onBatch(tmp.putRow(batch, row));
-                if (tmp != null) {
-                    st = lock(st);
-                    try {
-                        if (recycled == null) recycled = asPooled(tmp);
-                        else                  tmp.recycle();
-                    } finally { unlock(st); }
-                }
+                bt.recycle(onBatch(batch.dupRow(row)));
             } else {
                 upstreamEmpty = false;
                 switch (type) {
@@ -648,10 +629,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 b = rb;
                 assert rb != null;
             } else if (merger != null) {
-                if (!merger.hasRecycled()) {
-                    merger.recycle(asUnpooled(recycled));
-                    recycled = null;
-                }
                 b = merger.merge(null, lb, lr, rb);
             }
 
@@ -668,7 +645,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                     else           stats.onBatchDelivered(b);
                 }
                 int state = lock(statePlain());
-                requested -= b == null ? 1 : b.rows;
+                requested -= b == null ? 1 : b.totalRows();
                 unlock(state);
 
                 // deliver batch/row
@@ -680,10 +657,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                     if (ResultJournal.ENABLED)
                         ResultJournal.logBatch(BindingStage.this, b);
                     b = downstream.onBatch(b);
-                    if (!rightPassThrough && b != null) {
-                        if      (recycled          == null) recycled = asPooled(b);
-                        else if (merger.recycle(b) != null) b.recycle();
-                    }
+                    if (!rightPassThrough && b != null)
+                        b.recycle();
                 }
             } catch (Throwable t) {
                 handleEmitError(downstream, BindingStage.this, false, t);
@@ -692,8 +667,9 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         }
 
         @Override public void onComplete() {
-            assert lb != null;
+            if (ENABLED) journal("right.onComplete() on ", BindingStage.this);
             try {
+                assert lb != null;
                 if (lexContinueRight(intBinding, upstream)) {
                     if (ENABLED)
                         journal("lexContinueRight, bStage=", BindingStage.this);
@@ -710,21 +686,28 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                             case LEFT_JOIN,NOT_EXISTS,MINUS -> merge(null);
                         }
                     }
-                    startNextBinding(lock(statePlain()));
+                    int st = lock(statePlain());
+                    if ((st&CAN_BIND_MASK)==RIGHT_CAN_BIND) {
+                        startNextBinding(st);
+                    } else {
+                        if (ENABLED)
+                            journal("r completed, but cannot startNextBinding, st=", st, flags, "on", this);
+                        unlock(st);
+                    }
                 }
             } catch (Throwable t) {
                 log.error("onComplete() failed", t);
-                rightTerminated(RIGHT_FAILED, t);
+                rightFailedOrCancelled(RIGHT_FAILED, t);
             }
         }
 
         @Override public void onCancelled() {
-            if (type.isJoin()) rightTerminated(RIGHT_CANCELLED, null);
+            if (type.isJoin()) rightFailedOrCancelled(RIGHT_CANCELLED, null);
             else               onComplete();
         }
 
         @Override public void onError(Throwable cause) {
-            rightTerminated(RIGHT_FAILED, cause);
+            rightFailedOrCancelled(RIGHT_FAILED, cause);
         }
     }
 }

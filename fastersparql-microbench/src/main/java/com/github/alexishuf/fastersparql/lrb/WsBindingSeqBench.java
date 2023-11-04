@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -40,23 +40,25 @@ public class WsBindingSeqBench {
         ropeTypeHolder = new RopeTypeHolder(ropeType);
         var wbs = new WsBindingSeq();
         ByteRope filler = new ByteRope("\"123456789012345678901\"");
-        CompressedBatch seedBatch = COMPRESSED.create(N_ROWS, 2);
+        CompressedBatch seedBatch = COMPRESSED.create(2);
         ByteRope seedRope = new ByteRope(N_ROWS * 32);
         TwoSegmentRope tsr = new TwoSegmentRope();
         for (int i = 0; i < N_ROWS; i++) {
-            seedBatch = seedBatch.beginPut();
+            seedBatch.beginPut();
             wbs.write(i, seedBatch, 0);
             seedBatch.putTerm(1, null, filler.utf8, 0, filler.len, true);
             seedBatch.commitPut();
 
-            if (!seedBatch.getRopeView(i, 0, tsr)) throw new AssertionError("put not visible");
+            CompressedBatch tail = seedBatch.tail();
+            int last = tail.rows - 1;
+            if (!seedBatch.getRopeView(last, 0, tsr)) throw new AssertionError("put not visible");
             seedRope.append(tsr).append('\t');
-            if (!seedBatch.getRopeView(i, 1, tsr)) throw new AssertionError("put not visible");
+            if (!seedBatch.getRopeView(last, 1, tsr)) throw new AssertionError("put not visible");
             seedRope.append(tsr).append('\n');
         }
         batches.clear();
         for (int i = 0; i < N_BATCHES; i++)
-            batches.add(seedBatch.copy(null));
+            batches.add(seedBatch.dup());
         seedBatch.recycle();
         for (int i = 0, begin = 0, len = seedRope.len; begin < len; ++i) {
             begins[i] = begin;
@@ -82,9 +84,11 @@ public class WsBindingSeqBench {
         nextInput = (nextInput +1) & BATCHES_MASK;
         SegmentRope tmp = new SegmentRope();
         long acc = 0;
-        for (int i = 0, rows = b.rows; i < rows; i++) {
-            if (b.localView(i, 0, tmp))
-                acc += WsBindingSeq.parse(tmp, 0, tmp.len);
+        for (var n = b; n != null; n = n.next) {
+            for (int r = 0, rows = n.rows; r < rows; r++) {
+                if (n.localView(r, 0, tmp))
+                    acc += WsBindingSeq.parse(tmp, 0, tmp.len);
+            }
         }
         return acc;
     }

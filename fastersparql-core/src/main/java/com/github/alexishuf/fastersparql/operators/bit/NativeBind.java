@@ -37,7 +37,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 
-import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
 
 public class NativeBind {
@@ -99,9 +98,9 @@ public class NativeBind {
                                 q.complete(new FSException("Unexpected Terminated|CancelledException"));
                             it.remove();
                         } catch (Throwable t) {
-                            String bStr = "batch with " + b.rows + " rows";
+                            String bStr = "batch with " + b.totalRows() + " rows";
                             try {
-                                if (b.rows < 10) bStr = b.toString();
+                                if (b.totalRows() < 10) bStr = b.toString();
                             } catch (Throwable t2) {
                                 log.error("Ignoring b.toString() failure", t2);
                             }
@@ -148,11 +147,11 @@ public class NativeBind {
         // If something goes wrong really fast, scatter could remove items from queues while
         // this tread is iterating it to fill boundIts.
         scatter.start();
-        int cdc = right.crossDedupCapacity;
+        boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      (weakDedup) dedup = new WeakDedup<>(bt, nOps*dedupCapacity(), dedupCols);
-        else if (cdc >  0) dedup = new WeakDedup<>(bt, nOps*cdc, dedupCols);
+        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols);
+        else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
         else               return new MergeBIt<>(boundIts, bt, outVars, metrics);
         return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
     }
@@ -218,11 +217,11 @@ public class NativeBind {
             gather.subscribeTo(bind);
         }
 
-        int cdc = right.crossDedupCapacity;
+        boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      (weakDedup) dedup = new WeakDedup<>(bt, dedupCapacity(), dedupCols);
-        else if (cdc >   0) dedup = new WeakCrossSourceDedup<>(bt, cdc,  dedupCols);
+        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols);
+        else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
         else                return gather;
         return bt.filter(outVars, dedup).subscribeTo(gather);
     }

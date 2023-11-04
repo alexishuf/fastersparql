@@ -23,8 +23,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
-
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
  * ({@link ResultsParser#feedShared(SegmentRope)}) and produces rows to be
@@ -104,7 +102,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     protected ResultsParser(CompletableBatchQueue<B> dst) {
         this.dst = dst;
-        this.batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size());
+        this.batch = dst.createBatch();
     }
 
     /**
@@ -244,7 +242,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     protected final void beginRow() {
         incompleteRow = true;
-        batch = batch.beginPut();
+        batch.beginPut();
     }
 
     /*  --- --- --- private helpers --- --- --- */
@@ -281,7 +279,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
         } else if (batch != null && batch.rows > 0) {
             eager = false;
             if ((batch = dst.offer(batch)) == null)
-                batch = dst.batchType().create(PREFERRED_MIN_BATCH, dst.vars().size());
+                batch = dst.createBatch();
             else
                 batch.clear();
         }

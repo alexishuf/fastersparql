@@ -47,7 +47,7 @@ public class GlobalAffinityShallowPool {
     }
 
     public static <T> T get(int column) {
-        int id = (int) currentThread().threadId();
+        int id = (int)currentThread().threadId();
         T o = (T)D.getAndSetAcquire(data, ((id &MASK)<<W_SHIFT)+column, null);
         if (o != null) return o;
         return (T)D.getAndSetAcquire(data, (((id-1)&MASK)<<W_SHIFT)+column, null);
@@ -70,7 +70,7 @@ public class GlobalAffinityShallowPool {
     public static <T> @Nullable T offer(int column, @Nullable T o) {
         if (o == null) return null;
 //        assert isNovel(o);
-        int id = (int) currentThread().threadId();
+        int id = (int)currentThread().threadId();
         if (D.compareAndExchangeRelease(data, ((id&MASK) <<W_SHIFT)+column, null, o) == null)
             return null;
         if (D.compareAndExchangeRelease(data, (((id+1)&MASK)<<W_SHIFT)+column, null, o) == null)

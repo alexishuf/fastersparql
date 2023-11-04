@@ -77,7 +77,7 @@ public class ResultsParserBench {
             serializer.init(vars, vars, false, sink.touch());
             fragments.add(ropeTypeHolder.takeRope(sink));
             for (Batch b : batches) {
-                serializer.serialize(b, sink.touch());
+                serializer.serializeAll(b, sink.touch());
                 fragments.add(ropeTypeHolder.takeRope(sink));
             }
             serializer.serializeTrailer(sink.touch());
@@ -116,7 +116,7 @@ public class ResultsParserBench {
             return new ResultsSender<>(WsSerializer.create(), null) {
                 @Override public void preTouch() {}
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
-                @Override public void sendSerialized(Batch<?> batch) {}
+                @Override public void sendSerializedAll(Batch<?> batch) {}
                 @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
                 @Override public void sendTrailer() {}
                 @Override public void sendError(Throwable cause) {}
@@ -137,8 +137,10 @@ public class ResultsParserBench {
             var blackhole = this.blackhole;
             int rows = 0;
             for (B b = null; (b = it.nextBatch(b)) != null; ) {
-                rows += b.rows;
-                blackhole.consume(b);
+                for (var n = b; n != null; n = n.next) {
+                    rows += n.rows;
+                    blackhole.consume(n);
+                }
             }
             drainedRows = rows;
         }

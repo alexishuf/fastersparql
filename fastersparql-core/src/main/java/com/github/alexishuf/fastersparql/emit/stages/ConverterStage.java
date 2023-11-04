@@ -8,16 +8,30 @@ import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends AbstractStage<I, O> {
-    protected final int cols;
-    protected @Nullable O recycled;
+    @SuppressWarnings("FieldMayBeFinal") private static int nextSurrogateThreadId = 1;
+    private static final VarHandle SURR_THREAD_ID;
+    static {
+        try {
+            SURR_THREAD_ID = MethodHandles.lookup().findStaticVarHandle(ConverterStage.class, "nextSurrogateThreadId", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+
+    protected final short cols, threadId;
 
     public ConverterStage(BatchType<O> type, Emitter<I> upstream) {
         super(type, upstream.vars());
-        cols = vars.size();
+        int cols = vars.size(), threadId = (int)SURR_THREAD_ID.getAndAdd(1);
+        if (cols > Short.MAX_VALUE)
+            throw new IllegalArgumentException("Too amny columns");
+        this.cols     = (short)cols;
+        this.threadId = (short)threadId;
         subscribeTo(upstream);
     }
 
@@ -35,21 +49,23 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         return this;
     }
 
-    @Override public @Nullable I onBatch(I batch) {
-        if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(batch);
-        int rows = batch == null ? 0 : batch.rows;
-        if (rows == 0) return batch;
-        O o = batchType.empty(asUnpooled(recycled), batch.rows, cols);
-        recycled = null;
-        recycled = asPooled(downstream.onBatch(o.putConverting(batch)));
-        return batch;
+
+    @Override public @Nullable I onBatch(I b) {
+        if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(b);
+        if (b != null) {
+            O dst = batchType.createForThread(threadId, cols);
+            dst.putConverting(b);
+            batchType.recycleForThread(threadId, downstream.onBatch(dst));
+        }
+        return b;
     }
 
-    @Override public void onRow(I batch, int row) {
+    @Override public void onRow(I b, int row) {
         if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
-        if (batch == null) return;
-        O o = batchType.emptyForTerms(asUnpooled(recycled), cols, cols);
-        recycled = null;
-        recycled = asPooled(downstream.onBatch(o.putRowConverting(batch, row)));
+        if (b != null) {
+            O dst = batchType.createForThread(threadId, cols);
+            dst.putRowConverting(b, row);
+            batchType.recycleForThread(threadId, downstream.onBatch(dst));
+        }
     }
 }

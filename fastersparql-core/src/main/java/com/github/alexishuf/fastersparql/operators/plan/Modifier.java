@@ -199,7 +199,7 @@ public final class Modifier extends Plan {
         Dedup<B> dedup = null;
         if      (cols == 0)                               limit = dCap > 0 || weakDedup ? 1 : limit;
         else if (dCap >= reducedCapacity() && !weakDedup) dedup = strongUntil(bt, dCap, cols);
-        else if (dCap > 0)                                dedup = new WeakDedup<>(bt, dCap, cols);
+        else if (dCap > 0)                                dedup = new WeakDedup<>(bt, cols);
 
         BatchProcessor<B> processor;
         boolean slice = limit < Long.MAX_VALUE || offset > 0;

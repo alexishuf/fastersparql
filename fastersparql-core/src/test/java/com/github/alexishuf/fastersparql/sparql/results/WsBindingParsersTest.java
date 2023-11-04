@@ -26,7 +26,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingDeque;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static com.github.alexishuf.fastersparql.util.Results.results;
@@ -67,8 +67,8 @@ public class WsBindingParsersTest {
                     sendFrame(sink.take());
                 }
 
-                @Override public void sendSerialized(Batch<?> batch) {
-                    serializer.serialize(batch, sink.touch());
+                @Override public void sendSerializedAll(Batch<?> batch) {
+                    serializer.serializeAll(batch, sink.touch());
                     sendFrame(sink.take());
                 }
 
@@ -178,19 +178,21 @@ public class WsBindingParsersTest {
         int activeBinding = 0;
         clientMBox.send("!bind-request "+requested+"\n");
         for (TermBatch b = null; (b = bindings.nextBatch(b)) != null;) {
-            for (int r = 0; r < b.rows; r++, ++activeBinding) {
-                if (--requested == 0)
-                    clientMBox.send("!bind-request "+(++requested)+"\n");
-                var bResults = bRow2Res.get(b.asList(r));
-                assertNotNull(bResults, "no results defined for row " + b.asList(r));
+            for (var node = b; node != null; node = node.next) {
+                for (int r = 0; r < node.rows; r++, ++activeBinding) {
+                    if (--requested == 0)
+                        clientMBox.send("!bind-request " + (++requested) + "\n");
+                    var bResults = bRow2Res.get(node.asList(r));
+                    assertNotNull(bResults, "no results defined for row " + node.asList(r));
 //                if (!bResults.isEmpty())
 //                    clientMBox.send("!active-binding "+activeBinding+"\n");
-                try (var bIt = bResults.asPlan().execute(TERM)) {
-                    assertEquals(serverVars, bIt.vars());
-                    for (TermBatch bb = null; (bb = bIt.nextBatch(bb)) != null; ) {
-                        serializer.serialize(bb, buffer);
-                        clientMBox.sendFrame(buffer);
-                        buffer = clientMBox.createSink();
+                    try (var bIt = bResults.asPlan().execute(TERM)) {
+                        assertEquals(serverVars, bIt.vars());
+                        for (TermBatch bb = null; (bb = bIt.nextBatch(bb)) != null; ) {
+                            serializer.serializeAll(bb, buffer);
+                            clientMBox.sendFrame(buffer);
+                            buffer = clientMBox.createSink();
+                        }
                     }
                 }
             }

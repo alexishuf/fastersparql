@@ -43,7 +43,7 @@ public final class MetricsStage<B extends Batch<B>> extends AbstractStage<B, B> 
             stats.onBatchPassThrough(batch);
         if (batch == null) return null;
         if (downstream == null) throw new NoDownstreamException(this);
-        metrics.batch(batch.rows);
+        metrics.batch(batch.totalRows());
         return downstream.onBatch(batch);
     }
 

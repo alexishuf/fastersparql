@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.openjdk.jmh.annotations.*;
@@ -39,17 +39,19 @@ public class RopeHasBench {
         rt = new RopeTypeHolder(ropeType);
         ByteSink sink = rt.byteSink().touch();
         int terms = 0;
-        var batches = uniformCols(fromName(Batch.TERM, sizeName), Batch.TERM);
+        var batches = uniformCols(fromName(TermBatchType.TERM, sizeName), TermBatchType.TERM);
         for (TermBatch b : batches)
-            terms += b.rows * b.cols;
+            terms += b.totalRows()*b.cols;
         int[] offsets = new int[terms+1];
         terms = 0;
         for (TermBatch b : batches) {
-            for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    if (b.termType(r, c) != null) {
-                        offsets[terms++] = sink.len();
-                        b.writeNT(sink, r, c);
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        if (n.termType(r, c) != null) {
+                            offsets[terms++] = sink.len();
+                            n.writeNT(sink, r, c);
+                        }
                     }
                 }
             }

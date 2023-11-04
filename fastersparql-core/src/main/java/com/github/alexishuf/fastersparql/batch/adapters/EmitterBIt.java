@@ -21,7 +21,7 @@ public class EmitterBIt<B extends Batch<B>> extends SPSCBIt<B> implements Receiv
 
     @Override public @Nullable B onBatch(B batch) {
         try {
-            int n = maxItems - batch.rows;
+            int n = maxItems - batch.totalRows();
             if (n > 0) upstream.request(n);
             batch = offer(batch);
         } catch (Throwable t) {

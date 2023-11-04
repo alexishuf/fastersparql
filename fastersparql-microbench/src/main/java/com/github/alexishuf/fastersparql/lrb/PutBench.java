@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import org.openjdk.jmh.annotations.*;
@@ -35,8 +34,8 @@ public class PutBench {
         in = Workloads.fromName(bt, sizeName);
         out = new ArrayList<>();
         for (Batch batch : in)
-            out.add(bt.create(BIt.PREFERRED_MIN_BATCH, batch.cols));
-//        if (bt == Batch.COMPRESSED) {
+            out.add(bt.create(batch.cols));
+//        if (bt == CompressedBatchType.COMPRESSED) {
 //            inC  = (List<CompressedBatch>)(List<?>)in;
 //            outC = (List<CompressedBatch>)(List<?>)out;
 //        } else {
@@ -49,7 +48,8 @@ public class PutBench {
     public List<Batch> put() {
         for (int i = 0, n = in.size(); i < n; i++) {
             Batch outBatch = out.get(i), inBatch = in.get(i);
-            out.set(i, outBatch.clear(inBatch.cols).put(inBatch));
+            out.set(i, outBatch = outBatch.clear(inBatch.cols));
+            outBatch.copy(inBatch);
         }
         return out;
     }
@@ -71,9 +71,11 @@ public class PutBench {
         for (int i = 0, n = in.size(); i < n; i++) {
             Batch inBatch = in.get(i);
             Batch outBatch = out.get(i).clear(inBatch.cols);
-            for (int r = 0, rows = inBatch.rows; r < rows; r++)
-                outBatch = outBatch.putRow(inBatch, r);
             out.set(i, outBatch);
+            for (var b = inBatch; b != null; b = b.next) {
+                for (int r = 0, rows = b.rows; r < rows; r++)
+                    outBatch.putRow(b, r);
+            }
         }
         return out;
     }

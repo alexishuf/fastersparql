@@ -28,7 +28,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.BItGenerator.GENERATORS;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
 import static java.lang.Runtime.getRuntime;
 import static java.lang.String.format;

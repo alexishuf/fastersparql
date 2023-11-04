@@ -104,9 +104,9 @@ public enum QueryName {
                     throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
                 }
             });
-            B acc = batchType.create(64, vars.size());
+            B acc = batchType.create(vars.size());
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
-                acc = acc.put(b);
+                acc.copy(b);
             return acc;
         } catch (IOException e) {
             throw new RuntimeException("IOException reading from resource");
@@ -135,23 +135,34 @@ public enum QueryName {
 
     public Plan parsed() { return SparqlParser.parse(opaque()); }
 
+
     public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
-        return b == null ? null : amputateNumbers(type, b, 0, b.rows);
+        if (b == null || (this != C7 && this != C8 && this != C10))
+            return b;
+        B fixed = amputateNumbersInNode(type, b, 0, b.rows);
+        for (B n = b; n != null; n = n.next) {
+            B a = amputateNumbersInNode(type, n, 0, n.rows);
+            fixed.quickAppend(a == n ? n.dup() : n);
+        }
+        return fixed;
+    }
+    public <B extends Batch<B>> B dupRowAmputatingNumbers(BatchType<B> type, B b, int row) {
+        if (b == null || (this != C7 && this != C8 && this != C10))
+            return b;
+        return amputateNumbersInNode(type, b, row, row+1);
     }
 
-    public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b, int beginRow, int endRow) {
+    private <B extends Batch<B>> B amputateNumbersInNode(BatchType<B> type, B b, int beginRow, int endRow) {
         if (this != C7 && this != C8 && this != C10)
             return b;
-        boolean changed = false;
-        B fixed = type.create(b.rows, b.cols);
+        B fixed = type.create(b.cols);
         fixed.reserveAddLocals(b.localBytesUsed());
         var tmp = Term.pooledMutable();
         var tr = new ByteRope();
         for (int r = beginRow, cols = b.cols; r < endRow; r++) {
-            fixed = fixed.beginPut();
+            fixed.beginPut();
             for (int c = 0; c < cols; c++) {
                 if (Term.isNumericDatatype(b.shared(r, c))) {
-                    changed = true;
                     if (!b.getView(r, c, tmp))
                         throw new AssertionError("no term, but shared() != null");
                     SegmentRope local = tmp.local();
@@ -165,9 +176,6 @@ public enum QueryName {
             fixed.commitPut();
         }
         tmp.recycle();
-        if (changed)
-            b = b.clear(b.cols).put(fixed);
-        fixed.recycle();
-        return b;
+        return fixed;
     }
 }

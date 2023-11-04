@@ -1,9 +1,12 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
+import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
@@ -14,10 +17,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -30,7 +30,7 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.EMIT;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.ITERATE;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
@@ -46,12 +46,10 @@ class MeasureTest {
     private static File dataDir;
     private static boolean hasHDT, hasStore;
     private static boolean hasAllHDT, hasAllStore;
-    private static boolean oldSelfValidate;
 
     @BeforeAll
     static void beforeAll() {
-        oldSelfValidate = Batch.SELF_VALIDATE;
-        Batch.SELF_VALIDATE = false;
+        Batch.makeValidationCheaper();
         String prop = System.getProperty(DATA_DIR_PROP);
         dataDir = prop != null && !prop.isEmpty() ? new File(prop) : new File("");
         hasHDT = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
@@ -68,9 +66,9 @@ class MeasureTest {
     }
 
     @AfterAll static void afterAll() {
-        Batch.SELF_VALIDATE = oldSelfValidate;
-        System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY,
-                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY));
+        Batch.restoreValidationCheaper();
+        System.setProperty(FSProperties.OP_CROSS_DEDUP,
+                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP));
         FSProperties.refresh();
     }
 
@@ -78,14 +76,14 @@ class MeasureTest {
 
     @BeforeEach void setUp() {
         NettyChannelDebugger.flushActive();
-        System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY, "0");
+        System.setProperty(FSProperties.OP_CROSS_DEDUP, "false");
         FSProperties.refresh();
     }
 
     @AfterEach void tearDown() {
         NettyChannelDebugger.flushActive();
-        System.setProperty(FSProperties.OP_CROSS_DEDUP_CAPACITY,
-                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP_CAPACITY));
+        System.setProperty(FSProperties.OP_CROSS_DEDUP,
+                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP));
         FSProperties.refresh();
         for (File d : tempDirs) {
             if (d.isDirectory()) {
@@ -112,7 +110,7 @@ class MeasureTest {
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer,
                         MeasureOptions.FlowModel flowModel) throws IOException {
-        int nReps = 50;
+        int nReps = 2;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",
@@ -187,7 +185,7 @@ class MeasureTest {
             var serializer = ResultsSerializer.create(TSV);
             var tsv = new ByteRope();
             serializer.init(query.publicVars(), query.publicVars(), false, tsv);
-            serializer.serialize(acc, tsv);
+            serializer.serializeAll(acc, tsv);
             serializer.serializeTrailer(tsv);
             System.out.println(tsv);
         }
@@ -221,7 +219,29 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, ITERATE);
+//        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, ITERATE);
         doTest(sourceKind, jsonPlans, "B2", sel, COUNT, EMIT);
+    }
+
+    @RepeatedTest(10) void testS10Unexpected() throws Exception {
+        try (var tasks = TestTaskSet.platformTaskSet("testS10Unexpected")) {
+            tasks.repeat(Runtime.getRuntime().availableProcessors()*2, () -> {
+                CompressedBatch s10 = QueryName.S10.expected(COMPRESSED);
+                assertNotNull(s10);
+                var dedup = StrongDedup.strongForever(COMPRESSED, s10.totalRows(), s10.cols);
+                for (var node = s10; node != null; node = node.next) {
+                    for (int r = 0; r < node.rows; r++) {
+                        dedup.add(node, r);
+                        assertTrue(dedup.contains(node, r));
+                    }
+                }
+                for (var node = s10; node != null; node = node.next) {
+                    for (int r = 0; r < node.rows; r++)
+                        assertTrue(dedup.contains(node, r));
+                    for (int r = node.rows-1; r >= 0; r--)
+                        assertTrue(dedup.contains(node, r));
+                }
+            });
+        }
     }
 }

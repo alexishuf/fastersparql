@@ -9,22 +9,21 @@ import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.batch.dedup.HashBitset.HASH_MASK;
-import static java.lang.Integer.numberOfLeadingZeros;
 
 public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     /** Rows in the set. This works as a list of buckets of size 1. */
     private final RowBucket<B> rows;
     /** Value such that {@code hash & mask} yields the bucket index for a given hash value */
-    private final int mask;
+    private final int capacity;
     /** If bit {@code hash(r) & bitsetMask} is set, r MAY be present, else it certainly is not. */
     private long[] bitset = HashBitset.get();
 
-    public WeakDedup(BatchType<B> batchType, int capacity, int cols) {
+    public WeakDedup(BatchType<B> batchType, int cols) {
         super(batchType, cols);
-        if (capacity <= 0) throw new IllegalArgumentException();
-        capacity = 1+(mask = capacity < 8 ? 7 : -1 >>> numberOfLeadingZeros(capacity-1));
-        // allocated bucket above capacity to avoid range checking of bucket+1 accesses
-        rows = batchType.createBucket(capacity+1, cols);
+        int rowsCapacity = batchType.preferredTermsPerBatch()/cols;
+        this.rows = batchType.createBucket(rowsCapacity, cols);
+        this.rows.maximizeCapacity();
+        this.capacity = this.rows.capacity();
     }
 
     @Override public void clear(int cols) {
@@ -33,7 +32,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public void recycleInternals() {
-        bt.recycleBucket(rows);
+        rows.recycleInternals();
         bitset = HashBitset.recycle(bitset);
     }
 
@@ -56,19 +55,20 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public boolean isDuplicate(B batch, int row, int source) {
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
-        int bucket = hash&mask, wordIdx = (hash&HASH_MASK)>>6;
+        int bucket = (hash&Integer.MAX_VALUE)%capacity, wordIdx = (hash&HASH_MASK)>>6;
+        int nBucket = (bucket+1)%capacity;
         long bit = 1L << hash;
         lock();
         try {
             if ((bitset[wordIdx] & bit) != 0) { //row may be in set, we must compare
                 // bucket+1 may have received an evicted row
-                if (rows.equals(bucket, batch, row) || rows.equals(bucket + 1, batch, row))
+                if (rows.equals(bucket, batch, row) || rows.equals(nBucket, batch, row))
                     return true;
             } else {
                 bitset[wordIdx] |= bit;
             }
-            if (rows.has(bucket) && !rows.has(bucket + 1))
-                rows.set(bucket + 1, bucket); // if possible, delay eviction of old row at bucket
+            if (rows.has(bucket) && !rows.has(nBucket))
+                rows.set(nBucket, bucket); // if possible, delay eviction of old row at bucket
             rows.set(bucket, batch, row);
         } finally { unlock(); }
         return false;
@@ -84,8 +84,9 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         int hash = enhanceHash(batch.hash(row));
         if ((bitset[(hash&HASH_MASK) >> 6] & (1L << hash)) == 0)
             return false;
-        int bucket = hash&mask;
-        return rows.equals(bucket, batch, row) || rows.equals(bucket+1, batch, row);
+        int bucket = (hash&Integer.MAX_VALUE)%capacity;
+        int nBucket = (bucket+1)%capacity;
+        return rows.equals(bucket, batch, row) || rows.equals(nBucket, batch, row);
     }
 
     /** Execute {@code consumer.accept(r)} for every row in this set. */

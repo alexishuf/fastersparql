@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -10,7 +11,7 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.lang.System.arraycopy;
 
 public class TermBatchBucket implements RowBucket<TermBatch> {
@@ -18,25 +19,50 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
     private TermBatch b;
 
     public TermBatchBucket(int rows, int cols) {
-        (b = TERM.create(rows, cols)).rows = rows;
-        Arrays.fill(b.arr, 0, rows*cols, NULL);
+        if (rows > Short.MAX_VALUE || cols > Short.MAX_VALUE)
+            throw new IllegalArgumentException("rows or cols overflow 2-byte short");
+        int terms = rows*cols;
+        b = TERM.createSpecial(terms);
+        b.rows = (short)rows;
+        b.cols = (short)cols;
+        Arrays.fill(b.arr, 0, terms, NULL);
     }
 
-    @Override public void recycleInternals() { b = TERM.recycle(b); }
+    @Override public @Nullable TermBatchBucket recycleInternals() {
+        b = TERM.recycleSpecial(b);
+        return null;
+    }
+
+    @Override public void maximizeCapacity() {
+        short old = b.rows;
+        if ((b.rows = (short)(b.termsCapacity()/b.cols)) > old)
+            Arrays.fill(b.arr, old*b.cols, b.rows*b.cols, NULL);
+    }
 
     @Override public void grow(int addRows) {
         if (addRows <= 0)
             return;
-        int begin = b.rows*b.cols, end = begin+addRows*b.cols;
-        if (b.arr.length < end)
-            b = b.withCapacity(addRows);
+        var b = this.b;
+        int nRows = b.rows+addRows, begin = b.rows*b.cols, end = nRows*b.cols;
+        if (nRows > Short.MAX_VALUE)
+            throw new IllegalArgumentException("new rows will overflow 2-byte short");
+        if (end > b.termsCapacity())
+            b = reAlloc(b, end);
+        b.rows = (short)nRows;
         Arrays.fill(b.arr, begin, end, NULL);
-        b.rows += addRows;
+    }
+
+    private TermBatch reAlloc(TermBatch b, int terms) {
+        var bigger = TERM.createSpecial(terms).clear(b.cols);
+        bigger.copy(b);
+        TERM.recycleSpecial(b);
+        this.b = b = bigger;
+        return b;
     }
 
     @Override public void clear(int rows, int cols) {
-        Arrays.fill(b.arr, 0, b.rows*b.cols, NULL);
-        (b = b.clear(cols).withCapacity(rows)).rows = rows;
+        b = b.clear(cols);
+        grow(rows);
     }
 
     @Override public boolean has(int row) {
@@ -61,6 +87,8 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
             throw new IndexOutOfBoundsException("dst >= capacity()");
         arraycopy(batch.arr, row*cols, b.arr, dst*cols, cols);
     }
+
+
 
     @Override public void set(int dst, RowBucket<TermBatch> other, int src) {
         var b = this.b;
@@ -110,7 +138,7 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
 
     @Override public @NonNull Iterator<TermBatch> iterator() {
         return new Iterator<>() {
-            private TermBatch tmp = TERM.createSingleton(cols());
+            private TermBatch tmp = TERM.create(b.cols);
             private int row = skipEmpty(0);
 
             private int skipEmpty(int row) {
@@ -129,7 +157,7 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
                 if (!hasNext()) throw new NoSuchElementException();
                 tmp.clear();
                 var b = TermBatchBucket.this.b;
-                tmp = tmp.putRow(b, row);
+                tmp.putRow(b, row);
                 if ((row = skipEmpty(++row)) >= b.rows)
                     row = Integer.MAX_VALUE;
                 return tmp;

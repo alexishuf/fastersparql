@@ -3,32 +3,108 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal.RoleJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 @SuppressWarnings("unused")
 public class ThreadJournal {
     public static final boolean ENABLED = false;
 
-    private static final ConcurrentHashMap<Thread, RoleJournal> thread2journal
-            = new ConcurrentHashMap<>();
+    private static final class Node {
+        @Nullable Thread key;
+        @Nullable RoleJournal value;
+        @Nullable Node next;
+
+        public Node(@Nullable Thread key, @Nullable RoleJournal value) {
+            this.key = key;
+            this.value = value;
+        }
+    }
+
+    private static final int            N_BUCKETS = 1024;
+    private static final int         BUCKETS_MASK = N_BUCKETS-1;
+    private static final VarHandle         WRITER;
+    private static       int          writerDepth;
+    private static       Thread       plainWriter;
+    private static final Node[]    thread2journal;
+    private static final Node            resetTmp = new Node(null, null);
+
+    static {
+        try {
+            WRITER = MethodHandles.lookup().findStaticVarHandle(ThreadJournal.class, "plainWriter", Thread.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+        assert Integer.bitCount(N_BUCKETS) == 1;
+        thread2journal = new Node[1024];
+        for (int i = 0; i < thread2journal.length; i++)
+            thread2journal[i] = new Node(null, null);
+    }
+
+    private static void lockForWrite() {
+        Thread me = Thread.currentThread(), owner;
+        while ((owner=(Thread)WRITER.compareAndExchangeAcquire(null, me)) != null && owner != me)
+            Thread.onSpinWait();
+        ++writerDepth;
+    }
+
+    private static void unlockForWrite() {
+        assert WRITER.getOpaque() == Thread.currentThread() : "current thread does not own lock";
+        int nextDepth = --writerDepth;
+        if (nextDepth < 0) {
+            writerDepth = 0;
+            assert false : "unlockForWrite() calls exceed lockForWrite() calls";
+        } else if (nextDepth == 0) {
+            WRITER.setRelease((Thread)null);
+        }
+    }
 
     /**
      * Closes all {@link RoleJournal} assigned to threads. Future attempts to journal from such
      * threads will transparently trigger the assignment of a new journal.
      */
-    public static void closeThreadJournals() {
-        for (var it = thread2journal.values().iterator(); it.hasNext(); ) {
-            RoleJournal j = it.next();
-            it.remove();
-            j.close();
+    public static void resetJournals() {
+        lockForWrite();
+        try {
+            resetJournals0();
+        } finally { unlockForWrite(); }
+    }
+
+    private static void resetJournals0() {
+        for (Node node : thread2journal) {
+            resetTmp.next  = node.next;
+            node.next      = null;
+            resetTmp.key   = node.key;
+            node.key       = null;
+            resetTmp.value = node.value;
+            node.value     = null;
+            while (true) {
+                var j = resetTmp.value;
+                resetTmp.value = null;
+                if (j != null)
+                    j.close();
+                var next = resetTmp.next;
+                if (next != null) {
+                    resetTmp.key   = next.key;
+                    resetTmp.value = next.value;
+                    resetTmp.next  = next.next;
+                } else {
+                    resetTmp.key   = null;
+                    resetTmp.value = null;
+                    break;
+                }
+            }
         }
     }
 
     /** Write all logged messages to {@code dest} in lanes of the given {@code columnWidth} and
-     *  calls {@link #closeThreadJournals()}. */
+     *  calls {@link #resetJournals()}. */
     public static void dumpAndReset(Appendable dest, int columnWidth) {
-        DebugJournal.SHARED.dump(dest, columnWidth);
-        closeThreadJournals();
+        lockForWrite();
+        try {
+            DebugJournal.SHARED.dump(dest, columnWidth);
+            resetJournals();
+        } finally { unlockForWrite(); }
     }
 
     /** Create an un-{@link Watchdog#start(long)}ed watchdog for
@@ -39,18 +115,36 @@ public class ThreadJournal {
 
     private static RoleJournal journal() {
         Thread thread = Thread.currentThread();
+        Node root = thread2journal[(int)thread.threadId()&BUCKETS_MASK];
         RoleJournal journal;
-        while (true) {
-            journal = thread2journal.computeIfAbsent(thread, t -> {
-                String name = thread.getName();
-                if (name.length() > 20)
-                    name = name.substring(0, 4) + "..." + name.substring(name.length() - (20 - 7));
-                return DebugJournal.SHARED.role(name);
-            });
-            if (journal.isClosed()) thread2journal.remove(thread);
-            else                    break;
+        for (Node node = root; node != null; node = node.next) {
+            if (node.key == thread && (journal=node.value) != null)  return journal;
         }
-        return journal;
+
+        lockForWrite();
+        try {
+            // must create journal for this thread
+            String name = thread.getName();
+            if (name.length() > 20)
+                name = name.substring(0, 4) + "..." + name.substring(name.length() - (20 - 7));
+            journal = DebugJournal.SHARED.role(name);
+            for (Node node = root; node != null; node = node.next) {
+                if (node.key == null) {
+                    node.key = thread;
+                    node.value = journal;
+                    break;
+                } else if (node.key == thread) {
+                    var older = node.value;
+                    if   (older == null) node.value = journal;
+                    else                    journal = older;
+                    break;
+                } else if (node.next == null) {
+                    node.next = new Node(thread, journal);
+                    break;
+                }
+            }
+            return journal;
+        } finally { unlockForWrite(); }
     }
 
     /** Delegates to the {@code write()} method of the {@link RoleJournal} of the calling thread. */

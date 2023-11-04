@@ -23,7 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.Integer.MAX_VALUE;
@@ -50,19 +50,21 @@ class CallbackEmitterTest {
 
         private void feed() {
             boolean gotTerminated = false;
-            for (int r = 0; r < expected.rows; r++) {
-                canFeed.acquireUninterruptibly();
-                canFeed.release();
-                try {
-                    if ((r & 1) == 0) {
-                        COMPRESSED.recycle(offer(expected.copyRow(r, null)));
-                    } else {
-                        putRow(expected, r);
+            for (var node = expected; node != null; node = node.next) {
+                for (int r = 0; r < node.rows; r++) {
+                    canFeed.acquireUninterruptibly();
+                    canFeed.release();
+                    try {
+                        if ((r & 1) == 0) {
+                            COMPRESSED.recycle(offer(node.dupRow(r)));
+                        } else {
+                            putRow(node, r);
+                        }
+                    } catch (CancelledException e) {
+                        break;
+                    } catch (TerminatedException e) {
+                        gotTerminated = true;
                     }
-                } catch (CancelledException e) {
-                    break;
-                } catch (TerminatedException e) {
-                    gotTerminated = true;
                 }
             }
             if      (fail)   complete(new RuntimeException("test-fail"));
@@ -94,15 +96,15 @@ class CallbackEmitterTest {
     record D(int height, int cancelAt, int failAt) implements Runnable {
         @Override public void run() {
             ByteRope local = new ByteRope();
-            var expected = COMPRESSED.create(height, 1);
+            var expected = COMPRESSED.create(1);
             for (int r = 0, n = Math.min(height, Math.min(failAt, cancelAt)); r < n; r++) {
-                expected = expected.beginPut();
+                expected.beginPut();
                 local.clear().append(r).append('>');
                 expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
                 expected.commitPut();
             }
-            var copy = expected.copy(null);
-            CompressedBatch[] actual = {COMPRESSED.create(height, 1)};
+            var copy = expected.dup();
+            CompressedBatch[] actual = {COMPRESSED.create(1)};
             actual[0].reserveAddLocals(expected.localBytesUsed());
             try {
                 Cb cb = new Cb(copy, failAt <= height, cancelAt <= height);
@@ -114,11 +116,11 @@ class CallbackEmitterTest {
                     }
                     @Override public CompressedBatch onBatch(CompressedBatch batch) {
                         cb.request(1);
-                        actual[0] = actual[0].put(batch);
+                        actual[0].copy(batch);
                         return batch;
                     }
                     @Override public void onRow(CompressedBatch batch, int row) {
-                        actual[0] = actual[0].putRow(batch, row);
+                        actual[0].putRow(batch, row);
                         cb.request(1);
                     }
                     @Override public void onComplete() {

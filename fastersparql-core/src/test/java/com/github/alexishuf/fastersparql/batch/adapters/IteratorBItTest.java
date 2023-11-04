@@ -1,11 +1,17 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.text.ParseException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,7 +32,7 @@ class IteratorBItTest extends AbstractBItTest {
     @Override protected void run(Scenario s) {
         var list = IntStream.range(0, s.size()).boxed().toList();
         var it = ThrowingIterator.andThrow(list.iterator(), s.error);
-        var bit = new IteratorBIt<>(it, Batch.TERM, X);
+        var bit = new IteratorBIt<>(it, TermBatchType.TERM, X);
         s.drainer.drainOrdered(bit, s.expectedInts(), s.error());
     }
 
@@ -41,7 +47,7 @@ class IteratorBItTest extends AbstractBItTest {
                 return next <= 3;
             }
             @Override public Integer next() { return next++; }
-        }, Batch.TERM, X);
+        }, TermBatchType.TERM, X);
         bit.minBatch(2).maxWait(Duration.ofMillis(50));
 
         Semaphore started = new Semaphore(0);
@@ -72,8 +78,26 @@ class IteratorBItTest extends AbstractBItTest {
         });
     }
 
+    public static void main(String[] args) throws IOException, ParseException {
+        IteratorBItTest t = new IteratorBItTest();
+//        try {
+//            t.testMinWait();
+//        } catch (Throwable ignored) {}
+        try (var rec = new Recording(Configuration.getConfiguration("profile"))) {
+            rec.setDumpOnExit(true);
+            rec.setDestination(Path.of("/tmp/profile.jfr"));
+            rec.start();
+            for (int i = 0; i < 1; i++)
+                t.testMinWait();
+        }
+    }
+
     @Test void testMinWait() {
-        int delay = 10;
+        TermBatchType.TERM.create(3).recycle();
+        int delay = 100;
+        long before = Timestamp.nanoTime();
+        busySleepMillis(delay);
+        assertTrue(Timestamp.nanoTime()-before/1_000_000L >= delay-1);
         @SuppressWarnings("resource")
         var bit = new IteratorBIt<>(new Iterator<>() {
             private int next = 1;
@@ -83,7 +107,7 @@ class IteratorBItTest extends AbstractBItTest {
                 return true;
             }
             @Override public Integer next() { return next++; }
-        }, Batch.TERM, X);
+        }, TermBatchType.TERM, X);
         bit.minBatch(2).minWait(Duration.ofMillis(2*delay + delay/2));
 
         List<TermBatch> batches = new ArrayList<>();

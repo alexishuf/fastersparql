@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.ESTIMATOR_PEEK;
-import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatch.TYPE;
+import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.waitStage;
 import static java.time.Duration.ofMillis;
@@ -93,7 +93,7 @@ class HdtSparqlClientTest {
             results("?s ?n", ":n0", ":n1")
                     .query("SELECT DISTINCT ?n WHERE { ?s :next ?n }")
                     .bindings("?s", ":n0")
-                    .check(client, TYPE, TYPE.converter(client.dictId));
+                    .check(client, HDT, HDT.converter(client.dictId));
         }
     }
 
@@ -180,7 +180,7 @@ class HdtSparqlClientTest {
                 var estimator = client.estimator();
                 assertSame(estimator, waitStage(estimator.ready()));
                 results.check(client);
-                results.check(client, TYPE);
+                results.check(client, HDT);
             } finally {
                 System.clearProperty(ESTIMATOR_PEEK);
                 FSHdtProperties.refresh();
@@ -228,7 +228,7 @@ class HdtSparqlClientTest {
     @ParameterizedTest @MethodSource public void testBinding(Results r) {
         try (var client = FS.clientFor(endpoint)) {
             r.check(client);
-            r.check(client, TYPE, TYPE.converter(((HdtSparqlClient) client).dictId));
+            r.check(client, HDT, HDT.converter(((HdtSparqlClient) client).dictId));
         }
     }
 }

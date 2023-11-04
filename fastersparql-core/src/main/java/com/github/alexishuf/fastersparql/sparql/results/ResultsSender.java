@@ -24,8 +24,8 @@ public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements Auto
 
     /** Sends the result of {@link ResultsSerializer#init(Vars, Vars, boolean, ByteSink)} */
     public abstract void sendInit(Vars vars, Vars subset, boolean isAsk);
-    /** Sends the result of {@link ResultsSerializer#serialize(Batch, ByteSink)} */
-    public abstract void sendSerialized(Batch<?> batch);
+    /** Sends the result of {@link ResultsSerializer#serializeAll(Batch, ByteSink)} */
+    public abstract void sendSerializedAll(Batch<?> batch);
     /** Sends the result of {@link ResultsSerializer#serialize(Batch, int, int, ByteSink)} */
     public abstract void sendSerialized(Batch<?> batch, int from, int nRows);
     /** Sends the result of {@link ResultsSerializer#serializeTrailer(ByteSink)} */

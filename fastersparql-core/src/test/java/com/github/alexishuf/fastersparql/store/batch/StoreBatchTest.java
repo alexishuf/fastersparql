@@ -26,7 +26,7 @@ import static com.github.alexishuf.fastersparql.batch.IntsBatch.X;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.DROP;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.KEEP;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.source;
-import static com.github.alexishuf.fastersparql.store.batch.StoreBatch.TYPE;
+import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.Mode.LAST;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -82,21 +82,21 @@ class StoreBatchTest {
 
     @ParameterizedTest @MethodSource
     void testFill(boolean grow, int rows, int cols) {
-        StoreBatch b0 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
-        StoreBatch b2 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
-        StoreBatch b4 = grow ? TYPE.createSingleton(cols) : TYPE.create(rows, cols);
+        StoreBatch b0 = STORE.create(cols);
+        StoreBatch b2 = STORE.create(cols);
+        StoreBatch b4 = STORE.create(cols);
         var lookup = IdTranslator.lookup(dictId);
         List<StoreBatch> batches = new ArrayList<>(List.of(b0, b2, b4));
         for (int r = 0; r < rows; r++) {
-            batches.set(0, b0 = b0.beginPut());
+            b0.beginPut();
             for (int c = 0; c < cols; c++) b0.putTerm(c, sourcedIds[r*c]);
             b0.commitPut();
 
-            batches.set(1, b2 = b2.beginPut());
+            b2.beginPut();
             for (int c = cols-1; c >= 0; c--) b2.putTerm(c, sourcedIds[r*c]);
             b2.commitPut();
 
-            batches.set(2, b4 = b4.putRow(b0, r));
+            b4.putRow(b0, r);
 
             for (int i = 0; i <= r; i++) {
                 for (int c = 0; c < cols; c++) {
@@ -120,15 +120,14 @@ class StoreBatchTest {
             }
 
             assertTrue(batches.stream().allMatch(b0::equals));
-            var b0_ = b0;
-            assertTrue(batches.stream().allMatch(b -> b.equals(b0_)));
+            assertTrue(batches.stream().allMatch(b -> b.equals(b0)));
         }
     }
 
     private StoreBatch mk(int cols, int... ids) {
-        StoreBatch b = TYPE.create(ids.length / cols, cols);
+        StoreBatch b = STORE.create(cols);
         for (int i = 0; i < ids.length; i += cols) {
-            b = b.beginPut();
+            b.beginPut();
             for (int c = 0; c < cols; c++)
                 b.putTerm(c, source(ids[i+c], dictId));
             b.commitPut();
@@ -144,7 +143,7 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveRightCol() {
-        var projector = TYPE.projector(Vars.of("x"), Vars.of("x", "y"));
+        var projector = STORE.projector(Vars.of("x"), Vars.of("x", "y"));
         assertNotNull(projector);
         StoreBatch b0 = mk(2, 1, 2);
         StoreBatch b1 = mk(2, 1, 2, 3, 4, 5, 6);
@@ -159,7 +158,7 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveLeftCol() {
-        var projector = TYPE.projector(Vars.of("y"), Vars.of("x", "y"));
+        var projector = STORE.projector(Vars.of("y"), Vars.of("x", "y"));
         assertNotNull(projector);
         StoreBatch b0 = mk(2, 1, 2);
         StoreBatch b1 = mk(2, 1, 2, 3, 4, 5, 6);
@@ -171,7 +170,7 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveMidCol() {
-        var projector = TYPE.projector(Vars.of("x", "z"), Vars.of("x", "y", "z"));
+        var projector = STORE.projector(Vars.of("x", "z"), Vars.of("x", "y", "z"));
         assertNotNull(projector);
         StoreBatch b0 = mk(3, 1, 2, 3);
         StoreBatch b1 = mk(3, 1, 2, 3, 4, 5, 6);
@@ -183,7 +182,7 @@ class StoreBatchTest {
     }
 
     @Test public void testRemoveOdd() {
-        var filter = TYPE.filter(X,
+        var filter = STORE.filter(X,
                 new RowFilter<>() {
                     @Override public Decision drop(StoreBatch batch, int row) {
                         return (row & 1) == 1 ? DROP : KEEP;
@@ -198,7 +197,7 @@ class StoreBatchTest {
 
 
     @Test public void testRemoveEvenAndMidCol() {
-        var filter = TYPE.filter(Vars.of("x", "z"), Vars.of("x", "y", "z"),
+        var filter = STORE.filter(Vars.of("x", "z"), Vars.of("x", "y", "z"),
                 new RowFilter<>() {
                     @Override public Decision drop(StoreBatch batch, int row) {
                         return (row & 1) == 0 ? DROP : KEEP;

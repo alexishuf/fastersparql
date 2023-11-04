@@ -115,7 +115,7 @@ public abstract class Stateful {
     public static boolean isCompleted(int state) {
         return (state&IS_TERM) != 0 && (state&SUB_STATE_MASK) == COMPLETED_SUB_STATE;
     }
-    public static boolean isFailed(int state) {
+    @SuppressWarnings("unused") public static boolean isFailed(int state) {
         return (state&IS_TERM) != 0 && (state&SUB_STATE_MASK) == FAILED_SUB_STATE;
     }
 
@@ -133,16 +133,16 @@ public abstract class Stateful {
     /* --- --- --- observers --- --- --- */
 
     /** Read current state&flags with <strong>plain</strong> read semantics. */
-    protected int statePlain()   { return plainState; }
+    protected int statePlain()  { return plainState; }
 
     /** Read current state&flags with <strong>opaque</strong> semantics: there will certainly
      * be a read operation but there will be no ordering guarantees. */
-    protected int state()        { return (int)S.getOpaque(this); }
+    protected int state() { return (int)S.getOpaque(this); }
 
     /** Read current state&flags with <strong>acquire</strong> semantics: any writes by the
      *  thread that did a <strong>release</strong> write to the state will be visible if they
      *  preceded the release write in program order. */
-    protected int stateAcquire() { return (int)S.getAcquire(this); }
+    @SuppressWarnings("unused") protected int stateAcquire() { return (int)S.getAcquire(this); }
 
     /** Get a readable {@link String} for the current {@link #state()} */
     @SuppressWarnings("unused")
@@ -263,7 +263,7 @@ public abstract class Stateful {
             current = (int)S.compareAndExchangeRelease(this, ex, updated);
         } while (current != ex);
         if (ENABLED)
-            journal("transition to", nextState, flags, "on", this);
+            journal("transition to", updated, flags, "on", this);
         return true;
     }
 
@@ -319,7 +319,7 @@ public abstract class Stateful {
         } while ((st=(int)S.compareAndExchangeRelease(this, ex, (st&clear)|set)) != ex);
         if (ENABLED) {
             journal((setFlags&LOCKED_MASK) == 0 ? "resetForRebind cl=" : "lock+resetForRebind, cl=",
-                    clearFlags, HEX, "set=", setFlags, HEX);
+                    clearFlags, HEX, "set=", setFlags, HEX, "on", this);
         }
         return (ex&clear)|set;
     }
@@ -366,6 +366,8 @@ public abstract class Stateful {
         while ((a=(int)S.compareAndExchangeRelease(this, e=a&~flag, a|flag)) != e) {
             if ((a&flag) == flag) return false; // already set
         }
+        if (ENABLED)
+            journal("CAS flag=", flag, flags, "before=", a, flags, "on", this);
         return true;
     }
 
@@ -385,8 +387,8 @@ public abstract class Stateful {
             if ((current & LOCKED_MASK) == 0) {
                 int e = current;
                 if ((current=(int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK)) == e) {
-//                    if (THREAD_JOURNAL)
-//                        journal("locked, s=", e, flags, this);
+                    if (ENABLED)
+                        journal("locked, s=", e, flags, this);
                     return e|LOCKED_MASK;
                 }
             } else {
@@ -417,9 +419,10 @@ public abstract class Stateful {
         int ex = current|LOCKED_MASK;
         while ((current=(int)S.compareAndExchangeRelease(this, ex, ex&UNLOCKED_MASK)) != ex)
             ex = current;
-        return current & UNLOCKED_MASK;
-//        if (THREAD_JOURNAL)
-//            journal("unlckd, s=", ex&UNLOCKED_MASK, flags, this);
+        current = ex&UNLOCKED_MASK;
+        if (ENABLED)
+            journal("unlckd, next=", current, flags, "now=", state(), flags, "on", this);
+        return current;
     }
 
     /**
@@ -440,12 +443,12 @@ public abstract class Stateful {
         if (IS_DEBUG && (state() & LOCKED_MASK) == 0)
             throw new IllegalStateException("not locked");
         int e = current|LOCKED_MASK;
-        int mask = ~(clear|LOCKED_MASK);
-        while ((current=(int)S.compareAndExchangeRelease(this, e, (e&mask)|set)) != e)
+        int mask = ~(clear|LOCKED_MASK), next;
+        while ((current=(int)S.compareAndExchangeRelease(this, e, next=(e&mask)|set)) != e)
             e = current;
         if (ENABLED)
-            journal("unlckd, clear=", clear, flags, "set=", set, flags, this);
-        return current&UNLOCKED_MASK;
+            journal("unlckd, clear=", clear, flags, "set=", set, flags, "on", this);
+        return next;
     }
 
 

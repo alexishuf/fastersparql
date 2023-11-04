@@ -4,8 +4,8 @@ import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -31,7 +31,7 @@ class DedupTest {
     private static final String[] DOMAINS = {"example.org", "www.informatik.de", "somewhere.com"};
     private static final String[] PATHS = {"/#", "/ns#", "/d/", "/ontology/", "/graph/"};
     TermBatch generateRows(int n) {
-        TermBatch batch = Batch.TERM.create(n, 1);
+        TermBatch batch = TermBatchType.TERM.create(1);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < n; i++) {
             sb.setLength(0);
@@ -71,12 +71,14 @@ class DedupTest {
     void testGenerateRows(int n) {
         TermBatch batch = generateRows(n);
         assertEquals(1, batch.cols);
-        assertEquals(n, batch.rows);
+        assertEquals(n, batch.totalRows());
 
         Map<Term, Integer> histogram = new HashMap<>();
-        for (int r = 0; r < batch.rows; r++) {
-            Term t = batch.get(r, 0);
-            histogram.put(t, 1+histogram.getOrDefault(t, 0));
+        for (var node = batch; node != null; node = node.next) {
+            for (int r = 0; r < node.rows; r++) {
+                Term t = node.get(r, 0);
+                histogram.put(t, 1 + histogram.getOrDefault(t, 0));
+            }
         }
         var duplicates = histogram.entrySet().stream().filter(e -> e.getValue() > 1)
                 .map(Map.Entry::getKey).toList();
@@ -86,19 +88,19 @@ class DedupTest {
 
     private static final Function<Integer, Dedup<TermBatch>> wFac = new Function<>() {
         @Override public Dedup<TermBatch> apply(Integer c) {
-            return new WeakDedup<>(Batch.TERM, c, 1);
+            return new WeakDedup<>(TermBatchType.TERM, 1);
         }
         @Override public String toString() { return "WeakDedup"; }
     };
     private static final Function<Integer, Dedup<TermBatch>> sFac = new Function<>() {
         @Override public Dedup<TermBatch> apply(Integer c) {
-            return StrongDedup.strongForever(Batch.TERM, c, 1);
+            return StrongDedup.strongForever(TermBatchType.TERM, c, 1);
         }
         @Override public String toString() { return "StrongDedup"; }
     };
     private static final Function<Integer, Dedup<TermBatch>> cFac = new Function<>() {
         @Override public Dedup<TermBatch> apply(Integer c) {
-            return new WeakCrossSourceDedup<>(Batch.TERM, c, 1);
+            return new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
         }
         @Override public String toString() { return "WeakCrossSourceDedup"; }
     };
@@ -135,21 +137,34 @@ class DedupTest {
     }
 
     private void work(D d, TermBatch batch, int thread, Dedup<TermBatch> dedup) {
-        int chunk = batch.rows/d.threads;
-        int begin = thread*chunk, end = thread == d.threads-1 ? batch.rows : begin+chunk;
+        int totalRows = batch.totalRows();
+        int chunk = totalRows/d.threads;
+        int begin = thread*chunk, end = thread == d.threads-1 ? totalRows : begin+chunk;
+
+        TermBatch node = batch;
+        int relRow = begin;
+        for (; node != null && relRow >= node.rows; node = node.next) relRow -= node.rows;
+        assertNotNull(node);
+
         int twiceFailures = 0;
         int repeatFailures = 0, repeatTries = 0;
-        for (int i = begin; i < end; i++) {
+        for (int absRow = begin; absRow < end; absRow++, relRow++) {
+            if (relRow >= node.rows) {
+                assertNotNull(node = node.next);
+                relRow = 0;
+            }
             if (thread == 0)
-                assertFalse(dedup.contains(batch, i));
-            assertFalse(dedup.isDuplicate(batch, i, thread));
+                assertFalse(dedup.contains(node, relRow));
+            assertFalse(dedup.isDuplicate(node, relRow, thread));
             if (thread == 0 && !dedup.isWeak() && d.threads == 1)
-                assertTrue(dedup.contains(batch, i));
-            if (d.twice && !dedup.isDuplicate(batch, i, thread))
+                assertTrue(dedup.contains(node, relRow));
+            if (d.twice && !dedup.isDuplicate(node, relRow, thread))
                 twiceFailures++;
-            if (d.repeatEvery > 0 && i % d.repeatEvery == 0 && i-d.repeatEvery >= begin) {
+            if (d.repeatEvery > 0 && relRow%d.repeatEvery == 0
+                                  && absRow-d.repeatEvery >= begin
+                                  && relRow-d.repeatEvery >= 0) {
                 repeatTries++;
-                repeatFailures += !dedup.isDuplicate(batch, i - d.repeatEvery, thread) ? 1 : 0;
+                repeatFailures += !dedup.isDuplicate(node, relRow - d.repeatEvery, thread) ? 1 : 0;
             }
         }
         if (dedup.isWeak()) {
@@ -167,7 +182,7 @@ class DedupTest {
                 assertEquals(repeatTries, repeatFailures);
             } else if (repeatTries > 100) {
                 double failRatio = repeatFailures / (double) repeatTries;
-                double maxFailRatio = 1 - (d.capacity / (4.0 * batch.rows));
+                double maxFailRatio = 1 - (d.capacity / (4.0 * totalRows));
                 assertTrue(failRatio < maxFailRatio);
             }
         }
@@ -195,9 +210,9 @@ class DedupTest {
 
     static Stream<Arguments> testHasAndAdd() {
         return Stream.of(
-                StrongDedup.strongUntil(Batch.TERM, 128, 1),
-                new WeakDedup<>(Batch.TERM, 128, 1),
-                new WeakCrossSourceDedup<>(Batch.TERM, 128, 1)
+                StrongDedup.strongUntil(TermBatchType.TERM, 128, 1),
+                new WeakDedup<>(TermBatchType.TERM, 1),
+                new WeakCrossSourceDedup<>(TermBatchType.TERM, 1)
         ).map(Arguments::arguments);
     }
 

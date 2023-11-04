@@ -131,7 +131,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             //journal.write("drainTask:", source);
             processor = createProcessor(i);
             //if (processor != null) journal.write("drainTask: processor=", processor);
-            for (B b = stealRecycled(); (b = source.nextBatch(b)) != null;) {
+            for (B b = null; (b = source.nextBatch(b)) != null;) {
                 if (processor != null) {
                     b = processor.processInPlace(b);
                     if (b == null) break;

@@ -6,8 +6,8 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
@@ -28,7 +28,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.lang.System.nanoTime;
 import static java.lang.Thread.ofVirtual;
 import static java.time.Duration.ofMillis;
@@ -74,9 +74,9 @@ class MergeBItTest extends AbstractMergeBItTest {
                 TermBatch batch = it.nextBatch(null);
                 assertNotNull(batch);
                 if (n <= 3)
-                    assertEquals(1, batch.rows);
+                    assertEquals(1, batch.totalRows());
                 else
-                    assertTrue(batch.rows >= 2);
+                    assertTrue(batch.totalRows() >= 2);
             } // closes it
             active.set(false);
             if (feeder != null)
@@ -87,10 +87,10 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWait() {
         int wait = 50;
-        try (var s1 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Batch.TERM, X)) {
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, single-source wait
@@ -105,10 +105,10 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWaitMerging() {
         int wait = 50, tol = 20;
-        try (var s1 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Batch.TERM, X)) {
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, two-sources wait
@@ -127,10 +127,10 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWaitMergingConcurrent() throws Exception {
         int wait = 50, tol = wait/2;
-        try (var s1 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var it = new MergeBIt<>(List.of(s1, s2, s3), Batch.TERM, X)) {
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // multi-thread, multi-source wait
@@ -147,7 +147,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             TermBatch batch = future.get();
             double ms = (nanoTime()-start)/1_000_000.0;
             assertTrue(Math.abs(ms-wait) < tol, "elapsed="+ms+" more than 50% off "+wait);
-            assertEquals(3, batch.rows);
+            assertEquals(3, batch.totalRows());
             assertEquals(new HashSet<>(intsBatch(21, 22, 23).asList()),
                          new HashSet<>(batch.asList()));
         }
@@ -155,9 +155,9 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMaxWait() {
         int min = 20, max = 100;
-        try (var s1 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(Batch.TERM, X, queueMaxRows());
-             var it = new MergeBIt<>(List.of(s1, s2), Batch.TERM, X)) {
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+             var it = new MergeBIt<>(List.of(s1, s2), TermBatchType.TERM, X)) {
             it.minBatch(2).minWait(min, MILLISECONDS).maxWait(max, MILLISECONDS);
 
             offerAndInvalidate(s1, 1);
@@ -230,10 +230,12 @@ class MergeBItTest extends AbstractMergeBItTest {
                 actual.clear();
                 actualSet.clear();
                 boolean split = false;
-                for (TermBatch b : batches) {
-                    split |= b.rows < 2;
-                    for (int r = 0; r < b.rows; r++)
-                        actual.add(IntsBatch.parse(b.get(r, 0)));
+                for (TermBatch batch : batches) {
+                    split |= batch.totalRows() < 2;
+                    for (var node = batch; node != null; node = node.next) {
+                        for (int r = 0; r < node.rows; r++)
+                            actual.add(IntsBatch.parse(node.get(r, 0)));
+                    }
                 }
                 actualSet.addAll(actual);
                 assertEquals(expected.size(), actual.size());
@@ -292,10 +294,10 @@ class MergeBItTest extends AbstractMergeBItTest {
                 TermBatch b = batches[i];
                 if (b == null) {
                     //journal.write("pooled batch");
-                    batches[i] = b = TERM.createSingleton(1);
+                    batches[i] = b = TERM.create(1);
                 }
                 b.clear();
-                batches[i] = b = b.beginPut();
+                b.beginPut();
                 b.putTerm(0, IntsBatch.term(val));
                 b.commitPut();
                 //journal.write("&batches[i]=", System.identityHashCode(batches[i]), "val=", val, "[0][0]=", batches[i].get(0, 0));
@@ -358,10 +360,12 @@ class MergeBItTest extends AbstractMergeBItTest {
                     // drain MergeBIt
                     int nConsumed = 0;
 
-                    for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                        for (int r = 0; r < b.rows; r++) {
-                            var local = Objects.requireNonNull(b.get(r, 0)).local();
-                            consumed[nConsumed++] = local.get(1) - '0';
+                    for (TermBatch batch = null; (batch = it.nextBatch(batch)) != null; ) {
+                        for (var node = batch; node != null; node = node.next) {
+                            for (int r = 0; r < node.rows; r++) {
+                                var local = Objects.requireNonNull(node.get(r, 0)).local();
+                                consumed[nConsumed++] = local.get(1) - '0';
+                            }
                         }
                     }
                     boolean s1running = s1Feeder.await(10_000_000);

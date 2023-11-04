@@ -31,11 +31,10 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
-    protected static final VarHandle RECYCLED, STATE;
+    protected static final VarHandle STATE;
 
     static {
         try {
-            RECYCLED = lookup().findVarHandle(AbstractBIt.class, "recycled", Batch.class);
             STATE = lookup().findVarHandle(AbstractBIt.class, "plainState", State.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
@@ -46,17 +45,20 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected long maxWaitNs;
     protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
     @SuppressWarnings("CanBeFinal") protected State plainState = State.ACTIVE;
-    protected int rowsCapacity = PREFERRED_MIN_BATCH, bytesCapacity = PREFERRED_MIN_BATCH*32;
     protected boolean needsStartTime = false, eager = false;
+    protected final short nColumns;
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;
-    @SuppressWarnings("unused") protected B recycled;
     protected @Nullable MetricsFeeder metrics;
     protected final Vars vars;
 
     public AbstractBIt(BatchType<B> batchType, Vars vars) {
         this.batchType = batchType;
         this.vars = vars;
+        int nColumns = vars.size();
+        if (nColumns > Short.MAX_VALUE)
+            throw new IllegalArgumentException("columns too large");
+        this.nColumns = (short) nColumns;
     }
 
     @Override public Stream<? extends StreamNode> upstream() {
@@ -84,10 +86,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      *              <i>error completion</i>, or a {@link BItClosedAtException} for {@code this}
      *              in case of <i>cancellation</i>
      */
-    protected void cleanup(@Nullable Throwable cause) {
-        for (B b; (b = stealRecycled()) != null; )
-            batchType.recycle(b);
-    }
+    protected void cleanup(@Nullable Throwable cause) {}
 
     protected final void checkError() {
         if (STATE.getAcquire(this) == State.ACTIVE || error == null) return;
@@ -163,29 +162,12 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      * <p>Implementations should use this to updated derived fields or to complete
      * filling but not yet ready batches.</p>
      */
-    protected void updatedBatchConstraints() {
-        int bound;
-        if (rowsCapacity  < (bound = minBatch)   ) rowsCapacity = bound;
-        if (bytesCapacity < (bound = 32*minBatch)) bytesCapacity = bound;
-        if (rowsCapacity  > (bound = maxBatch)   ) rowsCapacity = bound;
-    }
+    protected void updatedBatchConstraints() {}
 
     protected final void onNextBatch(@Nullable B b) {
         if (b == null) return;
-        int delta = b.rows - rowsCapacity;
-        if (delta > 0) {
-            rowsCapacity += delta; // add missing capacity
-            bytesCapacity = Math.max(b.localBytesUsed(), bytesCapacity);
-        } else if (delta < -64) {
-            rowsCapacity += delta>>2; // reduce capacity by 25% of excess capacity
-            delta = b.localBytesUsed()-bytesCapacity;
-            if (delta > 0)
-                bytesCapacity += delta;
-            else if (delta < -128)
-                bytesCapacity += delta>>4;
-        }
         var m = metrics;
-        if (m != null) m.batch(b.rows);
+        if (m != null) m.batch(b.totalRows());
         eager = false;
     }
 
@@ -322,32 +304,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         return this;
     }
 
-    @Override public @Nullable B recycle(@Nullable B batch) {
-        if (batch == null) return null;
-        batch.markPooled();
-        if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null) return null;
-        return batch.markUnpooledNoTrace();
-    }
-
-    /** Get an empty batch using {@code offer}, {@link #stealRecycled()} or
-     *  {@link BatchType#create(int, int)}. */
-    protected final B getBatch(@Nullable B offer) {
-        B b = batchType.empty(offer == null ? stealRecycled() : offer,
-                               rowsCapacity, vars.size());
-        b.reserveAddLocals(bytesCapacity);
-        return b;
-    }
-
-    @Override public @Nullable B stealRecycled() {
-        //noinspection unchecked
-        B b = (B) RECYCLED.getAndSetAcquire(this, null);
-        return b == null ? null : b.markUnpooledNoTrace();
-    }
-
     @Override public void close() {
-        if (state() != State.ACTIVE)
-            batchType.recycle(stealRecycled());
-        else
+        if (state() == State.ACTIVE)
             onTermination(new BItClosedAtException(this));
     }
 

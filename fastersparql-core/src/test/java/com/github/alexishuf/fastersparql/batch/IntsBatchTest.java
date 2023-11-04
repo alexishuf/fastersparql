@@ -60,7 +60,7 @@ public class IntsBatchTest {
 
     @Test void testFill() {
         TermBatch ex = TermBatch.of(termList(1), termList(2),  termList(3));
-        var b = IntsBatch.fill(new TermBatch(new Term[3], 0, 1), 1, 2, 3);
+        var b = IntsBatch.fill(new TermBatch(new Term[3], 0, 1, true), 1, 2, 3);
         assertEquals(ex, b);
     }
 

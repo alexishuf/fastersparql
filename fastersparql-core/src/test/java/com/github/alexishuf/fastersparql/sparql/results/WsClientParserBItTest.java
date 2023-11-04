@@ -102,7 +102,7 @@ class WsClientParserBItTest extends ResultsParserTest {
                 return new ResultsSender<>(WsSerializer.create(), new ByteRope()) {
                     @Override public void preTouch() {}
                     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
-                    @Override public void sendSerialized(Batch<?> batch) {}
+                    @Override public void sendSerializedAll(Batch<?> batch) {}
                     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
                     @Override public void sendTrailer() {}
                     @Override public void sendCancel() {}

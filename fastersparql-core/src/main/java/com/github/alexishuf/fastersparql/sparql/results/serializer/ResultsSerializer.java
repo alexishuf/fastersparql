@@ -110,8 +110,11 @@ public abstract class ResultsSerializer {
         init(subset, dest);
     }
 
-    /** Equivalent to {@link #serialize(Batch, int, int, ByteSink)} spanning the whole batch */
-    public void serialize(Batch<?> batch, ByteSink<?, ?> dest) {
+    /**
+     * {@link #serialize(Batch, int, int, ByteSink)} {@code batch} and all its successor nodes
+     * ({@link Batch#next()})
+     */
+    public void serializeAll(Batch<?> batch, ByteSink<?, ?> dest) {
         serialize(batch, 0, batch == null ? 0 : batch.rows, dest);
     }
 

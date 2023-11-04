@@ -117,9 +117,11 @@ public class QueueBench {
         LockSupport.unpark(this.feederThread);
         int count = 0;
         for (B b = null; (b = it.nextBatch(b)) != null; ) {
-            for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    if (b.termType(r, c) != null) ++count;
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        if (n.termType(r, c) != null) ++count;
+                    }
                 }
             }
         }

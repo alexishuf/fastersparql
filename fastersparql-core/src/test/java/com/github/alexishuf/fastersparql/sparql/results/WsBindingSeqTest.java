@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -18,7 +18,8 @@ class WsBindingSeqTest {
             0xffffffffffffL
     })
     void test(long seq) {
-        var batch = Batch.COMPRESSED.createSingleton(2).beginPut();
+        var batch = CompressedBatchType.COMPRESSED.create(2);
+        batch.beginPut();
         encoder.write(seq, batch, 0);
         encoder.write(seq, batch, 1);
         batch.commitPut();

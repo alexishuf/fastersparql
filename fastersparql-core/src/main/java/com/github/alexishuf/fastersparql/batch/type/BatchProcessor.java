@@ -17,23 +17,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asPooled;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.asUnpooled;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
 
 public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implements Stage<B, B> {
-    protected static final VarHandle RECYCLED;
-    static {
-        try {
-            RECYCLED = MethodHandles.lookup().findVarHandle(BatchProcessor.class, "recycled", Batch.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
     protected static final int EXPECT_CANCELLED  = 0x80000000;
     protected static final int ASSUME_THREAD_SAFE = 0x40000000;
 
@@ -44,7 +32,6 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     protected @MonotonicNonNull Emitter<B> upstream;
     protected @MonotonicNonNull Receiver<B> downstream;
-    @SuppressWarnings("unused") protected @Nullable B recycled;
     public final BatchType<B> batchType;
     public final Vars vars;
     protected final EmitterStats stats = EmitterStats.createIfEnabled();
@@ -57,12 +44,6 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         assert flags.contains(PROC_FLAGS);
         this.batchType = batchType;
         this.vars = outVars;
-    }
-
-    @Override protected void doRelease() {
-        //noinspection unchecked
-        Batch.recyclePooled((B)RECYCLED.getAndSetRelease(this, null));
-        super.doRelease();
     }
 
     /**
@@ -172,13 +153,12 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
     /* --- --- --- Receiver --- --- --- */
 
-    @Override public @Nullable B onBatch(B batch) {
+    protected void onBatchPrologue(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(batch);
-        if (batch == null)
-            return null;
-        batch = processInPlace(batch);
+    }
 
+    protected final @Nullable B onBatchEpilogue(@Nullable B batch) {
         if (downstream == null) {
             throw new NoDownstreamException(this);
         } else if (upstream == null) {
@@ -197,7 +177,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override public void onRow(B batch, int row) {
         if (batch != null)
-            recycled = asPooled(onBatch(batch.copyRow(row, asUnpooled(recycled))));
+            recycle(onBatch(batch.dupRow(row)));
     }
 
     @Override public final void onComplete() {
@@ -232,70 +212,5 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         } finally {
             markDelivered(FAILED);
         }
-    }
-
-    /* --- --- --- recycling --- --- --- */
-
-    /**
-     * Offers a batch for recycling and reuse in {@link BatchProcessor#processInPlace(Batch)}.
-     *
-     * @param batch a batch to recycle
-     * @return {@code null} if the batch is now owned by the {@link BatchProcessor},
-     *         {@code batch} if ownership remains with caller
-     */
-    public final @Nullable B recycle(@Nullable B batch) {
-        if (batch == null)
-            return null;
-        batch.markPooled();
-        if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
-            if (recycled != null)
-                return batch.markUnpooledNoTrace();
-            recycled = batch;
-            return null;
-        } else {
-           if (RECYCLED.compareAndExchangeRelease(this, null, batch) == null)
-               return null;
-           return batch.markUnpooledNoTrace();
-        }
-    }
-
-    /**
-     * Takes ownership of a previously {@link BatchProcessor#recycle(Batch)}ed batch.
-     *
-     * <p>The use case is to move the batch somewhere else when the {@link BatchProcessor}
-     * is about to become unreachable </p>
-     *
-     * @return a previously {@link BatchProcessor#recycle(Batch)}ed batch or {@code null}
-     */
-    public final @Nullable B stealRecycled() {
-        //noinspection unchecked
-        B b = (B) RECYCLED.getAndSetAcquire(this, null);
-        if (b != null) b.markUnpooled();
-        return b;
-    }
-
-    /**
-     * Cheap test if this processor holds a recycled batch. This method is prone to both false
-     * positives and false negatives.
-     */
-    public final boolean hasRecycled() {
-        return recycled != null;
-    }
-
-    protected final B getBatch(int rows, int cols, int localBytes) {
-        B b;
-        if ((statePlain()&ASSUME_THREAD_SAFE) != 0) {
-            b = batchType.empty(asUnpooled(recycled), rows, cols);
-            recycled = null;
-            return b;
-        } else {
-            //noinspection unchecked
-            b = (B)RECYCLED.getAndSetAcquire(this, null);
-            if (b != null)
-                b.markUnpooled();
-            b = batchType.empty(b, rows, cols);
-        }
-        b.reserveAddLocals(localBytes);
-        return b;
     }
 }

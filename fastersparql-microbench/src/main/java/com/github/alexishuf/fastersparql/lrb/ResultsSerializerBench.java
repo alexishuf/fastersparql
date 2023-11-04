@@ -53,7 +53,7 @@ public class ResultsSerializerBench {
         List<Batch> batches = batchLists.get(nextBatchList);
         nextBatchList = (nextBatchList+1) % batchLists.size();
         for (Batch b : batches)
-            serializer.serialize(b, sink);
+            serializer.serializeAll(b, sink);
         serializer.serializeTrailer(sink);
         return ropeTypeHolder.takeRope(sink);
     }

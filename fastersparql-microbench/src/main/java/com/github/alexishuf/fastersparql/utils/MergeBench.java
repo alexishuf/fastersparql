@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 
@@ -47,9 +48,10 @@ public class MergeBench {
 
     private <B extends Batch<B>> B makeBatch(int rows, int value) {
         BatchType<B> type = (BatchType<B>) batchKind.asType();
-        B b = type.create(rows, 1);
+        B b = type.create(1);
         for (int r = 0; r < rows; r++) {
-            (b = b.beginPut()).putTerm(0, Term.valueOf("\""+(value++)+"\""));
+            b.beginPut();
+            b.putTerm(0, Term.valueOf("\""+(value++)+"\""));
             b.commitPut();
         }
         return b;
@@ -69,7 +71,7 @@ public class MergeBench {
         for (int i = 0; i < nTall; i++, next += tallHeight)
             columns.add(makeBatch(tallHeight, next));
         for (int i = 0; i < nEmpty; i++, next += tallHeight)
-            columns.add(type.create(1, 1));
+            columns.add(type.create(1));
         Async.uninterruptibleSleep(100); // thermal slack
     }
 
@@ -78,16 +80,20 @@ public class MergeBench {
     }
 
     private static final class SourceBIt<B extends Batch<B>> extends UnitaryBIt<B> {
-        private final B source;
+        private @Nullable B current;
         private int row;
-        public SourceBIt(BatchType<B> batchType, B source) {
+        public SourceBIt(BatchType<B> batchType, @NonNull B source) {
             super(batchType, X);
-            this.source = source;
+            this.current = source;
         }
 
         @Override protected B fetch(B dest) {
-            if (row == source.rows) exhausted = true;
-            else                    dest = dest.putRow(source, row++);
+            if (current != null && row == current.rows) {
+                current = current.next;
+                row = 0;
+            }
+            if (current == null) exhausted = true;
+            else                 dest.putRow(current, row++);
             return dest;
         }
     }
@@ -101,8 +107,10 @@ public class MergeBench {
         int h = 0;
         try (var it = new MergeBIt<>(sources, type, X)) {
             for (B b = null; (b = it.nextBatch(b)) != null; ) {
-                for (int r = 0, rows = b.rows; r < rows; r++)
-                    h ^= b.hash(r);
+                for (var n = b; n != null; n = n.next) {
+                    for (int r = 0, rows = n.rows; r < rows; r++)
+                        h ^= n.hash(r);
+                }
             }
         }
         return h;
@@ -122,8 +130,10 @@ public class MergeBench {
             extends ReceiverFuture<BenchReceiver<B>, B> {
         public int h;
         @Override public B onBatch(B batch) {
-            for (int r = 0, rows = batch.rows; r < rows; r++)
-                h ^= batch.hash(r);
+            for (var b = batch; b != null; b = b.next) {
+                for (int r = 0, rows = b.rows; r < rows; r++)
+                    h ^= b.hash(r);
+            }
             return batch;
         }
         @Override public void onRow(B batch, int row) {
@@ -134,29 +144,35 @@ public class MergeBench {
 
 
     private static final class SourceProducer<B extends Batch<B>> extends TaskEmitter<B> {
-        private final B source;
-        private @Nullable B recycled;
+        private static final int TICK_CHECK = 0x1f;
+        private @Nullable B current;
         private int row;
 
-        public SourceProducer(BatchType<B> type, B source) {
+        public SourceProducer(BatchType<B> type, @NonNull B source) {
             super(type, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
-            this.source = source;
+            this.current = source;
         }
 
         @Override protected int produceAndDeliver(int state) {
             int r = row;
-            int limit = (int)Math.min(source.rows-r, (long)REQUESTED.getOpaque(this));
-            B b = batchType.empty(Batch.asUnpooled(recycled), limit, 1);
-            recycled = null;
-            int end = r+limit;
+            var curr = current;
+            if (curr == null)
+                return COMPLETED;
+            B b = bt.createForThread(threadId, 1);
+            int end = r+(int)Math.min(curr.rows-r, (long)REQUESTED.getOpaque(this));
             long deadline = Timestamp.nextTick(1);
             while (r < end) {
-                b = b.putRow(source, r++);
-                if (Timestamp.nanoTime() > deadline) break;
+                b.putRow(curr, r++);
+                if ((r&TICK_CHECK) == TICK_CHECK && Timestamp.nanoTime() > deadline)
+                    break;
             }
             row = r;
-            recycled = Batch.asPooled(deliver(b));
-            return r >= source.rows ? COMPLETED : state|MUST_AWAKE;
+            bt.recycleForThread(threadId, deliver(b));
+            if (r >= curr.rows) {
+                this.current = curr.next;
+                return COMPLETED;
+            }
+            return state|MUST_AWAKE;
         }
 
         @Override public void rebind(BatchBinding binding) {

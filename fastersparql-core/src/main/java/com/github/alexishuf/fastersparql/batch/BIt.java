@@ -230,10 +230,6 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
     /**
      * Get the next batch or {@code null} if there are no more batches.
      *
-     * <p>Ownership of the batch is passed to the caller, who should release the batch
-     * only once through a subsequent call to this method or {@link BIt#recycle(Batch)}, or
-     * {@link BatchType#recycle(Batch)}.</p>
-     *
      * @param offer if non-null this batch may be clear()ed and used as the return batch in this
      *              call or in subsequent calls. Note that the caller
      *              <strong>ALWAYS</strong> looses ownership of {@code offer} and
@@ -243,21 +239,6 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      */
     @Nullable B nextBatch(@Nullable B offer);
 
-    /**
-     * Return ownership of {@link Batch} to this {@link BIt} so that it can be used when
-     * assembling new batches.
-     *
-     * <p>This method is a hint: implementations are allowed to reuse the given {@link Batch}
-     * but are not required to.</p>
-     *
-     * @param batch the batch whose ownership will be returned to this {@link BIt}
-     * @return {@code batch} if the caller remains owner of batch or {@code null} if the
-     *         caller lost ownership of {@code batch}.
-     */
-    @Nullable B recycle(B batch);
-
-    /** Take ownership of a previously {@link BIt#recycle(Batch)}ed batch. */
-    @Nullable B stealRecycled();
 
     /**
      * Signals the iterator will not be used anymore and background processing (if any) as

@@ -62,7 +62,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
@@ -190,7 +190,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         @Override public final @Nullable CompressedBatch onBatch(CompressedBatch batch) {
-            sendSerialized(batch);
+            sendSerializedAll(batch);
             return batch;
         }
 
@@ -263,12 +263,13 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             } finally { unlock(); }
         }
 
-        @Override public void sendSerialized(Batch<?> batch) {
-            super.sendSerialized(batch);
+        @Override public void sendSerializedAll(Batch<?> batch) {
+            super.sendSerializedAll(batch);
             if (handler.bindQuery == null || batch.rows == 0)
                 return;
             var tmpView = handler.tmpView;
-            if (!batch.localView(batch.rows - 1, 0, tmpView))
+            Batch<?> tail = batch.tail();
+            if (!tail.localView(tail.rows-1, 0, tmpView))
                 throw new IllegalStateException("Missing binding sequence");
             lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
         }

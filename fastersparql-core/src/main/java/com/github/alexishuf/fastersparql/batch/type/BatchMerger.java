@@ -6,26 +6,26 @@ import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
-    protected final int[] sources;
-    public final int @Nullable [] columns;
+    protected final short[] sources;
+    public final short @Nullable [] columns;
     public final boolean safeInPlaceProject;
 
-    public static int[] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
-        int[] sources = new int[out.size()];
+    public static short[] mergerSources(Vars out, Vars leftVars, Vars rightVars) {
+        short[] sources = new short[out.size()];
         for (int i = 0; i < sources.length; i++) {
             var var = out.get(i);
             int s = leftVars.indexOf(var);
-            sources[i] = s >= 0 ? s+1 : -rightVars.indexOf(var)-1;
+            sources[i] = (short)(s >= 0 ? s+1 : -rightVars.indexOf(var)-1);
         }
         return sources;
     }
 
-    public static int @Nullable [] projectorSources(Vars out, Vars leftVars) {
+    public static short @Nullable [] projectorSources(Vars out, Vars leftVars) {
         if (out.equals(leftVars)) return null;
         return mergerSources(out, leftVars, Vars.EMPTY);
     }
 
-    public BatchMerger(BatchType<B> batchType, Vars outVars, int[] sources) {
+    public BatchMerger(BatchType<B> batchType, Vars outVars, short[] sources) {
         super(batchType, outVars, CREATED, PROC_FLAGS);
         this.sources = sources;
 
@@ -42,9 +42,9 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         }
         this.safeInPlaceProject = safeInPlace && sources.length <= leftCols;
         if (isProjection) {
-            columns = new int[sources.length];
+            columns = new short[sources.length];
             for (int i = 0; i < sources.length; i++)
-                columns[i] = sources[i] - 1;
+                columns[i] = (short)(sources[i]-1);
         } else {
             columns = null;
         }
@@ -85,8 +85,6 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         return sb.toString();
     }
 
-    @Override public final B processInPlace(B b) { return projectInPlace(b); }
-
     public abstract B projectInPlace(B batch);
 
     /**
@@ -106,11 +104,31 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @return a projection of {@code b}, which MAY be {@code b} itself.
      */
     protected final B projectInPlaceEmpty(B b) {
-        if (b == null) return b;
-        int rows = b.rows;
-        b.clear(sources.length);
+        if (b == null) return null;
+        short rows = b.rows;
+        b = b.clear(sources.length);
         b.rows = rows;
         return b;
+    }
+
+    /**
+     * Performs a {@link #merge(Batch, Batch, int, Batch)} or {@link #project(Batch, Batch)}
+     * operation when {@code this.sources.lenght == 0}.
+     *
+     * <p>If {@code dst == in}, {@link Batch#clear(int)} will be called to turn {@code dst}
+     * into a zero-column batch, before anything. Next, in any case {@code dst} will receive
+     * {@code in.rows} zero-column rows.</p>
+     *
+     * @param dst the batch that will receive the zero-with rows
+     * @param in the {@code right} parameter from {@link #merge(Batch, Batch, int, Batch)} or the
+     *           {@code in} parameter from {@link #project(Batch, Batch)}.
+     * @return {@code dst}
+     */
+    protected final B mergeThin(B dst, @Nullable B in) {
+        int rows = in == null ? 1 : in.totalRows();
+        if (dst == in) dst.clear(0);
+        dst.addRowsToZeroColumns(rows);
+        return dst;
     }
 
     /**

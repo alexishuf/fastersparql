@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -27,12 +27,17 @@ public class BItCTest {
     private final int resultBytes;
     protected int consumedSize = 0;
 
+    private static final IllegalArgumentException LINKED_EX
+            = new IllegalArgumentException("linked batches are not supported");
+
     public BItCTest(CallbackBIt<TermBatch> it, TermBatch[] batches) {
         this.it = it;
         this.batches = batches;
         int consumedCapacity = 0;
         int resultBytes = 0;
         for (TermBatch b : batches) {
+            if (b.next != null)
+                throw LINKED_EX;
             consumedCapacity += b.rows;
             for (int r = 0; r < b.rows; r++)
                 resultBytes += requireNonNull(b.get(r, 0)).local().len-1;
@@ -43,7 +48,8 @@ public class BItCTest {
     }
 
     static TermBatch batch(int i) {
-        TermBatch b = Batch.TERM.createSingleton(1).beginPut();
+        TermBatch b = TermBatchType.TERM.create(1);
+        b.beginPut();
         b.putTerm(0, INTS[i]);
         b.commitPut();
         return b;
@@ -56,7 +62,8 @@ public class BItCTest {
         } catch (BatchQueue.TerminatedException|BatchQueue.CancelledException ignored) {}
         if (mine != null) {
             mine.clear();
-            mine.beginPut().putTerm(0, INTS[999]);
+            mine.beginPut();
+            mine.putTerm(0, INTS[999]);
             mine.commitPut();
         }
     }
@@ -84,8 +91,10 @@ public class BItCTest {
     protected void consumeToCompletion() {
         int i = 0;
         for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
-            for (int r = 0; r < b.rows; r++)
-                consumed[i++] = parseInt(b.get(r, 0));
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0; r < n.rows; r++)
+                    consumed[i++] = parseInt(n.get(r, 0));
+            }
         }
         consumedSize = i;
     }

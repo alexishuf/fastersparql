@@ -28,7 +28,7 @@ import static com.github.alexishuf.fastersparql.batch.BItGenerator.CB_GEN;
 import static com.github.alexishuf.fastersparql.batch.BItGenerator.IT_GEN;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -78,12 +78,14 @@ public class BItProducerTest {
 
             @Override public TermBatch onBatch(TermBatch batch) {
                 Term view = Term.pooledMutable();
-                for (int r = 0, rows = batch.rows; r < rows; r++) {
-                    if (!batch.getView(r, 0, view))
-                        continue;
-                    if (size == ints.length)
-                        ints = ArrayPool.grow(ints, size << 1);
-                    ints[size++] = IntsBatch.parse(view);
+                for (var node = batch; node != null; node = node.next) {
+                    for (int r = 0, rows = node.rows; r < rows; r++) {
+                        if (!node.getView(r, 0, view))
+                            continue;
+                        if (size == ints.length)
+                            ints = ArrayPool.grow(ints, size << 1);
+                        ints[size++] = IntsBatch.parse(view);
+                    }
                 }
                 view.recycle();
                 return batch;

@@ -7,22 +7,11 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         implements CompletableBatchQueue<B> {
-    private static final VarHandle RECYCLED;
-    static {
-        try {
-            RECYCLED = MethodHandles.lookup().findVarHandle(CallbackEmitter.class, "recycled", Batch.class);
-        } catch (NoSuchFieldException|IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-    private @Nullable B b0, b1, recycled;
+    private @Nullable B b0, b1;
     private int avgRows;
 
     public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner, int worker,
@@ -30,10 +19,8 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         super(batchType, vars, runner, worker, initState, flags);
     }
 
-    @Override protected void doRelease() {
-        if (recycled != null)
-            recycled = recycled.markUnpooledNoTrace().recycle();
-        super.doRelease();
+    @Override public B createBatch() {
+        return bt.createForThread(threadId, outCols);
     }
 
     /**
@@ -85,18 +72,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             } else if (b0 == null || b1 == null) {
                 if (b0 == null) b0 = b;
                 else            b1 = b;
-                if ((b = recycled) != null) {
-                    b.markUnpooled();
-                    recycled = null;
-                }
             } else {
-                b1 = b1.put(b, RECYCLED, this);
+                b1.quickAppend(b);
             }
         } finally {
             unlock(st);
         }
         awake();
-        return b;
+        return null;
     }
 
     public void putRow(B batch, int row) throws TerminatedException, CancelledException {
@@ -113,14 +96,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 } else if (b0 != null) {
                     dst = b0;
                 } else {
-                    dst = b0 = batchType.create(avgRows, batch.cols);
-                    dst.reserveAddLocals(avgRows * (batch.localBytesUsed()/batch.rows));
+                    dst = b0 = bt.createForThread(threadId, batch.cols);
+                    dst.reserveAddLocals(avgRows*(batch.localBytesUsed()/batch.rows));
                 }
-                B grown = dst.putRow(batch, row);
-                if (grown != dst) {
-                    if   (b1 != null) b1 = grown;
-                    else              b0 = grown;
-                }
+                dst.putRow(batch, row);
             }
         } finally {
             unlock(st);
@@ -128,7 +107,8 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         awake();
     }
 
-    @Override protected void task() {
+    @Override protected void task(int threadId) {
+        this.threadId = (short)threadId;
         int st = lock(state());
         try {
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)

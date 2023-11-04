@@ -57,7 +57,7 @@ public abstract sealed class Plan implements SparqlQuery
     private static final ByteRope LEFT_JOIN_NM = new ByteRope("LeftJoin");
     private static final ByteRope MINUS_NM = new ByteRope("Minus");
     private static final ByteRope UNION_NM = new ByteRope("Union");
-    private static final ByteRope UNION_NM_PARAM = new ByteRope("Union[crossDedup=");
+    private static final ByteRope UNION_NM_CD = new ByteRope("Union[crossDedup]");
     private static final ByteRope VALUES_NM = new ByteRope("Values");
     private static final byte[] QUERY_LBRAC = "Query[".getBytes(UTF_8);
     /** Operator name to be used in {@link Plan#toString()} */
@@ -70,11 +70,7 @@ public abstract sealed class Plan implements SparqlQuery
             case EXISTS     -> EXISTS_NM;
             case NOT_EXISTS -> NOT_EXISTS_NM;
             case VALUES     -> new ByteRope().append(VALUES_NM).append(allVars());
-            case UNION -> {
-                int cdc = ((Union) this).crossDedupCapacity;
-                yield cdc == 0 ? UNION_NM
-                        : new ByteRope().append(UNION_NM_PARAM).append(cdc).append(']');
-            }
+            case UNION -> ((Union)this).crossDedup ? UNION_NM : UNION_NM_CD;
             case QUERY -> {
                 Query q = (Query) this;
                 ByteRope rb = new ByteRope(256);

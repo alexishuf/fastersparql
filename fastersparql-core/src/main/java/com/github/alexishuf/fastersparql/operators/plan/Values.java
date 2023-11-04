@@ -21,7 +21,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 
 public final class Values extends Plan {
     private @Nullable TermBatch values;
@@ -39,8 +39,8 @@ public final class Values extends Plan {
 
     public void append(TermBatch other) {
         if (values == null)
-            values = TERM.create(other.rows, other.cols);
-        values = values.put(other);
+            values = TERM.create(other.cols);
+        values.copy(other);
     }
 
     @Override public <B extends Batch<B>> BIt<B>
@@ -59,15 +59,15 @@ public final class Values extends Plan {
             values = dedupValues();
         if (values == null)
             return Emitters.empty(type, publicVars);
-        values = values.copy(null);
+        values = values.dup();
         return type.convert(Emitters.ofBatch(publicVars, values));
     }
 
     private TermBatch dedupValues() {
         TermBatch dedupValues = this.dedupValues;
         if (dedupValues == null && values != null) {
-            var filter = TERM.filter(publicVars, new WeakDedup<>(TERM, values.rows, values.cols));
-            this.dedupValues = dedupValues = filter.filter(null, values);
+            var filter = TERM.filter(publicVars, new WeakDedup<>(TERM, values.cols));
+            this.dedupValues = dedupValues = filter.filterInPlace(values.dup());
             filter.release();
         }
         return dedupValues;
@@ -97,7 +97,7 @@ public final class Values extends Plan {
             }
             sb.append("],");
         }
-        if (values.rows > displayed)
+        if (values.rows > displayed || values.next != null)
             sb.append("\n  ...");
         else if (displayed > 0)
             sb.unAppend(1);
@@ -114,11 +114,11 @@ public final class Values extends Plan {
             out.append('?').append(publicVars.get(i));
         }
         out.append(')').append(' ').append('{');
-        if (values != null) {
-            for (int r = 0, rows = values.rows, cols = values.cols; r < rows; r++) {
+        for (var b = values; b != null; b = b.next) {
+            for (short r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
                 out.newline(indent).append('(').append(' ');
                 for (int c = 0; c < cols; c++) {
-                    Term term = values.get(r, c);
+                    Term term = b.get(r, c);
                     if (term == null) out.append(UNDEF_u8);
                     else              term.toSparql(out, assigner);
                     out.append(' ');

@@ -1,9 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.dedup;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.RowBucket;
-import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
+import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import com.github.alexishuf.fastersparql.util.concurrent.AffinityLevelPool;
 import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
@@ -167,8 +165,6 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
             sum += b == null ? bucketCapacity : b.capacity();
         return (int)Math.min(MAX_VALUE, sum);
     }
-
-    public int weakenAt() { return weakenAt; }
 
     @Override public boolean isWeak() { return tableSize >= weakenAt; }
 
@@ -347,7 +343,9 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     public String dump() {
         var sb = new StringBuilder();
         forEach(b -> {
-            for (int r = 0; r < b.rows; r++) sb.append(b.toString(r)).append('\n');
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0; r < n.rows; r++) sb.append(n.toString(r)).append('\n');
+            }
         });
         sb.setLength(Math.max(1, sb.length()-1));
         return sb.toString();
@@ -363,9 +361,9 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     private static final int BUCKET_ARRAY_POOL_LARGE_CAPACITY = 32;
     private static final int BUCKET_ARRAY_POOL_HUGE_CAPACITY = 8;
     static {
-        bucketArrayPool(Batch.TERM);
-        bucketArrayPool(Batch.COMPRESSED);
-        bucketArrayPool(StoreBatch.TYPE);
+        bucketArrayPool(TermBatchType.TERM);
+        bucketArrayPool(CompressedBatchType.COMPRESSED);
+        bucketArrayPool(StoreBatchType.STORE);
     }
 
     @SuppressWarnings({"unchecked", "RedundantCast"})
@@ -413,9 +411,9 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     @SuppressWarnings("unchecked")
     private static AffinityPool<Bucket<?>>[] BUCKET_POOLS = new AffinityPool[10];
     static {
-        bucketPool(Batch.TERM);
-        bucketPool(Batch.COMPRESSED);
-        bucketPool(StoreBatch.TYPE);
+        bucketPool(TermBatchType.TERM);
+        bucketPool(CompressedBatchType.COMPRESSED);
+        bucketPool(StoreBatchType.STORE);
     }
 
     @SuppressWarnings("unchecked")
@@ -469,7 +467,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
 
         void recycleInternals() {
             hashes = ArrayPool.INT.offer(hashes, hashes.length);
-            rows = parent.bt.recycleBucket(rows);
+            rows = rows.recycleInternals();
         }
 
         boolean contains(B batch, int row, int hash) {

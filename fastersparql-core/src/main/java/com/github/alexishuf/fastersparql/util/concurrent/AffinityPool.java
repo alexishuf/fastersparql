@@ -5,7 +5,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
-import java.util.Arrays;
 
 import static java.lang.Thread.currentThread;
 
@@ -40,10 +39,15 @@ public class AffinityPool<T> implements LeakyPool {
     }
 
     @Override public void cleanLeakyRefs() {
+        T[] shared = this.shared;
         int size;
         while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
-            Arrays.fill(shared, size, shared.length, null);
+            int mid = size;
+            while (mid < shared.length && shared[mid] != null)
+                ++mid;
+            for (int i = size; i < mid; i++)
+                shared[i] = null;
         } finally { S.setRelease(this, size); }
     }
 
@@ -65,7 +69,7 @@ public class AffinityPool<T> implements LeakyPool {
     public @Nullable T offer(T o) {
         if (o == null)
             return null;
-        int idx = (int) currentThread().threadId() & mask;
+        int idx = (int)currentThread().threadId() & mask;
         // if shared is empty, offer to shared before. If local is always offered first, we
         // could have tens of pooled items and still return null from get().
         int size = (int)S.getAndSetAcquire(this, LOCKED);

@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -36,8 +35,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
@@ -78,7 +77,6 @@ class GatherAndScatterTest {
             private final ByteRope nt = new ByteRope();
             private int next;
             private boolean cleaned;
-            private @Nullable B recycled;
 
             public P(BatchType<B> batchType, Vars vars, EmitterService runner,
                      int id, int begin, int failAt) {
@@ -112,15 +110,14 @@ class GatherAndScatterTest {
                 if (failAt >= next && failAt < next + n) {
                     throw new DummyException(id, next);
                 } else {
-                    B b = batchType.empty(Batch.asUnpooled(recycled), n, 1);
-                    recycled = null;
+                    B b = bt.createForThread(preferredWorker, 1);
                     for (long e = Math.min(end, next+n); next < e; next++) {
-                        b = b.beginPut();
+                        b.beginPut();
                         nt.clear().append('"').append(next);
                         b.putTerm(0, DT_integer, nt.u8(), 0, nt.len, true);
                         b.commitPut();
                     }
-                    recycled = Batch.asPooled(deliver(b));
+                    bt.recycleForThread(preferredWorker, deliver(b));
                 }
                 return next < end ? state|MUST_AWAKE : COMPLETED;
             }
@@ -131,7 +128,6 @@ class GatherAndScatterTest {
 
             @Override protected void doRelease() {
                 cleaned = true;
-                recycled = Batch.recyclePooled(recycled);
             }
         }
 
@@ -190,19 +186,21 @@ class GatherAndScatterTest {
                 try {
                     if (state == Stateful.CREATED)
                         state = Stateful.ACTIVE;
-                    if (cancelAtRow >= 0 && historyLen + batch.rows > cancelAtRow)
+                    if (cancelAtRow >= 0 && historyLen + batch.totalRows() > cancelAtRow)
                         emitter.cancel();
                     assertNotNull(batch);
                     assertEquals(1, batch.cols);
-                    int required = historyLen + batch.rows;
+                    int required = historyLen + batch.totalRows();
                     if (required > history.length) {
                         history = ArrayPool.grow(history, required);
                         Arrays.fill(history, historyLen, history.length, 0);
                     }
                     SegmentRope view = SegmentRope.pooled();
-                    for (int r = 0, rows = batch.rows; r < rows; r++) {
-                        assertTrue(batch.localView(r, 0, view));
-                        history[historyLen++] = (int)view.parseLong(1);
+                    for (var node = batch; node != null; node = node.next) {
+                        for (int r = 0, rows = node.rows; r < rows; r++) {
+                            assertTrue(node.localView(r, 0, view));
+                            history[historyLen++] = (int) view.parseLong(1);
+                        }
                     }
                     view.recycle();
                 } finally { unlock(); }
@@ -295,7 +293,7 @@ class GatherAndScatterTest {
 
         @Override public void run() { genericRun(); }
         private <B extends Batch<B>> void genericRun() {
-            ThreadJournal.closeThreadJournals();
+            ThreadJournal.resetJournals();
             ResultJournal.clear();
             //noinspection unchecked
             BatchType<B> batchType = (BatchType<B>) this.batchType;
@@ -314,7 +312,6 @@ class GatherAndScatterTest {
                 for (int i = 0; i < nConsumers; i++)
                     consumers.add(new C<>(gatherScatter, consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
-                boolean oldSelfValidate = Batch.SELF_VALIDATE;
                 try (var w = ThreadJournal.watchdog(System.out, 100)) {
                     w.start(10_000_000_000L).andThen(() -> {
                         try {
@@ -326,11 +323,12 @@ class GatherAndScatterTest {
                             throw new RuntimeException(e);
                         }
                     });
-                    Batch.SELF_VALIDATE = oldSelfValidate && requestSize < 1_024;
+                    if (requestSize > 32)
+                        Batch.makeValidationCheaper();
                     gatherScatter.request(requestSize);
                     consumerBarrier.await();
                 } finally {
-                    Batch.SELF_VALIDATE = oldSelfValidate;
+                    Batch.restoreValidationCheaper();
                 }
                 assertTerminationStatus(consumerBarrier);
                 assertHistory(consumers.iterator().next());
@@ -518,7 +516,7 @@ class GatherAndScatterTest {
 
     @AfterEach
     void tearDown() {
-        Batch.SELF_VALIDATE = FSProperties.batchSelfValidate();
+        Batch.restoreValidationCheaper();
     }
 
     @ParameterizedTest @MethodSource
@@ -600,7 +598,7 @@ class GatherAndScatterTest {
     @RepeatedTest(4)
     void testConcurrent() throws Exception {
         System.gc();
-        Batch.SELF_VALIDATE = false;
+        Batch.makeValidationCheaper();
         String name = getClass().getSimpleName();
         try (TestTaskSet tasks = new TestTaskSet(name, newFixedThreadPool(THREADS))) {
             test().map(a -> (D) a.get()[0]).forEach(tasks::add);

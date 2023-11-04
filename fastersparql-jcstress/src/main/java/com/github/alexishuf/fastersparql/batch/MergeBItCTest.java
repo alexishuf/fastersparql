@@ -39,7 +39,7 @@ import org.openjdk.jcstress.infra.results.L_Result;
 
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.util.stream.IntStream.range;
 
 // See jcstress-samples or existing tests for API introduction and testing guidelines

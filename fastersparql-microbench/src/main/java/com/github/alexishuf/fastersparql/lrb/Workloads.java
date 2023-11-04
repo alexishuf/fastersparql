@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.lrb;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -85,15 +87,15 @@ public class Workloads {
             }
             List<B> copy = new ArrayList<>();
             for (B b : seed)
-                copy.add(b.copy(null));
+                copy.add(b.dup());
             dest.add(copy);
         }
     }
 
     public static BatchType<?> parseBatchType(String name) {
         return switch (name) {
-            case "COMPRESSED", "COMPR", "COMP" -> Batch.COMPRESSED;
-            case "TERM", "ARRAY" -> Batch.TERM;
+            case "COMPRESSED", "COMPR", "COMP" -> CompressedBatchType.COMPRESSED;
+            case "TERM", "ARRAY" -> TermBatchType.TERM;
             default -> throw new IllegalArgumentException();
         };
     }

@@ -4,7 +4,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
-import java.util.Arrays;
 
 import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
@@ -35,10 +34,15 @@ public final class LIFOPool<T> implements LeakyPool {
     @SuppressWarnings("unused") public Class<T> itemClass() { return cls; }
 
     @Override public void cleanLeakyRefs() {
+        T[] recycled = this.recycled;
         int size;
         while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
-            Arrays.fill(recycled, size, recycled.length, null);
+            int mid = size;
+            while (mid < recycled.length && recycled[mid] != null)
+                ++mid;
+            for (int i = size; i < mid; i++)
+                recycled[mid] = null;
         } finally {
             S.setRelease(this, size);
         }

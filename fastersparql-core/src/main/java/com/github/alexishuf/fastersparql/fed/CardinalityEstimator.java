@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.fed;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -44,7 +45,7 @@ public abstract class CardinalityEstimator {
     };
 
     /* --- --- --- fields & lifecycle --- --- --- */
-    private final int lowDistinctCap = 2*FSProperties.dedupCapacity();
+    private final int lowDistinctCap = CompressedBatchType.COMPRESSED.preferredTermsPerBatch()/4;
     private final int highDistinctCap = 2*FSProperties.reducedCapacity();
     protected final CompletableFuture<CardinalityEstimator> ready;
 
@@ -154,7 +155,7 @@ public abstract class CardinalityEstimator {
     public int estimate(Plan plan, @Nullable Binding binding) {
         return switch (plan.type) {
             case EMPTY -> 0;
-            case VALUES -> ((Values)plan).values().rows;
+            case VALUES -> ((Values)plan).values().totalRows();
             case TRIPLE -> estimate((TriplePattern) plan, binding);
             case QUERY -> estimate((Query)plan, binding);
             case MODIFIER -> estimateModifier((Modifier)plan, binding);

@@ -18,10 +18,10 @@ import java.util.stream.Stream;
 
 public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         implements Stage<I, O> {
-    public final BatchType<O> batchType;
-    public final Vars vars;
     protected @MonotonicNonNull Emitter<I> upstream;
     protected @MonotonicNonNull Receiver<O> downstream;
+    public final BatchType<O> batchType;
+    public final Vars vars;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
     public AbstractStage(BatchType<O> batchType, Vars vars) {

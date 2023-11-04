@@ -20,8 +20,8 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.FSProperties.askNegativeCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.askPositiveCapacity;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class AskSelector extends Selector {
@@ -43,8 +43,8 @@ public class AskSelector extends Selector {
 
     private static TermBatch triple(Term s, Term p, Term o) {
         TermBatch b = TRIPLE_POOL.get();
-        if (b == null) b = TERM.createSingleton(3);
-        b = b.beginPut();
+        if (b == null) b = TERM.create(3);
+        b.beginPut();
         b.putTerm(0, s);
         b.putTerm(1, p);
         b.putTerm(2, o);
@@ -143,13 +143,15 @@ public class AskSelector extends Selector {
         } else {
             out.write(Integer.toString(set.capacity()).getBytes(UTF_8));
             out.write('\n');
-            set.forEach(b -> {
+            set.forEach(root -> {
                 ByteRope line = new ByteRope();
-                for (int r = 0, rows = b.rows; r < rows; r++) {
-                    b.writeNT(line.clear(), r, 0);
-                    b.writeNT(line.append(' '), r, 1);
-                    b.writeNT(line.append(' '), r, 2);
-                    line.append('\n').write(out);
+                for (var b = root; b != null; b = b.next) {
+                    for (int r = 0, rows = b.rows; r < rows; r++) {
+                        b.writeNT(line.clear(), r, 0);
+                        b.writeNT(line.append(' '), r, 1);
+                        b.writeNT(line.append(' '), r, 2);
+                        line.append('\n').write(out);
+                    }
                 }
             });
         }

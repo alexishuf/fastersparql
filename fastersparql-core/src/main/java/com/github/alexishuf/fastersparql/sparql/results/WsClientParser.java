@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
@@ -44,7 +45,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
-        DUMMY_SENT_BINDINGS = new SPSCBIt<>(Batch.TERM, Vars.EMPTY, DEF_MAX_BATCH);
+        DUMMY_SENT_BINDINGS = new SPSCBIt<>(TermBatchType.TERM, Vars.EMPTY, DEF_MAX_BATCH);
         DUMMY_SENT_BINDINGS.complete(new Exception("DUMMY_SENT_BINDINGS should never be used"));
     }
 
@@ -208,7 +209,12 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 while (true) {
                     if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
                         sentBatchRow = 0;
-                        if ((sentBatch = sentBindings.nextBatch(sentBatch)) == null)
+                        boolean got = false;
+                        if (sentBatch != null && sentBatch.next != null) {
+                            sentBatch = sentBatch.dropHead();
+                            got = sentBatch != null;
+                        }
+                        if (!got && (sentBatch = sentBindings.nextBatch(sentBatch)) == null)
                             break; // no more sent bindings
                     }
                     handleBindEmptyUntil(bindingSeq+(sentBatch.rows-sentBatchRow));
@@ -248,8 +254,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         while (bindingSeq < seq) {
             if (metrics instanceof JoinMetrics m) m.beginBinding();
             if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
-                sentBatch = sentBindings.nextBatch(sentBatch);
                 sentBatchRow = 0;
+                boolean got = sentBatch != null && sentBatch.next != null
+                           && (sentBatch = sentBatch.dropHead()) != null;
+                if (!got) sentBatch = sentBindings.nextBatch(sentBatch);
             }
             long prev = bindingSeq++;
             if (!bindingNotified)
@@ -271,7 +279,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         Thread.currentThread().setName("sendBindingsThread");
         ResultsSender<?,?> sender = null;
         boolean sendEnd = true;
-        B b = null;
+        B batch = null;
         try {
             if (bindQuery == null)
                 throw noBindings("sendBindingsThread()");
@@ -282,16 +290,18 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             int allowed = 0; // bindings requested by the server
 
             sender.sendInit(bindings.vars(), usefulBindingsVars, false);
-            while ((b = bindings.nextBatch(b)) != null) {
-                sentBindings.copy(b);
-                for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
-                    while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
-                        LockSupport.park(this);
-                    if (allowed < 0) allowed = MAX_VALUE;
-                    if (isTerminated())
-                        throw CancelledException.INSTANCE;
-                    allowed -= taken = Math.min(allowed, rows - r);
-                    sender.sendSerialized(b, r, taken);
+            while ((batch = bindings.nextBatch(batch)) != null) {
+                sentBindings.copy(batch);
+                for (var b = batch; b != null; b = b.next) {
+                    for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
+                        while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
+                            LockSupport.park(this);
+                        if (allowed < 0) allowed = MAX_VALUE;
+                        if (isTerminated())
+                            throw CancelledException.INSTANCE;
+                        allowed -= taken = Math.min(allowed, rows - r);
+                        sender.sendSerialized(b, r, taken);
+                    }
                 }
             }
         } catch (TerminatedException|CancelledException|BItReadClosedException e) {
@@ -346,7 +356,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             } catch (TerminatedException | CancelledException e) {
                 upstream.cancel();
             }
-            sender.sendSerialized(batch);
+            sender.sendSerializedAll(batch);
             return batch;
         }
 

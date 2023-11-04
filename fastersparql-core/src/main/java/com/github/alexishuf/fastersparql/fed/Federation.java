@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.fed;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -35,7 +34,7 @@ import java.util.function.BiFunction;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.FS.project;
-import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
+import static com.github.alexishuf.fastersparql.FSProperties.crossDedup;
 import static com.github.alexishuf.fastersparql.util.BS.*;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.runtimeExceptionCondenser;
@@ -55,7 +54,7 @@ public class Federation extends AbstractSparqlClient {
     private final List<MetricsListener> planListeners = new ArrayList<>();
     private final Path specPathsRelativeTo;
     private final Lock lock = new ReentrantLock();
-    private int cdc = FSProperties.crossDedupCapacity();
+    private boolean crossDedup = crossDedup();
     private CompletableFuture<Void> init;
 
     public Federation(SparqlEndpoint endpoint,
@@ -298,7 +297,7 @@ public class Federation extends AbstractSparqlClient {
 
     private Plan plan(SparqlQuery sparql, FedMetrics m, Vars rebindHint) {
         // parse query or copy tree and sanitize
-        cdc = FSProperties.crossDedupCapacity();
+        crossDedup = crossDedup();
         Plan root = sparql instanceof Plan p
                 ? p.deepCopy() : SparqlParser.parse(sparql);
         root = project(mutateSanitize(root), sparql.publicVars());
@@ -333,11 +332,12 @@ public class Federation extends AbstractSparqlClient {
                 case JOIN, UNION -> {
                     if (parent.right == null) yield copyUnwrap(parent);
                     Plan copy = parent.copy();
-                    int nFlat = -1, n = copy.opCount(), c = parent instanceof Union u ? u.crossDedupCapacity : -1;
+                    int nFlat = -1, n = copy.opCount();
+                    boolean cd = parent instanceof Union u && u.crossDedup;
                     for (int i = 0; i < n; i++) {
                         Plan o = copy.op(i).transform(this, ctx);
                         copy.replace(i, o);
-                        if (o.type == t && (!(o instanceof Union u) || u.crossDedupCapacity == c))
+                        if (o.type == t && (!(o instanceof Union u) || u.crossDedup == cd))
                             nFlat = Math.max(0, nFlat) + o.opCount()-1;
                     }
                     if (nFlat == -1)
@@ -347,7 +347,7 @@ public class Federation extends AbstractSparqlClient {
                     nFlat = 0;
                     for (int i = 0; i < n; i++) {
                         Plan o = copy.op(i);
-                        if (o.type == t && (!(o instanceof Union u) || u.crossDedupCapacity == c))
+                        if (o.type == t && (!(o instanceof Union u) || u.crossDedup == cd))
                             for (int j = 0, m = o.opCount(); j < m; j++) flat[nFlat++] = o.op(j);
                         else
                             flat[nFlat++] = o;
@@ -382,11 +382,12 @@ public class Federation extends AbstractSparqlClient {
         return switch (type) {
             case JOIN -> {
                 if (plan.right == null) yield mutateUnwrap(plan);
-                int nFlat = -1, n = plan.opCount(), c = plan instanceof Union u ? u.crossDedupCapacity : -1;
+                int nFlat = -1, n = plan.opCount();
+                boolean cd = plan instanceof Union u  && u.crossDedup;
                 for (int i = 0; i < n; i++) {
                     Plan o = mutateSanitize(plan.op(i));
                     plan.replace(i, o);
-                    if (o.type == type && (!(o instanceof Union u) || u.crossDedupCapacity == c))
+                    if (o.type == type && (!(o instanceof Union u) || u.crossDedup == cd))
                         nFlat = Math.max(0, nFlat) + o.opCount()-1;
                 }
                 if (nFlat == -1) yield plan;
@@ -395,7 +396,7 @@ public class Federation extends AbstractSparqlClient {
                 nFlat = 0;
                 for (int i = 0; i < n; i++) {
                     Plan o = plan.op(i);
-                    if (o.type == type && (!(o instanceof Union u) || u.crossDedupCapacity == c))
+                    if (o.type == type && (!(o instanceof Union u) || u.crossDedup == cd))
                         for (int j = 0, m = o.opCount(); j < m; j++) flat[nFlat++] = o.op(j);
                     else
                         flat[nFlat++] = o;
@@ -472,7 +473,7 @@ public class Federation extends AbstractSparqlClient {
                 // add non-exclusive Unions
                 long srcMask = -1 >>> -nSrc;
                 for (int o=0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; ++o)
-                    bound[nBound++] = bindToSources(plan.op(o), (op2src>>o*nSrc)&srcMask, cdc);
+                    bound[nBound++] = bindToSources(plan.op(o), (op2src>>o*nSrc)&srcMask, crossDedup);
 
                 if (nonTP != 0)
                     addNonTP(plan, nonTP, bound, nBound);
@@ -484,7 +485,7 @@ public class Federation extends AbstractSparqlClient {
                 long relevant = 0;
                 for (int i = 0; i < nSrc; i++)
                     if (sources.get(i).selector.has(t)) relevant |= 1L << i;
-                yield bindToSources(t, relevant, cdc);
+                yield bindToSources(t, relevant, crossDedup);
             }
             default -> {
                 if (nOps == 0) yield plan;
@@ -510,7 +511,7 @@ public class Federation extends AbstractSparqlClient {
         return new Query(new Join(null, ops), client);
     }
 
-    private Plan bindToSources(Plan tp, long srcSubset, int crossDedupCapacity) {
+    private Plan bindToSources(Plan tp, long srcSubset, boolean crossDedup) {
         int src = numberOfTrailingZeros(srcSubset);
         if (src == 64)
             return new Empty(tp);
@@ -521,28 +522,28 @@ public class Federation extends AbstractSparqlClient {
         Query snd = new Query(tp, sources.get(src++).client);
         int n = bitCount(srcSubset);
         if (n == 2)
-            return new Union(crossDedupCapacity, fst, snd);
+            return new Union(crossDedup, fst, snd);
         Plan[] ops = new Plan[n];
         ops[0] = fst;
         ops[1] = snd;
         for (int o = 2; (src+=numberOfTrailingZeros(srcSubset>>>src)) < 64; src++)
             ops[o++] = new Query(tp, sources.get(src).client);
-        return new Union(crossDedupCapacity, ops);
+        return new Union(crossDedup, ops);
     }
 
     private Plan bindToSources(Plan tp, long[] op2src, int oIdx, int nOps, int nSrc,
-                               int cdc) {
+                               boolean crossDedup) {
         int begin = oIdx*nSrc, nOpSources = cardinality(op2src, begin, begin+nOps);
         if (nOpSources == 2) {
             int i0 = nextSetOrLen(op2src, begin);
-            return new Union(cdc, new Query(tp, sources.get(i0-begin).client),
+            return new Union(crossDedup, new Query(tp, sources.get(i0-begin).client),
                                   new Query(tp, sources.get(nextSetOrLen(op2src, i0+1)-begin).client));
         } else {
             var unionOps = new Plan[nOpSources];
             nOpSources = 0;
             for (int s = 0; (s=nextSetOrLen(op2src, begin+s)-begin) < nSrc; s++)
                 unionOps[nOpSources++] = new Query(tp, sources.get(s).client);
-            return new Union(cdc, unionOps);
+            return new Union(crossDedup, unionOps);
         }
     }
 
@@ -599,7 +600,8 @@ public class Federation extends AbstractSparqlClient {
     }
 
     private Plan coldPlan(Join join) {
-        int nOps = join.opCount(), nSrc = sources.size(), cdc = dedupCapacity();
+        int nOps = join.opCount(), nSrc = sources.size();
+        boolean crossDedup = crossDedup();
         long sourced = 0, nonExcl = 0, ssStartNs = Timestamp.nanoTime();
         long[] op2src       = new long[(nOps*nSrc-1 >> 6) + 1];
         long[] src2op       = new long[(nSrc*nOps-1 >> 6) + 1];
@@ -645,7 +647,7 @@ public class Federation extends AbstractSparqlClient {
         // add non-exclusive Unions
         for (int o = 0; (o+=numberOfTrailingZeros(nonExcl>>>o)) < 64; o++) {
             int begin = o * nSrc;
-            bound[nBound++] = bindToSources(join.op(o), get(op2src, begin, begin+nSrc), cdc);
+            bound[nBound++] = bindToSources(join.op(o), get(op2src, begin, begin+nSrc), crossDedup);
         }
 
         if (nonTP != 0)
@@ -706,9 +708,9 @@ public class Federation extends AbstractSparqlClient {
         }
 
         //add non-exclusive groups
-        int cdc = dedupCapacity();
+        boolean crossDedup = crossDedup();
         for (int o = 0; (o=nextSet(nonExcl, o)) != -1; o++)
-            bound[nBound++] = bindToSources(join.op(o), op2src, o, nOps, nSrc, cdc);
+            bound[nBound++] = bindToSources(join.op(o), op2src, o, nOps, nSrc, crossDedup);
 
         if (nonTP > 0)
             addNonTP(join, sourced, bound, nBound);
@@ -721,6 +723,6 @@ public class Federation extends AbstractSparqlClient {
         long[] relevant = new long[(nSrc - 1 >> 6) + 1];
         for (int s = 0; s < nSrc; s++)
             if (sources.get(s).selector.has(tp)) relevant[s>>6] |= 1L << s;
-        return bindToSources(tp, relevant, 0, 1, nSrc, dedupCapacity());
+        return bindToSources(tp, relevant, 0, 1, nSrc, crossDedup());
     }
 }

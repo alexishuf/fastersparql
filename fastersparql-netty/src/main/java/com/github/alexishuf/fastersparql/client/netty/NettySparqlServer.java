@@ -56,7 +56,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static com.github.alexishuf.fastersparql.FSProperties.wsServerBindings;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
@@ -404,7 +404,7 @@ public class NettySparqlServer implements AutoCloseable {
                 }
                 task.sendInit(it.vars(), serializeVars, query.isAsk());
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                    task.sendSerialized(b);
+                    task.sendSerializedAll(b);
                 }
                 task.sendTrailer();
             } catch (NettyResultsSender.NettyExecutionException e) {
@@ -581,7 +581,7 @@ public class NettySparqlServer implements AutoCloseable {
                 serializer.init(it.vars(), it.vars(), query.isAsk(), sink);
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
                     if (this.round != round) return;
-                    serializer.serialize(b, sink);
+                    serializer.serializeAll(b, sink);
                 }
                 serializer.serializeTrailer(sink);
                 ByteBuf bb = sink.take();
@@ -694,11 +694,12 @@ public class NettySparqlServer implements AutoCloseable {
                 } finally { unlock(); }
             }
 
-            @Override public void sendSerialized(Batch<?> batch) { //runs on drainerThread
-                super.sendSerialized(batch);
+            @Override public void sendSerializedAll(Batch<?> batch) { //runs on drainerThread
+                super.sendSerializedAll(batch);
                 if (bindQuery == null || batch.rows == 0)
                     return;
-                if (!batch.localView(batch.rows - 1, 0, tmpView))
+                Batch<?> tail = batch.tail();
+                if (!tail.localView(tail.rows-1, 0, tmpView))
                     throw new IllegalStateException("Missing binding sequence");
                 lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
             }

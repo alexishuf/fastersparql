@@ -17,8 +17,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.batch.BIt.PREFERRED_MIN_BATCH;
-
 public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.BatchConsumer {
     private static final String OK = "No errors";
     public final Vars vars;
@@ -38,14 +36,17 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         if (b == null) {
             expectedRows = 0;
             expected = observed = null;
-            unexpected = batchType.createSingleton(vars.size());
+            unexpected = batchType.create(vars.size());
         } else {
-            expectedRows = b.rows;
-            expected = StrongDedup.strongForever(batchType, b.rows, b.cols);
-            for (int r = 0; r < b.rows; r++)
-                expected.add(b, r);
-            observed = StrongDedup.strongForever(batchType, b.rows, b.cols);
-            unexpected = batchType.create(PREFERRED_MIN_BATCH, b.cols);
+            int rows = b.totalRows();
+            expectedRows = rows;
+            expected = StrongDedup.strongForever(batchType, rows, b.cols);
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0, nRows = n.rows; r < nRows; r++)
+                    expected.add(n, r);
+            }
+            observed = StrongDedup.strongForever(batchType, rows, b.cols);
+            unexpected = batchType.create(b.cols);
         }
     }
 
@@ -84,11 +85,11 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
                 return OK;
             if (missing[0] >= 10)
                 sb.append("\n  +").append(missing[0]-9);
-            sb.append("\nUnexpected rows: ").append(unexpected.rows);
+            sb.append("\nUnexpected rows: ").append(unexpected.totalRows());
             for (int r = 0, n = Math.min(unexpected.rows, 9); r < n; r++)
                 sb.append("\n  ").append(unexpected.toString(r));
             if (unexpected.rows > 9)
-                sb.append("\n +").append(unexpected.rows-9);
+                sb.append("\n +").append(unexpected.totalRows()-9);
             //serialize(new File("/tmp/expected.tsv"), expected);
             //serialize(new File("/tmp/observed.tsv"), observed);
             //serialize(new File("/tmp/unexpected.tsv"), unexpected);
@@ -105,9 +106,9 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         var serializer = new TsvSerializer();
         serializer.init(vars, vars, false, sink);
         if (rows instanceof Dedup<?> d)
-            d.forEach(b -> serializer.serialize(b, sink));
+            d.forEach(b -> serializer.serializeAll(b, sink));
         else if (rows instanceof Batch<?> b)
-            serializer.serialize(b, sink);
+            serializer.serializeAll(b, sink);
         else
             throw new IllegalArgumentException("Unsupported type for rows="+rows);
         serializer.serializeTrailer(sink);
@@ -139,8 +140,10 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     public void forEachMissing(RowConsumer rowConsumer) {
         if (expected == null || observed == null) return;
         expected.forEach(b -> {
-            for (int r = 0, rows = b.rows; r < rows; r++) {
-                if (!observed.contains(b, r) && !rowConsumer.accept(b, r)) break;
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0, rows = n.rows; r < rows; r++) {
+                    if (!observed.contains(n, r) && !rowConsumer.accept(n, r)) break;
+                }
             }
         });
     }
@@ -150,7 +153,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         explanation = null;
         if (observed != null) {
             if (unexpected == null)//noinspection unchecked
-                unexpected = (B)batchType.create(PREFERRED_MIN_BATCH, vars.size());
+                unexpected = (B)batchType.create(vars.size());
             else
                 unexpected.clear();
             observed.clear(observed.cols());
@@ -160,25 +163,30 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
 
     @Override public void accept(Batch<?> gb) {
         //noinspection unchecked
-        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb, 0, gb.rows);
-        rows += b.rows;
-        if (expected == null || observed == null) return;
-        for (int r = 0, rows = b.rows; r < rows; r++) {
-            if (!expected.contains(b, r))
-                unexpected = unexpected.putRow(b, r);
-            else
-                observed.add(b, r);
+        B amputated = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb);
+        for (B node = amputated; node != null; node = node.next) {
+            rows += node.rows;
+            if (expected == null || observed == null) return;
+            for (int r = 0, rows = node.rows; r < rows; r++) {
+                if (!expected.contains(node, r))
+                    unexpected.putRow(node, r);
+                else
+                    observed.add(node, r);
+            }
         }
+        if (amputated != gb)
+            Batch.recycle(amputated);
     }
 
     @Override public void accept(Batch<?> gb, int r) {
         //noinspection unchecked
-        B b = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb, r, r+1);
+        B singleton = queryName.dupRowAmputatingNumbers((BatchType<B>) batchType, (B)gb, r);
         ++rows;
         if (expected == null || observed == null) return;
-        if (!expected.contains(b, 0))
-            unexpected = unexpected.putRow(b, 0);
+        if (!expected.contains(singleton, 0))
+            unexpected.putRow(singleton, 0);
         else
-            observed.add(b, 0);
+            observed.add(singleton, 0);
+        singleton.recycle();
     }
 }

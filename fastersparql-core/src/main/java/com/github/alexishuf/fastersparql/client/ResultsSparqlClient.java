@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.AbstractStage;
@@ -30,7 +31,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.*;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
@@ -229,11 +230,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         private final Plan parsedQuery;
         private final Results expected;
         private @Nullable TermBatch batch;
-        private @Nullable TermBatch recycled;
         private final List<List<Term>> actualBindings = new ArrayList<>();
 
         public ResultsEmitter(Plan parsedQuery) {
-            super(Batch.TERM, parsedQuery.publicVars(), EMITTER_SVC, RR_WORKER,
+            super(TermBatchType.TERM, parsedQuery.publicVars(), EMITTER_SVC, RR_WORKER,
                   CREATED, TASK_EMITTER_FLAGS);
             this.parsedQuery = parsedQuery;
             this.expected = qry2emitResults.getOrDefault(parsedQuery, null);
@@ -244,8 +244,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void doRelease() {
             super.doRelease();
-            batch    = TERM.recycle(batch);
-            recycled = recyclePooled(recycled);
+            batch = TERM.recycle(batch);
             if (expected.hasBindings()) {
                 List<List<Term>> exBindingRows = expected.bindingsList();
                 if (exBindingRows == null)
@@ -271,7 +270,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             Vars allVars = expected.vars();
-            var batch = this.batch = TERM.empty(this.batch, 1, allVars.size());
+            var batch = this.batch = TERM.empty(this.batch, allVars.size());
             List<List<Term>> rows = expected.expected();
             outer:
             for (var row : rows) {
@@ -280,7 +279,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                     if (i >= 0 && !Objects.equals(row.get(i), binding.get(bIdx)))
                         continue outer; // rows does not match binding
                 }
-                this.batch = batch = batch.putRow(row); // row matches binding
+                this.batch = batch.putRow(row); // row matches binding
             }
             Boolean askResult = switch (expected.bindType()) {
                 case JOIN,LEFT_JOIN   -> null;
@@ -288,7 +287,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 case NOT_EXISTS,MINUS -> batch.rows == 0;
             };
             if (askResult != null)
-                batch.clear(0).rows = askResult ? 1 : 0;
+                batch.clear(0).rows = (short)(askResult ? 1 : 0);
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -306,7 +305,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         @Override protected int produceAndDeliver(int state) {
             if (batch != null)
-                recycled = asPooled(deliver(batch.copy(asUnpooled(recycled))));
+                TERM.recycle(deliver(batch.dup()));
             return error == UNSET_ERROR ? COMPLETED : FAILED;
         }
     }
@@ -381,7 +380,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         if (usesBindingAwareProtocol()) {
             var bindingsChecker = exBindings.checker(bq.bindings);
             var bt = bq.bindings.batchType();
-            AbstractStage<TermBatch, TermBatch> intercepted = new AbstractStage<>(Batch.TERM, expected.vars()) {
+            AbstractStage<TermBatch, TermBatch> intercepted = new AbstractStage<>(TermBatchType.TERM, expected.vars()) {
                 private volatile boolean started = false;
                 private volatile boolean failed = false;
 

@@ -14,7 +14,7 @@ import java.util.function.Consumer;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 
 public sealed interface BItGenerator {
     /** Equivalent to {@link #asBIt(Consumer, RuntimeException, int...)} with {@code err=null}  */

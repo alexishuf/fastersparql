@@ -33,8 +33,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.*;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.model.SparqlEndpoint.parse;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static org.junit.jupiter.api.Assertions.*;

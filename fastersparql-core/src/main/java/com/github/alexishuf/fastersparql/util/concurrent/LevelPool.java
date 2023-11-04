@@ -5,7 +5,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
-import java.util.Arrays;
 
 import static java.lang.Integer.numberOfLeadingZeros;
 import static java.lang.Integer.numberOfTrailingZeros;
@@ -114,7 +113,7 @@ public final class LevelPool<T> implements LeakyPool {
         return (short)S.getOpaque(metadata, level<<S_SHIFT) == 0;
     }
 
-    @Nullable T getFromLevel(int level) {
+    public @Nullable T getFromLevel(int level) {
         short size, base = metadata[MD_BASE_AND_CAP + (level<<1)];
         while ((size = (short)S.getAndSetAcquire(metadata, level<<S_SHIFT, LOCKED)) == LOCKED)
             onSpinWait();
@@ -127,6 +126,7 @@ public final class LevelPool<T> implements LeakyPool {
     }
 
     @Override public void cleanLeakyRefs() {
+        T[] pool = this.pool;
         for (int l = 0; l < 33; l++) {
             short size;
             int base =      metadata[MD_BASE_AND_CAP+(l<<1)  ];
@@ -134,7 +134,11 @@ public final class LevelPool<T> implements LeakyPool {
             while ((size = (short)S.getAndSetAcquire(metadata, l<<S_SHIFT, LOCKED)) == LOCKED)
                 onSpinWait();
             try {
-                Arrays.fill(pool, base+size, end, null);
+                int begin = base+size, mid = begin;
+                while (mid < end && pool[mid] != null)
+                    ++mid;
+                for (int i = begin; i < mid; ++i)
+                    pool[i] = null;
             } finally {
                 S.setRelease(metadata, l<<S_SHIFT, size);
             }

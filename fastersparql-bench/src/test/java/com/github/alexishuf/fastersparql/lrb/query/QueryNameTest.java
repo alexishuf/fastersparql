@@ -6,6 +6,8 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -56,7 +58,7 @@ class QueryNameTest {
     static Stream<Arguments> testParseResults() {
         List<Arguments> list = new ArrayList<>();
         for (QueryName name : QueryName.values()) {
-            for (var type : List.of(Batch.TERM, Batch.COMPRESSED))
+            for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED))
                 list.add(arguments(name, type));
         }
         return list.stream();
@@ -68,11 +70,13 @@ class QueryNameTest {
         if (expected == null) return;
         assertTrue(expected.rows > 0);
         assertEquals(name.parsed().publicVars().size(), expected.cols);
-        for (int r = 0; r < expected.rows; r++) {
-            boolean allNull = true;
-            for (int c = 0; allNull && c < expected.cols; c++)
-                allNull = expected.termType(r, c) == null;
-            assertFalse(allNull, "r="+r);
+        for (B node = expected; node != null; node = node.next) {
+            for (int r = 0; r < node.rows; r++) {
+                boolean allNull = true;
+                for (int c = 0; allNull && c < node.cols; c++)
+                    allNull = node.termType(r, c) == null;
+                assertFalse(allNull, "r=" + r);
+            }
         }
     }
 
@@ -81,7 +85,7 @@ class QueryNameTest {
                             "C2", "C8", "C7"})
     public void testHasResults(String nameString) {
         var name = QueryName.valueOf(nameString);
-        for (var type : List.of(Batch.TERM, Batch.COMPRESSED)) {
+        for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
             //noinspection unchecked,rawtypes
             Batch<?> expected = name.expected((BatchType) type);
             assertNotNull(expected);
@@ -113,7 +117,7 @@ class QueryNameTest {
         var serializer = ResultsSerializer.create(format);
         ByteRope sink = new ByteRope();
         serializer.init(vars, vars, false, sink);
-        serializer.serialize(expected, sink);
+        serializer.serializeAll(expected, sink);
         serializer.serializeTrailer(sink);
 
         //parse
@@ -121,10 +125,10 @@ class QueryNameTest {
             var parser = createParser(format, parsed);
             parser.feedShared(sink);
             parser.feedEnd();
-            B acc = type.create(expected.rows, expected.cols);
+            B acc = type.create(expected.cols);
             acc.reserveAddLocals(expected.localBytesUsed());
             for (B b = null; (b = parsed.nextBatch(b)) != null; )
-                acc = acc.put(b);
+                acc.copy(b);
             assertEquals(expected, acc);
         } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
             throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
@@ -167,8 +171,8 @@ class QueryNameTest {
                         @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                             serializer.init(vars, subset, isAsk, new ByteRope());
                         }
-                        @Override public void sendSerialized(Batch<?> batch) {
-                            serializer.serialize(batch, new ByteRope());
+                        @Override public void sendSerializedAll(Batch<?> batch) {
+                            serializer.serializeAll(batch, new ByteRope());
                         }
                         @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
                             serializer.serialize(batch, from, nRows, new ByteRope());
@@ -215,12 +219,13 @@ class QueryNameTest {
                 "\"Prime Minister\"@en"
         );
 
-        var b = QueryName.C8.expected(Batch.COMPRESSED);
+        var b = QueryName.C8.expected(CompressedBatchType.COMPRESSED);
         assertNotNull(b);
+        var bTail = b.tail();
         assertEquals(r0.size(), b.cols);
         for (int c = 0; c < b.cols; c++) {
-            assertEquals(r0.get(c), b.get(0,        c), "c="+c);
-            assertEquals(rX.get(c), b.get(b.rows-1, c), "c="+c);
+            assertEquals(r0.get(c),     b.get(0,            c), "c="+c);
+            assertEquals(rX.get(c), bTail.get(bTail.rows-1, c), "c="+c);
         }
     }
 }

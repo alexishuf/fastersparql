@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.Results;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
@@ -49,15 +50,15 @@ public class ProjectTest {
 
     @ParameterizedTest @MethodSource
     void test(Results in, Results expected) {
-        expected.check(FS.project(in.asPlan(), expected.vars()).execute(Batch.TERM));
-        ThreadJournal.closeThreadJournals();
+        expected.check(FS.project(in.asPlan(), expected.vars()).execute(TermBatchType.TERM));
+        ThreadJournal.resetJournals();
         try {
-            expected.check(FS.project(in.asPlan(), expected.vars()).emit(Batch.TERM, Vars.EMPTY));
+            expected.check(FS.project(in.asPlan(), expected.vars()).emit(TermBatchType.TERM, Vars.EMPTY));
         } catch (Throwable t ) {
             ThreadJournal.dumpAndReset(System.err, 80);
             throw t;
         }
-        expected.check(FS.project(in.asPlan(), expected.vars()).emit(Batch.COMPRESSED, Vars.EMPTY));
+        expected.check(FS.project(in.asPlan(), expected.vars()).emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
     }
 
 }

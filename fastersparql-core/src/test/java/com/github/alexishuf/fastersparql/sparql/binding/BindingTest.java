@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -30,24 +32,24 @@ class BindingTest {
 
     private static <B extends Batch<B>>
     void addCases(BatchType<B> bt, List<Arguments> argsList) {
-        var b = bt.createSingleton(1);
-        b = b.putRow(List.of(one));
+        var b = bt.create(1);
+        b.putRow(List.of(one));
         argsList.add(arguments(new BatchBinding(Vars.of("x")).attach(b, 0),
                                List.of(one)));
 
-        b = bt.createSingleton(2);
-        b = b.putRow(Arrays.asList(one, null));
+        b = bt.create(2);
+        b.putRow(Arrays.asList(one, null));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y")).attach(b, 0),
                                asList(one, null)));
 
-        b = bt.createSingleton(2);
-        b = b.putRow(Arrays.asList(null, two));
+        b = bt.create(2);
+        b.putRow(Arrays.asList(null, two));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y")).attach(b, 0),
                 asList(null, two)));
 
-        b = bt.create(2, 3);
-        b = b.putRow(asList(null, null, null));
-        b = b.putRow(Arrays.asList(one, two, three));
+        b = bt.create(3);
+        b.putRow(asList(null, null, null));
+        b.putRow(Arrays.asList(one, two, three));
         argsList.add(arguments(new BatchBinding(Vars.of("x", "y", "z")).attach(b, 1),
                                asList(one, two, three)));
     }
@@ -70,17 +72,17 @@ class BindingTest {
                                            new Term[]{one, two, three}),
                           asList(one, two, three))
         ));
-        addCases(Batch.TERM, argsList);
-        addCases(Batch.COMPRESSED, argsList);
+        addCases(TermBatchType.TERM, argsList);
+        addCases(CompressedBatchType.COMPRESSED, argsList);
         return argsList.stream();
     }
 
     @Test
     void testInvalidAttach() {
-        for (var bt : List.of(Batch.TERM, Batch.COMPRESSED)) {
-            var b1 = bt.createSingleton(1);
-            var b2 = bt.createSingleton(2);
-            var c1 = bt.createSingleton(1).putRow(new Term[]{one});
+        for (var bt : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+            var b1 = bt.create(1);
+            var b2 = bt.create(2);
+            var c1 = bt.create(1).putRow(new Term[]{one});
             BatchBinding bb1 = new BatchBinding(Vars.of("x"));
             BatchBinding bb2 = new BatchBinding(Vars.of("x", "y"));
             assertThrows(IndexOutOfBoundsException.class, () -> bb1.attach(b1, 0));

@@ -31,7 +31,7 @@ public class EmitterService {
     private static final Logger log = LoggerFactory.getLogger(EmitterService.class);
 
     /**
-     * An arbitrary task ({@link #task()}) that can be repeatedly re-scheduled via {@link #awake()}.
+     * An arbitrary task ({@link #task(int)}) that can be repeatedly re-scheduled via {@link #awake()}.
      */
     public abstract static class Task extends Stateful {
         private static final VarHandle SCHEDULED;
@@ -75,7 +75,7 @@ public class EmitterService {
         }
 
         /**
-         * Ensures that after this call, {@link #task()} will execute at least once. Such execution
+         * Ensures that after this call, {@link #task(int)} will execute at least once. Such execution
          * may start and complete before the return of this call.
          */
         protected final void awake() {
@@ -90,25 +90,28 @@ public class EmitterService {
          * {@link EmitterService} set at construction. If running due to {@link #runNow()}, it
          * may be called from an external thread. Whatever the trigger, there will be no parallel
          * executions of this method for a single {@link Task} instance.
+         *
+         * @param threadId lower 32 bits of value of {@link Thread#threadId()} for
+         *                 the {@link Thread#currentThread()}
          */
-        protected abstract void task();
+        protected abstract void task(int threadId);
 
         /**
          * Execute this task <strong>now</strong>, unless it is already being executed by
-         * another thread. Unlike a direct call to {@link #task()}, this will ensure there are
-         * no concurrent {@link #task()} calls for the same {@link Task} object. If there is a
-         * concurrent execution by another thread on {@link #run()} or {@code runNow()}, this
+         * another thread. Unlike a direct call to {@link #task(int)}, this will ensure there are
+         * no concurrent {@link #task(int)} calls for the same {@link Task} object. If there is a
+         * concurrent execution by another thread on {@link #run(int)} or {@code runNow()}, this
          * call will have no effect
          *
          * <p>This should be called to solve inversion-of-priority issues. A producer that finds
          * itself being blocked due to this task not running can call this method to have the
          * consumer task work instead of spinning or parking.</p>
          */
-        protected boolean runNow() {
+        @SuppressWarnings("unused") protected boolean runNow() {
             if (!compareAndSetFlagRelease(IS_RUNNING))
                 return false; // running elsewhere
             try {
-                task();
+                task((int)Thread.currentThread().threadId());
                 return true;
             } catch (Throwable t) {
                 handleTaskException(t);
@@ -118,7 +121,7 @@ public class EmitterService {
             return false;
         }
 
-        @Async.Execute private void run() {
+        @Async.Execute private void run(int threadId) {
             if (!compareAndSetFlagRelease(IS_RUNNING)) {
                 // runNow() active on another thread, return to queue
                 runner.add(this);
@@ -126,7 +129,7 @@ public class EmitterService {
             }
             short old = (short)SCHEDULED.getAcquire(this);
             try {
-                task();
+                task(threadId);
             } catch (Throwable t) {
                 handleTaskException(t);
             } finally {
@@ -202,18 +205,22 @@ public class EmitterService {
 
     private final class Worker extends Thread {
         private final int id;
+        private final int threadId;
         private boolean yielding;
 
         public Worker(ThreadGroup group, int i) {
             super(group, "EmitterService-"+EmitterService.this.id+"-"+i);
             this.id = i;
             setDaemon(true);
+            threadId = (int)threadId();
             start();
         }
 
         @Override public void run() {
-            int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
             var parent = EmitterService.this;
+            var md = parent.md;
+            int id = this.id, threadId = this.threadId;
+            int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task task = pollOrSteal(id);
@@ -222,7 +229,7 @@ public class EmitterService {
                     md[mdParkedIdx] = 0;
                 } else {
                     try {
-                        task.run();
+                        task.run(threadId);
                     } catch (Throwable t) {
                         log.error("Dispatch failed for {}", task, t);
                     }
@@ -276,7 +283,7 @@ public class EmitterService {
                             MD.setRelease(md, mdb+MD_LOCK, 0);          // release worker queue
                             locked = false;                             // do not release
                             os = (short)Task.SCHEDULED.getOpaque(task); // pending awake()s
-                            task.task();
+                            task.task(threadId);
                             ran = true;
                         } catch (Throwable t) {
                             task.handleTaskException(t);
@@ -398,7 +405,7 @@ public class EmitterService {
      *
      * @return Whether a task was executed. {@code false} will be returned if there is no
      * scheduled task in the worker or if the selected task is already being executed
-     * (i.e., {@link Task#awake()} called from within {@link Task#task()}),
+     * (i.e., {@link Task#awake()} called from within {@link Task#task(int)}),
      */
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean yieldToTaskOnce() {
@@ -526,6 +533,7 @@ public class EmitterService {
             LockSupport.unpark(workers[mdb >> MD_BITS]);
         return true;
     }
+
 
     /**
      * Tries adding {@code task} to the queue of the {@code task.worker}-th worker or to the shared

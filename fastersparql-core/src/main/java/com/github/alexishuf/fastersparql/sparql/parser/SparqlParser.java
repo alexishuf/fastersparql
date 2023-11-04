@@ -23,7 +23,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
@@ -432,9 +432,9 @@ public class SparqlParser {
             require(')');
             int n = vars.size();
             require('{');
-            var batch = TERM.createForTerms(n<<3, n);
+            var batch = TERM.create(n);
             while (poll('(')) {
-                batch = batch.beginPut();
+                batch.beginPut();
                 for (int c = 0; c < n; c++)
                     batch.putTerm(c, pTerm());
                 batch.commitPut();
@@ -461,7 +461,10 @@ public class SparqlParser {
             current = p == null ? current : p.projectInPlace(current);
             p = TERM.projector(union, v.publicVars());
             var b = v.values();
-            current = p == null ? current.put(b) : p.project(current, b);
+            if (p == null)
+                current.copy(b);
+            else
+                current = p.project(current, b);
             this.values = new Values(union, current);
         }
 

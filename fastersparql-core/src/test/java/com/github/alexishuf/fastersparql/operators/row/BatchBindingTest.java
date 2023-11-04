@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.operators.row;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -38,11 +38,11 @@ class BatchBindingTest {
 
         );
         return list.stream().map(d -> {
-            TermBatch b = Batch.TERM.create(2, d.vars.size());
-            b = b.beginPut();
+            TermBatch b = TermBatchType.TERM.create(d.vars.size());
+            b.beginPut();
             for (int i = 0; i < d.vars.size(); i++) b.putTerm(i, (Term)null);
             b.commitPut();
-            b = b.putRow(d.terms);
+            b.putRow(d.terms);
             return arguments(d.vars, b);
         });
     }

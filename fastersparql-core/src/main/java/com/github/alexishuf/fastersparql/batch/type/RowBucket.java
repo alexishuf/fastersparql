@@ -1,9 +1,16 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     @SuppressWarnings("unused") BatchType<B> batchType();
+
+    /**
+     * Increase {@link #capacity()} of {@code this} {@link RowBucket} to the maximum value
+     * that can be achieved without re-allocation or copying of actual stored data.
+     */
+    void maximizeCapacity();
 
     /**
      * Increase capacity to {@link RowBucket#capacity()}+{@code additionalRows}.
@@ -28,7 +35,7 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      * <p>A subsequent {@link #clear(int, int)} call will restore the bucket to a determined
      * capacity and will reset all rows.</p>
      */
-    void recycleInternals();
+    @Nullable RowBucket<B> recycleInternals();
 
     /** How many rows fit in this bucket. */
     int capacity();
@@ -41,6 +48,16 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
 
     /** Copy {@code row}-th row of {@code batch} into slot {@code dst} */
     void set(int dst, B batch, int row);
+
+    /** Analogous to {@link #set(int, Batch, int)}, but {@code row} is relative to the whole
+     *  linked list that starts at {@code batch}. */
+    default void setLinked(int dst, B batch, int row) {
+        int rel = row;
+        var node = batch;
+        for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
+        if (node == null) throw new IndexOutOfBoundsException("row >= batch.totalRows()");
+        else              set(dst, node, rel);
+    }
 
     /** Copy row at {@code src} into {@code dst} */
     void set(int dst, int src);
@@ -55,6 +72,17 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      * {@code batch}
      */
     boolean equals(int row, B other, int otherRow);
+
+    /** Analogous to {@link #equals(int, Batch, int)}, but {@code otherRow} is relative to
+     *  the whole linked list that starts at other. */
+    default boolean equalsLinked(int row, B other, int otherRow) {
+        B node = other;
+        int rel = otherRow;
+        for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
+        if (node == null)
+            throw new IndexOutOfBoundsException("otherRow >= other.totalRows()");
+        return equals(row, node, rel);
+    }
 
     /**
      * Hash code for the {@code row}-th row in this bucket. If {{@link #has(int)}}, the

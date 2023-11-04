@@ -14,7 +14,6 @@ import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTE
 public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     private @Nullable B batch;
     private int nextRow;
-    private @Nullable B recycled;
 
     public BatchEmitter(Vars vars, B batch) {
         super(batch.type(), vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
@@ -24,8 +23,7 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     }
 
     @Override protected void doRelease() {
-        recycled = Batch.recyclePooled(recycled);
-        batch = batchType.recycle(batch);
+        batch = Batch.recycle(batch);
         super.doRelease();
     }
 
@@ -44,21 +42,22 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         if (limit <= 0)
             return state;
         B b = this.batch;
-        if (b == null)
+        int bRows = b == null ? 0 : b.totalRows();
+        if (bRows == 0)
             return COMPLETED;
-        int n = (int)Math.min(limit, b.rows-nextRow);
+        int n = (int)Math.min(limit, bRows-nextRow);
         REQUESTED.getAndAddRelease(this, (long)-n);
-        B copy = batchType.empty(Batch.asUnpooled(recycled), n, b.cols);
-        recycled = null;
-        copy.reserveAddLocals(b.localBytesUsed());
-        if (nextRow == 0 && n == b.rows) {
-            copy = copy.put(b);
+
+        B copy;
+        if (nextRow == 0 && n == bRows) {
+            copy = b.dup();
         } else {
+            copy = bt.createForThread(threadId, b.cols);
             for (int r = nextRow, end = nextRow+n; r < end; r++)
-                copy = copy.putRow(b, r);
+                copy.putRow(b, r);
         }
         nextRow += n;
-        recycled = Batch.asPooled(deliver(copy));
-        return nextRow < b.rows ? state : COMPLETED;
+        bt.recycleForThread(threadId, deliver(copy));
+        return nextRow < bRows ? state : COMPLETED;
     }
 }

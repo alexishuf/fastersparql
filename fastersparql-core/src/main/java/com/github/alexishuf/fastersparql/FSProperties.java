@@ -39,8 +39,8 @@ public class FSProperties {
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_REDUCED_CAPACITY       = "fastersparql.op.reduced.capacity";
-    public static final String OP_DEDUP_CAPACITY         = "fastersparql.op.dedup.capacity";
-    public static final String OP_CROSS_DEDUP_CAPACITY   = "fastersparql.op.cross-source-dedup";
+    public static final String OP_CROSS_DEDUP            = "fastersparql.op.cross-dedup";
+    public static final String OP_OPPORTUNISTIC_DEDUP    = "fastersparql.op.opportunistic-dedup";
     public static final String OP_JOIN_REORDER           = "fastersparql.op.join.reorder";
     public static final String OP_JOIN_REORDER_BIND      = "fastersparql.op.join.reorder.bind";
     public static final String OP_JOIN_REORDER_HASH      = "fastersparql.op.join.reorder.hash";
@@ -64,11 +64,11 @@ public class FSProperties {
     public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int     DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
-    public static final int     DEF_OP_DEDUP_CAPACITY         = 1<<8; // 256 rows --> 2KiB
-    public static final int     DEF_OP_CROSS_DEDUP_CAPACITY   = 1<<8;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
+    public static final boolean DEF_OP_CROSS_DEDUP            = true;
+    public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
     public static final boolean DEF_EMIT_LOG_STATS            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final Boolean DEF_BATCH_POOLED_TRACE        = false;
@@ -86,19 +86,19 @@ public class FSProperties {
     private static int CACHE_BATCH_QUEUE_ROWS          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
     private static int CACHE_OP_REDUCED_CAPACITY       = -1;
-    private static int CACHE_OP_DEDUP_CAPACITY         = -1;
-    private static int CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
-    private static Boolean CACHE_USE_VECTORIZATION     = null;
-    private static Boolean CACHE_USE_UNSAFE            = null;
-    private static Boolean CACHE_EMIT_LOG_STATS        = null;
-    private static Boolean CACHE_STORE_CLIENT_VALIDATE = null;
-    private static Boolean CACHE_BATCH_POOLED_MARK     = null;
-    private static Boolean CACHE_BATCH_POOLED_TRACE    = null;
-    private static Boolean CACHE_BATCH_JFR_ENABLED     = null;
-    private static Boolean CACHE_BATCH_SELF_VALIDATE   = null;
+    private static Boolean CACHE_USE_VECTORIZATION      = null;
+    private static Boolean CACHE_USE_UNSAFE             = null;
+    private static Boolean CACHE_OP_CROSS_DEDUP         = null;
+    private static Boolean CACHE_OP_OPPORTUNISTIC_DEDUP = null;
+    private static Boolean CACHE_EMIT_LOG_STATS         = null;
+    private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
+    private static Boolean CACHE_BATCH_POOLED_MARK      = null;
+    private static Boolean CACHE_BATCH_POOLED_TRACE     = null;
+    private static Boolean CACHE_BATCH_JFR_ENABLED      = null;
+    private static Batch.Validation CACHE_BATCH_SELF_VALIDATE   = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_BIND = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_HASH = null;
@@ -134,6 +134,7 @@ public class FSProperties {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     protected static @NonNegative int readNonNegativeInteger(String propertyName, int defaultValue) {
         return readProperty(propertyName, defaultValue, (src, val) -> {
             int i = -1;
@@ -184,13 +185,12 @@ public class FSProperties {
         CACHE_BATCH_QUEUE_ROWS          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
         CACHE_OP_REDUCED_CAPACITY       = -1;
-        CACHE_OP_DEDUP_CAPACITY         = -1;
-        CACHE_OP_CROSS_DEDUP_CAPACITY   = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_NETTY_EVLOOP_THREADS      = -1;
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
+        CACHE_OP_CROSS_DEDUP            = null;
         CACHE_EMIT_LOG_STATS            = null;
         CACHE_BATCH_POOLED_MARK         = null;
         CACHE_BATCH_POOLED_TRACE        = null;
@@ -439,6 +439,8 @@ public class FSProperties {
         return v;
     }
 
+    private static final Batch.Validation[] SELF_VALIDATIONS_VALUES = Batch.Validation.values();
+
     /**
      * Whether {@link Batch} implementations should perform self-tests to ensure
      * that implementation-specific invariants are preserved after every mutation. Such checks
@@ -450,11 +452,13 @@ public class FSProperties {
      *
      * @return {@code true} iff {@link Batch} implementations should self-test after every mutation.
      */
-    public static boolean batchSelfValidate() {
-        Boolean v = CACHE_BATCH_SELF_VALIDATE;
+    public static Batch.Validation batchSelfValidate() {
+        Batch.Validation v = CACHE_BATCH_SELF_VALIDATE;
         if (v == null) {
-            boolean def = FSProperties.class.desiredAssertionStatus();
-            CACHE_BATCH_SELF_VALIDATE = v = readBoolean(BATCH_SELF_VALIDATE, def);
+            Batch.Validation def = FSProperties.class.desiredAssertionStatus()
+                    ? Batch.Validation.EXPENSIVE : Batch.Validation.NONE;
+            v = readEnum(BATCH_SELF_VALIDATE, SELF_VALIDATIONS_VALUES, def);
+            CACHE_BATCH_SELF_VALIDATE = v;
         }
         return v;
     }
@@ -513,8 +517,7 @@ public class FSProperties {
      *
      * <p>Unlike a DISTINCT implemented with fixed-capacity, a query that uses REDUCED already
      * expects a low-effort de-duplication, thus the value for this should be smaller than
-     * {@link FSProperties#distinctCapacity()} but larger than
-     * {@link FSProperties#dedupCapacity()}.</p>
+     * {@link FSProperties#distinctCapacity()}.</p>
      *
      * <p>The default is 128*1024 rows ({@link FSProperties#DEF_OP_REDUCED_CAPACITY}),
      * which consumes 512KiB in row pointers.</p>
@@ -529,38 +532,44 @@ public class FSProperties {
     }
 
     /**
-     * The capacity to use when de-duplicating intermediary results of a query.
+     * Whether the results of unions of joins that all share the same left-side source and share
+     * the same algebra for the right side (but are directed to distinct endpoints) should be
+     * cross-source de-duplicated.
      *
-     * <p>Intermediary results deduplication arises in two scenarios:</p>
+     * <p>In cross-source deduplication, if the same row is emitted twice by the same source, the
+     * second occurrence will not be eliminated, but if a row is emitted once by a source and again
+     * by another, the second occurrence may be dropped if it was possible to observe the previous
+     * occurrence in the limited, moving history.</p>
      *
-     * <ul>
-     *     <li>A DISTINCT is applied to the query and thus any intermediary step can
-     *     be de-duplicated without changing the final result set.</li>
-     *     <li>A UNION of the same query being submitted to distinct sources arises in federated
-     *     query processing. If sources have duplicate data, dropping rows from one source
-     *     that have already been output by another source will often be acceptable.</li>
-     * </ul>
+     * <p>The <strong>default</strong> for this is {@code true} ({@link #DEF_OP_CROSS_DEDUP}.
+     * The java property name is {@link #OP_CROSS_DEDUP}</p>
      *
-     * <p>When unions are de-duplicated the capacity set here will be multiplied by the number
-     * of sources. Thus, unions with many operands will have more capacity.</p>
-     *
-     * <p>The value for this property should be a {@code n} small to avoid turning an optimization
-     * into a bottleneck. The default, 256 rows yields an array of 2KiB for the row
-     * references, which can fit within a single page (linux uses 4KiB pages) and should not
-     * cause large disturbances in the cache hit ratio for x86 systems.</p>
+     * @return Whether cross-source dedup is enabled.
      */
-    public static @NonNegative int dedupCapacity() {
-        int i = CACHE_OP_DEDUP_CAPACITY;
-        if (i < 0)
-            CACHE_OP_DEDUP_CAPACITY = i = readPositiveInt(OP_DEDUP_CAPACITY, DEF_OP_DEDUP_CAPACITY);
-        return i;
+    public static boolean crossDedup() {
+        Boolean v = CACHE_OP_CROSS_DEDUP;
+        if (v == null)
+            CACHE_OP_CROSS_DEDUP = v = readBoolean(OP_CROSS_DEDUP, DEF_OP_CROSS_DEDUP);
+        return Boolean.TRUE.equals(v);
     }
 
-    public static int crossDedupCapacity() {
-        int i = CACHE_OP_CROSS_DEDUP_CAPACITY;
-        if (i < 0)
-            CACHE_OP_CROSS_DEDUP_CAPACITY = i = readNonNegativeInteger(OP_CROSS_DEDUP_CAPACITY, DEF_OP_CROSS_DEDUP_CAPACITY);
-        return i;
+    /**
+     * Whether results should be opportunistically de-duplicated as early as possible during
+     * execution. I.e., if a query has a globally applied DISTINCT or REDUCED, and doing so would
+     * not change semantics, leaf nodes of the execution will employ low-effort deduplication in
+     * order to reduce the number of rows to be evaluated by the execution node that implements
+     * the DISTINCT/REDUCED clause requested by the query.
+     *
+     * <p>The <strong>default</strong> value is true ({@link #DEF_OP_OPPORTUNISTIC_DEDUP}). The
+     * java corresponding property name is {@link #OP_OPPORTUNISTIC_DEDUP}.</p>
+     *
+     * @return 1 of opportunistic deduplication is enabled, 0 otherwise.
+     */
+    public static int opportunisticDedupCapacity() {
+        Boolean v = CACHE_OP_OPPORTUNISTIC_DEDUP;
+        if (v == null)
+            CACHE_OP_OPPORTUNISTIC_DEDUP = v = readBoolean(OP_OPPORTUNISTIC_DEDUP, DEF_OP_OPPORTUNISTIC_DEDUP);
+        return Boolean.TRUE.equals(v) ? 1 : 0;
     }
 
     private static final class JoinReorderStrategyParser implements Parser<JoinReorderStrategy> {

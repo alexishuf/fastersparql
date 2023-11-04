@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.batch;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 class FailedBItTest {
     @Test void test() {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(Batch.TERM, ex)) {
+        try (var it = new FailedBIt<>(TermBatchType.TERM, ex)) {
             it.minBatch(2);
             try {
                 it.nextBatch(null);
@@ -24,7 +24,7 @@ class FailedBItTest {
 
     @Test void testWait() {
         RuntimeException ex = new RuntimeException("test");
-        try (var it = new FailedBIt<>(Batch.TERM, ex)) {
+        try (var it = new FailedBIt<>(TermBatchType.TERM, ex)) {
             it.minWait(1, TimeUnit.MINUTES).maxWait(2, TimeUnit.MINUTES);
             try {
                 it.nextBatch(null);

@@ -5,10 +5,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadFailedException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchConverter;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.client.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Emitters;
@@ -34,7 +31,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.util.*;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
 import static java.lang.Math.max;
 import static java.lang.String.format;
@@ -394,9 +391,9 @@ public final class Results {
     public Emitter<TermBatch> bindingsEmitter() {
         if (bindingsList == null)
             return Emitters.empty(TERM, bindingsVars);
-        var b = TERM.create(bindingsList.size(), bindingsVars.size());
+        var b = TERM.create(bindingsVars.size());
         for (List<Term> row : bindingsList)
-            b = b.putRow(row);
+            b.putRow(row);
         return Emitters.ofBatch(bindingsVars, b);
     }
     public ItBindQuery<TermBatch> asBindQuery() {
@@ -423,7 +420,7 @@ public final class Results {
 
     /* --- --- --- check() methods --- --- --- */
 
-    /** Equivalent to {@link Results#check(SparqlClient, BatchType)} with {@link Batch#TERM}. */
+    /** Equivalent to {@link Results#check(SparqlClient, BatchType)} with {@link TermBatchType#TERM}. */
     public void check(SparqlClient client) throws AssertionError {
         check(client, TERM);
     }
@@ -591,8 +588,10 @@ public final class Results {
         Throwable thrown = null;
         try {
             for (B b = null; (b = it.nextBatch(b)) != null; ) {
-                for (int i = 0; i < b.rows; i++)
-                    acList.add(normalizeRow(b, i));
+                for (var n = b; n != null; n = n.next) {
+                    for (int i = 0; i < n.rows; i++)
+                        acList.add(normalizeRow(n, i));
+                }
             }
         } catch (Throwable t) { thrown = t; }
         check(acList, thrown, it.vars());
@@ -616,8 +615,10 @@ public final class Results {
         }
 
         @Override public B onBatch(B b) {
-            for (int r = 0; r < b.rows; r++)
-                acList.add(normalizeRow(b, r));
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0; r < n.rows; r++)
+                    acList.add(normalizeRow(n, r));
+            }
             return b;
         }
 
@@ -712,7 +713,7 @@ public final class Results {
                 }
                 case Term[] a -> asList(a);
                 case Batch<?> b -> {
-                    if (b.rows != 1)
+                    if (b.rows != 1 || b.next != null)
                         throw new IllegalArgumentException("Cannot normalize non-singleton batch as row");
                     var list = new ArrayList<Term>(b.cols);
                     for (int c = 0; c < b.cols; c++)

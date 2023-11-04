@@ -179,16 +179,16 @@ public final class QueryRunner {
         public B batch;
         public Accumulator(BatchType<B> batchType) {
             super(batchType);
-            this.batch = batchType.createForTerms(64*BIt.PREFERRED_MIN_BATCH, 1);
+            this.batch = batchType.create(1);
         }
-        @Override public void start(Vars vars) { batch.clear(vars.size()); }
+        @Override public void start(Vars vars) { batch = batch.clear(vars.size()); }
         @Override public void accept(Batch<?> batch) {
             //noinspection unchecked
-            this.batch = this.batch.put((B)batch);
+            this.batch.copy((B)batch);
         }
         @Override public void accept(Batch<?> batch, int row) {
             //noinspection unchecked
-            this.batch = this.batch.putRow((B)batch, row);
+            this.batch.putRow((B)batch, row);
         }
     }
 
@@ -221,7 +221,7 @@ public final class QueryRunner {
         @Override public void start(Vars vars) {
             serializer.init(vars, vars, vars.isEmpty(), sink);
         }
-        @Override public void accept(Batch<?> b) { serializer.serialize(b, sink); }
+        @Override public void accept(Batch<?> b) { serializer.serializeAll(b, sink); }
         @Override public void accept(Batch<?> b, int r) { serializer.serialize(b, r, 1, sink); }
         @Override public void finish(@Nullable Throwable error) {
             try {

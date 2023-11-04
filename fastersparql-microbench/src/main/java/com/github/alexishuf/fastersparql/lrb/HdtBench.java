@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.hdt.FSHdtProperties;
 import com.github.alexishuf.fastersparql.hdt.HdtSparqlClient;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
+import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -74,14 +75,16 @@ public class HdtBench {
 
     private double query(SparqlClient client, SparqlQuery query) {
         int total = 0, lits = 0;
-        try (var it = client.query(HdtBatch.TYPE, query)) {
+        try (var it = client.query(HdtBatchType.HDT, query)) {
             for (HdtBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-                    for (int c = 0; c < cols; c++) {
-                        if (b.termType(r, c) == Term.Type.LIT) ++lits;
+                for (var n = b; n != null; n = n.next) {
+                    for (short r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+                        for (int c = 0; c < cols; c++) {
+                            if (n.termType(r, c) == Term.Type.LIT) ++lits;
+                        }
                     }
+                    total += n.rows * n.cols;
                 }
-                total += b.rows*b.cols;
             }
         }
         return lits/(double)total;

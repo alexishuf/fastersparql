@@ -97,7 +97,7 @@ public abstract class AbstractBItTest {
 
     /** High-precision sleep */
     public static void busySleepMillis(double millis) {
-        long end = System.nanoTime() + (long)Math.ceil(millis*1_000_000.0);
+        long end = System.nanoTime() + (long)Math.ceil(millis*1_000_000);
         while (System.nanoTime() < end)
             Thread.yield();
     }

@@ -27,10 +27,11 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
             throw new ExceptionInInitializerError(e);
         }
     }
-    @SuppressWarnings("unchecked") private Receiver<B>[] extraDownstream = new Receiver[10];
     private int extraDownstreamCount;
-    private @Nullable B copyTmp;
-    @SuppressWarnings("unused") private int plainSubscribeLock;
+    @SuppressWarnings("unchecked")
+    private Receiver<B>[] extraDownstream = new Receiver[10];
+    @SuppressWarnings("unused")
+    private int plainSubscribeLock;
     private boolean started;
     private byte delayRelease;
 
@@ -50,7 +51,7 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
                     if (extraDownstream[i] == receiver) return;
                 }
                 if (extraDownstreamCount == extraDownstream.length)
-                    extraDownstream = Arrays.copyOf(extraDownstream, extraDownstream.length * 2);
+                    extraDownstream = Arrays.copyOf(extraDownstream, extraDownstream.length*2);
                 extraDownstream[extraDownstreamCount++] = receiver;
             }
             if (ENABLED)
@@ -79,51 +80,52 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
     }
 
     @Override public @Nullable B onBatch(B batch) {
-        if (batch.rows == 1) {
+        if (batch.rows == 1 && batch.next == null) {
             onRow(batch, 0);
             return batch;
         }
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchPassThrough(batch);
-        B copy = batch.copy(Batch.asUnpooled(copyTmp));
-        copyTmp = null;
-        for (int i = 0, last = extraDownstreamCount-1; i <= last; i++) {
-            B offer = extraDownstream[i].onBatch(copy);
-            copy = offer == copy || i == last ? offer : batch.copy(offer);
-        }
-        copyTmp = Batch.asPooled(copy);
+        if (downstream == null)
+            throw new NoReceiverException();
+        B copy = null;
+        for (int i = 0; i < extraDownstreamCount; i++)
+            copy = extraDownstream[i].onBatch(copy == null ? batch.dup() : copy);
+        batchType.recycle(copy);
         return downstream.onBatch(batch);
     }
 
     @Override public void onRow(B batch, int row) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onRowPassThrough();
+        if (downstream == null)
+            throw new NoReceiverException();
         downstream.onRow(batch, row);
         for (int i = 0; i < extraDownstreamCount; i++)
             extraDownstream[i].onRow(batch, row);
     }
 
     @Override public void onComplete() {
-        super.onComplete();
+        if (downstream == null)
+            throw new NoReceiverException();
+        downstream.onComplete();
         for (int i = 0; i < extraDownstreamCount; i++)
             extraDownstream[i].onComplete();
-        if (delayRelease == 0)
-            copyTmp = Batch.recyclePooled(copyTmp);
     }
 
     @Override public void onCancelled() {
-        super.onCancelled();
+        if (downstream == null)
+            throw new NoReceiverException();
+        downstream.onCancelled();
         for (int i = 0; i < extraDownstreamCount; i++)
             extraDownstream[i].onCancelled();
-        if (delayRelease == 0)
-            copyTmp = Batch.recyclePooled(copyTmp);
     }
 
     @Override public void onError(Throwable cause) {
-        super.onError(cause);
+        if (downstream == null)
+            throw new NoReceiverException();
+        downstream.onError(cause);
         for (int i = 0; i < extraDownstreamCount; i++)
             extraDownstream[i].onError(cause);
-        if (delayRelease == 0)
-            copyTmp = Batch.recyclePooled(copyTmp);
     }
 }

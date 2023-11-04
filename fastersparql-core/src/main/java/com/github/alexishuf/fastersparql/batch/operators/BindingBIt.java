@@ -42,7 +42,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         var left = bindQuery.bindings;
         Vars leftPublicVars = left.vars();
         Vars rFree = bindQuery.query.publicVars().minus(leftPublicVars);
-        this.lb          = batchType.createSingleton(leftPublicVars.size());
+        this.lb          = batchType.create(leftPublicVars.size());
         this.bindQuery   = bindQuery;
         this.empty       = inner;
         this.merger      = batchType.merger(vars(), leftPublicVars, rFree);
@@ -80,13 +80,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     /* --- --- --- delegate control --- --- --- */
 
-    @Override public @Nullable B recycle(B batch) {
-        if (batch == null || super.recycle(batch) == null) return null;
-        if (bindQuery.bindings.recycle(batch) == null) return null;
-        if (inner.recycle(batch) == null) return null;
-        return batch;
-    }
-
     /* --- --- --- binding behavior --- --- --- */
     protected abstract BIt<B> bind(BatchBinding binding);
 
@@ -101,13 +94,16 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         try {
             long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
             boolean rightEmpty = false, bindingEmpty = false;
-            b = getBatch(b);
+            b = batchType.empty(b, nColumns);
             do {
                 if (inner == empty) {
                     if (++leftRow >= lb.rows) {
                         leftRow = 0;
-                        lb = bindQuery.bindings.nextBatch(lb);
-                        if (lb == null) break; // reached end
+                        B n = lb.dropHead();
+                        if (n != null)
+                            lb = n;
+                        else if ((lb = bindQuery.bindings.nextBatch(n)) == null)
+                            break; // reached end
                     }
                     inner = bind(tempBinding.attach(lb, leftRow));
                     rightEmpty = true;
@@ -123,7 +119,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 };
                 bindingEmpty &= (action&PUB_MASK) == 0;
                 if      ((action&PUB_MERGE) != 0) b = merger.merge(b, lb, leftRow, rb);
-                else if ((action&PUB_LEFT)  != 0) b = b.putRow(lb, leftRow);
+                else if ((action&PUB_LEFT)  != 0) b.putRow(lb, leftRow);
                 if ((action&CANCEL) != 0) {
                     inner.close();
                     inner = empty;
@@ -133,7 +129,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                     if (bindingEmpty) bindQuery.   emptyBinding(seq);
                     else    bindQuery.nonEmptyBinding(seq);
                 }
-            } while (readyInNanos(b.rows, startNs) > 0);
+            } while (readyInNanos(b.totalRows(), startNs) > 0);
             if (b.rows == 0) b = handleEmptyBatch(b);
             else             onNextBatch(b);
         } catch (Throwable t) {
@@ -145,7 +141,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     }
 
     @SuppressWarnings("SameReturnValue") private B handleEmptyBatch(B batch) {
-        batchType.recycle(recycle(batch));
+        batch.recycle();
         safeCleanupThread = Thread.currentThread();
         onTermination(null);
         safeCleanupThread = null;

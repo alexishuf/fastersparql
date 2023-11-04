@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -119,7 +119,7 @@ class ResultsParserTest {
     }
 
     private void singleFeed(ResultsParser.Factory factory, Results ex, SegmentRope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), queueMaxRows())) {
+        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars(), queueMaxRows())) {
             var parser = factory.create(dst);
             Rope copy = ropeFac.create(input, 0, input.len());
             try {
@@ -132,7 +132,7 @@ class ResultsParserTest {
     }
 
     private void byteFeed(ResultsParser.Factory factory, Results ex, Rope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars(), 2)) {
             var parser = factory.create(dst);
             Thread.startVirtualThread(() -> {
                 try {
@@ -150,7 +150,7 @@ class ResultsParserTest {
 
     private void wsFeed(ResultsParser.Factory factory, Results ex, Rope input,
                         RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars(), 2)) {
             var parser = factory.create(dst);
             Thread.startVirtualThread(() -> {
                 try {
@@ -171,7 +171,7 @@ class ResultsParserTest {
 
     private void lineFeed(ResultsParser.Factory factory, Results ex, Rope input,
                           RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(Batch.TERM, ex.vars(), 2)) {
+        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars(), 2)) {
             var parser = factory.create(dst);
             Thread.startVirtualThread(() -> {
                 try {

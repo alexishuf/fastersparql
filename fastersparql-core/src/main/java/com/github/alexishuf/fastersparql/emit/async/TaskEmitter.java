@@ -48,10 +48,10 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     @SuppressWarnings("unused") protected long plainRequested;
     private @MonotonicNonNull Receiver<B> receiver0;
     private @MonotonicNonNull Receiver<B> receiver1;
-    private @Nullable B scattered;
+    protected final BatchType<B> bt;
+    protected short threadId, outCols;
     private @Nullable Extra<B> extra;
     protected final Vars vars;
-    protected final BatchType<B> batchType;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
     protected Throwable error = UNSET_ERROR;
 
@@ -76,12 +76,15 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
                           int initState, Flags flags) {
         super(runner, worker, initState, flags);
         this.vars = vars;
-        this.batchType = batchType;
+        this.bt = batchType;
+        int ouCols = vars.size();
+        if (ouCols > Short.MAX_VALUE)
+            throw new IllegalArgumentException("too many columns");
+        this.outCols = (short)ouCols;
         assert flags.contains(TASK_EMITTER_FLAGS);
     }
 
     @Override protected void doRelease() {
-        scattered = Batch.recyclePooled(scattered);
         if (EmitterStats.ENABLED && stats != null)
             stats.report(log, this);
         super.doRelease();
@@ -108,7 +111,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     @Override public boolean      canScatter() { return true; }
     @Override public Vars         vars()       { return vars; }
-    @Override public BatchType<B> batchType()  { return batchType; }
+    @Override public BatchType<B> batchType()  { return bt; }
+
 
     @Override public void cancel() {
         if (moveStateRelease(statePlain(), CANCEL_REQUESTING))
@@ -165,8 +169,9 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     protected abstract int produceAndDeliver(int state);
 
-    @Override protected void task() {
-        int st = state(), termState = st;
+    @Override protected void task(int threadId) {
+        this.threadId = (short)threadId;
+        int st = state(), termState;
         if ((st&IS_PENDING_TERM) != 0) {
             termState = (st&~IS_PENDING_TERM)|IS_TERM;
         } else if ((st&IS_CANCEL_REQ) != 0) {
@@ -178,6 +183,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
                 if (this.error == UNSET_ERROR) this.error = t;
                 termState = FAILED;
             }
+        } else {
+            return; // already terminated
         }
 
         if ((termState&IS_TERM) != 0)
@@ -190,19 +197,14 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
         if (receiver1 != null) {
-            B copy = b.copy(Batch.asUnpooled(scattered));
-            scattered = null;
+            B copy = b.dup();
             copy = deliver(receiver1, copy);
             if (extra != null) {
-                int rows = b.rows, cols = b.cols;
-                Receiver<B>[] receivers = extra.receivers;
-                for (int i = 0, n = extra.nReceivers; i < n; i++) {
-                    if (copy == null || copy.rows != rows || copy.cols != cols)
-                        copy = b.copy(copy);
-                    copy = deliver(receivers[i], copy);
-                }
+                var recs = extra.receivers;
+                for (int i = 0, n = extra.nReceivers; i < n; i++)
+                    copy = deliver(recs[i], copy == null ? b.dup() : copy);
             }
-            scattered = Batch.asPooled(copy);
+            bt.recycle(copy);
         }
         return deliver(receiver0, b);
     }
@@ -252,6 +254,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     }
 
     protected void deliverTermination(int current, int termState) {
+        assert (state()&IS_TERM) == 0 : "deliverTermination() while already terminated";
         if (moveStateRelease(current, termState)) {
             deliverTermination(receiver0, termState);
             if (receiver1 != null)

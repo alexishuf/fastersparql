@@ -54,19 +54,11 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                 }
             }
             if      (b       == null) onTermination(false, null); //exhausted
-            else if (metrics != null) metrics.batch(b.rows);
+            else if (metrics != null) metrics.batch(b.totalRows());
             return b;
         } catch (Throwable t) {
             onTermination(false, t); //error
             throw t;
         }
-    }
-
-    @Override public @Nullable B recycle(@Nullable B batch) {
-        return processor.recycle(batch);
-    }
-
-    @Override public @Nullable B stealRecycled() {
-        return processor.stealRecycled();
     }
 }

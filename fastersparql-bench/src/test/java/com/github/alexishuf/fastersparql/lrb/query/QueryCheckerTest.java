@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -27,8 +29,8 @@ class QueryCheckerTest {
     static Stream<Arguments> test() {
         List<Arguments> list = new ArrayList<>();
         for (QueryName qry : QueryName.values()) {
-            if (qry.expected(Batch.TERM) == null) continue;
-            for (var type : List.of(Batch.TERM, Batch.COMPRESSED)) {
+            if (qry.expected(TermBatchType.TERM) == null) continue;
+            for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
                 for (Variant variant : Variant.values())
                     list.add(arguments(qry, type, variant));
             }
@@ -52,22 +54,20 @@ class QueryCheckerTest {
         Thread.startVirtualThread(() -> {
             try {
                 assertNotNull(ex);
-                B tmp = bt.createSingleton(ex.cols);
-                int start = ex.rows - (variant == Variant.SKIP_LAST ? 2 : 1);
-                for (int r = start; r >= 0; r--) {
-                    if (tmp == null && (tmp = it.stealRecycled()) == null)
-                        tmp = bt.createSingleton(ex.cols);
-                    else
-                        tmp.clear();
-                    tmp = tmp.putRow(ex, r);
-                    tmp = it.offer(tmp);
-                }
-                if (variant == Variant.EMIT_NULL) {
-                    if (tmp == null && (tmp = it.stealRecycled()) == null)
-                        tmp = bt.createSingleton(ex.cols);
-                    else tmp.clear(ex.cols);
-                    (tmp = tmp.beginPut()).commitPut();
-                    bt.recycle(it.offer(tmp));
+                B tmp = bt.create(ex.cols);
+                for (var node = ex; node != null; node = node.next) {
+                    int start = node.rows - (variant == Variant.SKIP_LAST ? 2 : 1);
+                    for (int r = start; r >= 0; r--) {
+                        tmp = bt.empty(tmp, node.cols);
+                        tmp.putRow(node, r);
+                        tmp = it.offer(tmp);
+                    }
+                    if (variant == Variant.EMIT_NULL) {
+                        tmp = bt.empty(tmp, node.cols);
+                        tmp.beginPut();
+                        tmp.commitPut();
+                        bt.recycle(it.offer(tmp));
+                    }
                 }
                 it.complete(null);
             } catch (Throwable t) {

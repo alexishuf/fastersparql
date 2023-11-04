@@ -165,7 +165,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         throw TerminatedException.INSTANCE;
                 } else if (f == null) { // no filling batch
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
-                    if (READY.getOpaque(this) == null && readyInNanos(b.rows, fillingStart) == 0) {
+                    if (READY.getOpaque(this) == null && readyInNanos(b.totalRows(), fillingStart) == 0) {
                         READY.setRelease(this, b);
                         fillingStart = Timestamp.ORIGIN;
                         unpark(consumer);
@@ -176,8 +176,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     b = null;
                     break;
                 } else {
-                    boolean park = mustPark(b.rows, f.rows);
-                    if (plainReady == null && (park || readyInNanos(f.rows, fillingStart) == 0)) {
+                    boolean park = mustPark(b.totalRows(), f.totalRows());
+                    if (plainReady == null && (park || readyInNanos(f.totalRows(), fillingStart) == 0)) {
                         READY.setRelease(this, f);
                         fillingStart = Timestamp.ORIGIN;
                         unpark(consumer);
@@ -194,7 +194,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         lock();
                         locked = true;
                     } else {
-                        this.filling = f.put(b, RECYCLED, this);
+                        f.append(b);
+                        b = null;
                         delayedWake = consumer; // delay unpark() to avoid Thread.yield
                         break;
                     }
@@ -205,7 +206,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             if (eager) eager = false;
             unpark(delayedWake);
         }
-        if (b == null && (b = stealRecycled()) != null) b.clear(vars.size());
         return b;
     }
 
@@ -223,17 +223,17 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 B dst = this.filling;
                 // try publishing filling as READY since put() might take > 1us
                 if (dst != null && READY.getOpaque(this) == null
-                        && readyInNanos(dst.rows, fillingStart) == 0) {
+                        && readyInNanos(dst.totalRows(), fillingStart) == 0) {
                     READY.setRelease(this, dst);
                     fillingStart = Timestamp.ORIGIN;
                     unpark(consumer); // delayedWake unnecessary
                     dst = null;
                 }
                 if (dst == null) { // no filling or published filling to READY
-                    filling = dst = getBatch(null);
+                    filling = dst = batchType.create(nColumns);
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                 }
-                if (mustPark(b.rows, dst.rows)) { // park() until free capacity
+                if (mustPark(b.totalRows(), dst.totalRows())) { // park() until free capacity
                     producer = Thread.currentThread();
                     //dbg.write("copy: parking, b.rows=", b.rows);
                     LOCK.setRelease(this, 0);
@@ -243,8 +243,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     lock();
                     locked = true;
                 } else { // put and return
-                    this.filling = dst = dst.put(b, RECYCLED, this);
-                    if (READY.getOpaque(this) == null && readyInNanos(dst.rows, fillingStart)==0) {
+                    dst.copy(b);
+                    if (READY.getOpaque(this) == null && readyInNanos(dst.totalRows(), fillingStart)==0) {
                         READY.setRelease(this, dst);
                         this.filling = null;
                         fillingStart = Timestamp.ORIGIN;
@@ -264,7 +264,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- consumer methods --- --- --- */
 
     @Override public @Nullable B nextBatch(@Nullable B offer) {
-        offer = recycle(offer);
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
         B b = lockOrTakeReady();
         boolean locked = b == null;
@@ -277,7 +276,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 if ((b = (B)READY.getAndSetAcquire(this, null)) != null) {
                     break;
                 } else if (filling != null) { // steal or determine nanos until re-check
-                    if ((parkNs = readyInNanos(filling.rows, fillingStart)) == 0 || plainState.isTerminated()) {
+                    if ((parkNs = readyInNanos(filling.totalRows(), fillingStart)) == 0 || plainState.isTerminated()) {
                         if (filling.rows > 0) b = filling;
                         else                  batchType.recycle(filling);
                         this.filling = null;
@@ -289,7 +288,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;
                     if (offer != null) {
-                        this.filling = offer.clear(vars.size());
+                        this.filling = offer.clear(nColumns);
                         offer = null;
                     }
                     if (needsStartTime) fillingStart = nanoTime();
@@ -312,7 +311,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         } finally {
             if (locked) LOCK.setRelease(this, 0);
             // recycle offer if we did not already
-            if (offer != null && recycle(offer) != null) batchType.recycle(offer);
+            Batch.recycle(offer);
             unpark(producer);
         }
 
@@ -326,11 +325,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @SuppressWarnings("SameReturnValue") private @Nullable B onTerminal() {
         lock();
         try {
-            batchType.recycle(stealRecycled());
-            if (filling != null) {
-                batchType.recycle(filling);
-                filling = null;
-            }
+            filling = Batch.recycle(filling);
         } finally { LOCK.setRelease(this, 0); }
         checkError();
         return null;

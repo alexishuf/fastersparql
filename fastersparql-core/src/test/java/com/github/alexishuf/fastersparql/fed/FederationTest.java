@@ -29,7 +29,7 @@ class FederationTest {
                 new Empty(Vars.of("x"), Vars.of("x", "y")),
                 new Join(tp1, tp2),
                 new Join(tp1, tp2, tp3),
-                FS.union(tp1, FS.union(23, tp2, tp3))
+                FS.union(tp1, FS.union(true, tp2, tp3))
         );
 
         List<Arguments> list = new ArrayList<>();

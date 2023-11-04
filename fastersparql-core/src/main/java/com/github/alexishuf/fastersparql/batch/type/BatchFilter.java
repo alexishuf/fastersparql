@@ -28,7 +28,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
-    protected final int outColumns;
+    protected final short outColumns;
     @SuppressWarnings("unused") protected long requestLimit, plainUpRequested;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -38,7 +38,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         super(batchType, outVars, CREATED, PROC_FLAGS);
         this.rowFilter = rowFilter;
         this.before = before;
-        this.outColumns = outVars.size();
+        this.outColumns = (short)outVars.size();
         requestLimit = Long.MAX_VALUE;
         for (var bf = this; bf != null && requestLimit == Long.MAX_VALUE; bf = bf.before)
             requestLimit = bf.rowFilter.upstreamRequestLimit();
@@ -111,10 +111,10 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- Receiver methods --- --- --- */
 
-    @Override public @Nullable B onBatch(B batch) {
-        if (batch == null) return null;
-        REQUEST_LIMIT.getAndAddRelease(this, (long)-batch.rows);
-        return super.onBatch(batch);
+    @Override protected void onBatchPrologue(B batch) {
+        super.onBatchPrologue(batch);
+        if (batch != null)
+            REQUEST_LIMIT.getAndAddRelease(this, (long)-batch.totalRows());
     }
 
     @Override public void onRow(B batch, int row) {
@@ -150,19 +150,33 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- BatchProcessor methods --- --- --- */
 
-    @Override public final B processInPlace(B b) { return filterInPlace(b); }
-
     public final boolean isDedup() {
         return rowFilter instanceof Dedup<B> || (before != null && before.isDedup());
     }
 
-    public abstract B filter(B dst, B in);
-
     public abstract B filterInPlace(B in);
 
-    protected B filterEmpty(@Nullable B dst, B in) {
+    protected final B filterInPlaceSkipEmpty(B b, B prev) {
+        prev.next = b.dropHead();
+        return prev;
+    }
+
+    protected final B filterInPlaceEpilogue(B in, B last) {
+        if (in != null) {
+            in  .tail = last;
+            last.tail = last;
+            if (in.rows == 0) {
+                if (in.next == null) in.cols = outColumns;
+                else                 in = in.dropHead();
+            }
+            assert in == null || in.validate();
+        }
+        return in;
+    }
+
+    protected B filterEmpty(@Nullable B dst, B originalIn, B in) {
         if (in == null) return null;
-        int survivors = 0;
+        short survivors = 0;
         for (int r = 0, rows = in.rows; r < rows; r++) {
             switch (rowFilter.drop(in, r)) {
                 case KEEP      -> ++survivors;
@@ -173,24 +187,14 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
             dst.rows = survivors;
         } else {
             if (dst == null)
-                dst = in.type().createForTerms(outColumns, outColumns);
+                dst = batchType.create(outColumns);
             else if (dst.rows > 0 && dst.cols != outColumns)
                 throw new IllegalArgumentException("dst not empty and dst.cols != outColumns");
             dst.rows += survivors;
         }
         dst.cols = outColumns;
+        if (in != originalIn && in != dst)
+            in.recycle();
         return dst;
-    }
-
-    protected final B endFilter(B b, int terms, int cols, boolean cancel) {
-        b.rows = terms/cols;
-        b.cols = cols;
-        assert b.validate();
-        if (cancel) {
-            cancelUpstream();
-            if (b.rows == 0)
-                return b.recycle();
-        }
-        return b;
     }
 }

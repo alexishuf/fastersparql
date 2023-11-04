@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -36,16 +36,18 @@ public class RopeDictBench {
         rt = new RopeTypeHolder(ropeType);
         ByteSink sink = rt.byteSink().touch();
         int terms = 0, i = 0;
-        var batches = uniformCols(fromName(Batch.TERM, sizeName), Batch.TERM);
+        var batches = uniformCols(fromName(TermBatchType.TERM, sizeName), TermBatchType.TERM);
         for (TermBatch b : batches)
-            terms += b.rows*b.cols;
+            terms += b.totalRows()*b.cols;
         int[] starts = new int[terms+1];
         for (TermBatch b : batches) {
-            for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    starts[i++] = sink.len();
-                    Term term = b.get(r, c);
-                    if (term != null) sink.append(term);
+            for (var n = b; n != null; n = n.next) {
+                for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        starts[i++] = sink.len();
+                        Term term = n.get(r, c);
+                        if (term != null) sink.append(term);
+                    }
                 }
             }
         }

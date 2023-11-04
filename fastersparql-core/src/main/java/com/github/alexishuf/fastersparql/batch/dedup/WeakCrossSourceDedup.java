@@ -12,36 +12,40 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     private final RowBucket<B> table;
     private int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
     private byte[] bucketInsertion; // values are 0 <= bucketInsertion[i] < 8
-    private final int bucketMask, buckets, capacity;
+    private short buckets, bucketWidth;
 
-    public WeakCrossSourceDedup(BatchType<B> batchType, int capacity, int cols) {
+    public WeakCrossSourceDedup(BatchType<B> batchType, int cols) {
         super(batchType, cols);
-        if (capacity <= 0 || cols < 0)
+        if (cols < 0)
             throw new IllegalArgumentException();
-        // round capacity up to the nearest power-of-2
-        capacity = 1 + (-1 >>> Integer.numberOfLeadingZeros(Math.max(8, capacity)-1));
-        this.capacity = capacity;
-        this.buckets = capacity >> 3;
-        this.bucketMask = buckets-1;
+        int rowsCapacity = Math.max(batchType.preferredTermsPerBatch()/cols, 1);
+        this.table = batchType.createBucket(rowsCapacity, cols);
+        this.table.maximizeCapacity();
+        clear0(table.capacity());
+    }
+
+    private void clear0(int rowsCapacity) {
+        bucketWidth = (short)(rowsCapacity > 16 ? 4 : 1);
+        buckets = (short)(rowsCapacity/bucketWidth);
+        rowsCapacity = buckets*bucketWidth;
         this.bucketInsertion = ArrayPool.bytesAtLeast(buckets); // each bucket has 8 items
-        this.hashesAndSources = ArrayPool.intsAtLeast(capacity<<1);
+        this.hashesAndSources = ArrayPool.intsAtLeast(rowsCapacity<<1);
         Arrays.fill(bucketInsertion, (byte)0);
         Arrays.fill(hashesAndSources, 0);
-        this.table = batchType.createBucket(capacity, cols);
     }
 
     @Override public void clear(int cols) {
-        hashesAndSources = ArrayPool.intsAtLeast(capacity<<1, hashesAndSources);
-        bucketInsertion = ArrayPool.bytesAtLeast(buckets, bucketInsertion);
-        Arrays.fill(hashesAndSources, 0);
-        Arrays.fill(bucketInsertion, (byte) 0);
-        table.clear(table.capacity(), cols);
+        int rowsCapacity = Math.max(table.batchType().preferredTermsPerBatch()/cols, 1);
+        table.clear(rowsCapacity, cols);
+        table.maximizeCapacity();
+        rowsCapacity = table.capacity();
+        clear0(rowsCapacity);
     }
 
     @Override public void recycleInternals() {
         hashesAndSources = ArrayPool.INT.offer(hashesAndSources, hashesAndSources.length);
         bucketInsertion = ArrayPool.BYTE.offer(bucketInsertion, bucketInsertion.length);
-        bt.recycleBucket(table);
+        table.recycleInternals();
     }
 
     @Override public int capacity() { return table.capacity(); }
@@ -69,8 +73,8 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public boolean isDuplicate(B batch, int row, int source) {
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
-        int bucket = hash & bucketMask;
-        int begin = bucket << 3, end = begin+8, match = -1;
+        short bucket = (short)((hash&Integer.MAX_VALUE)%buckets), bucketWidth = this.bucketWidth;
+        int begin = bucket*bucketWidth, end = begin+bucketWidth, match = -1;
         for (int i = begin; match == -1 && i < end; i++) {
             if (hashesAndSources[i<<1] == hash && table.equals(i, batch, row))
                 match = i;
@@ -81,7 +85,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
             if (match == -1) { // add row to the table, consuming an insertion point
                 sources = 0;
                 match = begin + bucketInsertion[bucket]; //get insertion index
-                bucketInsertion[bucket] = (byte) ((bucketInsertion[bucket] + 1) & 7);
+                bucketInsertion[bucket] = (byte) ((bucketInsertion[bucket] + 1) % bucketWidth);
                 table.set(match, batch, row);
                 int hashIdx = match << 1;
                 sourcesIdx = hashIdx+1;
@@ -104,8 +108,9 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public boolean contains(B batch, int row) {
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
-        int i = (hash & bucketMask) << 3, e = i+8;
-        while (i < e && (hashesAndSources[i<<1] != hash || !table.equals(i, batch, row))) ++i;
+        int i = ((hash&Integer.MAX_VALUE)%buckets)*bucketWidth, e = i+bucketWidth;
+        while (i < e && (hashesAndSources[i<<1] != hash || !table.equals(i, batch, row)))
+            ++i;
         return i < e;
     }
 

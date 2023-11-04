@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
 import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,22 +24,16 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class WeakCrossSourceDedupTest {
 
     static Stream<Arguments> testHashtableSingleThread() {
-        List<Arguments> list = new ArrayList<>();
-        //why low capacities: more races, collisions and overflows
-        for (Integer capacity : of(8, 9, 15)) {
-            for (Integer rows : of(1, 8, 9, 1024))
-                list.add(arguments(capacity, rows));
-        }
-        return list.stream();
+        return Stream.of(1, 8, 9, 1024).map(Arguments::arguments);
     }
 
     private static TermBatch prefixedRow(int n) {
         return TermBatch.of(termList("\"abcdef"+n+"\""));
     }
 
-    @ParameterizedTest @MethodSource
-    void testHashtableSingleThread(int capacity, int rows) {
-        var table = new WeakCrossSourceDedup<>(Batch.TERM, capacity, 1);
+    @ParameterizedTest @ValueSource(ints = {1, 8, 9, 1024})
+    void testHashtableSingleThread(int rows) {
+        var table = new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
         for (int row = 0; row < rows; row++) {
             assertFalse(table.isDuplicate(prefixedRow(row), 0, 0));
             assertFalse(table.isDuplicate(prefixedRow(row), 0, 32)); // share the same bit
@@ -54,14 +49,14 @@ class WeakCrossSourceDedupTest {
         int processors = Runtime.getRuntime().availableProcessors();
         for (int multiplier : of(1, 2, 4))
             testHashtableSingleThread()
-                    .map(a -> arguments(a.get()[0], a.get()[1], processors*multiplier))
+                    .map(a -> arguments(a.get()[0], processors*multiplier))
                     .forEach(list::add);
         return list.stream();
     }
 
     @ParameterizedTest @MethodSource
-    void testHashtableConcurrent(int capacity, int rows, int threads) throws Exception {
-        var table = new WeakCrossSourceDedup<>(Batch.TERM, capacity, 2);
+    void testHashtableConcurrent(int rows, int threads) throws Exception {
+        var table = new WeakCrossSourceDedup<>(TermBatchType.TERM, 2);
         List<Future<?>> tasks = new ArrayList<>();
         try (var executor = Executors.newFixedThreadPool(threads)) {
             IntStream.range(0, threads).forEach(thread -> tasks.add(executor.submit(() -> {

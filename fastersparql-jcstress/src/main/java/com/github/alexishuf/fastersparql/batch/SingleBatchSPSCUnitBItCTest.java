@@ -35,7 +35,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 
 // See jcstress-samples or existing tests for API introduction and testing guidelines
 

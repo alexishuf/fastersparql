@@ -14,6 +14,9 @@ public interface BatchQueue<B extends Batch<B>> {
     /** Names for the columns in {@link #offer(Batch)}ed batches. */
     Vars vars();
 
+    /** Create an empty batch with {@link #vars()}{@code .size()} columns. */
+    default B createBatch() { return batchType().create(vars().size()); }
+
     class QueueStateException extends Exception {
         public QueueStateException(String message) { super(message); }
     }

@@ -4,8 +4,8 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItGenerator;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
@@ -38,8 +38,8 @@ class WeakCrossSourceDedupBItTest {
                 its.add(gen.asBIt(it -> it.minBatch(minBatch).maxBatch(maxBatch), sources.get(i)));
                 operands[i] = new Empty(Vars.of("x"), Vars.of("x"));
             }
-            var union = new Union(0, operands);
-            var dedup = new WeakCrossSourceDedup<>(Batch.TERM, 3, 1);
+            var union = new Union(false, operands);
+            var dedup = new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
             Vars outVars = union.publicVars();
             Metrics m = Metrics.createIf(union);
             //noinspection resource

@@ -52,6 +52,10 @@ public class DebugJournal {
      * Default lines capacity for {@link #role(String)}.
      */
     public static final int DEF_LINES = 512;
+
+    private static final int UNLOCKED = 0;
+    private static final int LOCKED   = 1;
+    private static final int DUMPING  = 2;
     private static final VarHandle LOCK;
 
     static {
@@ -73,8 +77,19 @@ public class DebugJournal {
 
     public RoleJournal role(String name) { return role(name, DEF_LINES); }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted") private boolean lock(int target) {
+        int actual;
+        while ((actual=(int)LOCK.compareAndExchangeAcquire(this, UNLOCKED, target)) != UNLOCKED) {
+            if (actual == DUMPING) return false;
+            else                   Thread.onSpinWait();
+        }
+        return true;
+    }
+
+
     public RoleJournal role(String name, int lines) {
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
+        if (!lock(LOCKED))
+            return new RoleJournal(name, 2);
         try {
             int i = roles.indexOf(name);
             if (i >= 0)
@@ -88,7 +103,8 @@ public class DebugJournal {
 
     /** Equivalent to calling {@link RoleJournal#close()} on all journals not yet closed. */
     public void closeAll() {
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
+        if (!lock(LOCKED))
+            return;
         try {
             for (RoleJournal j : roleJournals)
                 j.closed = true;
@@ -112,7 +128,8 @@ public class DebugJournal {
     }
 
     public String toString(int columnWidth) {
-        while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+        if (!lock(DUMPING))
+            return "<<<concurrent DebugJournal.toString() call>>>";
         try {
             String tickFmt = "T=%0" + Integer.toString(tick).length() + "d";
             String colFmt = " | %" + columnWidth + "s";
@@ -122,10 +139,10 @@ public class DebugJournal {
             appendHeaders(sb, tickFmt, colFmt);
 
             // write rs
-            int[] rs = new int[roles.size()];
-            for (int i = 0,  t = currentTick(rs); !ended(rs); t = currentTick(increment(t, rs)), ++i) {
+            ParallelIterator it = new ParallelIterator();
+            for (int i = 0, t = it.currentTick(); it.hasNext(); t = it.nextTick(t), ++i) {
                 sb.append(String.format(tickFmt, t));
-                render(sb, columnWidth, t, rs);
+                it.render(sb, columnWidth, t);
                 sb.append('\n');
                 if (i == 100)  {
                     i = -1;
@@ -145,49 +162,75 @@ public class DebugJournal {
         sb.append('\n');
     }
 
-    private boolean ended(int[] rows) {
-        for (int i = 0; i < rows.length; i++) {
-            if (rows[i] < roleJournals.get(i).size())
-                return false;
-        }
-        return true;
-    }
+    private final class ParallelIterator {
+        int[] physRows;
+        int[] physSize;
 
-    private int currentTick(int[] rows) {
-        int t = Integer.MAX_VALUE;
-        for (int i = 0; i < rows.length; i++) {
-            RoleJournal j = roleJournals.get(i);
-            if (rows[i] < j.size())
-                t = min(t, j.tick(rows[i]));
-        }
-        return t;
-    }
-
-    private void render(StringBuilder dest, int width, int tick, int[] rows) {
-        String whitespace = " ".repeat(Math.max(0, width));
-        for (int i = 0; i < rows.length; i++) {
-            dest.append(" | ");
-            RoleJournal j = roleJournals.get(i);
-            if (j.tick(rows[i]) == tick) {
-                int before = dest.length();
-                j.render(dest, width, rows[i]);
-                dest.append(" ".repeat(Math.max(0, width - (dest.length() - before))));
-            } else {
-                dest.ensureCapacity(dest.length()+width);
-                dest.append(whitespace);
+        public ParallelIterator() {
+            int n = roleJournals.size();
+            physRows = new int[n];
+            physSize = new int[n];
+            for (int i = 0; i < n; i++) {
+                var journal  = roleJournals.get(i);
+                int end      = (int)RoleJournal.END.getOpaque(journal);
+                int capacity = journal.ticksAndFlags.length >> 1;
+                physRows[i] = Math.max(0, end-capacity)%capacity;
+                physSize[i] = min(end, capacity);
             }
         }
-    }
 
-    private int[] increment(int tick, int[] rows) {
-        for (int i = 0; i < rows.length; i++) {
-            if (roleJournals.get(i).tick(rows[i]) == tick) ++rows[i];
+        boolean hasNext() {
+            for (int size : physSize) {
+                if (size > 0) return true;
+            }
+            return false;
         }
-        return rows;
+
+        int currentTick() {
+            int t = Integer.MAX_VALUE;
+            for (int i = 0; i < physRows.length; i++) {
+                if (physSize[i] > 0)
+                    t = min(t, roleJournals.get(i).ticksAndFlags[physRows[i]<<1]);
+            }
+            return t;
+        }
+
+        int nextTick(int curr) {
+            for (int i = 0; i < physRows.length; i++) {
+                if (physSize[i] > 0) {
+                    var journal = roleJournals.get(i);
+                    if (journal.ticksAndFlags[physRows[i]<<1] == curr) {
+                        int capacity = journal.ticksAndFlags.length >> 1;
+                        physRows[i] = (physRows[i]+1) % capacity;
+                        --physSize[i];
+                    }
+                }
+            }
+            return currentTick();
+        }
+
+        void render(StringBuilder dst, int width, int currentTick) {
+            String whitespace = " ".repeat(Math.max(0, width));
+            for (int i = 0; i < physRows.length; i++) {
+                dst.append(" | ");
+                RoleJournal j = roleJournals.get(i);
+                int physRow = physRows[i];
+                if (j.ticksAndFlags[physRow<<1] == currentTick) {
+                    int before = dst.length();
+                    j.render(dst, width, physRow);
+                    dst.append(" ".repeat(Math.max(0, width - (dst.length() - before))));
+                } else {
+                    dst.ensureCapacity(dst.length()+width);
+                    dst.append(whitespace);
+                }
+            }
+        }
+
     }
 
     private void dropRole(String name) {
-        while (!LOCK.weakCompareAndSetAcquire(this, 0, 1)) Thread.onSpinWait();
+        if (!lock(LOCKED))
+            return;
         try {
             int i = roles.indexOf(name);
             if (i >= 0) {
@@ -342,21 +385,7 @@ public class DebugJournal {
             return this;
         }
 
-        public int size() {
-            return Math.min((int)END.getOpaque(this), ticksAndFlags.length>>1);
-        }
-
-        public int tick(int row) {
-            int capacity = ticksAndFlags.length >> 1;
-            int physBegin = Math.max(0, (int) END.getOpaque(this) - capacity);
-            int physRow = (physBegin+row) % capacity;
-            return ticksAndFlags[2*physRow];
-        }
-
-        public void render(StringBuilder dest, int colWidth, int row) {
-            int capacity = ticksAndFlags.length>>1;
-            int physBegin = Math.max(0, (int) END.getOpaque(this) - capacity);
-            int physRow = (physBegin+row) % capacity;
+        void render(StringBuilder dest, int colWidth, int physRow) {
             int base = physRow*4;
             Object o1 = messages[base  ], o2 = messages[base+1];
             Object o3 = messages[base+2], o4 = messages[base+3];
@@ -410,8 +439,8 @@ public class DebugJournal {
             int base = physRow*2;
             ticksAndFlags[base  ] = tick++;
             ticksAndFlags[base+1] = flags;
-            longs[base  ] = l1;
-            longs[base+1] = l2;
+            longs        [base  ] = l1;
+            longs        [base+1] = l2;
             longRenderers[base  ] = l1Renderer;
             longRenderers[base+1] = l2Renderer;
 
@@ -421,7 +450,7 @@ public class DebugJournal {
             messages[base+2] = o3;
             messages[base+3] = o4;
             assert !(o2 instanceof Integer || o2 instanceof Long
-                  || o3 instanceof Integer || o3 instanceof Long) : "Boxing a number reorder args";
+                  || o3 instanceof Integer || o3 instanceof Long) : "Boxing a number, reorder args";
         }
     }
 }

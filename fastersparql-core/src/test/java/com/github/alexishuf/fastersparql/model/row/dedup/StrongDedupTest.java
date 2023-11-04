@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -20,7 +20,7 @@ class StrongDedupTest {
         for (int i = 0; i < 2*strongUntil; i++)
             rows.add(TermBatch.of(List.of(Term.valueOf("\""+i+"\""))));
 
-        var dedup = StrongDedup.strongUntil(Batch.TERM, strongUntil, 1);
+        var dedup = StrongDedup.strongUntil(TermBatchType.TERM, strongUntil, 1);
         for (int i = 0; i < strongUntil; i++) {
             for (int j = 0; j < i; j++)
                 assertTrue(dedup.contains(rows.get(j), 0), "i="+i+", j="+j);

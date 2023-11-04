@@ -21,22 +21,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.FSProperties.dedupCapacity;
 
 public final class Union extends Plan {
-    public final int crossDedupCapacity;
+    public final boolean crossDedup;
     Boolean singleEndpoint;
 
-    public Union(int crossDedupCapacity, Plan left, Plan right) {
+    public Union(boolean crossDedup, Plan left, Plan right) {
         super(Operator.UNION);
         this.left = left;
         this.right = right;
-        this.crossDedupCapacity = crossDedupCapacity;
+        this.crossDedup = crossDedup;
     }
-    public Union(int crossDedupCapacity, Plan ... operands) {
+    public Union(boolean crossDedup, Plan ... operands) {
         super(Operator.UNION);
         replace(operands);
-        this.crossDedupCapacity = crossDedupCapacity;
+        this.crossDedup = crossDedup;
     }
 
     @Override public Union copy(@Nullable Plan[] ops) {
@@ -44,8 +43,8 @@ public final class Union extends Plan {
             if ((ops = operandsArray) != null) ops = Arrays.copyOf(ops, ops.length);
         }
         if (ops == null)
-            return new Union(crossDedupCapacity, left, right);
-        return new Union(crossDedupCapacity, ops);
+            return new Union(crossDedup, left, right);
+        return new Union(crossDedup, ops);
     }
 
     public boolean singleEndpoint() {
@@ -80,10 +79,9 @@ public final class Union extends Plan {
     }
 
     private <B extends Batch<B>> @Nullable Dedup<B> createDedup(BatchType<B> bt, boolean weak) {
-        if (weak || crossDedupCapacity > 0) {
-            int cap = crossDedupCapacity > 0 ? crossDedupCapacity : dedupCapacity();
+        if (weak || crossDedup) {
             int cs = publicVars().size();
-            return weak ? new WeakDedup<>(bt, cap, cs) : new WeakCrossSourceDedup<>(bt, cap, cs);
+            return weak ? new WeakDedup<>(bt, cs) : new WeakCrossSourceDedup<>(bt, cs);
         }
         return null;
     }
@@ -102,8 +100,8 @@ public final class Union extends Plan {
     }
 
     @Override public boolean equals(Object o) {
-        return o instanceof Union u && crossDedupCapacity == u.crossDedupCapacity && super.equals(o);
+        return o instanceof Union u && crossDedup == u.crossDedup && super.equals(o);
     }
 
-    @Override public int hashCode() { return Objects.hash(crossDedupCapacity, super.hashCode()); }
+    @Override public int hashCode() { return Objects.hash(crossDedup, super.hashCode()); }
 }

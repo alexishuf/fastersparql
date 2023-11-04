@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -63,14 +64,14 @@ public class ModifierTest {
         void run() {
             if (!expected.isEmpty())
                 assertEquals(expected.columns(), plan.publicVars().size());
-            expected.check(plan.execute(Batch.TERM));
-            expected.check(plan.execute(Batch.TERM));
-            expected.check(plan.execute(Batch.COMPRESSED));
-            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
-            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
-            expected.check(plan.emit(Batch.COMPRESSED, Vars.EMPTY));
-            expected.check(plan.emit(Batch.TERM, Vars.EMPTY));
-            expected.check(plan.emit(Batch.COMPRESSED, Vars.EMPTY));
+            expected.check(plan.execute(TermBatchType.TERM));
+            expected.check(plan.execute(TermBatchType.TERM));
+            expected.check(plan.execute(CompressedBatchType.COMPRESSED));
+            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
+            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
+            expected.check(plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
+            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
+            expected.check(plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
         }
     }
 
@@ -190,7 +191,7 @@ public class ModifierTest {
     @ParameterizedTest @MethodSource
     void test(D c) {
         try (var w = ThreadJournal.watchdog(System.out, 100)) {
-            ThreadJournal.closeThreadJournals();
+            ThreadJournal.resetJournals();
             w.start(1_000_000_000L);
             c.run();
         } catch (Throwable t) {

@@ -11,7 +11,7 @@ import org.opentest4j.AssertionFailedError;
 
 import java.util.Arrays;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.util.Arrays.copyOf;
 
@@ -74,18 +74,19 @@ public class IntsBatch {
 
     public static TermBatch fill(TermBatch dest, int... ints) {
         for (int i : ints) {
-            (dest = dest.beginPut()).putTerm(0, term(i));
+            dest.beginPut();
+            dest.putTerm(0, term(i));
             dest.commitPut();
         }
         return dest;
     }
 
     public static TermBatch tightIntsBatch(int... ints) {
-        return fill(new TermBatch(new Term[ints.length], 0, 1), ints);
+        return fill(new TermBatch(new Term[ints.length], 0, 1, true), ints);
     }
 
     public static TermBatch intsBatch(int... ints) {
-        return fill(TERM.create(ints.length, 1), ints);
+        return fill(TERM.create(1), ints);
     }
 
     public static void offerAndInvalidate(CallbackBIt<TermBatch> it, int... ints) {
@@ -98,7 +99,8 @@ public class IntsBatch {
             retained = it.offer(b);
         } catch (TerminatedException|CancelledException ignored) {}
         if (retained != null) {
-            retained = retained.clear(1 + (retained.cols&1)).beginPut();
+            retained = retained.clear(1 + (retained.cols&1));
+            retained.beginPut();
             for (int c = 0; c < retained.cols; c++) retained.putTerm(c, INVALID_MARKER);
             retained.commitPut();
         }

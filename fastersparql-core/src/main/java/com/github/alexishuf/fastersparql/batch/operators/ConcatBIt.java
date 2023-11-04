@@ -34,9 +34,6 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         if (sourcesIt.hasNext()) {
             var source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
                                          .minWait(minWait(NANOSECONDS), NANOSECONDS);
-            for (B b; (b = this.inner.stealRecycled()) != null; ) {
-                if ((b = source.recycle(b)) != null) batchType.recycle(b);
-            }
             if (eager) source.tempEager();
             inner = source;
             ++sourceIdx;
@@ -77,14 +74,6 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
             onTermination(t);
             throw new BItReadFailedException(this, t);
         }
-    }
-
-    @Override public @Nullable B recycle(B batch) {
-        if (super.recycle(batch) == null)
-            return null;
-        if (processor != null)
-            return processor.recycle(batch);
-        return batch;
     }
 
     @Override public String toString() { return toStringWithOperands(sources); }

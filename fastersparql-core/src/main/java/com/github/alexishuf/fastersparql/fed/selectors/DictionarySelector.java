@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
 import com.github.alexishuf.fastersparql.batch.Timestamp;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.fed.Selector;
@@ -144,13 +144,15 @@ public class DictionarySelector extends Selector {
             } catch (InterruptedException ignored) { }
         });
         try (DictSorter sorter = new DictSorter(tempDir, false, true);
-             var it = client.query(Batch.TERM, query)) {
-            for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                for (int r = 0, rows = b.rows; r < rows; r++) {
-                    Term term = b.get(r, 0);
-                    if (term != null && term.isIri()) {
-                        received.getAndIncrement();
-                        sorter.copy(term.first(), term.second());
+             var it = client.query(TermBatchType.TERM, query)) {
+            for (TermBatch root = null; (root = it.nextBatch(root)) != null; ) {
+                for (var b = root; b != null; b = b.next) {
+                    for (int r = 0, rows = b.rows; r < rows; r++) {
+                        Term term = b.get(r, 0);
+                        if (term != null && term.isIri()) {
+                            received.getAndIncrement();
+                            sorter.copy(term.first(), term.second());
+                        }
                     }
                 }
             }

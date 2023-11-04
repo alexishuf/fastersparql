@@ -6,14 +6,12 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Optional;
 import java.util.stream.Stream;
 
 public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     private final BIt<B> it;
-    private @Nullable B recycled;
 
     public BItEmitter(BIt<B> it) { this(EmitterService.EMITTER_SVC, RR_WORKER, it); }
     public BItEmitter(EmitterService runner, int worker, BIt<B> it) {
@@ -21,11 +19,6 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         this.it = it;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
-    }
-
-    @Override protected void doRelease() {
-        recycled = Batch.recyclePooled(recycled);
-        super.doRelease();
     }
 
     @Override public String toString() { return it.toString(); }
@@ -45,10 +38,9 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         if (limit <= 0)
             return state;
         int termState = state;
-        B b = Batch.asUnpooled(recycled);
-        recycled = null;
+        B b;
         try {
-            b = it.nextBatch(b);
+            b = it.nextBatch(null);
             if (b == null)
                 termState = COMPLETED;
         } catch (Throwable t) {
@@ -57,9 +49,10 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             b = null;
         }
         if (b != null) {
-            if ((long) REQUESTED.getAndAddRelease(this, -b.rows) > b.rows)
+            int bRows = b.totalRows();
+            if ((long) REQUESTED.getAndAddRelease(this, -bRows) > bRows)
                 termState |= MUST_AWAKE;
-            recycled = Batch.asPooled(deliver(b));
+            bt.recycleForThread(threadId, deliver(b));
         }
         return termState;
     }

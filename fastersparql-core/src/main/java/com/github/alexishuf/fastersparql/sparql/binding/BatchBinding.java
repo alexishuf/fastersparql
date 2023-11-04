@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
@@ -15,8 +17,9 @@ import java.util.List;
 public class BatchBinding extends Binding {
     private static final BatchBinding[] EMPTY = new BatchBinding[BatchType.MAX_BATCH_TYPE_ID];
     static {
-        for (var t : List.of(Batch.TERM, Batch.COMPRESSED, StoreBatchType.INSTANCE)) {
-            var b = t.create(1, 0).beginPut();
+        for (var t : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED, StoreBatchType.STORE)) {
+            var b = t.create(0);
+            b.beginPut();
             b.commitPut();
             EMPTY[t.id] = new BatchBinding(Vars.EMPTY).attach(b, 0);
         }
@@ -30,8 +33,9 @@ public class BatchBinding extends Binding {
     public static BatchBinding ofEmpty(BatchType<?> type) {
         var bb = EMPTY[type.id];
         var b = bb == null ? null : bb.batch;
-        if (b == null || b.rows != 1  || b.cols != 0) {
-            (b = type.create(1, 0).beginPut()).commitPut();
+        if (b == null || b.rows != 1  || b.next != null || b.cols != 0) {
+            (b = type.create(0)).beginPut();
+            b.commitPut();
             EMPTY[type.id] = bb = new BatchBinding(Vars.EMPTY).attach(b, 0);
         }
         return bb;

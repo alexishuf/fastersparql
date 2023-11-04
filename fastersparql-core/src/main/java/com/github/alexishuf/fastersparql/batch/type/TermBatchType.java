@@ -12,77 +12,79 @@ import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
+import static java.lang.Thread.currentThread;
 
 public final class TermBatchType extends BatchType<TermBatch> {
-    public static final TermBatchType INSTANCE = new TermBatchType();
+    public static final short DEF_BATCH_TERMS = PREFERRED_BATCH_TERMS*2;
+    public static final TermBatchType TERM = new TermBatchType();
 
-    @SuppressWarnings("SameReturnValue") public static TermBatchType get() { return INSTANCE; }
+    private final LevelBatchPool<TermBatch> levelPool;
 
-    private TermBatchType() {super(TermBatch.class);}
+    @SuppressWarnings("SameReturnValue") public static TermBatchType get() { return TERM; }
 
-    @Override public TermBatch create(int rows, int cols) {
-        return createForTerms(rows > 0 ? rows*cols : cols, cols);
+    private static final class TermBatchFactory implements BatchPool.Factory<TermBatch> {
+        @Override public TermBatch create() {
+            var b = new TermBatch(new Term[DEF_BATCH_TERMS], 0, 1, false);
+            b.markPooled();
+            return b;
+        }
     }
 
-    @Override public TermBatch createForTerms(int terms, int cols) {
-        TermBatch b = pool.getAtLeast(terms);
-        if (b == null)
-            return new TermBatch(new Term[terms], 0, cols);
-        BatchEvent.Unpooled.record(b);
-        return b.clear(cols).markUnpooled();
+    private static final class SizedTermBatchFactory implements LevelBatchPool.Factory<TermBatch> {
+        @Override public TermBatch create(int terms) {
+            TermBatch b = new TermBatch(new Term[terms], 0, 1, true);
+            b.markPooled();
+            return b;
+        }
     }
 
-    @Override
-    public TermBatch empty(@Nullable TermBatch offer, int rows, int cols) {
-        return emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols);
+    private TermBatchType() {
+        super(TermBatch.class, new TermBatchFactory());
+        levelPool = new LevelBatchPool<>(new SizedTermBatchFactory(), pool, DEF_BATCH_TERMS);
     }
 
-    @Override
-    public TermBatch emptyForTerms(@Nullable TermBatch offer, int terms, int cols) {
-        var b = offer == null ? null : offer.hasCapacity(terms, 0) ? offer : recycle(offer);
-        if (b == null && (b = pool.getAtLeast(terms)) == null)
-            return new TermBatch(new Term[terms], 0, cols);
-        b.clear(cols);
-        if (b != offer)
-            BatchEvent.Unpooled.record(b.markUnpooled());
+    public TermBatch createSpecial(int terms) {
+        TermBatch b = levelPool.get(terms);
+        BatchEvent.Unpooled.record(b.markUnpooled());
         return b;
     }
 
-    @Override public TermBatch withCapacity(@Nullable TermBatch offer, int rows, int cols) {
-        if (offer      == null) return createForTerms(rows > 0 ? rows*cols : cols, cols);
-        if (offer.cols != cols) throw new IllegalArgumentException("offer.cols != cols");
-        return offer.withCapacity(rows);
+    public @Nullable TermBatch recycleSpecial(TermBatch b) { return recycle(b); }
+
+    @Override public TermBatch createForThread(int threadId, int cols) {
+        return createForThread0(threadId).clear(cols);
     }
 
-    //    @Override
-//    public TermBatch reserved(@Nullable TermBatch offer, int rows, int cols, int localBytes) {
-//        int capacity = rows*cols;
-//        if (offer != null) {
-//            offer.clear(cols);
-//            if (offer.arr.length >= capacity)
-//                return offer;
-//            recycle(offer);
-//        }
-//        var b = pool.getAtLeast(capacity);
-//        if (b != null) {
-//            if (b.arr.length < capacity)
-//                b.arr = new Term[Math.min(capacity, b.arr.length<<1)];
-//            b.clear(cols);
-//            b.unmarkPooled();
-//            return b;
-//        }
-//        return new TermBatch(capacity, cols);
+    @Override public TermBatch emptyForThread(int threadId, @Nullable TermBatch offer, int cols) {
+        return emptyForThread0(threadId, offer).clear(cols);
+    }
 
-//    }
-
-    @Override public @Nullable TermBatch recycle(@Nullable TermBatch b) {
-        if (b == null)
-            return null;
-        Arrays.fill(b.arr, null); // allow collection of Terms
-        BatchEvent.Pooled.record(b.markPooled());
-        if (pool.offerToNearest(b, b.arr.length) != null)
-            b.markGarbage();
+    @Override public @Nullable TermBatch recycleForThread(int threadId, @Nullable TermBatch b) {
+        for (TermBatch next; b != null; b = next) {
+            next = b.next;
+            Arrays.fill(b.arr, 0, b.rows*b.cols, null);
+            b.rows = 0;
+            b.next = null;
+            b.tail = b;
+            BatchEvent.Pooled.record(b.markPooled());
+            b = b.special ? levelPool.offer(b) : pool.offer(threadId, b);
+            if (b != null) b.markGarbage();
+        }
         return null;
+    }
+
+    @Override public TermBatch create(int cols) {
+        return createForThread((int)currentThread().threadId(), cols);
+    }
+    @Override public TermBatch empty(@Nullable TermBatch offer, int cols) {
+        return emptyForThread((int)currentThread().threadId(), offer, cols);
+    }
+    @Override public @Nullable TermBatch recycle(@Nullable TermBatch b) {
+        return recycleForThread((int)currentThread().threadId(), b);
+    }
+
+    @Override public short preferredTermsPerBatch() {
+        return DEF_BATCH_TERMS;
     }
 
     @Override public RowBucket<TermBatch> createBucket(int rowsCapacity, int cols) {
@@ -91,7 +93,7 @@ public final class TermBatchType extends BatchType<TermBatch> {
 
     @Override
     public @Nullable Merger projector(Vars out, Vars in) {
-        int[] sources = projectorSources(out, in);
+        short[] sources = projectorSources(out, in);
         return sources == null ? null : new Merger(this, out, sources);
     }
 

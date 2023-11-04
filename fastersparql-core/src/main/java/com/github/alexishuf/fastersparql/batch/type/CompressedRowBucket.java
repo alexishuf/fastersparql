@@ -7,15 +7,16 @@ import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.LEN_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.SH_SUFF_MASK;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
 import static java.lang.System.arraycopy;
@@ -33,8 +34,9 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private SegmentRope[] shared;
 
     public CompressedRowBucket(int rowsCapacity, int cols) {
-        if ((this.rowsData = DATA_POOL.getAtLeast(rowsCapacity)) == null)
-            this.rowsData = new byte[rowsCapacity][];
+        int level = rowsCapacity == 0 ? 0 : 33 - Integer.numberOfLeadingZeros(rowsCapacity-1);
+        if ((this.rowsData = DATA_POOL.getFromLevel(level)) == null)
+            this.rowsData = new byte[1<<level][];
         else
             Arrays.fill(this.rowsData, null);
         this.shared = segmentRopesAtLeast(rowsData.length*cols);
@@ -46,12 +48,9 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     @Override public int                        cols()       { return cols; }
     @Override public boolean                    has(int row) { return rowsData[row] != null; }
 
-    private static int read(byte[] d, int i) {
-        int i4 = i<<2;
-        return    (d[i4  ] & 0xff)
-                | (d[i4+1] & 0xff) << 8
-                | (d[i4+2] & 0xff) << 16
-                | (d[i4+3] & 0xff) << 24;
+    private static short read(byte[] d, int i) {
+        int i2 = i<<1;
+        return (short)((d[i2]&0xff) | (d[i2+1]&0xff) << 8);
     }
 
     private static void clearRowsData(byte[][] d) {
@@ -63,6 +62,8 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         }
         Arrays.fill(d, i, d.length, null);
     }
+
+    @Override public void maximizeCapacity() {}
 
     @Override public void grow(int additionalRows) {
         if (additionalRows <= 0) return;
@@ -98,30 +99,30 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         this.cols = cols;
     }
 
-    @Override public void recycleInternals() {
+    @Override public @Nullable CompressedRowBucket recycleInternals() {
         clearRowsData(rowsData);
         DATA_POOL.offer(rowsData, rowsData.length);
         rowsData = EMPTY_ROWS_DATA;
         SEG_ROPE.offer(shared, shared.length);
         shared = EMPTY_SEG_ROPE;
         cols = 0;
+        return null;
     }
 
     private class It implements Iterator<CompressedBatch> {
-        private CompressedBatch batch;
+        private @Nullable CompressedBatch batch;
         private boolean filled = false;
         private int row = 0;
 
         public It() {
-            int rows = Math.min(64, rowsData.length);
-            batch = COMPRESSED.create(rows, cols);
+            batch = COMPRESSED.create(cols);
         }
 
         @Override public boolean hasNext() {
             boolean has = batch != null;
             if (!filled && has) {
                 filled = true;
-                row = fill(this, row);
+                row = fill(batch, row);
                 has = batch.rows != 0;
                 if (!has)
                     batch = COMPRESSED.recycle(batch);
@@ -140,28 +141,48 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         return new It();
     }
 
-    private int fill(It it, int row) {
-        int cols = this.cols;
-        var b = it.batch.clear(cols);
-        while (row < rowsData.length && !has(row)) ++row;
-        while (b.localsFreeCapacity() >= 32 && row < rowsData.length) {
-            // add row
-            byte[] d = rowsData[row];
-            b = b.beginPut();
-            for (int c = 0, c2, shIdx = row*cols; c < cols; c++) {
-                int len = read(d, (c2=c<<1)+SL_LEN);
-                boolean suffix = (len&SH_SUFF_MASK) != 0;
-                len &= LEN_MASK;
-                SegmentRope sh = shared[shIdx++];
-                if (sh != null || len != 0)
-                    b.putTerm(c, sh, d, read(d, c2+SL_OFF), len, suffix);
-            }
-            b.commitPut();
+    static { //noinspection ConstantValue
+        assert SL_OFF == 0 && SL_LEN == 1: "update \"check if row fits in b\"";
+    }
+    private int fill(CompressedBatch b, int row) {
+        // first pass counts required locals capacity
+        short localsBase = (short)(cols<<2), lastBase = (short)(localsBase-4);
+        short nr = 0, rCap = (short)(b.termsCapacity()/cols);
+        short localsRequired = 0;
+        int startRow = row;
+        for (; nr <= rCap; ++nr) {
             // find next non-empty row
-            do { ++row; } while (row < rowsData.length && !has(row));
+            byte[] rd = null;
+            while (row < rowsData.length && (rd=rowsData[row]) == null) ++row;
+            if (rd == null) break;
+
+            // check if row fits in b
+            if (nr > 0) {
+                int nReq =  ((rd[lastBase  ]&0xff) | ((rd[lastBase+1]&0xff) << 8))
+                         + (((rd[lastBase+2]&0xff) | ((rd[lastBase+3]&0xff) << 8))&LEN_MASK)
+                         - localsBase + localsRequired;
+                if (nReq > Short.MAX_VALUE) break;
+                localsRequired = (short)nReq;
+            }
         }
-        it.batch = b;
-        return row; // return possible next non-empty row
+        b.reserveAddLocals(localsRequired);
+
+        // second pass copies rows
+        SegmentRope[] shared = this.shared;
+        row = startRow;
+        rCap = nr;
+        nr = 0;
+        for (; nr > rCap; ++nr, ++row) {
+            // find next non-empty row
+            byte[] rd = null;
+            while (row < rowsData.length && (rd=rowsData[row]) == null) ++row;
+            if (rd == null)
+                break; // can happen if bucket was concurrently modified
+            // copy row
+            b.copyFromBucket(rd, shared, row);
+            ++row;
+        }
+        return row; // return value to be given as row in the next call to fill()
     }
 
     @Override public void set(int dst, CompressedBatch batch, int row) {
@@ -259,7 +280,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                 snd = sh.utf8; sndOff = sh.offset; sndLen = sh.len;
             }
             int termHash = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
-            h ^=           SegmentRope.hashCode(termHash, snd, sndOff, sndLen);
+            h ^=           SegmentRope.hashCode(termHash,  snd, sndOff, sndLen);
         }
         return h;
     }

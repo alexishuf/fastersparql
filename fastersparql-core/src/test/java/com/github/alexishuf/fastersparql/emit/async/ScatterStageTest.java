@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -25,7 +26,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,7 +34,6 @@ class ScatterStageTest {
     private static final Vars XY = Vars.of("x", "y");
     private static final int MAX_HEIGHT = 1024;
     private static final Term[] INTEGERS, URIS;
-    private static boolean oldSelfValidate;
 
     static {
         INTEGERS = new Term[MAX_HEIGHT];
@@ -44,25 +44,22 @@ class ScatterStageTest {
         }
     }
 
-    @BeforeAll static void beforeAll() {
-        oldSelfValidate = Batch.SELF_VALIDATE;
-        Batch.SELF_VALIDATE = false;
-    }
-
-    @AfterAll static void afterAll() {
-        Batch.SELF_VALIDATE = oldSelfValidate;
-    }
+    @BeforeAll static void beforeAll() { Batch.makeValidationCheaper(); }
+    @AfterAll  static void  afterAll() { Batch.restoreValidationCheaper(); }
 
     private static final class P extends TaskEmitter<CompressedBatch> {
-        private final CompressedBatch expected;
+        private @Nullable CompressedBatch current;
         private final boolean injectCancel;
         private final @Nullable RuntimeException injectFail;
-        private int row;
+        private int absRow, relRow;
+        private final int totalRows;
 
-        public P(CompressedBatch expected, boolean injectCancel,
+        public P(@NonNull CompressedBatch expected, boolean injectCancel,
                  @Nullable RuntimeException injectFail) {
             super(COMPRESSED, XY, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
-            this.expected = expected;
+            assert expected.validate(Batch.Validation.CHEAP);
+            this.current = expected;
+            this.totalRows = expected.totalRows();
             this.injectCancel = injectCancel;
             this.injectFail = injectFail;
             if (ResultJournal.ENABLED)
@@ -74,17 +71,24 @@ class ScatterStageTest {
         }
 
         @Override protected int produceAndDeliver(int state) {
-            if (row >= expected.rows) {
+            if (current != null && relRow >= current.rows) {
+                current = current.next;
+                relRow = 0;
+                assert current == null || current.rows > 0;
+            }
+            if (absRow >= totalRows) {
                 if      (injectFail != null) throw injectFail;
                 else if (injectCancel)       return CANCELLED;
                 else                         return COMPLETED;
             }
-            if ((row&1) == 0) {
-                deliverRow(expected, row);
+            assert current != null;
+            if ((absRow&1) == 0) {
+                deliverRow(current, relRow);
             } else {
-                COMPRESSED.recycle(deliver(expected.copyRow(row, null)));
+                COMPRESSED.recycleForThread(threadId, deliver(current.dupRow(relRow, threadId)));
             }
-            ++row;
+            ++absRow;
+            ++relRow;
             return state|MUST_AWAKE;
         }
 
@@ -127,9 +131,9 @@ class ScatterStageTest {
         }
 
         private CompressedBatch makeExpected() {
-            var expected = COMPRESSED.create(height, 2);
+            var expected = COMPRESSED.create(2);
             for (int r = 0; r < height; r++) {
-                expected = expected.beginPut();
+                expected.beginPut();
                 expected.putTerm(0, INTEGERS[r]);
                 expected.putTerm(1, URIS[r]);
                 expected.commitPut();
@@ -167,7 +171,7 @@ class ScatterStageTest {
     void test(D d) {
         for (int i = 0; i < 20; i++) {
             ResultJournal.clear();
-            ThreadJournal.closeThreadJournals();
+            ThreadJournal.resetJournals();
             try (var w = ThreadJournal.watchdog(System.out, 100)) {
                 w.start(2_000_000_000L);
                 d.run();

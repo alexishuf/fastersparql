@@ -56,7 +56,7 @@ public class UnionTest {
                         results("?x", "3", "2").asPlan()
                 )),
                 // eliminate cross-source duplicate but retain intra-source
-        /*  9 */results("?x", "1", "2", "1", "3", "4").query(union(512,
+        /*  9 */results("?x", "1", "2", "1", "3", "4").query(union(true,
                         results("?x", "1", "2", "1").asPlan(),
                         results("?x", "3", "2", "4").asPlan()
                 ))

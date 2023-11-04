@@ -147,7 +147,7 @@ public class Measure implements Callable<Void>{
 //        Stateful.INSTANCES.clear();
 //        Plan debugPlan;
 //        ResultJournal.clear();
-//        ThreadJournal.closeThreadJournals();
+//        ThreadJournal.resetJournals();
         try {
             Object results;
             if (plans != null) {
@@ -169,7 +169,6 @@ public class Measure implements Callable<Void>{
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
 //            try (var w = ThreadJournal.watchdog(System.out, 100)) {
-//                DebugJournal.SHARED.closeAll();
 //                w.start(5_000_000_000L).andThen(() -> dump(task.query(), debugPlan, (StreamNode)results));
 //            }
             switch (msrOp.flowModel) {
@@ -185,7 +184,7 @@ public class Measure implements Callable<Void>{
         return (int)((nanoTime()-start)/1_000_000L);
     }
 
-    private void dump(QueryName qry, Plan debugPlan, StreamNode results) {
+    @SuppressWarnings("unused") private void dump(QueryName qry, Plan debugPlan, StreamNode results) {
         Async.uninterruptibleSleep(500);
         System.out.println(qry.opaque().sparql());
         if (debugPlan != null)
@@ -198,6 +197,7 @@ public class Measure implements Callable<Void>{
             writer.append(results.toDOT(WITH_STATE_AND_STATS));
             results.renderDOT(svg, WITH_STATE_AND_STATS);
         } catch (IOException ignored) {}
+        ThreadJournal.dumpAndReset(System.out, 100);
     }
 
     /* --- --- --- metrics collection --- --- --- */
@@ -337,7 +337,7 @@ public class Measure implements Callable<Void>{
                             try (var os = new FileOutputStream(file)) {
                                 sink.os = os;
                                 ser.init(vars, vars, false, sink);
-                                ser.serialize(unexpected, sink);
+                                ser.serializeAll(unexpected, sink);
                                 ser.serializeTrailer(sink);
                             } catch (Throwable t) {
                                 log.error("Failed to write {}", file, t);

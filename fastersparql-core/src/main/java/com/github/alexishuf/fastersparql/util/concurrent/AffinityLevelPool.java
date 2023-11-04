@@ -42,9 +42,9 @@ public class AffinityLevelPool<T> {
     }
 
     @SuppressWarnings("unchecked")
-    @Nullable T getFromLevel(int level) {
+    public @Nullable T getFromLevel(int level) {
         if (level < disableLocalityLevel) {
-            int bucket = (((int) currentThread().threadId() & threadMask) << 5) + level;
+            int bucket = (((int)currentThread().threadId() & threadMask) << 5) + level;
             T o = (T) L.getAndSetAcquire(local, bucket, null);
             if (o != null) return o;
         }

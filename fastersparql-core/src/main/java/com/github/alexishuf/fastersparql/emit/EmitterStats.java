@@ -23,9 +23,9 @@ public class EmitterStats {
         if (b == null) {
             ++deliveredNullBatches;
         } else {
-            if (b.rows == 1)
+            if (b.rows == 1 && b.next == null)
                 ++deliveredSingleRowBatches;
-            deliveredRows += b.rows;
+            deliveredRows += b.totalRows();
         }
     }
 
@@ -46,9 +46,9 @@ public class EmitterStats {
         if (b == null) {
             ++receivedNullBatches;
         } else {
-            if (b.rows == 1)
+            if (b.rows == 1 && b.next == null)
                 ++receivedSingleRowBatches;
-            receivedRows += b.rows;
+            receivedRows += b.totalRows();
         }
     }
     public void onBatchPassThrough(@Nullable Batch<?> b) {

@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -29,7 +30,7 @@ class QueryRunnerTest {
     public void testTimeout(boolean emit) {
         TermBatch[] acc = {null};
         Throwable[] cause = {null};
-        var consumer = new QueryRunner.Accumulator<>(Batch.TERM) {
+        var consumer = new QueryRunner.Accumulator<>(TermBatchType.TERM) {
             @Override public void finish(@Nullable Throwable error) {
                acc[0] = batch;
                cause[0] = error;

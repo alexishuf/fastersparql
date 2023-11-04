@@ -7,33 +7,30 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.IntsBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.IntsBatch.intsBatch;
+import static com.github.alexishuf.fastersparql.batch.IntsBatch.tightIntsBatch;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.lang.System.nanoTime;
 import static java.time.Duration.ofMillis;
 import static java.time.Duration.ofSeconds;
-import static java.util.Arrays.stream;
-import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SPSCBItTest extends CallbackBItTest {
     private static final int maxItems = 8;
-    private static final Logger log = LoggerFactory.getLogger(SPSCBItTest.class);
     private final AtomicInteger nextId = new AtomicInteger(1);
 
     @Override protected CallbackBIt<TermBatch> create(int capacity) {
@@ -108,9 +105,8 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testDoNotOfferToFillingWhenThereIsExcessCapacity() {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 8)) {
-            TermBatch b1 = tightIntsBatch(1, 2).withCapacity(3);
+            TermBatch b1 = tightIntsBatch(1, 2);
             TermBatch b2 = tightIntsBatch(3, 4);
-            assertTrue(b1.rowsCapacity() >= 5);
 
             assertNull(assertDoesNotThrow(() -> it.offer(b1)));
             assertNull(assertDoesNotThrow(() -> it.offer(b2))); // do not offer() to b1, queue is mostly empty
@@ -119,19 +115,17 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testOfferToFilling() {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), maxItems)) {
-            TermBatch b1 = tightIntsBatch(1), b2_ = tightIntsBatch(2, 3), b3 = tightIntsBatch(4, 5);
-            assertEquals(2, b2_.rowsCapacity());
-            var b2 = b2_.withCapacity(2);
+            TermBatch b1 = tightIntsBatch(1), b2 = tightIntsBatch(2, 3), b3 = tightIntsBatch(4, 5);
+            assertEquals(2, b2.rowsCapacity());
 
             assertNull(assertDoesNotThrow(() -> it.offer(b1)));
             assertNull(assertDoesNotThrow(() -> it.offer(b2)));
-            var b3_ = b3;
-            assertSame(b3, assertDoesNotThrow(() -> it.offer(b3_))); // rows copied to b2, we own b3
-            b3.clear();
-            b3 = b3.putRow(Term.termList("23")); // invalidate b3
+            assertNull(assertDoesNotThrow(() -> it.offer(b3))); // b2.append(b3), we lost ownership
 
-            assertSame(b1, it.nextBatch(b3));
+            TermBatch b4 = TERM.create(1);
+            assertSame(b1, it.nextBatch(b4));
             assertEquals(tightIntsBatch(1), b1);
+            b4.requirePooled();
 
             assertSame(b2, it.nextBatch(null));
             assertEquals(intsBatch(2, 3, 4, 5), b2);
@@ -213,53 +207,6 @@ class SPSCBItTest extends CallbackBItTest {
             assertEquals(b4, it.nextBatch(null));
         }
     }
-
-    @Test void testRecyclingRace() throws Exception {
-        int threads = Math.max(2, Runtime.getRuntime().availableProcessors());
-        int chunk = 1<<16, queueCap = 4;
-        TermBatch[] batches   = new TermBatch[threads*chunk];
-        TermBatch[] stolen    = new TermBatch[threads*chunk];
-        int[] stolenCount     = new int[batches.length];
-        for (int i = 0, n = chunk*threads; i < n; i++)
-            batches[i] = IntsBatch.fill(new TermBatch(new Term[1], 0, 1), i+1);
-        try (var tasks = new TestTaskSet("testRecyclingRace", newFixedThreadPool(threads));
-             var it = new SPSCBIt<>(TERM, X, queueCap)) {
-            for (int round = 0, rounds = 20; round < rounds; round++) {
-                log.info("start round {}/{}", round, rounds);
-                Arrays.fill(stolen, null);
-                for (int threadIdx = 0; threadIdx < threads/2; threadIdx++) {
-                    final int finalThreadIdx = threadIdx;
-                    tasks.add(() -> {
-                        Thread.currentThread().setName("producer-"+finalThreadIdx);
-                        for (int i = finalThreadIdx*chunk, end = i+chunk; i < end; i++)
-                            batches[i] = it.recycle(batches[i]);
-                    });
-                    tasks.add(() -> {
-                        Thread.currentThread().setName("consumer-"+finalThreadIdx);
-                        for (int i = finalThreadIdx*chunk, end = i+chunk; i < end; i++) {
-                            stolen[i] = it.stealRecycled();
-                        }
-                    });
-                }
-                tasks.await(); // wait producers and consumers
-
-                // check minimal number of recycled batches
-                long recycled = stream(batches).filter(Objects::isNull).count();
-                assertTrue(recycled >= queueCap, "number of recycled batches ("+recycled+") < queueCap ("+queueCap+")");
-
-                // check for duplicate stealRecycled()
-                Arrays.fill(stolenCount, 0);
-                for (TermBatch b : stolen) {
-                    if (b == null) continue;
-                    assertEquals(1, b.rows);
-                    ++stolenCount[IntsBatch.parse(b.get(0, 0))];
-                }
-                var stolenTwice = Arrays.toString(stream(stolenCount).filter(i -> i > 1).toArray());
-                assertEquals("[]", stolenTwice, "batches stolen more than once: race");
-            }
-        }
-    }
-
 
     @Test void testMinWait() {
         int delay = 20;

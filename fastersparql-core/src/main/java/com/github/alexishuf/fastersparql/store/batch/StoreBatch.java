@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
-import com.github.alexishuf.fastersparql.batch.type.*;
-import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -17,61 +17,48 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
+import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
+import static java.lang.Thread.currentThread;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.util.Objects.requireNonNull;
 
 public class StoreBatch extends IdBatch<StoreBatch> {
-    public static final StoreBatchType TYPE = StoreBatchType.INSTANCE;
     public static int TEST_DICT = 0;
 
     /* --- --- --- lifecycle --- --- -- */
 
-    StoreBatch(int terms, int cols) {
-        super(terms, cols);
+    StoreBatch(int terms, short cols, boolean special) {
+        super(terms, cols, special);
         BatchEvent.Created.record(this);
     }
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public StoreBatchType type() { return TYPE; }
+    @Override public StoreBatchType idType() { return STORE; }
 
-    @Override public StoreBatch copy(@Nullable StoreBatch offer) {
-        int rows = this.rows, cols = this.cols;
-        return TYPE.emptyForTerms(offer, rows > 0 ? rows*cols : cols, cols)
-                   .doAppend(this, 0, 0, rows, cols);
+    @Override public StoreBatch dup() {return dup((int)currentThread().threadId());}
+    @Override public StoreBatch dup(int threadId) {
+        StoreBatch b = STORE.createForThread(threadId, cols);
+        b.copy(this);
+        return b;
     }
 
-    @Override
-    protected StoreBatch grown(int terms, @Nullable VarHandle rec, @Nullable Object holder) {
-        int c = this.cols;
-        var copy = TYPE.createForTerms(terms, c).doAppend(this, 0, 0, rows, c);
-        BatchEvent.TermsGrown.record(copy);
-        if (rec != null) {
-            if (rec.compareAndExchangeRelease(holder, null, markPooled()) == null)
-                return copy;
-            markUnpooledNoTrace();
-        }
-        TYPE.recycle(this);
-        return copy;
+    @Override public StoreBatch dupRow(int row) {
+        return dupRow(row, (int)currentThread().threadId());
     }
-
-    @Override public StoreBatch copyRow(int row, @Nullable StoreBatch offer) {
-        int cols = this.cols;
-        return TYPE.emptyForTerms(offer, cols, cols)
-                   .doAppend(this, row*cols, 0, 1, cols);
-    }
-
-    @Override public StoreBatch withCapacity(int addRows) {
-        int terms = (rows+addRows)*cols;
-        return terms > termsCapacity ? grown(terms, null, null) : this;
+    @Override public StoreBatch dupRow(int row, int threadId) {
+        short cols = this.cols;
+        var b = STORE.createForThread(threadId, cols);
+        b.doPut(this, row*cols, 0, (short)1, cols);
+        return b;
     }
 
     /* --- --- --- term-level accessors --- --- --- */
@@ -349,173 +336,88 @@ public class StoreBatch extends IdBatch<StoreBatch> {
     /* --- --- --- mutators --- --- --- */
 
     @Override public @Nullable StoreBatch recycle() {
-        return StoreBatchType.INSTANCE.recycle(this);
+        return STORE.recycle(this);
     }
 
     @Override public void putTerm(int destCol, Term t) {
-        if (offerRowBase < 0) throw new IllegalStateException();
+        StoreBatch dst = tailUnchecked();
+        if (dst.offerRowBase < 0) throw new IllegalStateException();
         if (TEST_DICT == 0)
             throw new UnsupportedOperationException("putTerm(int, Term) is only supported during testing.");
-        putTerm(destCol, t == null ? 0 : source(lookup(TEST_DICT).find(t), TEST_DICT));
+        dst.doPutTerm(destCol, t == null ? 0 : source(lookup(TEST_DICT).find(t), TEST_DICT));
     }
 
     /**
-     * Similar to {@link Batch#putConverting(Batch, VarHandle, Object)}, but converts
+     * Similar to {@link Batch#putConverting(Batch)}, but converts
      * {@link Term}s into {@code sourcedIds} referring to {@code dictId} rather than throwing
      * {@link UnsupportedOperationException}.
      *
-     * @param other a {@link Batch} whose rows are to be added to {@code this}
+     * @param o a {@link Batch} whose rows are to be added to {@code this}
      * @param dictId The previously {@link IdTranslator#register(LocalityCompositeDict)}ed dict
      *               that generated {@code sourcedId}s will point
      * @return {@code this}
      */
-    public StoreBatch putConverting(Batch<?> other, int dictId, @Nullable VarHandle rec,
-                                    @Nullable Object holder) {
-        if (other.getClass() == getClass())
-            return put((StoreBatch) other, rec, holder);
-        int cols = other.cols, oRows = other.rows, terms = (rows+oRows)*cols;
-        if (cols != this.cols) throw new IllegalArgumentException("cols mismatch");
-
-        var dst = terms > termsCapacity ? grown(terms, rec, holder) : this;
+    public StoreBatch putConverting(Batch<?> o, int dictId) {
+        if (o instanceof StoreBatch b) {
+            copy(b);
+            return this;
+        }
+        short cols = this.cols;
+        if (o.cols != cols)
+            throw new IllegalArgumentException("other.cols != cols");
+        var tail = tail();
         var lookup = lookup(dictId);
         var t = TwoSegmentRope.pooled();
-        for (int r = 0; r < oRows; r++) {
-            dst = dst.beginPut();
-            for (int c = 0; c < cols; c++) {
-                if (other.getRopeView(r, c, t))
-                    dst.putTerm(c, IdTranslator.source(lookup.find(t), dictId));
+        for (; o != null; o = o.next) {
+            o.requireUnpooled();
+            for (short nr, rb = 0, oRows = o.rows; rb < oRows; rb += nr) {
+                int dPos = tail.rows*cols;
+                nr = (short)( (tail.termsCapacity-dPos)/cols );
+                if (nr <= 0) {
+                    tail.tail = null;
+                    nr = (short)( (tail = createTail()).termsCapacity/cols );
+                    dPos = 0;
+                }
+                if (rb+nr > oRows) nr = (short)(oRows-rb);
+                tail.rows += nr;
+                long[] ids = tail.arr;
+                Arrays.fill(tail.hashes, dPos, dPos + nr*cols, 0);
+                for (int r = rb; r < nr; r++) {
+                    for (int c = 0; c < cols; c++, ++dPos)
+                        ids[dPos] = o.getRopeView(r, c, t) ? source(lookup.find(t), dictId) : 0L;
+                }
             }
-            dst.commitPut();
         }
         t.recycle();
-        return dst;
+        assert validate();
+        return this;
     }
 
     public StoreBatch putRowConverting(Batch<?> other, int row, int dictId) {
-        if (type() == other.type())
-            return putRow((StoreBatch) other, row);
+        if (other instanceof StoreBatch b) {
+            putRow(b, row);
+            return this;
+        }
         int cols = this.cols;
-        if (row > other.rows) throw new IndexOutOfBoundsException(row);
-        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
+        if (other.rows >=  row) throw new IndexOutOfBoundsException("row >= other.rows");
+        if (other.cols != cols) throw new  IllegalArgumentException("other.cols != cols");
 
         var lookup = lookup(dictId);
         var t = TwoSegmentRope.pooled();
-        var dst = beginPut();
-        for (int c = 0; c < cols; c++) {
-            if (other.getRopeView(row, c, t))
-                dst.putTerm(c, IdTranslator.source(lookup.find(t), dictId));
+
+        var dst = tail();
+        int dPos = dst.rows*cols;
+        if (dPos+cols > dst.termsCapacity) {
+            dst = createTail();
+            dPos = 0;
         }
-        dst.commitPut();
+        ++dst.rows;
+        long[] ids = dst.arr;
+        Arrays.fill(dst.hashes, dPos, dPos+cols, 0);
+        for (int c = 0; c < cols; c++, ++dPos)
+            ids[dPos] = other.getRopeView(row, c, t) ? source(lookup.find(t), dictId) : 0L;
         t.recycle();
-        return dst;
-    }
-
-    /* -- --- --- merger --- --- --- */
-
-    public static final class Merger extends IdBatch.Merger<StoreBatch> {
-        public Merger(BatchType<StoreBatch> batchType, Vars outVars, int[] sources) {
-            super(batchType, outVars, sources);
-        }
-
-        @Override public StoreBatch projectInPlace(StoreBatch b) {
-            int[] cols = this.columns;
-            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
-            int terms = b == null ? 0 : b.rows*cols.length;
-            if (terms == 0)
-                return projectInPlaceEmpty(b);
-            var dst = safeInPlaceProject ? b : TYPE.createForTerms(terms, cols.length);
-            projectInto(dst, cols, b);
-            if (dst != b)
-                TYPE.recycle(b);
-            return dst;
-        }
-
-        @Override public StoreBatch project(StoreBatch dst, StoreBatch in) {
-            int[] cols = columns;
-            if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
-            return projectInto(TYPE.withCapacity(dst, in.rows, cols.length), cols, in);
-        }
-
-        @Override public StoreBatch projectRow(@Nullable StoreBatch dst, StoreBatch in, int row) {
-            if (columns == null) throw new UnsupportedOperationException("not a projecting merger");
-            dst = TYPE.withCapacity(dst, 1, columns.length);
-            return projectRowInto(dst, in, row, columns);
-        }
-
-        @Override
-        public StoreBatch merge(@Nullable StoreBatch dst, StoreBatch left, int leftRow,
-                                @Nullable StoreBatch right) {
-            int rows = right == null ? 0 : right.rows;
-            dst = TYPE.withCapacity(dst, rows, sources.length);
-            if (rows == 0)
-                return mergeWithMissing(dst, left, leftRow);
-            return mergeInto(dst, left, leftRow, right);
-        }
-    }
-
-    /* -- --- --- filter --- --- --- */
-    public final static class Filter extends IdBatch.Filter<StoreBatch> {
-        private final @Nullable Merger projector;
-        public Filter(BatchType<StoreBatch> batchType, Vars vars,
-                      @Nullable Merger projector, RowFilter<StoreBatch> rowFilter,
-                      @Nullable BatchFilter<StoreBatch> before) {
-            super(batchType, vars, rowFilter, before);
-            assert projector == null || projector.vars.equals(vars);
-            this.projector = projector;
-        }
-
-        @Override public StoreBatch filter(@Nullable StoreBatch dst, StoreBatch in) {
-            if (before != null)
-                in = before.filter(null, in);
-            if (in == null || (in.rows*outColumns) == 0)
-                return filterEmpty(dst, in);
-            StoreBatch garbage = null;
-            var projector = this.projector;
-            if (projector != null && rowFilter.targetsProjection()) {
-                in = projector.project(null, in);
-                projector = null;
-                if (dst == null || dst.rows == 0) {
-                    garbage = dst;
-                    dst = in;
-                } else {
-                    garbage = in;
-                }
-            }
-            dst = TYPE.withCapacity(dst, in.rows, outColumns);
-            dst = projector == null ? filterInto(dst, in)
-                                    : projectingFilterInto(dst, in, projector);
-            if (garbage != null)
-                TYPE.recycle(garbage);
-            return dst;
-        }
-
-        @Override public StoreBatch filterInPlace(StoreBatch in) {
-            if (before != null)
-                in = before.filterInPlace(in);
-            if (in == null || (in.rows*outColumns) == 0)
-                return filterEmpty(in, in);
-            var projector = this.projector;
-            if (projector != null && rowFilter.targetsProjection()) {
-                in = projector.projectInPlace(in);
-                projector = null;
-            }
-            return projector == null ? filterInto(in, in)
-                                     : filterInPlaceProjecting(in, projector);
-        }
-
-        private StoreBatch filterInPlaceProjecting(StoreBatch in, Merger projector) {
-            StoreBatch dst, garbage;
-            if (projector.safeInPlaceProject) {
-                garbage = null;
-                dst = in;
-            } else {
-                garbage = in;
-                dst = TYPE.createForTerms(in.rows*outColumns, outColumns);
-            }
-            dst = projectingFilterInto(dst, in, projector);
-            if (garbage != null)
-                TYPE.recycle(garbage);
-            return dst;
-        }
+        assert dst.validate();
+        return this;
     }
 }

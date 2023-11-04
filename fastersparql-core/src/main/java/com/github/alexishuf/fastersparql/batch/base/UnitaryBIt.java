@@ -32,7 +32,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
      * more rows can be appended without further blocking, implementations may also append them to
      * {@code dest}
      *
-     * @return {@code dest} or a new batch to replace {@code dest} (see {@link Batch#put(Batch)}
+     * @return {@code dest} or a new batch to replace {@code dest} (see {@link Batch#copy(Batch)}
      */
     protected abstract B fetch(B dest);
 
@@ -56,13 +56,13 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         if (pendingError != null)
             throwPending();
         //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
-        b = getBatch(b);
+        b = batchType.empty(b, nColumns);
         //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
         long start = fillingStart;
         if (needsStartTime && start == Timestamp.ORIGIN)
             fillingStart = start = Timestamp.nanoTime();
         try {
-            while (!exhausted && readyInNanos(b.rows, start) > 0)
+            while (!exhausted && readyInNanos(b.totalRows(), start) > 0)
                 b = fetch(b);
         } catch (Throwable t) { pendingError = t; }
         fillingStart = Timestamp.ORIGIN;

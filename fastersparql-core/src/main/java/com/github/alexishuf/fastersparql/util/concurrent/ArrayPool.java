@@ -13,9 +13,10 @@ import static java.lang.System.arraycopy;
 public class ArrayPool<T> extends AffinityLevelPool<T> {
     /* --- --- --- instances --- --- --- */
 
-    public static final ArrayPool<byte[]> BYTE            = new ArrayPool<>(       byte[].class);
-    public static final ArrayPool<int[]> INT              = new ArrayPool<>(        int[].class);
-    public static final ArrayPool<long[]> LONG            = new ArrayPool<>(       long[].class);
+    public static final ArrayPool<byte[]>  BYTE           = new ArrayPool<>(       byte[].class);
+    public static final ArrayPool<int[]>   INT            = new ArrayPool<>(        int[].class);
+    public static final ArrayPool<short[]> SHORT          = new ArrayPool<>(      short[].class);
+    public static final ArrayPool<long[]>  LONG           = new ArrayPool<>(       long[].class);
     public static final ArrayPool<SegmentRope[]> SEG_ROPE = new ArrayPool<>(SegmentRope[].class);
 
     private static void prime(int firstCapacity, int lastCapacity, int n) {
@@ -23,6 +24,7 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
             for (int i = 0; i < n; i++) {
                 BYTE.offer(new byte[capacity], capacity);
                 INT.offer(new int[capacity], capacity);
+                SHORT.offer(new short[capacity], capacity);
                 LONG.offer(new long[capacity], capacity);
                 SEG_ROPE.offer(new SegmentRope[capacity], capacity);
             }
@@ -75,6 +77,7 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
     /* --- --- --- empty array instances --- --- --- */
     public static final        byte[] EMPTY_BYTE     = new        byte[0];
     public static final         int[] EMPTY_INT      = new         int[0];
+    public static final       short[] EMPTY_SHORT    = new       short[0];
     public static final        long[] EMPTY_LONG     = new        long[0];
     public static final SegmentRope[] EMPTY_SEG_ROPE = new SegmentRope[0];
 
@@ -127,6 +130,12 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         byte[] a = BYTE.getFromLevel(level);
         return a == null ? new byte[1<<level] : a;
     }
+    public static short[] shortsAtLeast(int minSize) {
+        if (minSize == 0) return EMPTY_SHORT;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        short[] a = SHORT.getFromLevel(level);
+        return a == null ? new short[1<<level] : a;
+    }
     public static int[] intsAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_INT;
         int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
@@ -146,6 +155,47 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         return a == null ? new SegmentRope[1<<level] : a;
     }
 
+    @SuppressWarnings("unused") public static byte[] bytesAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_BYTE;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        byte[] a = BYTE.getFromLevel(level);
+        if (a != null && a.length > 1<<level && BYTE.offer(a, a.length) == null)
+            a = BYTE.getFromLevel(level);
+        return a == null ? new byte[1<<level] : a;
+    }
+    @SuppressWarnings("unused") public static short[] shortsAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_SHORT;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        short[] a = SHORT.getFromLevel(level);
+        if (a != null && a.length > 1<<level && SHORT.offer(a, a.length) == null)
+            a = SHORT.getFromLevel(level);
+        return a == null ? new short[1<<level] : a;
+    }
+    @SuppressWarnings("unused") public static int[] intsAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_INT;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        int[] a = INT.getFromLevel(level);
+        if (a != null && a.length > 1<<level && INT.offer(a, a.length) == null)
+            a = INT.getFromLevel(level);
+        return a == null ? new int[1<<level] : a;
+    }
+    public static long[] longsAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_LONG;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        long[] a = LONG.getFromLevel(level);
+        if (a != null && a.length > 1<<level && LONG.offer(a, a.length) == null)
+            a = LONG.getFromLevel(level);
+        return a == null ? new long[1<<level] : a;
+    }
+    public static SegmentRope[] segmentRopesAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_SEG_ROPE;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        SegmentRope[] a = SEG_ROPE.getFromLevel(level);
+        if (a != null && a.length > 1<<level && SEG_ROPE.offer(a, a.length) == null)
+            a = SEG_ROPE.getFromLevel(level);
+        return a == null ? new SegmentRope[1<<level] : a;
+    }
+
     public static byte[] bytesAtLeast(int minSize, byte @Nullable [] a) {
         if (a != null) {
             if (a.length >= minSize) return a;
@@ -155,6 +205,16 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         }
         int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = BYTE.getFromLevel(level)) == null ? new byte[1<<level] : a;
+    }
+    @SuppressWarnings("unused") public static short[] shortsAtLeast(int minSize, short @Nullable[] a) {
+        if (a != null) {
+            if (a.length >= minSize) return a;
+            SHORT.offer(a, a.length);
+        } else if (minSize == 0) {
+            return EMPTY_SHORT;
+        }
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        return (a = SHORT.getFromLevel(level)) == null ? new short[1<<level] : a;
     }
     public static int[] intsAtLeast(int minSize, int @Nullable[] a) {
         if (a != null) {

@@ -30,11 +30,11 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
-import static com.github.alexishuf.fastersparql.batch.type.Batch.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
-import static com.github.alexishuf.fastersparql.store.batch.StoreBatch.TYPE;
+import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -252,11 +252,11 @@ class StoreSparqlClientTest {
         try (var client = d.createClient()) {
             d.results.check(client);
             d.results.check(client); // test client works more than once
-            d.results.check(client, TYPE);
+            d.results.check(client, STORE);
             if (innerConcurrency) {
                 try (var tasks = platformTaskSet(CLS_NAME+".test")) {
                     tasks.repeat(REPS, () -> d.results.check(client));
-                    tasks.repeat(REPS, () -> d.results.check(client, TYPE));
+                    tasks.repeat(REPS, () -> d.results.check(client, STORE));
                 } catch (Throwable t) {fail(t);}
             }
         }
@@ -315,14 +315,14 @@ class StoreSparqlClientTest {
         try (var client = d.createClient()) {
             r.check(client);
             r.check(client, COMPRESSED);
-            r.check(client, TYPE, TYPE.converter(client.dictId()));
+            r.check(client, STORE, STORE.converter(client.dictId()));
             if (innerConcurrency) {
                 try {
                     platformRepeatAndWait(CLS_NAME + ".testBinding", REPS,
                             () -> {
                                 d.results.check(client);
                                 d.results.check(client, COMPRESSED);
-                                d.results.check(client, TYPE, TYPE.converter(client.dictId()));
+                                d.results.check(client, STORE, STORE.converter(client.dictId()));
                             });
                 } catch (Throwable t) {fail(t);}
             }

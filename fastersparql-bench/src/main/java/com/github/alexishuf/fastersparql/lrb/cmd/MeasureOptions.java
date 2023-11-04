@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.batch.Timestamp;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.slf4j.Logger;
@@ -44,12 +45,12 @@ public class MeasureOptions {
 
         public BatchType<?> asType() {
             return switch (this) {
-                case TERM -> Batch.TERM;
-                case COMPRESSED -> Batch.COMPRESSED;
+                case TERM -> TermBatchType.TERM;
+                case COMPRESSED -> CompressedBatchType.COMPRESSED;
             };
         }
     }
-    public BatchType<?> batchType = Batch.COMPRESSED;
+    public BatchType<?> batchType = CompressedBatchType.COMPRESSED;
     @Option(names = "--batch", description = "The Batch implementation to use consume " +
             "the results with")
     public void batchType(BatchKind kind) {

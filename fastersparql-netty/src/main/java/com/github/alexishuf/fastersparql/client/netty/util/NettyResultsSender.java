@@ -109,10 +109,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         }
     }
 
-    @Override public void sendSerialized(Batch<?> batch) {
+    @Override public void sendSerializedAll(Batch<?> batch) {
         if (sink.needsTouch()) touch();
         try {
-            serializer.serialize(batch, sink);
+            serializer.serializeAll(batch, sink);
             execute(wrap(sink.take()));
         } catch (Throwable t) {
             execute(t);

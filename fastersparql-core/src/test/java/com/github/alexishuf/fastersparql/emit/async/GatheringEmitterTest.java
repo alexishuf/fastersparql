@@ -13,6 +13,8 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -24,10 +26,11 @@ import java.util.BitSet;
 import java.util.concurrent.CompletionException;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.Integer.MAX_VALUE;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class GatheringEmitterTest {
@@ -36,10 +39,10 @@ class GatheringEmitterTest {
 
     private static CompressedBatch makeExpected(int id, int height, int cancelAt, int failAt) {
         int rows = Math.min(height, Math.min(failAt, cancelAt));
-        var expected = COMPRESSED.create(rows, 1);
+        var expected = COMPRESSED.create(1);
         ByteRope local = new ByteRope();
         for (int i = 0; i < rows; i++) {
-            expected = expected.beginPut();
+            expected.beginPut();
             local.clear().append((long)id*height + i).append('>');
             expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
             expected.commitPut();
@@ -48,13 +51,14 @@ class GatheringEmitterTest {
     }
 
     private static class P extends TaskEmitter<CompressedBatch> {
-        private int row;
-        private final CompressedBatch expected;
+        private int absRow, relRow;
+        private @Nullable CompressedBatch current;
         private final int cancelAt, failAt;
 
-        public P(CompressedBatch expected, int cancelAt, int failAt) {
+        public P(@NonNull CompressedBatch expected, int cancelAt, int failAt) {
             super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
-            this.expected = expected;
+            assert expected.validate(Batch.Validation.CHEAP);
+            this.current = expected;
             this.failAt = failAt;
             this.cancelAt = cancelAt;
             if (ResultJournal.ENABLED)
@@ -66,13 +70,20 @@ class GatheringEmitterTest {
         }
 
         @Override protected int produceAndDeliver(int state) {
-            if (row == cancelAt)
+            if (absRow == cancelAt)
                 return CANCELLED;
-            if (row == failAt)
+            if (absRow == failAt)
                 throw new RuntimeException("failAt");
-            if (row == expected.rows)
+            if (current != null && relRow >= current.rows) {
+                relRow = 0;
+                current = current.next;
+                assert current == null || current.rows > 0;
+            }
+            if (current == null)
                 return COMPLETED;
-            COMPRESSED.recycle(deliver(expected.copyRow(row++, null)));
+            COMPRESSED.recycle(deliver(current.dupRow(relRow)));
+            ++relRow;
+            ++absRow;
             return state|MUST_AWAKE;
         }
     }
@@ -99,6 +110,7 @@ class GatheringEmitterTest {
                     error = e.getCause();
                 }
                 actual = receiver.collected();
+                assertTrue(actual.validate(Batch.Validation.CHEAP));
 
                 // assert error matches expected
                 if (failAt <= height) {
@@ -119,18 +131,20 @@ class GatheringEmitterTest {
                 // assert all rows come from a producer and there is no duplicates
                 BitSet seen = new BitSet();
                 TwoSegmentRope view = new TwoSegmentRope();
-                for (int r = 0; r < actual.rows; r++) {
-                    if (actual.getRopeView(r, 0, view)) {
-                        if (!view.has(0, PREFIX, 0, PREFIX.len))
-                            fail("Unexpected value at row "+r+": "+actual.toString(r));
-                        long value = view.parseLong(PREFIX.len);
-                        if (value < 0 || value > MAX_VALUE)
-                            fail("Unexpected integer in "+view);
-                        if (seen.get((int)value))
-                            fail("Row "+r+" "+actual.toString(r)+" is duplicate");
-                        seen.set((int)value);
-                    } else {
-                        fail("Unset column 0 at row " + r);
+                for (var node = actual; node != null; node = node.next) {
+                    for (int r = 0; r < node.rows; r++) {
+                        if (node.getRopeView(r, 0, view)) {
+                            if (!view.has(0, PREFIX, 0, PREFIX.len))
+                                fail("Unexpected value at row " + r + ": " + node.toString(r));
+                            long value = view.parseLong(PREFIX.len);
+                            if (value < 0 || value > MAX_VALUE)
+                                fail("Unexpected integer in " + view);
+                            if (seen.get((int) value))
+                                fail("Row " + r + " " + node.toString(r) + " is duplicate");
+                            seen.set((int) value);
+                        } else {
+                            fail("Unset column 0 at row " + r);
+                        }
                     }
                 }
 
@@ -153,14 +167,8 @@ class GatheringEmitterTest {
         }
     }
 
-    private static final boolean originalSelfValidate = Batch.SELF_VALIDATE;
-    @BeforeAll static void beforeAll() {
-        Batch.SELF_VALIDATE = false;
-    }
-
-    @AfterAll static void afterAll() {
-        Batch.SELF_VALIDATE = originalSelfValidate;
-    }
+    @BeforeAll static void beforeAll() { Batch.makeValidationCheaper(); }
+    @AfterAll  static void  afterAll() { Batch.restoreValidationCheaper(); }
 
     static Stream<Arguments> test() {
         return Stream.of(

@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -117,7 +118,7 @@ class NettySparqlServerTest {
         List<Scenario> list = new ArrayList<>();
         var methods = List.of(GET, POST, FORM, WS);
         for (Proto(var r, var ic)  : data) {
-            for (var bType : List.of(Batch.TERM, Batch.COMPRESSED)) {
+            for (var bType : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
                 for (SparqlMethod meth : methods) {
                     if (meth == WS) continue;
                     for (var fmt : List.of(TSV, JSON))

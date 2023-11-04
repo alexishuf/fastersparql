@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.sparql.results.serializer;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -129,7 +131,7 @@ class ResultsSerializerTest {
                         ]}}""")
         ));
         List<Arguments> args = new ArrayList<>();
-        for (BatchType<? extends Batch<? extends Batch<?>>> type : List.of(Batch.TERM, Batch.COMPRESSED)) {
+        for (BatchType<? extends Batch<? extends Batch<?>>> type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
             for (D(var r,  var f, var e) : data) args.add(arguments(type, r, f, e));
         }
         return args.stream();
@@ -138,23 +140,25 @@ class ResultsSerializerTest {
     @ParameterizedTest @MethodSource
     void test(BatchType<?> type, Results results, SparqlResultFormat fmt, String expected) {
         // serialize using a single batch
-        Batch<?> b = type.create(results.size(), results.vars().size());
-        for (List<Term> row : results.expected()) b = b.putRow(row);
+        Batch<?> b = type.create(results.vars().size());
+        for (List<Term> row : results.expected()) b.putRow(row);
         var serializer = serializers.get(fmt);
 
         ByteRope out = new ByteRope();
         serializer.init(results.vars(), results.vars(), results.isAsk(), out);
-        serializer.serialize(b, out);
+        serializer.serializeAll(b, out);
         serializer.serializeTrailer(out);
 
         assertEquals(expected, out.toString());
 
         //serialize again with a single batch but skipping fir column and first row
-        b = b.clear(results.vars().size()+1).beginPut();
+        b = b.clear(results.vars().size()+1);
+        b.beginPut();
         for (int i = 0; i < b.cols; i++) b.putTerm(i, Term.RDF_SEQ);
         b.commitPut();
         for (List<Term> row : results.expected()) {
-            (b = b.beginPut()).putTerm(0, Term.XSD_ANYURI);
+            b.beginPut();
+            b.putTerm(0, Term.XSD_ANYURI);
             int c = 1;
             for (Term t : row)  b.putTerm(c++, t);
             b.commitPut();
@@ -162,13 +166,17 @@ class ResultsSerializerTest {
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
                         results.isAsk(), out.clear());
         serializer.serialize(b, 1, b.rows-1, out);
+        if (b.next != null)
+            serializer.serializeAll(b.next, out);
         serializer.serializeTrailer(out);
         assertEquals(expected, out.toString());
 
         // serialize a sequence of singleton batches
         serializer.init(results.vars(), results.vars(), results.isAsk(), out.clear());
-        for (List<Term> row : results.expected())
-            serializer.serialize(b = b.clear(row.size()).putRow(row), out);
+        for (List<Term> row : results.expected()) {
+            (b = b.clear(row.size())).putRow(row);
+            serializer.serializeAll(b, out);
+        }
         serializer.serializeTrailer(out);
         assertEquals(expected, out.toString());
 
@@ -176,11 +184,13 @@ class ResultsSerializerTest {
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
                         results.isAsk(), out.clear());
         for (List<Term> row : results.expected()) {
-            b = b.clear(row.size()+1).beginPut();
+            b = b.clear(row.size()+1);
+            b.beginPut();
             for (int i = 0; i < b.cols; i++)  b.putTerm(i, Term.XSD_SHORT);
             b.commitPut();
             int c = 0;
-            (b = b.beginPut()).putTerm(c++, Term.XSD_BOOLEAN);
+            b.beginPut();
+            b.putTerm(c++, Term.XSD_BOOLEAN);
             for (Term t : row) b.putTerm(c++, t);
             b.commitPut();
             serializer.serialize(b, 1, 1, out);

@@ -51,8 +51,10 @@ public sealed abstract class BItDrainer {
         Throwable error = null;
         try {
             drain(it, b -> {
-                for (int r = 0; r < b.rows; r++)
-                    list.add(b.asList(r));
+                for (var node = b; node != null; node = node.next) {
+                    for (int r = 0; r < node.rows; r++)
+                        list.add(node.asList(r));
+                }
             });
         } catch (Throwable t) {
             error = t;
@@ -95,10 +97,12 @@ public sealed abstract class BItDrainer {
         public int[] cropped() { return size == ints.length ? ints : copyOf(ints, size); }
 
         @Override public void accept(TermBatch batch) {
-            for (int r = 0; r < batch.rows; r++) {
-                if (size == ints.length)
-                    ints = copyOf(ints, ints.length + Math.max(1, ints.length>>1));
-                ints[size++] = IntsBatch.parse(batch.get(r, 0));
+            for (var node = batch; node != null; node = node.next) {
+                for (int r = 0; r < node.rows; r++) {
+                    if (size == ints.length)
+                        ints = copyOf(ints, ints.length + Math.max(1, ints.length >> 1));
+                    ints[size++] = IntsBatch.parse(node.get(r, 0));
+                }
             }
         }
     }
