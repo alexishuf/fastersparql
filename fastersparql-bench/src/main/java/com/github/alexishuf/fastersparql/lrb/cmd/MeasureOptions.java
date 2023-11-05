@@ -106,7 +106,7 @@ public class MeasureOptions {
         uninterruptibleSleep(ms - (int)((Timestamp.nanoTime()-start)/1_000_000));
         double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
 
-        log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*freeAfter-freeBefore));
+        log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*(freeAfter-freeBefore)));
     }
 
     public void       cooldown() { cooldown(cooldownMs); }
