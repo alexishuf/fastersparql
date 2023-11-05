@@ -237,8 +237,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
     CompressedBatch(short terms, short cols) {
         super((short)0, cols);
-        this.locals        = EMPTY_LOCALS;
-        this.localsSeg     = EMPTY_LOCALS_SEG;
+        this.locals        = bytesAtLeastUpcycle(terms<<5);
+        this.localsSeg     = MemorySegment.ofArray(locals);
         this.shared        = segmentRopesAtLeastUpcycle(Math.max(terms, cols));
         this.termsCapacity = (short)Math.min(Short.MAX_VALUE, shared.length);
         this.slices        = shortsAtLeast(termsCapacity<<1);
