@@ -314,6 +314,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         B copy = null;
         for (int i = 0, n = extraDownCount; i < n; i++)
             copy = deliver(extraDown[i], copy == null ? b.dup() : copy);
+        batchType.recycle(copy);
         return deliver(downstream, b);
     }
 
