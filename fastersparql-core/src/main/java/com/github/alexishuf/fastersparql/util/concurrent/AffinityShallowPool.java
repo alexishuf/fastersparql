@@ -12,8 +12,12 @@ import static java.lang.Runtime.getRuntime;
 public class AffinityShallowPool<T> {
     private static final VarHandle P = MethodHandles.arrayElementVarHandle(Object[].class);
     private static final int THREAD_MASK
-            = 32-Integer.numberOfLeadingZeros(8*getRuntime().availableProcessors()-1);
+            = (1<<(32-Integer.numberOfLeadingZeros(8*getRuntime().availableProcessors()-1)))-1;
     private final T[] pool;
+    static {
+        assert Integer.bitCount(THREAD_MASK+1) == 1;
+        assert THREAD_MASK+1 >= 8*getRuntime().availableProcessors();
+    }
 
     public AffinityShallowPool(Class<T> cls) {
         pool = (T[])Array.newInstance(cls, THREAD_MASK+1);

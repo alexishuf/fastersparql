@@ -29,7 +29,7 @@ public class GlobalAffinityShallowPool {
         //noinspection ConstantValue
         assert WIDTH < 64;
         assert 1 << W_SHIFT == WIDTH;
-        int threads = 32-Integer.numberOfLeadingZeros(getRuntime().availableProcessors()-1);
+        int threads = 1 << (32-Integer.numberOfLeadingZeros(getRuntime().availableProcessors()-1));
         assert Integer.bitCount(threads) == 1;
         MASK = threads-1;
         data = new Object[threads*WIDTH];
@@ -47,16 +47,12 @@ public class GlobalAffinityShallowPool {
     }
 
     public static <T> T get(int column) {
-        int id = (int)currentThread().threadId();
-        T o = (T)D.getAndSetAcquire(data, ((id &MASK)<<W_SHIFT)+column, null);
-        if (o != null) return o;
-        return (T)D.getAndSetAcquire(data, (((id-1)&MASK)<<W_SHIFT)+column, null);
+        int slot = (((int)currentThread().threadId()&MASK)<<W_SHIFT)+column;
+        return (T)D.getAndSetAcquire(data, slot, null);
     }
 
     public static <T> T get(int column, int threadId) {
-        T o = (T) D.getAndSetAcquire(data, (( threadId   &MASK)<<W_SHIFT)+column, null);
-        if (o != null) return o;
-        return (T)D.getAndSetAcquire(data, (((threadId-1)&MASK)<<W_SHIFT)+column, null);
+        return (T)D.getAndSetAcquire(data, ((threadId&MASK)<<W_SHIFT)+column, null);
     }
 
     @SuppressWarnings("unused") private static boolean isNovel(Object o) {
@@ -70,21 +66,20 @@ public class GlobalAffinityShallowPool {
     public static <T> @Nullable T offer(int column, @Nullable T o) {
         if (o == null) return null;
 //        assert isNovel(o);
-        int id = (int)currentThread().threadId();
-        if (D.compareAndExchangeRelease(data, ((id&MASK) <<W_SHIFT)+column, null, o) == null)
-            return null;
-        if (D.compareAndExchangeRelease(data, (((id+1)&MASK)<<W_SHIFT)+column, null, o) == null)
-            return null;
+        for (int id = (int)currentThread().threadId(), end = id+3; id < end; id++) {
+            if (D.compareAndExchangeRelease(data, ((id&MASK)<<W_SHIFT)+column, null, o) == null)
+                return null;
+        }
         return o;
     }
 
     public static <T> @Nullable T offer(int column, @Nullable T o, int threadId) {
         if (o == null) return null;
 //        assert isNovel(o);
-        if (D.compareAndExchangeRelease(data, ((threadId&MASK) <<W_SHIFT)+column, null, o) == null)
-            return null;
-        if (D.compareAndExchangeRelease(data, (((threadId+1)&MASK)<<W_SHIFT)+column, null, o) == null)
-            return null;
+        for (int i = 0; i < 3; i++) {
+            if (D.compareAndExchangeRelease(data, (((threadId+i)&MASK)<<W_SHIFT)+column, null, o) == null)
+                return null;
+        }
         return o;
     }
 

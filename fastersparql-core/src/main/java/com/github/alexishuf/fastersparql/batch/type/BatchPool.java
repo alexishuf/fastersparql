@@ -47,6 +47,7 @@ public class BatchPool<B extends Batch<B>> implements LeakyPool {
     @SuppressWarnings("unchecked")
     public BatchPool(Class<B> cls, Factory<B> factory, int threads, int sharedCapacity) {
         threads           = 1 << (32 - numberOfLeadingZeros(Math.max(threads, MIN_THREADS)-1));
+        assert Integer.bitCount(threads) == 1;
         int batchesLen    = BATCHES_BASE + sharedCapacity + threads*LOCAL_CAP;
         this.batchClass   = cls;
         this.threadMask   = (threads-1);

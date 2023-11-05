@@ -28,6 +28,7 @@ public class AffinityLevelPool<T> {
     public AffinityLevelPool(LevelPool<T> shared, int disableLocalityLevel,
                              int threads) {
         int safeThreads = 1 << (32 - numberOfLeadingZeros(threads - 1));
+        assert Integer.bitCount(safeThreads) == 1 && safeThreads >= threads;
         this.threadMask = safeThreads-1;
         //noinspection unchecked
         this.local = (T[]) Array.newInstance(shared.itemClass(), safeThreads*32);

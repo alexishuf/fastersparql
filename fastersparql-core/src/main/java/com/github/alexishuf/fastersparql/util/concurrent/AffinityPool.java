@@ -30,7 +30,8 @@ public class AffinityPool<T> implements LeakyPool {
     }
 
     @SuppressWarnings("unchecked") public AffinityPool(Class<T> cls, int capacity, int threads) {
-        int safeThreads = 32 - Integer.numberOfLeadingZeros(threads - 1);
+        int safeThreads = 1 << (32 - Integer.numberOfLeadingZeros(threads - 1));
+        assert Integer.bitCount(safeThreads) == 1 && safeThreads >= threads;
         this.shared = (T[]) Array.newInstance(cls, capacity);
         this.local  = (T[]) Array.newInstance(cls, safeThreads<<L_SHIFT);
         this.capacity = capacity;
