@@ -70,6 +70,8 @@ class ScatterStageTest {
             throw new UnsupportedOperationException();
         }
 
+        @Override public Vars bindableVars() { return Vars.EMPTY; }
+
         @Override protected int produceAndDeliver(int state) {
             if (current != null && relRow >= current.rows) {
                 current = current.next;

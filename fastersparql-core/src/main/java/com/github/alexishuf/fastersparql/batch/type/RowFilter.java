@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.emit.Rebindable;
+import com.github.alexishuf.fastersparql.model.Vars;
 
 public interface RowFilter<B extends Batch<B>> extends Rebindable {
     enum Decision {
@@ -42,4 +43,5 @@ public interface RowFilter<B extends Batch<B>> extends Rebindable {
 
     @Override default void rebindRelease() {}
 
+    default @Override Vars bindableVars() { return Vars.EMPTY; }
 }

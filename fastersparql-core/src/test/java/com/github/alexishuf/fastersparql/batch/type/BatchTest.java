@@ -547,6 +547,60 @@ class BatchTest {
         });
     }
 
+    <B extends Batch<B>> void testMergeRow0(BatchType<B> type, int cols) {
+        String ctx = "type="+type+", cols="+cols;
+        Vars leftVars = Vars.of("l0", "l1", "l2");
+        B left = new Size(2, 3).fill(type.create(3));
+        B rightRoot = new Size(4, cols).fill(type.create(cols));
+        int rightRow = 2;
+        B right = rightRoot;
+        for (; right != null && rightRow >= right.rows; right = right.next)
+            rightRow -= right.rows;
+        assertNotNull(right);
+
+        var rightVars = mkVars(cols);
+        Vars outVars = Vars.of("l0", "l2").union(rightVars);
+        var merger = type.merger(outVars, leftVars, rightVars);
+
+        B dst = type.create(2+cols);
+        while ((dst.rows+1)*dst.cols <= dst.termsCapacity()) {
+            dst.beginPut();
+            dst.putTerm(0, left, 0, 0);
+            dst.putTerm(1, left, 0, 2);
+            for (int c = 0; c < cols; c++)
+                dst.putTerm(2+c, rightRoot, 0, c);
+            dst.commitPut();
+        }
+
+        B expected = dst.dup(), actual = null;
+        expected.beginPut();
+        expected.putTerm(0, left, 1, 0);
+        expected.putTerm(1, left, 1, 2);
+        for (int c = 0; c < cols; c++)
+            expected.putTerm(2+c, right, rightRow, c);
+        expected.commitPut();
+
+        try {
+            actual = merger.mergeRow(dst, left, 1, right, rightRow);
+        } catch (Throwable t) {
+            fail(t.getClass().getSimpleName()+"ctx="+ctx, t);
+        }
+        assertSame(dst, actual, ctx);
+        assertBatchesEquals(expected, actual, ctx);
+
+        assertNull(type.recycle(actual));
+        assertNull(type.recycle(expected));
+        assertNull(type.recycle(left));
+        assertNull(type.recycle(right));
+    }
+
+    @Test void testMergeRow() {
+        for (BatchType<?> type : TYPES) {
+            for (int cols : List.of(0, 1, 2, 3, 128))
+                testMergeRow0(type, cols);
+        }
+    }
+
     @Test void testCopy() {
         forEachSize(new ForEachSizeTest() {
             @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {

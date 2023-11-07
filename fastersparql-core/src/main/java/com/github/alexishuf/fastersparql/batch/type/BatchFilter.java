@@ -37,6 +37,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
                        RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
         super(batchType, outVars, CREATED, PROC_FLAGS);
         this.rowFilter = rowFilter;
+        this.bindableVars = rowFilter.bindableVars();
         this.before = before;
         this.outColumns = (short)outVars.size();
         requestLimit = Long.MAX_VALUE;

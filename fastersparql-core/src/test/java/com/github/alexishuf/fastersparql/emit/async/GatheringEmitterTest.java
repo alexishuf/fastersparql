@@ -69,6 +69,8 @@ class GatheringEmitterTest {
             throw new UnsupportedOperationException();
         }
 
+        @Override public Vars bindableVars() { return Vars.EMPTY; }
+
         @Override protected int produceAndDeliver(int state) {
             if (absRow == cancelAt)
                 return CANCELLED;

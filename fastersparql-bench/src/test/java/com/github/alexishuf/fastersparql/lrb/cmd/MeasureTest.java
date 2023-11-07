@@ -214,6 +214,12 @@ class MeasureTest {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, ITERATE);
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
+//        System.out.printf("""
+//                BindingStage.repeatRebind: %5d
+//                   TPEmitter.repeatRebind: %5d
+//                """,
+//                (int)BindingStage.REPEAT_REBIND.getOpaque(),
+//                (int)StoreSparqlClient.REPEAT_REBIND.getOpaque());
     }
 
     @ParameterizedTest @MethodSource("test")

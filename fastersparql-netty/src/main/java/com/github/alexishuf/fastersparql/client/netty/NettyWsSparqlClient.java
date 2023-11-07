@@ -201,6 +201,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 unlock(st);
             }
         }
+
+        @Override public Vars bindableVars() { return query.allVars(); }
     }
 
     private final class WsHandler<B extends Batch<B>>

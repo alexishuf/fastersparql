@@ -1478,6 +1478,59 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             assert dst.validate();
             return dst;
         }
+
+        @Override
+        public CompressedBatch mergeRow(@Nullable CompressedBatch dst,
+                                        CompressedBatch left, int leftRow,
+                                        CompressedBatch right, int rightRow) {
+            var tail = (dst = setupDst(dst, false)).tailUnchecked();
+            if (dst.cols > 0) {
+                short d = (short)(tail.rows*tail.cols), s;
+                short l = (short)(leftRow*left.cols), r = (short)(rightRow*right.cols);
+                // reserve locals/terms capacity
+                int lEnd = tail.localsLen +  left.localBytesUsed(leftRow)
+                                          + right.localBytesUsed(rightRow);
+                if (lEnd > LEN_MASK || d+tail.cols > tail.termsCapacity) {
+                    lEnd -= tail.localsLen;
+                    tail = createTail(dst);
+                    d = 0;
+                }
+                if (lEnd > LEN_MASK)
+                    throw new UnsupportedOperationException("locals exceed LEN_MASK");
+                if (lEnd > tail.locals.length)
+                    tail.growLocals(tail.localsLen, tail.localsLen+lEnd);
+                lEnd = tail.localsLen;
+
+                SegmentRope[] dsh = tail.shared, lsh = left.shared, rsh = right.shared;
+                short      [] dsl = tail.slices, lsl = left.slices, rsl = right.slices, isl;
+                byte       [] dlo = tail.locals, llo = left.locals, rlo = right.locals, ilo;
+                short i, o = d, len;
+                for (int c = 0; c < sources.length; o = (short)(d+(++c))) {
+                    if ((s=sources[c]) == 0) {
+                        dsh[o]     = null;
+                        dsl[o<<=1] = 0;
+                        dsl[o]     = 0;
+                    } else {
+                        if (s > 0) {
+                            dsh[o] = lsh[i=(short)(l+s-1)];
+                            isl    = lsl;
+                            ilo    = llo;
+                        } else {
+                            dsh[o] = rsh[i=(short)(r-s-1)];
+                            isl    = rsl;
+                            ilo    = rlo;
+                        }
+                        dsl[(o<<=1)+SL_OFF] = (short)lEnd;
+                        dsl[ o     +SL_LEN] = len = isl[(i<<=1)+SL_LEN];
+                        arraycopy(ilo, isl[i+SL_OFF], dlo, lEnd, len&=LEN_MASK);
+                        lEnd += len;
+                    }
+                }
+            }
+            tail.rows++;
+            assert tail.validate();
+            return dst;
+        }
     }
 
     public static final class Filter extends BatchFilter<CompressedBatch> {

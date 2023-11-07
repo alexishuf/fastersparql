@@ -332,14 +332,19 @@ public final class Modifier extends Plan {
         private final BatchBinding tmpBinding;
         private final List<Expr> filters;
         private final ExprEvaluator[] evaluators;
+        private final Vars filterVars;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
             this.tmpBinding = new BatchBinding(inVars);
             this.filters = filters;
+            this.filterVars = new Vars.Mutable(10);
             this.evaluators = new ExprEvaluator[filters.size()];
-            for (int i = 0; i < evaluators.length; i++)
-                evaluators[i] = filters.get(i).evaluator(inVars);
+            for (int i = 0; i < evaluators.length; i++) {
+                Expr expr = filters.get(i);
+                evaluators[i] = expr.evaluator(inVars);
+                filterVars.addAll(expr.vars());
+            }
         }
 
         private void logFailure(Throwable t) {
@@ -356,6 +361,8 @@ public final class Modifier extends Plan {
                     evaluators[i] = bound.evaluator(tmpBinding.vars);
             }
         }
+
+        @Override public Vars bindableVars() { return filterVars; }
 
         @Override public Decision drop(B batch, int row) {
             var binding = this.tmpBinding.attach(batch, row);

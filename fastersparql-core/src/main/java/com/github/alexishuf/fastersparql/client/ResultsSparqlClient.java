@@ -303,6 +303,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             setup(binding);
         }
 
+        @Override public Vars bindableVars() {
+            return expected.bindingsVars();
+        }
+
         @Override protected int produceAndDeliver(int state) {
             if (batch != null)
                 TERM.recycle(deliver(batch.dup()));

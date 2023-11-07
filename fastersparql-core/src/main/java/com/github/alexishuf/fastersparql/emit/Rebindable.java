@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindReleasedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 
 public interface Rebindable {
@@ -72,4 +73,9 @@ public interface Rebindable {
      * @throws RebindException if the operation cannot be performed due to reasons listed above.
      */
     void rebind(BatchBinding binding) throws RebindException;
+
+    /**
+     * Set of vars that can be assigned via {@link #rebind(BatchBinding)}.
+     */
+    Vars bindableVars();
 }

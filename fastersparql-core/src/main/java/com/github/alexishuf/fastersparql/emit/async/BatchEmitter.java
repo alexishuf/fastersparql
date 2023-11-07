@@ -37,6 +37,8 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             ResultJournal.rebindEmitter(this, binding);
     }
 
+    @Override public Vars bindableVars() { return Vars.EMPTY; }
+
     @Override protected int produceAndDeliver(int state) {
         long limit = (long)REQUESTED.getOpaque(this);
         if (limit <= 0)

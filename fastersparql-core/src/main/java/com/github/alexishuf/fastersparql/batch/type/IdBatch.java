@@ -509,6 +509,36 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             assert tail.validate();
             return dst;
         }
+
+        @Override public B mergeRow(@Nullable B dst, B left, int leftRow, B right, int rightRow) {
+            B tail = (dst = setupDst(dst, false)).tailUnchecked();
+            if (tail.cols > 0) {
+                int d = tail.rows * tail.cols;
+                short l = (short)(leftRow * left.cols), r = (short)(rightRow * right.cols);
+                long[] dIds = tail.arr, lIds = left.arr, rIds = right.arr;
+                if (d + tail.cols > dIds.length) {
+                    dIds = (tail = createTail(dst)).arr;
+                    d = 0;
+                }
+                int[] dHsh = tail.hashes, lHsh = left.hashes, rHsh = right.hashes;
+                short s, i;
+                for (int c = 0; c < sources.length; c++, d++) {
+                    if ((s = sources[c]) > 0) {
+                        dIds[d] = lIds[i=(short)(l+s-1)];
+                        dHsh[d] = lHsh[i];
+                    } else if (s < 0) {
+                        dIds[d] = rIds[i=(short)(r-s-1)];
+                        dHsh[d] = rHsh[i];
+                    } else {
+                        dIds[d] = 0L;
+                        dHsh[d] = 0;
+                    }
+                }
+            }
+            tail.rows++;
+            assert tail.validate();
+            return dst;
+        }
     }
 
     public static final class Filter<B extends IdBatch<B>> extends BatchFilter<B> {

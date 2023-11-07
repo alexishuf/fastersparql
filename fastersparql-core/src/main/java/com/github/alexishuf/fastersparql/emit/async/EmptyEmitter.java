@@ -28,6 +28,8 @@ public class EmptyEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         resetForRebind(0, 0);
     }
 
+    @Override public Vars bindableVars() { return Vars.EMPTY; }
+
     @Override protected int produceAndDeliver(int state) {
         return this.error == UNSET_ERROR ? COMPLETED : FAILED;
     }

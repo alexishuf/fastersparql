@@ -55,6 +55,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private short connectorTerminatedCount;
     private final BatchType<B> batchType;
     private final Vars vars;
+    private Vars bindableVars = Vars.EMPTY;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
     public GatheringEmitter(BatchType<B> batchType, Vars vars) {
@@ -74,6 +75,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (connectorCount >= connectors.length)
                 connectors = Arrays.copyOf(connectors, connectorCount*2);
             connectors[connectorCount++] = new Connector<>(upstream, this);
+            bindableVars = bindableVars.union(upstream.bindableVars());
         } finally {
             endDelivery();
         }
@@ -183,6 +185,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 LOCK.setRelease(this, 0);
         }
     }
+
+    @Override public Vars bindableVars() { return bindableVars; }
 
     @Override public void request(long rows) throws NoReceiverException {
         if ((state&IS_TERM) != 0)

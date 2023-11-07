@@ -188,6 +188,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 unlock(st);
             }
         }
+
+        @Override public Vars bindableVars() { return originalQuery.allVars(); }
     }
 
 

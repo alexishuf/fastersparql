@@ -78,6 +78,8 @@ class CallbackEmitterTest {
             throw new UnsupportedOperationException();
         }
 
+        @Override public Vars bindableVars() { return Vars.EMPTY; }
+
         @Override protected void onFirstRequest() {
             super.onFirstRequest();
             feedTask = ForkJoinPool.commonPool().submit(this::feed);

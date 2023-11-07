@@ -77,6 +77,8 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         upstream.rebind(binding);
     }
 
+    @Override public Vars bindableVars() { return upstream.bindableVars(); }
+
     /* --- --- --- Receiver methods --- --- --- */
 
     @Override public @This AbstractStage<I, O> subscribeTo(Emitter<I> emitter) {

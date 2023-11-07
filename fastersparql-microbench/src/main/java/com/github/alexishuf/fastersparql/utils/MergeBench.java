@@ -178,6 +178,8 @@ public class MergeBench {
         @Override public void rebind(BatchBinding binding) {
             throw new UnsupportedOperationException();
         }
+
+        @Override public Vars bindableVars() { return Vars.EMPTY; }
     }
 
 

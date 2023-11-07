@@ -126,9 +126,9 @@ class GatherAndScatterTest {
                 throw new UnsupportedOperationException();
             }
 
-            @Override protected void doRelease() {
-                cleaned = true;
-            }
+            @Override public Vars bindableVars() { return Vars.EMPTY; }
+
+            @Override protected void doRelease() { cleaned = true; }
         }
 
         private class C<B extends Batch<B>> implements Receiver<B> {

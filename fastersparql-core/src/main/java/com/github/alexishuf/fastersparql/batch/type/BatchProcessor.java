@@ -34,6 +34,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     protected @MonotonicNonNull Receiver<B> downstream;
     public final BatchType<B> batchType;
     public final Vars vars;
+    public Vars bindableVars = Vars.EMPTY;
     protected final EmitterStats stats = EmitterStats.createIfEnabled();
 
 
@@ -43,7 +44,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         super(initState, flags);
         assert flags.contains(PROC_FLAGS);
         this.batchType = batchType;
-        this.vars = outVars;
+        this.vars      = outVars;
     }
 
     /**
@@ -99,8 +100,13 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     /* --- --- --- Stage --- --- --- */
 
     @Override public @This Stage<B, B> subscribeTo(Emitter<B> e) {
-        if      (this.upstream ==  null) (this.upstream = e).subscribe(this);
-        else if (this.upstream !=     e) throw new MultipleRegistrationUnsupportedException(this);
+        if (this.upstream == null) {
+            this.upstream = e;
+            e.subscribe(this);
+            bindableVars = bindableVars.union(e.bindableVars());
+        } else if (this.upstream != e) {
+            throw new MultipleRegistrationUnsupportedException(this);
+        }
         return this;
     }
 
@@ -134,6 +140,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         if (ResultJournal.ENABLED)
             ResultJournal.rebindEmitter(this, binding);
     }
+
+    @Override final public Vars bindableVars() { return bindableVars; }
 
     @Override public final void cancel() {
         if (upstream != null)

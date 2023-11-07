@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
@@ -30,6 +31,8 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     @Override public void rebind(BatchBinding binding) throws RebindException {
         throw new UnsupportedOperationException("Cannot rebind a BIt");
     }
+
+     @Override public Vars bindableVars() { return Vars.EMPTY; }
 
     /* --- --- --- Task methods --- --- --- */
 

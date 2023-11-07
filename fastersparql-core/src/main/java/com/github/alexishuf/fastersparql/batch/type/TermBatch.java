@@ -510,6 +510,26 @@ public final class TermBatch extends Batch<TermBatch> {
             assert tail.validate();
             return dst;
         }
+
+        @Override
+        public TermBatch mergeRow(@Nullable TermBatch dst, TermBatch left, int leftRow, TermBatch right, int rightRow) {
+            dst = setupDst(dst, false);
+            TermBatch tail = dst.tailUnchecked();
+            if (sources.length > 0) {
+                Term[] dArr = tail.arr, lArr = left.arr, rArr = right.arr;
+                int d = (short) (tail.rows * tail.cols);
+                short l = (short) (leftRow * left.cols), r = (short) (rightRow * right.cols);
+                if (d + tail.cols > dArr.length) {
+                    dArr = (tail = createTail(dst)).arr;
+                    d = 0;
+                }
+                for (int c = 0, s; c < sources.length; c++)
+                    dArr[d++] = (s = sources[c]) > 0 ? lArr[l+s-1] : (s == 0 ? null : rArr[r-s-1]);
+            }
+            tail.rows++;
+            assert tail.validate();
+            return dst;
+        }
     }
 
     public static final class Filter extends BatchFilter<TermBatch> {

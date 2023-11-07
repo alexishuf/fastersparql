@@ -166,4 +166,10 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @return {@code dest}, if not null, else a new {@link Batch}.
      */
     public abstract B merge(@Nullable B dest, B left, int leftRow, @Nullable B right);
+
+    /**
+     * Equivalent to {@link #merge(Batch, Batch, int, Batch)} where right would be a
+     * batch containing only the {@code rightRow}-th row of the {@code right} given in this call.
+     */
+    public abstract B mergeRow(@Nullable B dest, B left, int leftRow, B right, int rightRow);
 }

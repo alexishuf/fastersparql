@@ -57,7 +57,8 @@ public class BatchBinding extends Binding {
         if (batch != null) {
             if (row < 0 || row >= batch.rows)
                 throw new IndexOutOfBoundsException(row);
-            this.cols = batch.cols;
+            if (cols != batch.cols)
+                throw new IllegalArgumentException("batch.cols != cols");
         }
         this.batch = batch;
         this.row = row;

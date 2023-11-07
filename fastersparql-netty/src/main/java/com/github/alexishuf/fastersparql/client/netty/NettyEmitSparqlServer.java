@@ -729,6 +729,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             @Override public void rebind(BatchBinding binding) {
                 throw new UnsupportedOperationException();
             }
+
+            @Override public Vars bindableVars() { return Vars.EMPTY; }
         }
 
         private void readVarsFrame(SegmentRope msg) {

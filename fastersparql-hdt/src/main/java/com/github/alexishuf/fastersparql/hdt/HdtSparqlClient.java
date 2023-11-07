@@ -204,6 +204,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private Term view = Term.pooledMutable();
         private int @Nullable[] skelCol2InCol;
         private final TripleID search = new TripleID();
+        private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
             super(HDT, outVars, EmitterService.EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
@@ -218,6 +219,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             this.oOutCol = (byte)oOutCol;
             this.cols = (byte)cols;
             this.tp = tp;
+            this.bindableVars = tp.allVars();
             Arrays.fill(rowSkel = ArrayPool.longsAtLeast(cols), 0L);
             if (!tp.publicVars().containsAll(outVars))
                 setFlagsRelease(statePlain(), HAS_UNSET_OUT);
@@ -303,6 +305,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                 unlock(st);
             }
         }
+
+        @Override public Vars bindableVars() { return bindableVars; }
 
         private long findId(int inCol, BatchBinding binding, TripleComponentRole role,
                             long fallback) {

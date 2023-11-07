@@ -694,6 +694,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     /* --- --- --- emitters --- --- --- */
 
+//    @SuppressWarnings("unused") private static int plainRepeatRebind;
+//    public static final VarHandle REPEAT_REBIND;
+//    static {
+//        try {
+//            REPEAT_REBIND = MethodHandles.lookup().findStaticVarHandle(StoreSparqlClient.class, "plainRepeatRebind", int.class);
+//        } catch (NoSuchFieldException|IllegalAccessException e) {
+//            throw new ExceptionInInitializerError(e);
+//        }
+//    }
+
     private final class TPEmitter extends TaskEmitter<StoreBatch> {
         private static final int LIMIT_TICKS   = 1;
         private static final int DEADLINE_CHK  = 0x3f;
@@ -717,6 +727,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final long sId, pId, oId;
         private int @Nullable[] skelCol2InCol;
         private final TwoSegmentRope view = TwoSegmentRope.pooled();
+        private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
             super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
@@ -725,6 +736,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 throw new IllegalArgumentException("Too many output columns");
             this.cols = (byte) cols;
             this.tp = tp;
+            bindableVars = tp.allVars();
             Arrays.fill(rowSkel = ArrayPool.longsAtLeast(cols), 0L);
             sId = lookup.find(tp.s);
             pId = lookup.find(tp.p);
@@ -807,6 +819,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return NOT_FOUND;
         }
 
+//        private CompressedBatch lastBindingC;
+//        private StoreBatch lastBindingI;
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             Vars bVars = binding.vars;
@@ -816,8 +830,26 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     stats.onRebind(binding);
                 if (ResultJournal.ENABLED)
                     ResultJournal.rebindEmitter(this, binding);
-                if (!bVars.equals(lastBindingsVars))
+                if (!bVars.equals(lastBindingsVars)) {
                     st = bindingVarsChanged(st, bVars);
+//                    lastBindingC = COMPRESSED.recycle(lastBindingC);
+//                    lastBindingI =       TYPE.recycle(lastBindingI);
+                }
+//                if (binding.batch instanceof StoreBatch sb) {
+//                    if (lastBindingI != null && lastBindingI.equals(0, sb, binding.row)) {
+//                        new Exception("repeat rebind on "+this+" vars="+bVars+", terms="+sb.toString(binding.row)).printStackTrace();
+//                        REPEAT_REBIND.getAndAdd(1);
+//                    }
+//                    lastBindingI = TYPE.empty(lastBindingI, bVars.size());
+//                    lastBindingI.putRow(sb, binding.row);
+//                } else if (binding.batch instanceof CompressedBatch cb) {
+//                    if (lastBindingC != null && lastBindingC.equals(0, cb, binding.row)) {
+//                        new Exception("repeat rebind on "+this+" vars="+bVars+", terms="+cb.toString(binding.row)).printStackTrace();
+//                        REPEAT_REBIND.getAndAdd(1);
+//                    }
+//                    lastBindingC = COMPRESSED.empty(lastBindingC, bVars.size());
+//                    lastBindingC.putRow(cb, binding.row);
+//                }
                 Batch<?> bb = binding.batch;
                 int bRow = binding.row;
                 if (bb == null || bRow >= bb.rows)
@@ -849,6 +881,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 unlock(st);
             }
         }
+
+        @Override public Vars bindableVars() { return bindableVars; }
 
         @Override public String toString() { return super.toString()+'('+tp+')'; }
 
