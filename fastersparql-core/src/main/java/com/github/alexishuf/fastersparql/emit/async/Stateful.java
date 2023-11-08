@@ -381,24 +381,28 @@ public abstract class Stateful {
      * @return the current state, with {@link #LOCKED_MASK} set
      */
     public int lock(int current) {
-        int spins = 0;
-        current &= UNLOCKED_MASK;
-        while (true) {
-            if ((current & LOCKED_MASK) == 0) {
-                int e = current;
-                if ((current=(int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK)) == e) {
-                    if (ENABLED)
-                        journal("locked, s=", e, flags, this);
-                    return e|LOCKED_MASK;
-                }
-            } else {
-                if ((++spins & 0x1f) == 0x1f)
-                    Thread.yield();
-                Thread.onSpinWait();
-                current = (int)S.getOpaque(this);
-            }
+        int e = current&UNLOCKED_MASK;
+        if ((current=(int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK)) != e) {
+            e = current&UNLOCKED_MASK;
+            if ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e)
+                current = lockCold();
         }
+        current |= LOCKED_MASK;
+        if (ENABLED)
+            journal("locked, s=", current, flags, this);
+        return current;
     }
+
+    private int lockCold() {
+        int e;
+        EmitterService.awakeStealer();
+        do {
+            Thread.onSpinWait();
+            e = (int)S.getOpaque(this)&UNLOCKED_MASK;
+        } while ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e);
+        return e;
+    }
+
 
     /**
      * Atomically clears the {@link #LOCKED_MASK} bit from {@link #state()}, if set

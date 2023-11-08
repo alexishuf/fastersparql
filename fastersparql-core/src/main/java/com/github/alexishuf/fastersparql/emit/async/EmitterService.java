@@ -304,6 +304,14 @@ public class EmitterService {
             }
             return ran;
         }
+
+        private void awakeStealer() {
+            if (md[(id<<MD_BITS)+MD_SIZE] == 0)
+                return; // no scheduled tasks to be stolen
+            int stealerId = (id-1)&threadsMask;
+            if (md[(stealerId<<MD_BITS)+MD_PARKED] == 1)
+                LockSupport.unpark(workers[stealerId]);
+        }
     }
 
     private static final int MD_BITS       = Integer.numberOfTrailingZeros(128/4);
@@ -413,6 +421,22 @@ public class EmitterService {
             return w.yieldToTaskOnce();
         return false;
     }
+
+    /**
+     * If the current thread is a worker thread with a non-empty queue (beyond the
+     * currently executing task) and the worker that would try stealing first from
+     * this worker is parked, then {@link LockSupport#unpark(Thread)} said stealing
+     * worker.
+     *
+     * <p>This method should be called in scenarios where there is a chance of the
+     * current worker doing some potentially expensive computation or being blocked
+     * for a few microseconds (tasks should not block)</p>
+     */
+    public static void awakeStealer() {
+        if (Thread.currentThread() instanceof Worker w)
+            w.awakeStealer();
+    }
+
 
     /**
      * Removes the first task from the queue whose metadata starts at {@code mdb}, assuming this
