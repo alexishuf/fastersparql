@@ -266,12 +266,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
      * @return {@code true} iff this thread is the only one delivering to downstream
      */
     private boolean tryBeginDelivery() {
-        if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) {
-            // CAE does not suffer from sporadic failures. Nevertheless, try at least twice
-            Thread.onSpinWait();
-            if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-                return false; // another thread is delivering
-        }
+        if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            return false; // another thread is delivering
         // got the mutex, we are obligated to deliver FILLING.
         deliverFilling();
         return true; // this thread is the only one delivering
