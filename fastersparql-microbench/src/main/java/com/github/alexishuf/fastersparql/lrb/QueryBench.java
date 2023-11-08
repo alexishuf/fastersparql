@@ -246,8 +246,9 @@ public class QueryBench {
 
 //        watchdog = new Thread(this::watchdog, "watchdog");
 //        watchdog.start();
-        System.out.println("\nThermal cooldown: 5s...");
+        System.out.print("\nThermal cooldown: 5s...");
         Async.uninterruptibleSleep(5_000);
+        System.out.println(" DONE");
     }
 
     @TearDown(Level.Trial) public void trialTearDown() {
