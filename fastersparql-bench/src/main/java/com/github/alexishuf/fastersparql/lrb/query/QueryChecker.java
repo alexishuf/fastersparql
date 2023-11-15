@@ -54,7 +54,8 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         try {
             doFinish(error);
         } finally {
-            unexpected = unexpected.recycle();
+            if (unexpected != null)
+                unexpected = unexpected.recycle();
         }
     }
 
