@@ -51,7 +51,7 @@ public class DebugJournal {
     /**
      * Default lines capacity for {@link #role(String)}.
      */
-    public static final int DEF_LINES = 512;
+    public static final int DEF_LINES = 1024;
 
     private static final int UNLOCKED = 0;
     private static final int LOCKED   = 1;
@@ -259,16 +259,16 @@ public class DebugJournal {
                 sb.append(o);
             } else {
                 String str = switch (o) {
-                    case Throwable t  -> t.getClass().getSimpleName();
-                    case Term t       -> t.toSparql().toString();
-                    case StreamNode n -> n.label(StreamNodeDOT.Label.MINIMAL);
-                    default           -> o.toString();
+                    case Throwable t     -> t.getClass().getSimpleName();
+                    case Term t          -> t.toSparql().toString();
+                    case CharSequence cs -> cs.toString();
+                    case StreamNode n    -> n.label(StreamNodeDOT.Label.MINIMAL);
+                    default              -> o.getClass().getSimpleName()+'@'+identityHashCode(o);
                 };
-                if (str.length() > maxWidth) {
-                    int side = Math.max(1, (maxWidth - 12)/2);
-                    sb.append(str, 0, side).append("...")
-                            .append(str, str.length() - side, str.length()).append('@')
-                            .append(toHexString(identityHashCode(o)));
+                if (maxWidth > 12 && str.length() > maxWidth) {
+                    int side = maxWidth - 12 /* ...@12345678 */;
+                    sb.append(str, 0, side).append("...");
+                    sb.append(str, str.length()-9-side, str.length());
                 } else {
                     sb.append(str);
                 }
