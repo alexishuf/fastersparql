@@ -12,7 +12,6 @@ import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.List;
 
-import static java.lang.Integer.toHexString;
 import static java.lang.Math.min;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;

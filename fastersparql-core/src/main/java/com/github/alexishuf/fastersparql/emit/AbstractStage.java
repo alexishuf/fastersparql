@@ -67,6 +67,14 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public void rebindAcquire() { upstream.rebindAcquire(); }
     @Override public void rebindRelease() { upstream.rebindRelease(); }
 
+    @Override public void rebindPrefetch(BatchBinding binding) {
+        if (upstream != null) upstream.rebindPrefetch(binding);
+    }
+
+    @Override public void rebindPrefetchEnd() {
+        if (upstream != null) upstream.rebindPrefetchEnd();
+    }
+
     @Override public void rebind(BatchBinding binding) throws RebindException {
         if (ThreadJournal.ENABLED)
             ThreadJournal.journal("rebind", this);

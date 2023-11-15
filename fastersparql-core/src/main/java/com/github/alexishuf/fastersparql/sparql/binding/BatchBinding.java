@@ -26,7 +26,7 @@ public class BatchBinding extends Binding {
     }
 
     public @Nullable Batch<?> batch;
-    public int row, cols;
+    public short row, cols;
     public Vars vars;
     public @Nullable BatchBinding remainder;
 
@@ -41,39 +41,46 @@ public class BatchBinding extends Binding {
         return bb;
     }
 
-    public BatchBinding(Vars vars) {
-        this.vars = vars;
-        this.cols = vars.size();
-    }
+    public BatchBinding(Vars vars) { vars(vars); }
 
     @Override public final Vars vars() { return vars; }
 
     public final void vars(Vars vars) {
         this.vars = vars;
-        this.cols = vars.size();
+        int cols = vars.size();
+        if (cols > Short.MAX_VALUE) throw new IllegalArgumentException("too many columns");
+        this.cols = (short) cols;
     }
 
     public final BatchBinding attach(@Nullable Batch<?> batch, int row) {
         if (batch != null) {
             if (row < 0 || row >= batch.rows)
                 throw new IndexOutOfBoundsException(row);
-            if (cols != batch.cols)
-                throw new IllegalArgumentException("batch.cols != cols");
+            cols = batch.cols;
         }
         this.batch = batch;
-        this.row = row;
+        this.row = (short)row;
         return this;
     }
 
     @Override final public @Nullable Term get(int i) {
+        if (i >= cols) return getFromRemainder(i);
         var batch = this.batch;
-        if (batch == null)
-            return null;
-        if (i >= cols) {
-            if (remainder == null) throw new IndexOutOfBoundsException(i);
-            return remainder.get(i-cols);
+        return batch == null ? null : batch.get(row, i);
+    }
+
+    private @Nullable Term getFromRemainder(int idx) {
+        var name = vars.get(idx);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return null;
+            return b.batch.get(b.row, c);
         }
-        return batch.get(row, i);
+        throw new IndexOutOfBoundsException("var not found");
     }
 
     /**
@@ -88,14 +95,23 @@ public class BatchBinding extends Binding {
      * @throws IndexOutOfBoundsException if {@code i < 0 || i >= vars.size()}
      */
     final public boolean get(int i, Term view) {
+        if (i >= cols) return getFromRemainder(i, view);
         var batch = this.batch;
-        if (batch == null)
-            return false;
-        if (i >= cols) {
-            if (remainder == null) throw new IndexOutOfBoundsException(i);
-            remainder.get(i-cols, view);
+        return batch != null && batch.getView(row, i, view);
+    }
+
+    private boolean getFromRemainder(int idx, Term view) {
+        var name = vars.get(idx);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return false;
+            return batch.getView(b.row, c, view);
         }
-        return batch.getView(row, i, view);
+        throw new IndexOutOfBoundsException("var not found");
     }
 
     /**
@@ -107,35 +123,63 @@ public class BatchBinding extends Binding {
      * @return {@code true} iff there is a term at column {@code i}
      */
     final public boolean get(int i, TwoSegmentRope view) {
+        if (i >= cols) return getFromRemainder(i, view);
         var batch = this.batch;
-        if (batch == null)
-            return false;
-        if (i >= cols) {
-            if (remainder == null) throw new IndexOutOfBoundsException(i);
-            return remainder.get(i-cols, view);
+        return batch != null && batch.getRopeView(row, i, view);
+    }
+
+    private boolean getFromRemainder(int idx, TwoSegmentRope view) {
+        var name = vars.get(idx);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return false;
+            return batch.getRopeView(b.row, c, view);
         }
-        return batch.getRopeView(row, i, view);
+        throw new IndexOutOfBoundsException("var not found");
     }
 
     @Override public final boolean has(int i) {
+        if (i >= cols) return hasInRemainder(i);
         var batch = this.batch;
-        if (batch == null)
-            return false;
-        if (i >= cols) {
-            if (remainder == null) throw new IndexOutOfBoundsException(i);
-            return remainder.has(i-cols);
+        return batch != null && batch.termType(row, i) != null;
+    }
+
+    private boolean hasInRemainder(int idx) {
+        var name = vars.get(idx);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return false;
+            return batch.termType(b.row, c) != null;
         }
-        return batch.termType(row, i) != null;
+        throw new IndexOutOfBoundsException("var not found");
     }
 
     @Override public final int writeSparql(int i, ByteSink<?, ?> dest, PrefixAssigner assigner) {
-        Batch<?> batch = this.batch;
-        if (batch == null)
-            return 0;
-        if (i > cols) {
-            if (remainder == null) throw new IndexOutOfBoundsException(i);
-            return writeSparql(i - cols, dest, assigner);
-        }
-        return batch.writeSparql(dest, row, i, assigner);
+        if (i >= cols) return writeSparqlRemainder(i, dest, assigner);
+        var batch = this.batch;
+        return batch == null ? 0 : batch.writeSparql(dest, row, i, assigner);
     }
+
+    private int writeSparqlRemainder(int idx, ByteSink<?, ?> dest, PrefixAssigner assigner) {
+        var name = vars.get(idx);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return 0;
+            return batch.writeSparql(dest, b.row, c, assigner);
+        }
+        throw new IndexOutOfBoundsException("var not found");
+    }
+
 }

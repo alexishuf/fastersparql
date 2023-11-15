@@ -131,6 +131,14 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         allowRelease();
     }
 
+    @Override public void rebindPrefetch(BatchBinding binding) {
+        if (upstream != null) upstream.rebindPrefetch(binding);
+    }
+
+    @Override public void rebindPrefetchEnd() {
+        if (upstream != null) upstream.rebindPrefetchEnd();
+    }
+
     @Override public void rebind(BatchBinding binding) throws RebindException {
         resetForRebind(0, 0);
         if (EmitterStats.ENABLED && stats != null)

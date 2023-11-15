@@ -395,14 +395,14 @@ public abstract class Stateful {
 
     private int lockCold() {
         int e;
-        EmitterService.awakeStealer();
+        EmitterService.beginSpin();
         do {
-            Thread.onSpinWait();
+            Thread.yield();
             e = (int)S.getOpaque(this)&UNLOCKED_MASK;
         } while ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e);
+        EmitterService.endSpin();
         return e;
     }
-
 
     /**
      * Atomically clears the {@link #LOCKED_MASK} bit from {@link #state()}, if set

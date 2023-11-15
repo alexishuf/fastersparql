@@ -79,10 +79,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private short lr = -1;
     private final short leftChunk;
     private int leftPending;
-    private @Nullable BatchMerger<B> leftMerger;
     private long requested;
     private final BatchBinding intBinding;
-    private @Nullable B extBindingForLeftMerger;
     private @Nullable Vars extBindingVars;
     protected final Vars outVars;
     protected final Vars bindableVars;
@@ -214,43 +212,29 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             journal("onBatch, rows=", rows, "st=", statePlain(), flags, "on", this);
 
         B retained = null;
-        BatchMerger<B> leftMerger = this.leftMerger;
-        int state = statePlain();
-        if (leftMerger != null) {
-            state = lock(state);
-            B merged = fillingLB;
-            fillingLB = null;
-            state = unlock(state);
-            if (ENABLED)
-                journal("onBatch merging into", merged == null ? "new batch" : "fillingLB");
-            merged = leftMerger.merge(merged, extBindingForLeftMerger, 0, batch);
-            retained = batch;
-            batch = merged;
-        }
-
-        state = lock(state);
+        int state = lock(statePlain());
         try {
             if (lb != null && fillingLB != null) {
-                B tmp = fillingLB;
+                retained = batch;
+                batch = fillingLB;
                 fillingLB = null;
                 state = unlock(state);
-
-                tmp.copy(batch);
-                if (retained != null) batchType.recycle(batch);
-                else                  retained = batch;
-                batch = tmp;
+                batch.copy(retained);
                 state = lock(state);
             }
-            if   (lb == null) lb        = batch;
-            else              fillingLB = batch;
-            leftPending -= (short)rows;
-            if ((state&CAN_BIND_MASK) == LEFT_CAN_BIND)
-                state = startNextBinding(state);
+            state = pushBatch(batch, rows, state);
         } finally {
-            if ((state&LOCKED_MASK) != 0)
-                unlock(state);
+            if ((state&LOCKED_MASK) != 0) unlock(state);
         }
         return retained;
+    }
+
+    private int pushBatch(B b, int rows, int state) {
+        if      (       lb == null)        lb = b;
+        else if (fillingLB == null) fillingLB = b;
+        else                        throw new IllegalStateException("fillingLB != null");
+        leftPending -= rows;
+        return (state&CAN_BIND_MASK) == LEFT_CAN_BIND ? startNextBinding(state) : state;
     }
 
     @Override public void onRow(B b, int row) {
@@ -261,27 +245,13 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             if (ENABLED)
                 journal("onRow", row, "st=", state, flags, "bStage=", this);
             B dst = fillingLB;
-            if (dst == null) dst = batchType.create(b.cols);
-            else             fillingLB = null;
-
+            if   (dst == null) dst = batchType.create(b.cols);
+            else               fillingLB = null;
             state = unlock(state);
-            if (leftMerger != null) {
-                dst = leftMerger.mergeRow(dst, extBindingForLeftMerger, 0, b, row);
-            } else {
-                dst.putRow(b, row);
-            }
-            state = lock(state);
-
-            if      (lb        == null) lb        = dst;
-            else if (fillingLB == null) fillingLB = dst;
-            else                        throw new IllegalStateException("fillingLB!=null");
-
-            --leftPending;
-            if ((state&CAN_BIND_MASK) == LEFT_CAN_BIND)
-                state = startNextBinding(state);
+            dst.putRow(b, row);
+            state = pushBatch(dst, 1, lock(state));
         } finally {
-            if ((state&LOCKED_MASK) != 0)
-                unlock(state);
+            if ((state&LOCKED_MASK) != 0) unlock(state);
         }
     }
 
@@ -328,9 +298,19 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
     @Override public Vars bindableVars() { return bindableVars; }
 
+
+    @Override public void rebindPrefetch(BatchBinding binding) {
+        leftUpstream.rebindPrefetch(binding);
+    }
+
+    @Override public void rebindPrefetchEnd() {
+        leftUpstream.rebindPrefetchEnd();
+    }
+
     @Override public void rebind(BatchBinding binding) throws RebindException {
         int st = resetForRebind(LEFT_TERM|RIGHT_TERM, RIGHT_STARVED|LOCKED_MASK);
         try {
+            rightRecv.upstream.rebindPrefetchEnd();
             if (EmitterStats.ENABLED && stats != null)
                 stats.onRebind(binding);
             requested = 0;
@@ -341,11 +321,11 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 //                lastRebindC = COMPRESSED.recycle(lastRebindC);
 //                lastRebindI =      STORE.recycle(lastRebindI);
             }
-            B storage = extBindingForLeftMerger;
-            if (storage != null) {
-                storage.clear();
-                storage.putRowConverting(binding.batch, binding.row);
-            }
+//            B storage = extBindingForLeftMerger;
+//            if (storage != null) {
+//                storage.clear();
+//                storage.putRowConverting(binding.batch, binding.row);
+//            }
 
 //            if (binding.batch instanceof CompressedBatch cb) {
 //                if (lastRebindC != null && lastRebindC.equals(0, cb, binding.row))
@@ -370,28 +350,32 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     private void updateExtRebindVars(BatchBinding binding) {
-        Vars bindingVars = binding.vars;
+        var bindingVars = binding.vars;
         extBindingVars = bindingVars;
-        Vars leftVars = leftUpstream.vars();
-        Vars rightVars = rightRecv.upstream.bindableVars();
-        Vars mergedVars = null;
-        for (int i = 0, n = bindingVars.size(); i < n; i++) {
-            var v = bindingVars.get(i);
-            if (!leftVars.contains(v) && rightVars.contains(v)) {
-                if (mergedVars == null)
-                    mergedVars = Vars.fromSet(leftVars, leftVars.size() + bindingVars.size());
-                mergedVars.add(v);
-            }
-        }
-        if (mergedVars == null) {
-            intBinding.vars(leftVars);
-            leftMerger = null;
-            extBindingForLeftMerger = batchType.recycle(extBindingForLeftMerger);
-        } else {
-            leftMerger = batchType.merger(mergedVars, bindingVars, leftVars);
-            intBinding.vars(mergedVars);
-            extBindingForLeftMerger = batchType.empty(extBindingForLeftMerger, bindingVars.size());
-        }
+        intBinding.vars(leftUpstream.vars().union(bindingVars));
+
+//        Vars bindingVars = binding.vars;
+//        extBindingVars = bindingVars;
+//        Vars leftVars = leftUpstream.vars();
+//        Vars rightVars = rightRecv.upstream.bindableVars();
+//        Vars mergedVars = null;
+//        for (int i = 0, n = bindingVars.size(); i < n; i++) {
+//            var v = bindingVars.get(i);
+//            if (!leftVars.contains(v) && rightVars.contains(v)) {
+//                if (mergedVars == null)
+//                    mergedVars = Vars.fromSet(leftVars, leftVars.size() + bindingVars.size());
+//                mergedVars.add(v);
+//            }
+//        }
+//        if (mergedVars == null) {
+//            intBinding.vars(leftVars);
+//            leftMerger = null;
+//            extBindingForLeftMerger = batchType.recycle(extBindingForLeftMerger);
+//        } else {
+//            leftMerger = batchType.merger(mergedVars, bindingVars, leftVars);
+//            intBinding.vars(mergedVars);
+//            extBindingForLeftMerger = batchType.empty(extBindingForLeftMerger, bindingVars.size());
+//        }
     }
 
     @Override
@@ -576,6 +560,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
             maybeRequestLeft();
             if (lb == null) {
+                rightRecv.upstream.rebindPrefetchEnd();
                 if ((st & LEFT_TERM) == 0) st = unlock(st, 0, RIGHT_STARVED);
                 else                       st = terminateStage(st);
             } else {
@@ -627,8 +612,13 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     /**
      * By default, equivalent to {@code rightEmitter.rebind(binding)}. This may be overridden
      * to implement non-standard joining, e.g., lexical joining.
+     *
+     * @param binding a {@link BatchBinding} to be used with {@link Emitter#rebind(BatchBinding)}
+     * @param rightEmitter the right-side emitter
      */
     protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
+        if (binding.row == 0)
+            rightEmitter.rebindPrefetch(binding);
         rightEmitter.rebind(binding);
     }
 

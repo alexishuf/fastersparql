@@ -145,11 +145,11 @@ public class Measure implements Callable<Void>{
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
 //        Stateful.INSTANCES.clear();
-//        Plan debugPlan;
+//        Plan debugPlan = null;
 //        ResultJournal.clear();
 //        ThreadJournal.resetJournals();
+        Object results;
         try {
-            Object results;
             if (plans != null) {
                 Plan plan = requireNonNull(plans.createPlan(task.query()));
                 currentPlan = plan;
@@ -169,7 +169,9 @@ public class Measure implements Callable<Void>{
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
 //            try (var w = ThreadJournal.watchdog(System.out, 100)) {
-//                w.start(5_000_000_000L).andThen(() -> dump(task.query(), debugPlan, (StreamNode)results));
+//                var dp = debugPlan;
+//                var sn = (StreamNode)results;
+//                w.start(5_000_000_000L).andThen(() -> dump(task.query(), dp, sn));
 //            }
             switch (msrOp.flowModel) {
                 case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
@@ -180,7 +182,10 @@ public class Measure implements Callable<Void>{
 //            }
         } catch (Throwable t) {
             consumer.finish(t);
+            log.error("Error during rep {} of task={}:", rep, task, t);
         }
+//        if (consumer instanceof Checker<?> c && !c.isValid())
+//            dump(task.query(), debugPlan, (StreamNode)results);
         return (int)((nanoTime()-start)/1_000_000L);
     }
 

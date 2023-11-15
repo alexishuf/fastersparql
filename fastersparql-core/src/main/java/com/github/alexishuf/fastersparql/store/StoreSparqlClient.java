@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
+import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
@@ -53,14 +54,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.currentWorker;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -69,6 +72,8 @@ import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
@@ -153,7 +158,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     @Override protected void doClose() {
         if (ThreadJournal.ENABLED)
-            ThreadJournal.journal("Closing dictId=", dictId, "endpoint=", endpoint);
+            journal("Closing dictId=", dictId, "endpoint=", endpoint);
         log.debug("Closing {}", this);
         IdTranslator.deregister(dictId, dict);
         dict.close();
@@ -704,104 +709,151 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //        }
 //    }
 
-    private final class TPEmitter extends TaskEmitter<StoreBatch> {
-        private static final int LIMIT_TICKS   = 1;
-        private static final int DEADLINE_CHK  = 0x3f;
-        private static final int HAS_UNSET_OUT = 0x01000000;
-        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
-                .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
-                .build();
+    private static final class PrefetchTask extends EmitterService.Task {
+        private static final byte CHUNK_ROWS = 8;
+        private static final VarHandle NEXT_ROW;
+        static {
+            try {
+                NEXT_ROW = MethodHandles.lookup().findVarHandle(PrefetchTask.class, "plainNextRow", int.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
 
-        private final byte cols;
-        private byte outCol0, outCol1, outCol2;
-        private final short dictId = (short)StoreSparqlClient.this.dictId;
-        private byte freeRoles;
-        private boolean retry;
-        private Object it;
-        private final long[] rowSkel;
-        // ---------- fields below this line are accessed only on construction/rebind()
-        private byte sInCol = -1, pInCol = -1, oInCol = -1;
-        private final TriplePattern tp;
-        private final LocalityCompositeDict.Lookup lookup = dict.lookup();
-        private @MonotonicNonNull Vars lastBindingsVars;
-        private final long sId, pId, oId;
-        private int @Nullable[] skelCol2InCol;
-        private final TwoSegmentRope view = TwoSegmentRope.pooled();
-        private final Vars bindableVars;
+//        private static final VarHandle REQUEST, NEXT_ROW;
+//        static {
+//            try {
+//                REQUEST = MethodHandles.lookup().findVarHandle(PrefetchTask.class, "request", Batch.class);
+//                NEXT_ROW = MethodHandles.lookup().findVarHandle(PrefetchTask.class, "nextRow", int.class);
+//            } catch (NoSuchFieldException | IllegalAccessException e) {
+//                throw new ExceptionInInitializerError(e);
+//            }
+//        }
 
-        public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
-            int cols = outVars.size();
-            if (cols > 127)
-                throw new IllegalArgumentException("Too many output columns");
-            this.cols = (byte) cols;
-            this.tp = tp;
-            bindableVars = tp.allVars();
-            Arrays.fill(rowSkel = ArrayPool.longsAtLeast(cols), 0L);
-            sId = lookup.find(tp.s);
-            pId = lookup.find(tp.p);
-            oId = lookup.find(tp.o);
-            rebind(BatchBinding.ofEmpty(TYPE));
-            if (stats != null)
-                stats.rebinds = 0;
-            if (ResultJournal.ENABLED)
-                ResultJournal.initEmitter(this, vars);
-            acquireRef();
+        private BatchBinding binding;
+        private Batch<?> batch;
+        @SuppressWarnings("unused") private volatile int plainNextRow;
+        private final short dictId;
+        private byte chunkRows;
+        byte unsrcIdsCols, sOutCol, pOutCol, oOutCol;
+        private byte sInCol, pInCol, oInCol, rowSkelCols;
+        final long sId, pId, oId;
+        private final LocalityCompositeDict.Lookup lookup;
+        private TwoSegmentRope view;
+        long[] unsrcIds;
+        private short[] skelCol2InCol = EMPTY_SHORT;
+        private long [] rowSkels      = EMPTY_LONG;
+
+        private PrefetchTask(short dictId, LocalityCompositeDict dict, TriplePattern tp) {
+            super(EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            this.dictId       = dictId;
+            this.chunkRows    = CHUNK_ROWS;
+            this.lookup       = dict.lookup();
+            this.view         = TwoSegmentRope.pooled();
+            this.unsrcIds     = longsAtLeast(TYPE.preferredTermsPerBatch()>>1);
+            this.sId          = lookup.find(tp.s);
+            this.pId          = lookup.find(tp.p);
+            this.oId          = lookup.find(tp.o);
         }
 
         @Override protected void doRelease() {
-            try {
-                ArrayPool.LONG.offer(rowSkel, rowSkel.length);
-                if (skelCol2InCol != null)
-                    skelCol2InCol = ArrayPool.INT.offer(skelCol2InCol, skelCol2InCol.length);
-                view.recycle();
-                releaseRef();
-            } finally {
-                super.doRelease();
+            view.recycle();
+            view = null; // cause an NPE on task()
+            unsrcIds = ArrayPool.LONG.offerToNearest(unsrcIds, unsrcIds.length);
+            skelCol2InCol = ArrayPool.SHORT.offer(skelCol2InCol, skelCol2InCol.length);
+            super.doRelease();
+        }
+
+        void setInCols(int sInCol, int pInCol, int oInCol) {
+            if (sInCol > 0x7f || pInCol > 0x7f || oInCol > 0x7f)
+                throw new IllegalArgumentException("Too many input columns");
+            this.sInCol = (byte) sInCol;
+            this.pInCol = (byte) pInCol;
+            this.oInCol = (byte) oInCol;
+            byte cols = 0;
+            this.sOutCol = sInCol < 0 ? -1 : cols++;
+            this.pOutCol = pInCol < 0 ? -1 : cols++;
+            this.oOutCol = oInCol < 0 ? -1 : cols++;
+            this.unsrcIdsCols = cols;
+        }
+
+        void setupBindSkel(boolean bindSkel, Vars outVars, Vars bindingVars) {
+            if (bindSkel) {
+                int outCols = outVars.size();
+                rowSkelCols = (byte)outCols;
+                if (skelCol2InCol.length < outCols)
+                    skelCol2InCol = shortsAtLeast(outCols);
+                for (int c = 0; c < outCols; c++)
+                    skelCol2InCol[c] = (short)bindingVars.indexOf(outVars.get(c));
+            } else {
+                rowSkelCols = 0;
             }
         }
 
-        private int bindingVarsChanged(int state, Vars bindingVars) {
-            lastBindingsVars = bindingVars;
-            freeRoles = 0;
-            int sInCol = -1, pInCol = -1, oInCol = -1;
-            if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
-            if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
-            if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
-            if (sInCol > 0x7f || pInCol > 0x7f || oInCol > 0x7f)
-                throw new IllegalArgumentException("Too many input columns");
-            this.sInCol = (byte)sInCol;
-            this.pInCol = (byte)pInCol;
-            this.oInCol = (byte)oInCol;
-            byte sc = (byte)vars.indexOf(tp.s);
-            byte pc = (byte)vars.indexOf(tp.p);
-            byte oc = (byte)vars.indexOf(tp.o);
-            byte o0 = -1, o1 = -1, o2 = -1;
-            switch (freeRoles) {
-                case       EMPTY_BITS ->   it = FALSE;
-                case         OBJ_BITS -> { it = spo.makeValuesIt(); o0 = oc; }
-                case         PRE_BITS -> { it = spo.makeSubKeyIt(); o0 = pc; }
-                case     PRE_OBJ_BITS -> { it = spo.makePairIt();   o0 = pc; o1 = oc; }
-                case         SUB_BITS -> { it = ops.makeValuesIt(); o0 = sc; }
-                case     SUB_OBJ_BITS -> { it = pso.makePairIt();   o0 = sc; o1 = oc; }
-                case     SUB_PRE_BITS -> { it = ops.makePairIt();   o0 = pc; o1 = sc; }
-                case SUB_PRE_OBJ_BITS -> { it = spo.scan();         o0 = sc; o1 = pc; o2 = oc; }
+        void forceRequest(Batch<?> b, BatchBinding binding, short r) {
+            short snapshot = stop(), rows;
+            try {
+                rows = b.rows;
+                // reserve storage capacity for results of conversion
+                if (rows*unsrcIdsCols > unsrcIds.length)
+                    unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
+                if (rows*rowSkelCols > (rowSkels == null ? 0 : rowSkels.length))
+                    rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
+
+                this.binding   = binding;
+                this.batch     = b;
+                this.chunkRows = 1; // on first task(), process at most one row
+                NEXT_ROW.setRelease(this, (int) r);
+            } finally {
+                allowRun(snapshot);
             }
-            outCol0 = o0;
-            outCol1 = o1;
-            outCol2 = o2;
-            int colsSet = 0;
-            if (o0 != -1                        ) ++colsSet;
-            if (o1 != -1 && o1 != o0            ) ++colsSet;
-            if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
-            if (colsSet < cols) {
-                if (skelCol2InCol == null)
-                    skelCol2InCol = ArrayPool.intsAtLeast(cols);
-                for (int c = 0; c < cols; c++)
-                    skelCol2InCol[c] = bindingVars.indexOf(vars.get(c));
-                return setFlagsRelease(state, HAS_UNSET_OUT);
+        }
+
+        void requestIfChanged(Batch<?> batch, BatchBinding binding,
+                              short startRow) {
+            if (batch != this.batch)
+                forceRequest(batch, binding, startRow);
+        }
+
+        void awaitRow(short row, short tpEmitterWorker) {
+            if ((int)NEXT_ROW.getAcquire(this) <= row) {
+                chunkRows = 1;
+                avoidWorkers(currentWorker(), tpEmitterWorker);
+                if (!runNow() || (int)NEXT_ROW.getAcquire(this) <= row)
+                    awaitRowCold(row);
             }
-            return clearFlagsRelease(state, HAS_UNSET_OUT);
+        }
+
+        private void awaitRowCold(short row) {
+            EmitterService.beginSpin();
+            while ((int)NEXT_ROW.getAcquire(this) <= row) {
+                if (!runNow())
+                    Thread.yield();
+            }
+            EmitterService.endSpin();
+        }
+
+        short stop() {
+            chunkRows = 0;
+            batch = null;
+            short snapshot = disallowRun(false);
+            NEXT_ROW.setRelease(this, 0);
+            return snapshot;
+        }
+
+        /**
+         * Safely release pooled resources. This will wait if {@link #task(int)} is running,
+         * but future executions of {@link #task(int)} will fail due to the resources
+         * being released
+         */
+        void release() {
+            short snapshot = stop();
+            try {
+                if (moveStateRelease(statePlain(), COMPLETED))
+                    markDelivered(COMPLETED);
+            } finally {
+                allowRun(snapshot);
+            }
         }
 
         @SuppressWarnings("DataFlowIssue")
@@ -812,15 +864,159 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 row  = (binding = binding.remainder).row;
                 cols = (batch   = binding.batch    ).cols;
             }
-            if (batch instanceof StoreBatch sb)
+            if (batch instanceof StoreBatch sb) {
                 return translate(sb.arr[cols*row+col], dictId, lookup);
-            else if (batch.getRopeView(row, col, view))
-                 return lookup.find(view);
+            } else if (batch.getRopeView(row, col, view)) {
+                return lookup.find(view);
+            }
             return NOT_FOUND;
+        }
+
+        @Override protected void task(int threadId) {
+            short r = (short)(int)NEXT_ROW.getAcquire(this), rows;
+            Batch<?> b = this.batch;
+            if (b == null || r >= (rows=b.rows))
+                return;
+            long[] unsrcIds = this.unsrcIds;
+            BatchBinding binding = this.binding;
+            byte sInCol = this.sInCol, pInCol = this.pInCol, oInCol = this.oInCol;
+            byte unsrcIdsCols = this.unsrcIdsCols;
+            short base = (short)(r*unsrcIdsCols);
+            byte rowSkelCols = this.rowSkelCols, i = 0;
+            for (; i < chunkRows && r < rows; ++i, base+=unsrcIdsCols) {
+                if (sInCol >= 0) unsrcIds[base+sOutCol] = toUnsourcedId(sInCol, b, r, binding);
+                if (pInCol >= 0) unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, b, r, binding);
+                if (oInCol >= 0) unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, b, r, binding);
+                if (rowSkelCols != 0) {
+                    int rsBase = r*rowSkelCols;
+                    short[] skelCol2InCol = this.skelCol2InCol;
+                    long[] rowSkels = this.rowSkels;
+                    for (int c = 0; c < rowSkelCols; c++) {
+                        int bc = skelCol2InCol[c];
+                        rowSkels[rsBase+c] = bc < 0
+                                ? NOT_FOUND : source(toUnsourcedId(bc, b, r, binding), dictId);
+                    }
+                }
+                NEXT_ROW.setRelease(this, ++r);
+            }
+            if (r < rows) {
+                chunkRows = CHUNK_ROWS;
+                awake();
+            }
+        }
+    }
+
+    private final class TPEmitter extends TaskEmitter<StoreBatch> {
+        private static final int LIMIT_TICKS       = 1;
+        private static final int DEADLINE_CHK      = 0x3f;
+        private static final int HAS_UNSET_OUT     = 0x01000000;
+        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
+                .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
+                .build();
+
+        private final byte cols;
+        private byte outCol0, outCol1, outCol2;
+        private final short dictId = (short)StoreSparqlClient.this.dictId;
+        private byte freeRoles;
+        private boolean retry;
+        private Object it;
+        private long[] rowSkels = EMPTY_LONG;
+        private int rowSkelBegin;
+        // ---------- fields below this line are accessed only on construction/rebind()
+        private final TriplePattern tp;
+        private @MonotonicNonNull Vars lastBindingsVars;
+        private final PrefetchTask prefetcher;
+        private final Vars bindableVars;
+
+        public TPEmitter(TriplePattern tp, Vars outVars) {
+            super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+            int cols = outVars.size();
+            if (cols > 127)
+                throw new IllegalArgumentException("Too many output columns");
+            this.cols         = (byte) cols;
+            this.tp           = tp;
+            this.bindableVars = tp.allVars();
+            this.prefetcher   = new PrefetchTask(dictId, dict, tp);
+            BatchBinding empty = BatchBinding.ofEmpty(TYPE);
+            rebindPrefetch(empty);
+            rebind(empty);
+            rebindPrefetchEnd();
+            if (stats != null)
+                stats.rebinds = 0;
+            if (ResultJournal.ENABLED)
+                ResultJournal.initEmitter(this, vars);
+            acquireRef();
+        }
+
+        @Override protected void doRelease() {
+            try {
+                prefetcher.release();
+                releaseRef();
+            } finally {
+                super.doRelease();
+            }
+        }
+
+        private int bindingVarsChanged(int state, Vars bindingVars) {
+            if (ENABLED)
+                journal("bindingVarsChanged bindingVars", bindingVars, "em=", this);
+            lastBindingsVars = bindingVars;
+            freeRoles = 0;
+            int sInCol = -1, pInCol = -1, oInCol = -1;
+            if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
+            if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
+            if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
+            short snapshot = prefetcher.stop();
+            try {
+                prefetcher.setInCols(sInCol, pInCol, oInCol);
+                byte sc = (byte)vars.indexOf(tp.s);
+                byte pc = (byte)vars.indexOf(tp.p);
+                byte oc = (byte)vars.indexOf(tp.o);
+                byte o0 = -1, o1 = -1, o2 = -1;
+                switch (freeRoles) {
+                    case       EMPTY_BITS ->  it = FALSE;
+                    case         OBJ_BITS -> {it = spo.makeValuesIt(); o0 = oc;}
+                    case         PRE_BITS -> {it = spo.makeSubKeyIt(); o0 = pc;}
+                    case     PRE_OBJ_BITS -> {it = spo.makePairIt();   o0 = pc; o1 = oc;}
+                    case         SUB_BITS -> {it = ops.makeValuesIt(); o0 = sc;}
+                    case     SUB_OBJ_BITS -> {it = pso.makePairIt();   o0 = sc; o1 = oc;}
+                    case     SUB_PRE_BITS -> {it = ops.makePairIt();   o0 = pc; o1 = sc;}
+                    case SUB_PRE_OBJ_BITS -> {it = spo.scan();         o0 = sc; o1 = pc; o2 = oc;}
+                }
+                outCol0 = o0;
+                outCol1 = o1;
+                outCol2 = o2;
+                int colsSet = 0;
+                if (o0 != -1                        ) ++colsSet;
+                if (o1 != -1 && o1 != o0            ) ++colsSet;
+                if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
+                prefetcher.setupBindSkel(colsSet < cols, vars, bindingVars);
+                return colsSet < cols ?   setFlagsRelease(state, HAS_UNSET_OUT)
+                                      : clearFlagsRelease(state, HAS_UNSET_OUT);
+            } finally {
+                prefetcher.allowRun(snapshot);
+            }
         }
 
 //        private CompressedBatch lastBindingC;
 //        private StoreBatch lastBindingI;
+
+        @Override public void rebindPrefetchEnd() {
+            prefetcher.allowRun(prefetcher.stop());
+        }
+
+        @Override public void rebindPrefetch(BatchBinding binding) {
+            int st = lock(statePlain());
+            try {
+                if ((st&STATE_MASK) != CREATED && (st & IS_TERM) == 0)
+                    return; // not rebind()able
+                if (!binding.vars.equals(lastBindingsVars))
+                    st = bindingVarsChanged(st, binding.vars);
+                Batch<?> bb = binding.batch;
+                if (bb != null)
+                    prefetcher.forceRequest(bb, binding, binding.row);
+            } finally { unlock(st); }
+        }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             Vars bVars = binding.vars;
@@ -851,22 +1047,23 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //                    lastBindingC.putRow(cb, binding.row);
 //                }
                 Batch<?> bb = binding.batch;
-                int bRow = binding.row;
+                short bRow = binding.row;
                 if (bb == null || bRow >= bb.rows)
                     throw new IllegalArgumentException("invalid binding");
-                long s = sInCol >= 0 ? toUnsourcedId(sInCol, bb, bRow, binding) : sId;
-                long p = pInCol >= 0 ? toUnsourcedId(pInCol, bb, bRow, binding) : pId;
-                long o = oInCol >= 0 ? toUnsourcedId(oInCol, bb, bRow, binding) : oId;
-                if ((st&HAS_UNSET_OUT) != 0) {
-                    int[] skelCol2InCol = this.skelCol2InCol;
-                    if (skelCol2InCol != null) {
-                        for (int c = 0; c < cols; c++) {
-                            int bc = skelCol2InCol[c];
-                            rowSkel[c] = bc < 0 ? NOT_FOUND
-                                    : source(toUnsourcedId(bc, bb, bRow, binding), dictId);
-                        }
-                    }
-                }
+
+                prefetcher.requestIfChanged(bb, binding, bRow);
+                int base = prefetcher.unsrcIdsCols *bRow;
+                int si = prefetcher.sOutCol < 0 ? -1 : base+prefetcher.sOutCol;
+                int pi = prefetcher.pOutCol < 0 ? -1 : base+prefetcher.pOutCol;
+                int oi = prefetcher.oOutCol < 0 ? -1 : base+prefetcher.oOutCol;
+                rowSkelBegin = cols*bRow;
+                prefetcher.awaitRow(bRow, preferredWorker);
+                rowSkels = prefetcher.rowSkels;
+                long[] unsourcedIds = prefetcher.unsrcIds;
+                long s = si < 0 ? prefetcher.sId : unsourcedIds[si];
+                long p = pi < 0 ? prefetcher.pId : unsourcedIds[pi];
+                long o = oi < 0 ? prefetcher.oId : unsourcedIds[oi];
+
                 switch (freeRoles) {
                     case       EMPTY_BITS -> it = spo.contains(s, p, o);
                     case         OBJ_BITS -> spo.values (s, p, (Triples.ValueIt )it);
@@ -924,7 +1121,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         @SuppressWarnings("SameReturnValue") private void fillAsk(StoreBatch b) {
             if (it == TRUE) {
                 if ((statePlain()&HAS_UNSET_OUT) != 0)
-                    arraycopy(rowSkel, 0, b.arr, 0, cols);
+                    arraycopy(rowSkels, rowSkelBegin, b.arr, 0, cols);
                 b.rows = 1;
             }
         }
@@ -937,7 +1134,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             byte outCol0 = this.outCol0;
             var it = (Triples.ValueIt)this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset     ) arraycopy(rowSkel, 0, a, base, cols);
+                if (hasUnset     ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
                 if (outCol0  >= 0) a[base+outCol0] = source(it.valueId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
@@ -954,7 +1151,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.PairIt) this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkel, 0, a, base, cols);
+                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.subKeyId, dictId);
                 if (outCol1   >= 0) a[base+outCol1] = source(it.valueId,  dictId);
                 ++rows;
@@ -972,7 +1169,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.SubKeyIt)this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkel, 0, a, base, cols);
+                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.subKeyId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
@@ -989,7 +1186,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.ScanIt) this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkel, 0, a, base, cols);
+                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.keyId,    dictId);
                 if (outCol1   >= 0) a[base+outCol1] = source(it.subKeyId, dictId);
                 if (outCol2   >= 0) a[base+outCol2] = source(it.valueId,  dictId);
@@ -1505,8 +1702,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
-            if (lexJoinBinding != null) binding = lexRebind(binding, lexJoinBinding);
-            rightEmitter.rebind(binding);
+            if (lexJoinBinding != null)
+                binding = lexRebind(binding, lexJoinBinding);
+            super.rebind(binding, rightEmitter);
         }
 
         private BatchBinding lexRebind(BatchBinding binding, BatchBinding lexJoinBinding) {

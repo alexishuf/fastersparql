@@ -42,7 +42,7 @@ public class EmitterService {
                 throw new ExceptionInInitializerError(e);
             }
         }
-        protected static final int RR_WORKER = -1;
+        protected static final short RR_WORKER = Short.MIN_VALUE;
         private static final int IS_RUNNING  = 0x40000000;
         protected static final Stateful.Flags TASK_FLAGS = Stateful.Flags.DEFAULT.toBuilder()
                 .flag(IS_RUNNING, "RUNNING").build();
@@ -55,19 +55,22 @@ public class EmitterService {
         /**
          * Create  a new {@link Task}, optionally  assigned to a preferred worker.
          *
-         * @param runner the {@link EmitterService} where the task will run.
+         * @param svc the {@link EmitterService} where the task will run.
          * @param worker if {@code >= 0}, this will be treated as the 0-based index of the worker
-         *               where this task will initially schedule itself on {@link #awake()}. If
-         *               {@code < 0}, a round-robin strategy will select a preferred worker.
+         *               where this task will initially schedule itself on {@link #awake()}.
+         *               If {@link #RR_WORKER}, a round-robin strategy will choose a worker.
          */
-        protected Task(EmitterService runner, int worker, int initState, Flags flags) {
+        protected Task(EmitterService svc, int worker, int initState, Flags flags) {
             super(initState, flags);
             assert flags.contains(TASK_FLAGS);
-            this.runner = runner;
-            int unbound = worker >= 0
-                        ? worker : (int) MD.getAndAddRelease(runner.runnerMd, RMD_WORKER, 1);
-            preferredWorker = (short)(unbound&runner.threadsMask);
-            MD.getAndAddRelease(runner.runnerMd, RMD_TASKS, 1);
+            this.runner = svc;
+            int chosen;
+            if (worker <  0)
+                chosen = (int)MD.getAndAddRelease(svc.runnerMd, RMD_WORKER, 1);
+            else
+                chosen = worker;
+            preferredWorker = (short)(chosen&svc.threadsMask);
+            MD.getAndAddRelease(svc.runnerMd, RMD_TASKS, 1);
         }
 
         @Override protected void doRelease() {
@@ -84,6 +87,28 @@ public class EmitterService {
         }
 
         /**
+         * If the {@code preferredWorker} for this task has ID {@code w0} or {@code w1}, change
+         * it to the worker that is not {@code w1} and is also the least likely to steal from
+         * {@code w0} or to have tasks stole by {@code w0}.
+         *
+         * <p>If the task is already scheduled or being executed, the change enacted by this
+         * method (if any) will only apply upon the next {@code awake}</p>
+         *
+         * @param w0 The ID of a worker to be avoided
+         * @param w1 The ID of another worker to be avoided, or {@code < 0} if this
+         *           parameter is to be ignored.
+         */
+        protected final void avoidWorkers(short w0, short w1) {
+            short preferred = preferredWorker;
+            if (preferred == w0 || preferred == w1) {
+                short mask = runner.threadsMask;
+                if ((preferred = (short)( (w0+1+(mask>>1)) & mask )) == w1)
+                    preferred = (short)((preferred+1)&mask);
+                preferredWorker = preferred;
+            }
+        }
+
+        /**
          * Arbitrary code that does whatever is the purpose of this task. Implementations
          * must not block and should {@link #awake()} and return instead of running loops. If
          * this runs in response to an {@link #awake()}, it will run in a worker thread of the
@@ -97,6 +122,53 @@ public class EmitterService {
         protected abstract void task(int threadId);
 
         /**
+         * Forbid execution of {@link #task(int)} after this method has returned and until
+         * {@link #allowRun(short)} is called.
+         *
+         * <p>If {@link #task(int)} is currently being executed at some thread, this call will
+         * block until it finishes executing. If the thread calling this method is a worker
+         * thread, it will attempt executing another task instead of busy-waiting.</p>
+         *
+         * @param yieldDuringSpin If this is true and {@link #task(int)} is running on another
+         *                        worker thread, {@link Thread#yield()} will be caller on each
+         *                        spin instead of {@link Thread#onSpinWait()}
+         * @return a counter value that must be passed to {@link #allowRun(short)}, so it can
+         *         determine whether {@link #awake()} calls arrived while running was disallowed.
+         */
+        public short disallowRun(boolean yieldDuringSpin) {
+            short snapshot = (short)SCHEDULED.getAcquire(this);
+            if (!compareAndSetFlagRelease(IS_RUNNING)) {
+                beginSpin();
+                while (!compareAndSetFlagRelease(IS_RUNNING)) {
+                    if (yieldDuringSpin) Thread.yield();
+                    else                 Thread.onSpinWait();
+                    snapshot = (short) SCHEDULED.getAcquire(this);
+                }
+                 endSpin();
+            }
+            return snapshot;
+        }
+
+        /**
+         * Allows this {@link Task} to be scheduled upon {@link #awake()} after a call to
+         * {@link #disallowRun(boolean)} made that impossible.
+         *
+         * <p>This call may itself trigger the effects of an {@link #awake()} if an
+         * {@link #awake()}  arrived while running was disallowed.</p>
+         *
+         * @param scheduledBeforeDisallowRun the value returned by {@link #disallowRun(boolean)}
+         */
+        public void allowRun(short scheduledBeforeDisallowRun) {
+            clearFlagsRelease(statePlain(), IS_RUNNING);
+            short ac;
+            ac = (short)SCHEDULED.compareAndExchange(this, scheduledBeforeDisallowRun, (short)0);
+            if (ac != scheduledBeforeDisallowRun) {
+                SCHEDULED.setRelease(this, (short)1);
+                runner.add(this);
+            } // else: S = 0 and not enqueued, future awake() can enqueue
+        }
+
+        /**
          * Execute this task <strong>now</strong>, unless it is already being executed by
          * another thread. Unlike a direct call to {@link #task(int)}, this will ensure there are
          * no concurrent {@link #task(int)} calls for the same {@link Task} object. If there is a
@@ -108,24 +180,15 @@ public class EmitterService {
          * consumer task work instead of spinning or parking.</p>
          */
         @SuppressWarnings("unused") protected boolean runNow() {
-            if (!compareAndSetFlagRelease(IS_RUNNING))
-                return false; // running elsewhere
-            try {
-                task((int)Thread.currentThread().threadId());
-                return true;
-            } catch (Throwable t) {
-                handleTaskException(t);
-            } finally {
-                clearFlagsRelease(statePlain(), IS_RUNNING);
-            }
-            return false;
+            return run((int)Thread.currentThread().threadId());
         }
 
-        @Async.Execute private void run(int threadId) {
+        @Async.Execute private boolean run(int threadId) {
             if (!compareAndSetFlagRelease(IS_RUNNING)) {
-                // runNow() active on another thread, return to queue
-                runner.add(this);
-                return;
+                // runNow() active on another thread. do runNow() will re-add() into
+                // preferredWorker if an awake arrived since runNow() acquired IS_RUNNING, which
+                // includes awake() calls from within task()
+                return false;
             }
             short old = (short)SCHEDULED.getAcquire(this);
             try {
@@ -137,13 +200,13 @@ public class EmitterService {
             }
             if ((short)SCHEDULED.compareAndExchange(this, old, (short)0) != old) {
                 SCHEDULED.setRelease(this, (short)1);
-                runner.add(this); // do not unpark() itself
-            } // else: S == 0 and not enqueued, future awake() can enqueue
+                runner.add(this);
+            } // else: S = 0 and not enqueued, future awake() can enqueue
+            return true; // task() was called
         }
 
         private void handleTaskException(Throwable t) {
-            if (IS_DEBUG) log.error("Ignoring {} exception: ",  this, t);
-            else          log.error("Ignoring {} thrown by {}", t,    this);
+            log.error("Ignoring {} thrown by {}:",  t.getClass().getSimpleName(), this, t);
         }
     }
 
@@ -204,26 +267,26 @@ public class EmitterService {
 //    }
 
     private final class Worker extends Thread {
-        private final int id;
-        private final int threadId;
-        private boolean yielding;
+        private final short id;
+        private final short threadId;
+        private final EmitterService parent;
 
-        public Worker(ThreadGroup group, int i) {
+        public Worker(ThreadGroup group, short i) {
             super(group, "EmitterService-"+EmitterService.this.id+"-"+i);
             this.id = i;
+            this.parent = EmitterService.this;
             setDaemon(true);
-            threadId = (int)threadId();
+            threadId = (short)threadId();
             start();
         }
 
         @Override public void run() {
-            var parent = EmitterService.this;
             var md = parent.md;
             int id = this.id, threadId = this.threadId;
             int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
             //noinspection InfiniteLoopStatement
             while (true) {
-                Task task = pollOrSteal(id);
+                Task task = parent.pollOrSteal(id);
                 if (task == null) {
                     LockSupport.park(parent);
                     md[mdParkedIdx] = 0;
@@ -262,56 +325,81 @@ public class EmitterService {
 //            }));
 //        }
 
-        public boolean yieldToTaskOnce() {
-            if (yielding)
-                return false;
-            int mdb = id << MD_BITS, size, queueIdx;
-            boolean ran = false, locked = false;
-            short os = 0;
-            try {
-                yielding = true;
-                while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
-                    onSpinWait(); // spin until locked worker queue
-                locked = true;
-                if ((size = md[mdb+MD_SIZE]) > 0) {
-                    queueIdx = md[mdb+MD_TAKE];
-                    Task task = queues[md[mdb+MD_QUEUE_BASE]+queueIdx];
-                    if (task.compareAndSetFlagRelease(Task.IS_RUNNING)) { // blocked task.runNow()
-                        try {
-                            md[mdb+MD_SIZE] = size-1;                   // remove task from queue
-                            md[mdb+MD_TAKE] = (queueIdx+1)&QUEUE_MASK;  // bump take index
-                            MD.setRelease(md, mdb+MD_LOCK, 0);          // release worker queue
-                            locked = false;                             // do not release
-                            os = (short)Task.SCHEDULED.getOpaque(task); // pending awake()s
-                            task.task(threadId);
-                            ran = true;
-                        } catch (Throwable t) {
-                            task.handleTaskException(t);
-                        } finally {
-                            task.clearFlagsRelease(task.statePlain(), Task.IS_RUNNING);
-                        }
-                        if ((short)Task.SCHEDULED.compareAndExchange(task, os, (short)0) != os) {
-                            // got awake() calls during task.task(), enqueue task again
-                            Task.SCHEDULED.setRelease(task, (short)1);
-                            add(task);
-                        }
-                    }
+        public void beginSpin() {
+            short mask = threadsMask;
+            short id = this.id, i = id, mdb = (short)(id<<MD_BITS);
+            int[] md = EmitterService.this.md;
+            MD.setRelease(md, mdb+MD_SPINNING, 1);
+            if (md[mdb+MD_SIZE] <= 0)
+                return; // no tasks to be stolen
+            // scan for a non-spinning non-parked worker that has no scheduled tasks
+            while ((i=(short)((i+1)&mask)) != id) {
+                mdb = (short)(i<<MD_BITS);
+                if (md[mdb+MD_SIZE] == 0 && (int)MD.getAcquire(md, mdb+MD_SPINNING) == 0
+                                         && md[mdb+MD_SPINNING] == 0) {
+                    return; // found a stealer, no need to unpark()
                 }
-            } finally {
-                yielding = false;
-                if (locked) // release worker queue if not already released
-                    MD.setRelease(md, mdb+MD_LOCK, 0);
             }
-            return ran;
+            // unpark at most one worker, staring from most likely stealer
+            while ((i=(short)((i-1)&mask)) != id) {
+                if (md[(i<<MD_BITS)+MD_PARKED] == 1) {
+                    LockSupport.unpark(workers[i]);
+                    break;
+                }
+            }
         }
 
-        private void awakeStealer() {
-            if (md[(id<<MD_BITS)+MD_SIZE] == 0)
-                return; // no scheduled tasks to be stolen
-            int stealerId = (id-1)&threadsMask;
-            if (md[(stealerId<<MD_BITS)+MD_PARKED] == 1)
-                LockSupport.unpark(workers[stealerId]);
-        }
+        public void endSpin() { MD.setRelease(md, (id<<MD_BITS)+MD_SPINNING, 0); }
+
+//        public boolean yieldToTaskOnce() {
+//            if (yielding)
+//                return false;
+//            int mdb = id << MD_BITS, size, queueIdx;
+//            boolean locked = false;
+//            short os = -1;
+//            try {
+//                yielding = true;
+//                while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
+//                    onSpinWait(); // spin until locked worker queue
+//                locked = true;
+//                if ((size = md[mdb+MD_SIZE]) > 0) {
+//                    queueIdx = md[mdb+MD_TAKE];
+//                    Task task = queues[md[mdb+MD_QUEUE_BASE]+queueIdx];
+//                    if (task.compareAndSetFlagRelease(Task.IS_RUNNING)) { // blocked task.runNow()
+//                        try {
+//                            md[mdb+MD_SIZE] = size - 1;                 // remove from queue
+//                            md[mdb+MD_TAKE] = (queueIdx+1)&QUEUE_MASK;  // bump take index
+//                            MD.setRelease(md, mdb+MD_LOCK, 0);          // release worker queue
+//                            locked = false;                             // do not release
+//                            os = (short)Task.SCHEDULED.getOpaque(task); // pending awake()s
+//                            task.task(threadId);
+//                        } catch (Throwable t) {
+//                            task.handleTaskException(t);
+//                        } finally {
+//                            task.clearFlagsRelease(task.statePlain(), Task.IS_RUNNING);
+//                        }
+//                        if ((short)Task.SCHEDULED.compareAndExchange(task, os, (short)0) != os) {
+//                            // got awake() calls during task.task(), enqueue task again
+//                            Task.SCHEDULED.setRelease(task, (short)1);
+//                            add(task);
+//                        }
+//                    }
+//                }
+//            } finally {
+//                yielding = false;
+//                if (locked) // release worker queue if not already released
+//                    MD.setRelease(md, mdb+MD_LOCK, 0);
+//            }
+//            return os != -1;
+//        }
+//
+//        private void awakeStealer() {
+//            if (md[(id<<MD_BITS)+MD_SIZE] == 0)
+//                return; // no scheduled tasks to be stolen
+//            int stealerId = (id-1)&threadsMask;
+//            if (md[(stealerId<<MD_BITS)+MD_PARKED] == 1)
+//                LockSupport.unpark(workers[stealerId]);
+//        }
     }
 
     private static final int MD_BITS       = Integer.numberOfTrailingZeros(128/4);
@@ -321,7 +409,8 @@ public class EmitterService {
     private static final int MD_TAKE       = 3;
     private static final int MD_PUT        = 4;
     private static final int MD_PARKED     = 5;
-    static { assert MD_PARKED < (1<<MD_BITS); }
+    private static final int MD_SPINNING   = 6;
+    static { assert MD_SPINNING < (1<<MD_BITS); }
 
     private static final int RMD_SHR_LOCK   = 0;
     private static final int RMD_SHR_PARKED = 1;
@@ -355,6 +444,7 @@ public class EmitterService {
     public EmitterService(int nWorkers) {
         threadMaskBits = (short) Math.min(15, 32-Integer.numberOfLeadingZeros(nWorkers-1));
         nWorkers = 1<<threadMaskBits;
+        assert nWorkers <= 0xffff;
         threadsMask = (short)(nWorkers-1);
         runnerMd = new int[4];
         md = new int[nWorkers<<MD_BITS];
@@ -364,7 +454,7 @@ public class EmitterService {
         workers = new Worker[nWorkers];
         id = nextServiceId.getAndIncrement();
         var grp = new ThreadGroup("EmitterService-"+id);
-        for (int i = 0; i < nWorkers; i++)
+        for (short i = 0; i < nWorkers; i++)
             workers[i] = new Worker(grp, i);
         sharedScheduler = Thread.ofPlatform().unstarted(this::sharedScheduler);
         sharedQueue = new ArrayDeque<>(nWorkers*QUEUE_CAP);
@@ -375,11 +465,11 @@ public class EmitterService {
     }
 
     @Override public String toString() {
-        return "RecurringTaskRunner-"+id;
+        return "EmitterService-"+id;
     }
 
     @SuppressWarnings("unused") public String dump() {
-        var sb = new StringBuilder().append("RecurringTaskRunner-").append(id).append('\n');
+        var sb = new StringBuilder().append("EmitterService-").append(id).append('\n');
         sb.append("  shared queue: ").append(sharedQueue.size()).append(" items\n");
         sb.append(" loaded tasks: ").append(runnerMd[RMD_TASKS]).append('\n');
         for (int i = 0; i < workers.length; i++) {
@@ -403,40 +493,68 @@ public class EmitterService {
         return sb.toString();
     }
 
+//    /**
+//     * Tries to execute a previously scheduled task in this {@link EmitterService}.
+//     *
+//     * <p>If this method is called from a worker thread, tasks scheduled in the worker will
+//     * be preferred. If the calling thread is not a worker thread, a task will be stolen
+//     * from an arbitrary worker chosen according to the calling Thread (i.e., the same
+//     * external thread will always try stealing from the same worker thread).</p>
+//     *
+//     * @return Whether a task was executed. {@code false} will be returned if there is no
+//     * scheduled task in the worker or if the selected task is already being executed
+//     * (i.e., {@link Task#awake()} called from within {@link Task#task(int)}),
+//     */
+//    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+//    public boolean yieldToTaskOnce() {
+//        if (Thread.currentThread() instanceof Worker w)
+//            return w.yieldToTaskOnce();
+//        return false;
+//    }
+//
+//    /**
+//     * If the current thread is a worker thread with a non-empty queue (beyond the
+//     * currently executing task) and the worker that would try stealing first from
+//     * this worker is parked, then {@link LockSupport#unpark(Thread)} said stealing
+//     * worker.
+//     *
+//     * <p>This method should be called in scenarios where there is a chance of the
+//     * current worker doing some potentially expensive computation or being blocked
+//     * for a few microseconds (tasks should not block)</p>
+//     */
+//    public static void awakeStealer() {
+//        if (Thread.currentThread() instanceof Worker w)
+//            w.awakeStealer();
+//    }
+
     /**
-     * Tries to execute a previously scheduled task in this {@link EmitterService}.
+     * If {@link Thread#currentThread()} is a worker thread, mark it as {@code spinning}. If,
+     * additionally, there is at least one scheduled task beyond the one that called
+     * this method, ensure that there is a non-spinning worker thread in the running state if
+     * no that can tasks scheduled on this worker.
      *
-     * <p>If this method is called from a worker thread, tasks scheduled in the worker will
-     * be preferred. If the calling thread is not a worker thread, a task will be stolen
-     * from an arbitrary worker chosen according to the calling Thread (i.e., the same
-     * external thread will always try stealing from the same worker thread).</p>
-     *
-     * @return Whether a task was executed. {@code false} will be returned if there is no
-     * scheduled task in the worker or if the selected task is already being executed
-     * (i.e., {@link Task#awake()} called from within {@link Task#task(int)}),
+     * <p>If this method is called, {@link #endSpin()} <strong>MUST</strong> be called once
+     * the spinning finishes.</p>
      */
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    public boolean yieldToTaskOnce() {
+    public static void beginSpin() {
         if (Thread.currentThread() instanceof Worker w)
-            return w.yieldToTaskOnce();
-        return false;
+            w.beginSpin();
     }
 
     /**
-     * If the current thread is a worker thread with a non-empty queue (beyond the
-     * currently executing task) and the worker that would try stealing first from
-     * this worker is parked, then {@link LockSupport#unpark(Thread)} said stealing
-     * worker.
-     *
-     * <p>This method should be called in scenarios where there is a chance of the
-     * current worker doing some potentially expensive computation or being blocked
-     * for a few microseconds (tasks should not block)</p>
+     * If the current thread is a worker thread, removes the {@code spinning} flag set by
+     * {@link #beginSpin()}.
      */
-    public static void awakeStealer() {
+    public static void endSpin() {
         if (Thread.currentThread() instanceof Worker w)
-            w.awakeStealer();
+            w.endSpin();
     }
 
+    public static short currentWorker() {
+        if (Thread.currentThread() instanceof Worker w)
+            return w.id;
+        return Task.RR_WORKER;
+    }
 
     /**
      * Removes the first task from the queue whose metadata starts at {@code mdb}, assuming this
@@ -574,7 +692,7 @@ public class EmitterService {
             // before unpark()ing sharedScheduler(), try the right-side worker which is the least
             // likely to steal from this queue
             boolean added = false;
-            int nextWorker = (task.preferredWorker +1) & threadsMask;
+            int nextWorker = (task.preferredWorker+1) & threadsMask;
             if (md[(nextWorker<<MD_BITS) + MD_SIZE] < overloaded) {
                 task.preferredWorker = (short)nextWorker;
                 added = tryAdd(task);

@@ -75,6 +75,36 @@ public interface Rebindable {
     void rebind(BatchBinding binding) throws RebindException;
 
     /**
+     * Notifies that multiple calls to {@link #rebind(BatchBinding)} using a
+     * {@link BatchBinding} to the same {@link Batch} but pointing to rows {@code >= binding.row}
+     * will follow this call.
+     *
+     * <p>The effects of {@link #rebindPrefetchEnd()} are implicit at entry on this method.</p>
+     *
+     * <p>Implementations of this method may start a background task to process all rows
+     * {@code >= binding.row} in {@code binding.batch} in advance, reducing latency of future
+     * {@link #rebind(BatchBinding)} calls</p>
+     *
+     * @param binding a {@link BatchBinding} pointing to the first row in a batch whose
+     *                subsequent rows will be used in future {@link #rebind(BatchBinding)} calls
+     */
+    default void rebindPrefetch(BatchBinding binding) {}
+
+    /**
+     * If there is a background task spawned by {@link #rebindPrefetch(BatchBinding)}, stop it.
+     *
+     * <p>This method will block until it is confirmed there is no such task or until the task
+     * is successfully stopped</p>
+     *
+     * <p>There is no need to call this method before {@link #rebindPrefetch(BatchBinding)},
+     * but this method <strong>MUST</strong> be called if no {@link #rebind(BatchBinding)} or
+     * {@link #rebindPrefetch(BatchBinding)} calls will follow (to avoid wasteful processing)
+     * and before {@code binding.batch} gets recycled (else the background tasks will process
+     * garbage)</p>
+     */
+    default void rebindPrefetchEnd()  {}
+
+    /**
      * Set of vars that can be assigned via {@link #rebind(BatchBinding)}.
      */
     Vars bindableVars();

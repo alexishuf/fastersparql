@@ -27,7 +27,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleTerminationError;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.emit.async.Stateful.*;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static java.lang.Integer.numberOfTrailingZeros;
@@ -411,60 +410,66 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (projector != null) {
                 in = projector.projectInPlace(in);
             }
-            if (in.rows == 1 && in.next == null) {
-                onRow0(in, 0); // will avoid setting FILLING to a singleton
+            if (in.rows == 1 && in.next == null && onRow0(in, 0))
                 return in;
-            }
             return onBatch0(in);
         }
 
         @SuppressWarnings("unchecked") private @Nullable B onBatch0(B in) {
             B f, b = in;
+            boolean spinNotified = false;
             while (true) {
                 if (down.tryBeginDelivery()) {
                     try {
                         if ((b = down.deliver(b)) != in)
                             b = bt.recycle(b);
-                        return b;
+                        break;
                     } finally { down.endDelivery(); }
                 } else if (FILLING.compareAndExchangeRelease(down, null, b) == null) {
                     // deliver our write to FILLING in case LOCK was released
                     if (down.tryBeginDelivery())  // else: thread owning LOCK will deliver
                         down.endDelivery();
-                    return null;
-                } else if (!EMITTER_SVC.yieldToTaskOnce()) { // try yielding before FILLING.put()
-                    if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                        f.append(b); // preserve in, try delivering combined batch
-                        b = f;
-                    }
+                    b = null;
+                    break;
+                } else if (!spinNotified) {
+                    spinNotified = true;
+                    EmitterService.beginSpin();
+                } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
+                    f.append(b); // preserve in, try delivering combined batch
+                    b = f;
                 }
             }
+            if (spinNotified)
+                EmitterService.endSpin();
+            return b;
         }
 
         @SuppressWarnings("unchecked") @Override public void onRow(B batch, int row) {
-            if (projector == null) {
-                onRow0(batch, row);
-            } else { // projection requires writing batch[row] into a new batch
-                B f = (B)FILLING.getAndSetRelease(down, null);
-                bt.recycle(onBatch0(projector.projectRow(f, batch, row)));
+            B copy;
+            if (projector != null) {
+                copy = (B)FILLING.getAndSetRelease(down, null);
+                projector.projectRow(copy, batch, row);
+            } else if (onRow0(batch, row)) {
+                return;
+            } else {
+                (copy = bt.create(batch.cols)).putRow(batch, row);
             }
+            bt.recycle(onBatch0(copy));
         }
 
-        @SuppressWarnings("unchecked") private void onRow0(B batch, int row) {
+        @SuppressWarnings("unchecked") private boolean onRow0(B batch, int row) {
             B f;
-            while (true) {
-                if (down.tryBeginDelivery()) {
-                    try {
-                        down.deliver(batch, row);
-                        return;
-                    } finally { down.endDelivery(); }
-                } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                    f.putRow(batch, row);
-                    bt.recycle(onBatch0(f));
-                    return;
-                }
-                EMITTER_SVC.yieldToTaskOnce();
+            if (down.tryBeginDelivery()) {
+                try {
+                    down.deliver(batch, row);
+                    return true;
+                } finally { down.endDelivery(); }
+            } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
+                f.putRow(batch, row);
+                bt.recycle(onBatch0(f));
+                return true;
             }
+            return false;
         }
 
         @Override public void onComplete() {
