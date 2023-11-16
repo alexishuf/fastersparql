@@ -123,6 +123,15 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return arr[row * cols + col];
     }
 
+    public long linkedId(int row, int col) {
+        @SuppressWarnings("unchecked") B node = (B)this;
+        int rel = row;
+        for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
+        if (node == null) throw new IndexOutOfBoundsException(row);
+
+        return node.id(rel, col);
+    }
+
     /* --- --- --- mutators --- --- --- */
 
     @SuppressWarnings("unchecked") @Override public final void clear() {
@@ -273,7 +282,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         short cols = this.cols;
         other.requireUnpooled();
         if (other.cols != cols) throw new IllegalArgumentException("other.cols != cols");
-        if (row >= other.rows) throw new IndexOutOfBoundsException("row >= other.rows");
+        if (row >= other.rows)
+            throw new IndexOutOfBoundsException("row >= other.rows");
 
         B dst = tail();
         int dstPos = dst.rows*cols;

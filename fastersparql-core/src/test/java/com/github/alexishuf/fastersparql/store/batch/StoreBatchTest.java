@@ -96,26 +96,26 @@ class StoreBatchTest {
             for (int c = cols-1; c >= 0; c--) b2.putTerm(c, sourcedIds[r*c]);
             b2.commitPut();
 
-            b4.putRow(b0, r);
+            b4.linkedPutRow(b0, r);
 
             for (int i = 0; i <= r; i++) {
                 for (int c = 0; c < cols; c++) {
-                    long id = b0.id(i, c);
+                    long id = b0.linkedId(i, c);
                     TwoSegmentRope str = lookup.get(IdTranslator.unsource(id));
                     assertNotNull(str);
                     int hash = str.hashCode();
                     for (StoreBatch b : batches) {
-                        assertEquals(id, b.id(i, c));
-                        assertTrue(b0.equals(i, c, b, i, c));
-                        assertTrue(b.equals(i, c, b0, i, c));
-                        assertEquals(hash, b.hash(i, c));
+                        assertEquals(id, b.linkedId(i, c));
+                        assertTrue(b0.linkedEquals(i, c, b, i, c));
+                        assertTrue(b.linkedEquals(i, c, b0, i, c));
+                        assertEquals(hash, b.linkedHash(i, c));
                     }
                 }
-                int rowHash = b0.hash(i);
+                int rowHash = b0.linkedHash(i);
                 for (StoreBatch b : batches) {
-                    assertTrue(b0.equals(i, b, i));
-                    assertTrue(b.equals(i, b0, i));
-                    assertEquals(rowHash, b.hash(i));
+                    assertTrue(b0.linkedEquals(i, b, i));
+                    assertTrue(b.linkedEquals(i, b0, i));
+                    assertEquals(rowHash, b.linkedHash(i));
                 }
             }
 
