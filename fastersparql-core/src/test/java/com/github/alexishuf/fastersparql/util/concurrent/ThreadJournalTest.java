@@ -17,7 +17,9 @@ class ThreadJournalTest {
 
     @Test void testSingleThread() {
         if (!ENABLED) return;
+        journal("garbage");
         ThreadJournal.resetJournals();
+        DebugJournal.SHARED.closeAll(); // resets tick
         journal("x=", 1, "y=", 2, "z=", "one");
         journal("x=", 3, "y=", 4, "z=", "two");
         journal("x=", 5, "y=", 6, "z=", "three");
@@ -47,6 +49,7 @@ class ThreadJournalTest {
         Arrays.fill(expectedLast, height-1);
         for (int rep = 0; rep < 50; rep++) {
             ThreadJournal.resetJournals();
+            DebugJournal.SHARED.closeAll(); // resets tick
             try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
                 tasks.repeat(threads, id -> {
                     for (int i = 0; i < height; i++)
@@ -57,10 +60,10 @@ class ThreadJournalTest {
             ThreadJournal.dumpAndReset(sb, 80);
 
             Arrays.fill(last, -1);
-            Matcher matcher = Pattern.compile("thread=(\\d+) i=(\\d+)").matcher(sb);
+            Matcher matcher = Pattern.compile("thread=(\\d+) i=(0x)?([0-9a-f]+)").matcher(sb);
             while (matcher.find()) {
                 int thread = parseInt(matcher.group(1));
-                int i = parseInt(matcher.group(2));
+                int i = parseInt(matcher.group(3), matcher.group(2) == null ? 10 : 16);
                 assertEquals(last[thread]+1, i);
                 ++last[thread];
             }

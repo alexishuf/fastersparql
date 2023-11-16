@@ -12,6 +12,7 @@ import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.List;
 
+import static java.lang.Integer.MAX_VALUE;
 import static java.lang.Math.min;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
@@ -109,6 +110,7 @@ public class DebugJournal {
                 j.closed = true;
             roleJournals.clear();
             roles.clear();
+            tick = 0;
         } finally { LOCK.setRelease(this, 0); }
     }
 
@@ -186,7 +188,7 @@ public class DebugJournal {
         }
 
         int currentTick() {
-            int t = Integer.MAX_VALUE;
+            int t = MAX_VALUE;
             for (int i = 0; i < physRows.length; i++) {
                 if (physSize[i] > 0)
                     t = min(t, roleJournals.get(i).ticksAndFlags[physRows[i]<<1]);
@@ -434,7 +436,7 @@ public class DebugJournal {
         public void write(Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, Object o3, Object o4)           { write(HAS_L1, o1, l1, l1Renderer, o2, 0, null, o3, o4); }
 
         private void write(int flags, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) {
-            int physRow = (int)END.getAndAdd(this, 1) % (ticksAndFlags.length>>1);
+            int physRow = ((int)END.getAndAdd(this, 1)&MAX_VALUE) % (ticksAndFlags.length>>1);
             int base = physRow*2;
             ticksAndFlags[base  ] = tick++;
             ticksAndFlags[base+1] = flags;
