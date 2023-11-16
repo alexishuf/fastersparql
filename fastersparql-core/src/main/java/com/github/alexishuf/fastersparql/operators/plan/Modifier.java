@@ -309,6 +309,18 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
+
+        @Override public String toString() {
+            var sb = new StringBuilder().append(super.toString());
+            if (offset != 0)
+                sb.append("OFFSET ").append(offset).append(' ');
+            if (limit != Long.MAX_VALUE)
+                sb.append("LIMIT ").append(limit).append(' ');
+            if (sb.charAt(sb.length()-1) == ' ')
+                sb.setLength(sb.length()-1);
+            return sb.toString();
+        }
+
         @Override public void rebind(BatchBinding binding) {
             skip = offset;
             allowed = limit;
@@ -351,6 +363,14 @@ public final class Modifier extends Plan {
             if (failures > 2) return;
             String stop = ++failures == 2 ? "Will stop reporting for this BIt" : "";
             log.info("Filter evaluation failed for {}. filters={}", tmpBinding, filters, t);
+        }
+
+        @Override public String toString() {
+            var sb = new StringBuilder().append("FILTER(");
+            for (Expr e : filters)
+                sb.append(e.toSparql()).append(" && ");
+            sb.setLength(Math.max(0, sb.length()-4));
+            return sb.append(')').toString();
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
