@@ -66,7 +66,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     public GatheringEmitter(BatchType<B> batchType, Vars vars) {
         this.vars         = vars;
         this.batchType    = batchType;
-        this.requestChunk = (short)Math.max(1, batchType.preferredTermsPerBatch()/vars.size());
+        int cols = Math.max(1, vars.size());
+        this.requestChunk = (short)Math.max(8, batchType.preferredTermsPerBatch()/cols);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
