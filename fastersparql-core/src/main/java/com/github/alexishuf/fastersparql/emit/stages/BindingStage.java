@@ -397,9 +397,11 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     @Override public void request(long rows) {
+        if (ENABLED)
+            journal("request ", rows, "on", this);
         int state = statePlain();
         long rightRows = (state&FILTER_BIND) == 0 ? rows : 2;
-        if ((state & IS_INIT) != 0 && moveStateRelease(state, ACTIVE)) {
+        if ((state&IS_INIT) != 0) {
             if (((state = onFirstRequest(state))&IS_LIVE) == 0)
                 return;
         }

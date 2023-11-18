@@ -44,6 +44,7 @@ import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.OP_CROSS_DEDUP;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.System.setProperty;
 
 @State(Scope.Thread)
@@ -220,15 +221,17 @@ public class QueryBench {
         rowCounter = new RowCounter(batchType);
         ropeLenCounter = new RopeLenCounter(batchType);
         termLenCounter = new TermLenCounter(batchType);
-        File dataDir1 = dataDir.toFile();
+        File dataDirFile = dataDir.toFile();
 
         // -------------
 
-        fedHandle = FederationHandle.builder(dataDir1).srcKind(srcKind)
+        journal("trialSetup: building federation, dataDir=", dataDir);
+        fedHandle = FederationHandle.builder(dataDirFile).srcKind(srcKind)
                 .selKind(selKind.forSource(srcKind))
                 .waitInit(true).create();
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         FSProperties.refresh();
+        journal("trialSetup: builtinPlans=", builtinPlans ? 1 : 0);
         if (builtinPlans) {
             var reg = PlanRegistry.parseBuiltin();
             reg.resolve(fedHandle.federation);
@@ -244,23 +247,26 @@ public class QueryBench {
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
 
-//        watchdog = new Thread(this::watchdog, "watchdog");
-//        watchdog.start();
+        //watchdog = new Thread(this::watchdog, "watchdog");
+        //watchdog.start();
         System.out.print("\nThermal cooldown: 5s...");
         Async.uninterruptibleSleep(5_000);
         System.out.println(" DONE");
     }
 
     @TearDown(Level.Trial) public void trialTearDown() {
-//        watchdog.interrupt();
-//        try {
-//            watchdog.join(Duration.ofSeconds(1));
-//        } catch (InterruptedException ignored) {}
+        journal("trialTearDown");
+        //watchdog.interrupt();
+        //try {
+            //watchdog.join(Duration.ofSeconds(1));
+        //} catch (InterruptedException ignored) {}
         fedHandle.close();
         FS.shutdown();
+        journal("trialTearDown: exit");
     }
 
     @Setup(Level.Iteration) public void iterationSetup() throws IOException {
+        journal("iterationSetup");
 //        CompressedBatchType.ALT = alt;
         lastBenchResult = -1;
         // drop unreachable references inside pools, do I/O and call for GC
@@ -271,13 +277,16 @@ public class QueryBench {
             System.gc();
 
         int slack = Math.min(2_000, 50+iterationMs);
+        journal("interationSetup(), slack=", slack);
         if (slack > 1_000)
             System.out.printf("dynamic thermal slack: %dms\n", slack);
         Async.uninterruptibleSleep(slack);
         iterationStart = Timestamp.nanoTime();
+        journal("iterationSetup(), start=", iterationStart);
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
+        journal("iterationTearDown");
         ++iterationNumber;
         iterationMs = (int)Math.max(1, (Timestamp.nanoTime()-iterationStart)/1_000_000L);
     }
@@ -347,6 +356,7 @@ public class QueryBench {
 //            } catch (IOException e) {e.printStackTrace();}
 //            ThreadJournal.dumpAndReset(System.out, 100);
 //            System.out.println(EmitterService.EMITTER_SVC.dump());
+//            System.out.printf("WATCHDOG FIRED for query %s\n", queryName);
 //        }
 //    }
 
@@ -360,7 +370,6 @@ public class QueryBench {
             case EMIT -> {
                 for (Plan plan : plans)
                     QueryRunner.drain(plan.emit(batchType, Vars.EMPTY), consumer);
-
             }
         }
         return checkResult(resultGetter.getAsInt());
