@@ -171,6 +171,8 @@ public abstract class Batch<B extends Batch<B>> {
                     Throwable cause = poolTraces == null ? null : poolTraces[0];
                     throw new IllegalStateException("batch is pooled", cause);
                 }
+                if (b.next == b)
+                    throw new IllegalArgumentException("cycle in linked list");
             }
         }
     }
@@ -209,14 +211,21 @@ public abstract class Batch<B extends Batch<B>> {
      *                   {@link #makeValidationCheaper()} and {@link #restoreValidationCheaper()}
      * @return {@code true} iff this {@link Batch} instance has not been corrupted.
      */
+    @SuppressWarnings("unchecked")
     public final boolean validate(Validation validation) {
         if (!SELF_VALIDATE || validation == NONE)
             return true;
+        if (next == this)
+            return false; // cycle
+        for (B prev = (B)this, b = next; b != null; b = (prev = b).next) {
+            if (b.next == b || b.next == prev || b.next == this)
+                return false; // cycle
+        }
         requireUnpooled();
         if (rows == 0 && next != null)
             return false; // empty batch cannot have successor node
         var actualTail = this;
-        for (var b = next; b != null; b = b.next) {
+        for (B b = next; b != null; b = b.next) {
             b.requireUnpooled();
             actualTail = b;
             if (b.cols != cols)
