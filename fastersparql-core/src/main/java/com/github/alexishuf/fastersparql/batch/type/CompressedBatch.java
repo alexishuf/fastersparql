@@ -210,18 +210,22 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (localsLen > LEN_MASK)
             raiseRowTooWide(prev, tail);
         if (localsLen > tail.locals.length)
-            tail.growLocals(0, min(LEN_MASK, localsLen<<1));
+            tail.growLocals(0, min(LEN_MASK, localsLen+(flaggedLocalLen&LEN_MASK)));
 
         byte[] prevLocals = prev.locals, locals = tail.locals;
         localsLen = 0;
         for (int i = begin, e = begin+(cols<<1); i < e; i+=2) {
-            slices[i+SL_OFF] = (short)localsLen;
             short len = prevSlices[i+SL_LEN];
             slices[i+SL_LEN] = len;
-            arraycopy(prevLocals, prevSlices[i+SL_OFF], locals, localsLen, len&=LEN_MASK);
-            localsLen += len;
+            if ((len&=LEN_MASK) == 0) {
+                slices[i+SL_OFF] = 0;
+            } else {
+                slices[i+SL_OFF] = (short)localsLen;
+                arraycopy(prevLocals, prevSlices[i+SL_OFF], locals, localsLen, len);
+                localsLen += len;
+            }
         }
-        tail.localsLen = (short)localsLen;
+        assert localsLen == tail.offerNextLocals;
         return allocTermMaybeChangeTail(destCol, shared, flaggedLocalLen);
     }
 
