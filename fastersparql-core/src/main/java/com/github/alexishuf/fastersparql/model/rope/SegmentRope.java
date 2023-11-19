@@ -13,8 +13,7 @@ import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_SEGMENT;
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY_UTF8;
+import static com.github.alexishuf.fastersparql.model.rope.ByteRope.*;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Long.numberOfTrailingZeros;
@@ -93,6 +92,7 @@ public class SegmentRope extends PlainRope {
     }
 
     public void recycle() {
+        if (this == EMPTY) throw new UnsupportedOperationException();
         wrapEmptyBuffer();
         GlobalAffinityShallowPool.offer(POOL_COL, this);
     }
@@ -124,6 +124,7 @@ public class SegmentRope extends PlainRope {
     }
 
     public void wrap(SegmentRope other) {
+        if (this == EMPTY) throw new UnsupportedOperationException();
         this.segment = other.segment;
         this.utf8    = other.utf8;
         this.offset  = other.offset;
@@ -136,6 +137,7 @@ public class SegmentRope extends PlainRope {
     }
 
     public void wrapSegment(MemorySegment segment, byte[] utf8, long offset, int len) {
+        if (this == EMPTY) throw new UnsupportedOperationException();
         this.segment = segment;
         this.utf8    = utf8;
         this.offset  = offset;
