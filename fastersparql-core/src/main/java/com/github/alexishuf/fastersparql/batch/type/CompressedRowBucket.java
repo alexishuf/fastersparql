@@ -145,6 +145,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         assert SL_OFF == 0 && SL_LEN == 1: "update \"check if row fits in b\"";
     }
     private int fill(CompressedBatch b, int row) {
+        b.clear();
         // first pass counts required locals capacity
         short localsBase = (short)(cols<<2), lastBase = (short)(localsBase-4);
         short nr = 0, rCap = (short)(b.termsCapacity()/cols);
@@ -157,13 +158,12 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             if (rd == null) break;
 
             // check if row fits in b
-            if (nr > 0) {
-                int nReq =  ((rd[lastBase  ]&0xff) | ((rd[lastBase+1]&0xff) << 8))
-                         + (((rd[lastBase+2]&0xff) | ((rd[lastBase+3]&0xff) << 8))&LEN_MASK)
-                         - localsBase + localsRequired;
-                if (nReq > Short.MAX_VALUE) break;
-                localsRequired = (short)nReq;
-            }
+            int nReq =  ((rd[lastBase  ]&0xff) | ((rd[lastBase+1]&0xff) << 8))
+                     + (((rd[lastBase+2]&0xff) | ((rd[lastBase+3]&0xff) << 8))&LEN_MASK)
+                     - localsBase + localsRequired;
+            if (nReq > Short.MAX_VALUE) break;
+            localsRequired = (short)nReq;
+            ++row;
         }
         b.reserveAddLocals(localsRequired);
 
@@ -172,7 +172,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         row = startRow;
         rCap = nr;
         nr = 0;
-        for (; nr > rCap; ++nr, ++row) {
+        for (; nr < rCap; ++nr, ++row) {
             // find next non-empty row
             byte[] rd = null;
             while (row < rowsData.length && (rd=rowsData[row]) == null) ++row;
@@ -180,7 +180,6 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                 break; // can happen if bucket was concurrently modified
             // copy row
             b.copyFromBucket(rd, shared, row);
-            ++row;
         }
         return row; // return value to be given as row in the next call to fill()
     }
@@ -216,6 +215,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             arraycopy(s, 0, d, 0, s.length);
             arraycopy(bucket.shared, src*bucket.cols, shared, dst*cols, cols);
         }
+    }
+
+    @Override public void putRow(CompressedBatch dst, int srcRow) {
+        dst.copyFromBucket(rowsData[srcRow], shared, srcRow);
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int otherRow) {

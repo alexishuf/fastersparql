@@ -107,6 +107,10 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
         arraycopy(a, src*cols, a, dst*cols, cols);
     }
 
+    @Override public void putRow(TermBatch dst, int srcRow) {
+        dst.putRow(b, srcRow);
+    }
+
     @Override public boolean equals(int row, TermBatch other, int otherRow) {
         var b = this.b;
         int cols = other.cols;

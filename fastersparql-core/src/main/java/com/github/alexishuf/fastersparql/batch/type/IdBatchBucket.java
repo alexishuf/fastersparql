@@ -110,6 +110,10 @@ public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
         arraycopy(a, src*cols, a, dst*cols, cols);
     }
 
+    @Override public void putRow(B dst, int srcRow) {
+        dst.putRow(b, srcRow);
+    }
+
     @Override public boolean equals(int row, B other, int otherRow) {
         return b.equals(row, other, otherRow);
     }

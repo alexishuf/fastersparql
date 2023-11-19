@@ -829,26 +829,39 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     void copyFromBucket(byte[] rowData, SegmentRope[] bucketShared, @NonNegative int srcRow) {
-        short cols = this.cols, base, lLen, lAdj;
+        short cols = this.cols, dTerm, lLen = 0, la;
         var tail = tailUnchecked();
-        if (cols               ==                  0) { tail.rows++; return; }
-        if ((tail.rows+1)*cols >  tail.termsCapacity)   tail = createTail();
+        if (cols == 0) { tail.rows++; return; }
 
-        base = (short)((cols-1)<<2);
-        lLen = (short)(((rowData[base  ]&0xff) | ((rowData[base+1]&0xff) << 8))
-                     + ((rowData[base+2]&0xff) | ((rowData[base+3]&0xff) << 8))&LEN_MASK);
-        int lDst = reserveAddLocals0(lLen);
-        arraycopy(rowData, base+4, tail.locals, lDst, lLen);
-        lAdj = (short)(lDst-(base+4));
+        // compute required locals capacity
+        int cols4 = cols<<2;
+        for (int c4 = 0; c4 < cols4; c4 += 4)
+            lLen += (short)(((rowData[c4+2]&0xff) | ((rowData[c4+3]&0xff)<<8))&LEN_MASK);
 
-        base = (short)(tail.rows*cols);
-        arraycopy(bucketShared, srcRow*cols, tail.shared, base, cols);
-
-        short[] slices = tail.slices;
-        for (short is=(short)(base<<1), slw = (short)(cols<<1), ib=0; is < slw; is += 2, ib += 4) {
-            slices[is  ] = (short)(((rowData[ib  ]&0xff) | ((rowData[ib+1]&0xff) << 8)) + lAdj);
-            slices[is+1] = (short)(((rowData[ib+2]&0xff) | ((rowData[ib+3]&0xff) << 8)));
+        // ensure tail has sufficient capacity
+        dTerm = (short)(tail.rows*cols);
+        if (dTerm+cols > tail.termsCapacity || tail.localsLen+lLen >= LEN_MASK) {
+            tail = createTail();
+            dTerm = 0;
         }
+        if (tail.localsLen+lLen > tail.locals.length)
+            tail.growLocals(tail.localsLen, tail.localsLen+lLen);
+
+        // copy locals
+        arraycopy(rowData, cols4, tail.locals, tail.localsLen, lLen);
+        la = (short)(tail.localsLen - cols4);
+        tail.localsLen += lLen;
+
+        // copy shared
+        arraycopy(bucketShared, srcRow*cols, tail.shared, dTerm, cols);
+
+        // copy slices
+        short[] slices = tail.slices;
+        for (int c2 = dTerm<<1, c4 = 0; c4 < cols4; c4+=4, c2+=2) {
+            slices[c2+SL_OFF] = (short)( ((rowData[c4  ]&0xff) | ((rowData[c4+1]&0xff)<<8)) + la );
+            slices[c2+SL_LEN] = (short)(  (rowData[c4+2]&0xff) | ((rowData[c4+3]&0xff)<<8) );
+        }
+        ++tail.rows;
     }
 
     /* --- --- --- mutators --- --- --- */

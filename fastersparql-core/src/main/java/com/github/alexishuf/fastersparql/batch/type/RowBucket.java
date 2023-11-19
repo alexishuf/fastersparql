@@ -67,6 +67,9 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      */
     void set(int dst, RowBucket<B> other, int src);
 
+    /** Appends the {@code srcRow}-th row of this bucket to the end of {@code dst}. */
+    void putRow(B dst, int srcRow);
+
     /**
      * Whether the row stored at slot {@code row} is equal to the {@code batchRow}-th row of
      * {@code batch}

@@ -752,6 +752,8 @@ class BatchTest {
                 var bucket0 =           type.createBucket(offRows  , size.cols);
                 var bucket1 =           type.createBucket(halfRows , size.cols);
                 var batch   = size.fill(type.create(size.cols));
+                var copy0 = type.create(size.cols);
+                var copy1 = type.create(size.cols);
 
                 for (int r = 0; r < size.rows; r++)
                     bucket0.setLinked(r+1, batch, r);
@@ -779,6 +781,14 @@ class BatchTest {
                 }
 
                 assertBatchesEquals(size, batch, ctx); // batch was not changed
+
+                for (int r = 0; r < size.rows; r++) {
+                    bucket0.putRow(copy0, r);
+                    bucket1.putRow(copy1, r);
+                }
+
+                assertBatchesEquals(copy0, batch, ctx);
+                assertBatchesEquals(copy1, batch, ctx);
             }
         });
     }
