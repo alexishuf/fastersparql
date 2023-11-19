@@ -2332,7 +2332,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     if (n != null) {
                         lb = n;
                     } else {
-                        lb = left.nextBatch(lb);
+                        lb = left.nextBatch(null);
                         if (startBindingNotifier != null) startBindingNotifier.startBinding();
                         if (lb == null) return false;
                     }
