@@ -140,9 +140,9 @@ public enum QueryName {
         if (b == null || (this != C7 && this != C8 && this != C10))
             return b;
         B fixed = amputateNumbersInNode(type, b, 0, b.rows);
-        for (B n = b; n != null; n = n.next) {
+        for (B n = b.next; n != null; n = n.next) {
             B a = amputateNumbersInNode(type, n, 0, n.rows);
-            fixed.quickAppend(a == n ? n.dup() : n);
+            fixed.quickAppend(a == n ? n.dup() : a);
         }
         return fixed;
     }
