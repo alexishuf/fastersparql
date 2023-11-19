@@ -115,7 +115,8 @@ public abstract class ResultsSerializer {
      * ({@link Batch#next()})
      */
     public void serializeAll(Batch<?> batch, ByteSink<?, ?> dest) {
-        serialize(batch, 0, batch == null ? 0 : batch.rows, dest);
+        for (var b = batch; b != null; b = b.next)
+            serialize(b, 0, b.rows, dest);
     }
 
     /** Serialize rows {@code [begin,begin+nRows)} from {@code batch} to {@code dest}. */
