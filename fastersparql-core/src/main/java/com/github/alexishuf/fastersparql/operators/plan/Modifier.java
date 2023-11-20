@@ -369,7 +369,7 @@ public final class Modifier extends Plan {
             var sb = new StringBuilder().append("FILTER(");
             for (Expr e : filters)
                 sb.append(e.toSparql()).append(" && ");
-            sb.setLength(Math.max(0, sb.length()-4));
+            sb.setLength(Math.max(7/*FILTER(*/, sb.length()-4));
             return sb.append(')').toString();
         }
 

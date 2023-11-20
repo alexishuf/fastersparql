@@ -555,19 +555,55 @@ public class StoreSparqlClient extends AbstractSparqlClient
     @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
                                                             Vars rebindHint) {
         Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
-        if (right instanceof Modifier m && !m.filters.isEmpty())
-            right = splitFiltersForLexicalJoin(m, m == bq.query);
-        return new StoreBindingEmitter<>(bq, right, rebindHint);
+        BatchBinding lexJoinBinding;
+        if (right instanceof Modifier m0 && !m0.filters.isEmpty()) {
+            Modifier m = (Modifier)(right = splitFiltersForLexicalJoin(m0));
+            var l = bq.bindings;
+            lexJoinBinding = createLexJoinBinding(l.batchType(), right, m.filters, l.vars());
+            if (m.isNoOp())
+                right = m.left;
+        } else {
+            lexJoinBinding = null;
+        }
+        return new StoreBindingEmitter<>(bq, right, rebindHint, lexJoinBinding);
     }
 
-    private Modifier splitFiltersForLexicalJoin(Modifier m, boolean copyOnChange) {
-        var split = Optimizer.splitFilters(m.filters);
-        if (split != m.filters) {
-            var m2 = copyOnChange ? (Modifier)m.copy() : m;
-            m2.filters = split;
-            return m2;
+    private Modifier splitFiltersForLexicalJoin(Modifier m) {
+        var m2 = (Modifier)m.copy();
+        m2.filters = Optimizer.splitFilters(m2.filters);
+        return m2;
+    }
+
+
+    private <B extends Batch<B>> BatchBinding
+    createLexJoinBinding(BatchType<B> batchType, Plan right, List<Expr> mFilters, Vars leftVars) {
+        Vars rightBindingVars = null;
+        var term = Term.pooledMutable();
+        var varRope = ByteRope.pooled(16);
+        for (SegmentRope name : right.allVars()) {
+            varRope.len = 1;
+            varRope.append(name).u8()[0] = '?';
+            term.set(ByteRope.EMPTY, varRope, false);
+            Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
+            if (leftVar != term) {
+                if (rightBindingVars == null)
+                    rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
+                int i = rightBindingVars.indexOf(leftVar);
+                if (i >= 0)
+                    rightBindingVars.set(i, name);
+            }
         }
-        return m;
+        varRope.recycle();
+        term.recycle();
+        if (rightBindingVars != null) {
+            BatchBinding lexJoinBinding = new BatchBinding(rightBindingVars);
+            B b = batchType.create(rightBindingVars.size());
+            b.beginPut();
+            b.commitPut();
+            lexJoinBinding.attach(b, 0);
+            return lexJoinBinding;
+        }
+        return null;
     }
 
     private static boolean canExecuteRightBGP(Plan right, int rIdx) {
@@ -1556,16 +1592,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private @Nullable B convLeftBatch;
 
         public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right,
-                                   Vars rebindHint) {
+                                   Vars rebindHint, @Nullable BatchBinding lexJoinBinding) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
                   emit(bq.bindings.batchType(), right,
                        bq.bindingsVars().union(rebindHint)));
             Vars leftVars = bq.bindingsVars();
 
-            var m = right instanceof Modifier mod ? mod : null;
-            List<Expr> mFilters = m == null ? List.of() : m.filters;
-            lexJoinBinding = mFilters.isEmpty() ? null
-                                : createLexJoinBinding(right, mFilters, leftVars);
+            this.lexJoinBinding = lexJoinBinding;
             if (lexJoinBinding == null) {
                 lexIts = EMPTY_LEX_ITS;
                 lexItsCols = ArrayPool.EMPTY_INT;
@@ -1598,36 +1631,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        private BatchBinding createLexJoinBinding(Plan right, List<Expr> mFilters,
-                                                     Vars leftVars) {
-            Vars rightBindingVars = null;
-            var term = Term.pooledMutable();
-            var varRope = ByteRope.pooled(16);
-            for (SegmentRope name : right.allVars()) {
-                varRope.len = 1;
-                varRope.append(name).u8()[0] = '?';
-                term.set(ByteRope.EMPTY, varRope, false);
-                Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
-                if (leftVar != term) {
-                    if (rightBindingVars == null)
-                        rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
-                    int i = rightBindingVars.indexOf(leftVar);
-                    if (i >= 0)
-                        rightBindingVars.set(i, name);
-                }
-            }
-            varRope.recycle();
-            term.recycle();
-            if (rightBindingVars != null) {
-                BatchBinding lexJoinBinding = new BatchBinding(rightBindingVars);
-                B b = batchType.create(rightBindingVars.size());
-                b.beginPut();
-                b.commitPut();
-                lexJoinBinding.attach(b, 0);
-                return lexJoinBinding;
-            }
-            return null;
-        }
 
         @Override protected void doRelease() {
             super.doRelease();
