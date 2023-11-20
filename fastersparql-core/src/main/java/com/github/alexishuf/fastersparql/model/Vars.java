@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.IndexOrHigh;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.*;
 
@@ -313,6 +314,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     /* --- --- --- specialized mutation methods --- --- --- */
 
     public boolean add(Term var) { throw new UnsupportedOperationException(); }
+    public @Nullable SegmentRope set(int i, Term var) { throw new UnsupportedOperationException(); }
     @SuppressWarnings("UnusedReturnValue") public boolean addAll(@NonNull Vars other) {
         throw new UnsupportedOperationException();
     }
@@ -342,10 +344,30 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
             return true;
         }
 
+        @Override public SegmentRope set(int index, SegmentRope name) {
+            if (name == null) throw new NullPointerException();
+            if (index >= size || index < 0) throw new IndexOutOfBoundsException(index);
+            var old = array[index];
+            int currentIdx = indexOf(name);
+            if (currentIdx < 0)  {
+                array[index] = name;
+                has = (has & ~(1L << old.hashCode())) | (1L << name.hashCode());
+            } else if (currentIdx != index) {
+                throw new IllegalArgumentException("name "+name+" aready set at index "+currentIdx);
+            }
+            return old;
+        }
+
         @Override public boolean add(Term var) {
             if (!var.isVar())
                 throw new IllegalArgumentException("Non-var Term instance");
             return add(new ByteRope(var.toArray(1, var.len)));
+        }
+
+        @Override public @Nullable SegmentRope set(int i, Term var) {
+            if (!var.isVar())
+                throw new IllegalArgumentException("Non-var Term instance");
+            return set(i, new ByteRope(var.toArray(1, var.len)));
         }
 
         @Override public boolean addAll(@NonNull Collection<? extends SegmentRope > c) {
