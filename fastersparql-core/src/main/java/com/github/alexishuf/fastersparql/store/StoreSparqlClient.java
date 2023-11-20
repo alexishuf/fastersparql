@@ -2181,6 +2181,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         if (preFilterMerger != null) //noinspection DataFlowIssue fb != null
                             prb = fb = preFilterMerger.merge(fb = fb.clear(prbCols), lb, lr, rb);
                         prb = rightFilter.filterInPlace(prb);
+                        if (preFilterMerger == null)
+                            rb = prb; // filterInPlace() may have recycled rb
                         if (prb.rows == 0)
                             continue;
                     }
