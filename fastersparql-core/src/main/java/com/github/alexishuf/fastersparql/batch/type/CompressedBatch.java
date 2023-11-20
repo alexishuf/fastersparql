@@ -199,33 +199,26 @@ public class CompressedBatch extends Batch<CompressedBatch> {
     private int allocTermOnNewTail(int destCol, SegmentRope shared, int flaggedLocalLen) {
         CompressedBatch prev = this.tail, tail = createTail();
         assert prev != null;
-        tail.offerNextLocals = (short)(prev.offerNextLocals-prev.localsLen);
+        short prevLocalsLen = prev.localsLen, cols = prev.cols;
+        short partialLocalsLen = (short) (prev.offerNextLocals-prevLocalsLen);
+        short begin = (short)(prev.rows*cols);
+        tail.offerNextLocals = partialLocalsLen;
         prev.offerNextLocals = -1;
 
-        short cols = prev.cols, begin = (short)(prev.rows*cols);
-        short[] prevSlices = prev.slices, slices = tail.slices;
-        int localsLen = flaggedLocalLen&LEN_MASK;
-        for (int i = begin+SL_LEN, e = begin+(cols<<1); i < e; i += 2)
-            localsLen += prevSlices[i]&LEN_MASK;
-        if (localsLen > LEN_MASK)
+        int localsReq = (flaggedLocalLen&LEN_MASK) + partialLocalsLen;
+        if (localsReq > LEN_MASK)
             raiseRowTooWide(prev, tail);
-        if (localsLen > tail.locals.length)
+        if (localsReq > tail.locals.length)
             tail.growLocals(0, min(LEN_MASK, localsLen+(flaggedLocalLen&LEN_MASK)));
 
-        byte[] prevLocals = prev.locals, locals = tail.locals;
-        localsLen = 0;
-        for (int i = begin, e = begin+(cols<<1); i < e; i+=2) {
-            short len = prevSlices[i+SL_LEN];
-            slices[i+SL_LEN] = len;
-            if ((len&=LEN_MASK) == 0) {
-                slices[i+SL_OFF] = 0;
-            } else {
-                slices[i+SL_OFF] = (short)localsLen;
-                arraycopy(prevLocals, prevSlices[i+SL_OFF], locals, localsLen, len);
-                localsLen += len;
-            }
+        arraycopy(prev.shared, begin, tail.shared, 0, cols);
+        arraycopy(prev.locals, prevLocalsLen, tail.locals, 0, partialLocalsLen);
+        short[] prevSlices = prev.slices, slices = tail.slices;
+        for (int i = begin<<1, c2 = 0, e = i+(cols<<1); i < e; i+=2, c2+=2) {
+            slices[c2+SL_OFF] = (short)Math.max(0, prevSlices[i+SL_OFF]-prevLocalsLen);
+            slices[c2+SL_LEN] = prevSlices[i+SL_LEN];
         }
-        assert localsLen == tail.offerNextLocals;
+
         return allocTermMaybeChangeTail(destCol, shared, flaggedLocalLen);
     }
 
@@ -893,21 +886,18 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         return this;
     }
 
-    @Override public void reserveAddLocals(int addBytes) { reserveAddLocals0(addBytes); }
-
-    private int reserveAddLocals0(int addBytes) {
-        var tail = this.tail;
-        if (tail == null)
-            tail = this;
-        int reqLen = tail.localsLen+addBytes;
+    @Override public void reserveAddLocals(int addBytes) {
+        var tail1 = this.tail;
+        if (tail1 == null)
+            tail1 = this;
+        int reqLen = tail1.localsLen+addBytes;
         if (reqLen > Short.MAX_VALUE) {
-            if (tail.rows == 0) throw new UnsupportedOperationException("locals too wide");
-            tail = createTail();
+            if (tail1.rows == 0) throw new UnsupportedOperationException("locals too wide");
+            tail1 = createTail();
             reqLen = addBytes;
         }
-        if (reqLen > tail.locals.length)
-            tail.growLocals(tail.localsLen, reqLen);
-        return tail.localsLen;
+        if (reqLen > tail1.locals.length)
+            tail1.growLocals(tail1.localsLen, reqLen);
     }
 
     private void growLocals(int currentEnd, int reqLen) {
