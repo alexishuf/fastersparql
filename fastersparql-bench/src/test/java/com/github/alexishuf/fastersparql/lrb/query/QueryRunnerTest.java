@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.async.BItEmitter;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -69,7 +70,10 @@ class QueryRunnerTest {
         assertTrue(ms > 900, "run too fast");
         assertTrue(ms < 1_100, "run to slow");
         assertEquals(TermBatch.of(termList(0), termList(1), termList(2), termList(3)), acc[0]);
-        assertTrue(cause[0] instanceof BItReadClosedException);
+        if (emit)
+            assertTrue(cause[0] instanceof FSCancelledException);
+        else
+            assertTrue(cause[0] instanceof BItReadClosedException);
         slow.close();
     }
 

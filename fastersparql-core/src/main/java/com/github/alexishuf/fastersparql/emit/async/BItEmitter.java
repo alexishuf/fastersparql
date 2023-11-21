@@ -22,6 +22,11 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             ResultJournal.initEmitter(this, vars);
     }
 
+    @Override protected void doRelease() {
+        super.doRelease();
+        it.close();
+    }
+
     @Override public String toString() { return it.toString(); }
 
     @Override public Stream<? extends StreamNode> upstream() {
@@ -33,6 +38,11 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     }
 
      @Override public Vars bindableVars() { return Vars.EMPTY; }
+
+    @Override public void cancel() {
+        super.cancel();
+        it.close();
+    }
 
     /* --- --- --- Task methods --- --- --- */
 
@@ -47,9 +57,11 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             if (b == null)
                 termState = COMPLETED;
         } catch (Throwable t) {
-            error = t;
-            termState = FAILED;
             b = null;
+            int st = state();
+            if      ((st&IS_CANCEL_REQ) != 0) termState = CANCELLED;
+            else if ((st&IS_TERM) != 0)       termState = st;
+            else                              throw t;
         }
         if (b != null) {
             int bRows = b.totalRows();

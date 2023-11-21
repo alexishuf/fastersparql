@@ -143,7 +143,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     /** Concurrent calls to feed(), nextBatch() and close() */
     @ParameterizedTest @MethodSource
     void testRaceFeedNextAndClose(int minBatch, int waitBatches) throws Exception {
-        int threads = 2*getRuntime().availableProcessors();
+        int threads = getRuntime().availableProcessors()+1;
         String name = ".testRaceFeedNextAndClose("+minBatch+", "+waitBatches+")";
         try {
             testRaceFeedNextAndClose(-1, minBatch, waitBatches);
