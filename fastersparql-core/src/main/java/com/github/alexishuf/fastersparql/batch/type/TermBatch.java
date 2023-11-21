@@ -112,24 +112,7 @@ public final class TermBatch extends Batch<TermBatch> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        if ((byte)P.getOpaque(this) != P_UNPOOLED)
-            return false; //pooled or garbage is not valid
-        if (SELF_VALIDATE_EXPENSIVE && validation.compareTo(Validation.EXPENSIVE) >= 0) {
-            for (int r = 0; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    if (!equals(r, c, this, r, c))
-                        return false;
-                    Term term = get(r, c);
-                    if (!equals(r, c, term))
-                        return false;
-                    if (term != null && hash(r, c) != term.hashCode())
-                        return false;
-                }
-                if (!equals(r, this, r))
-                    return false;
-            }
-        }
-        return true;
+        return (byte) P.getOpaque(this) == P_UNPOOLED; //pooled or garbage is not valid
     }
 
     /* --- --- --- batch accessors --- --- --- */
