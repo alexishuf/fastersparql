@@ -583,6 +583,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 in = p.projectInPlace(in);
                 p = null;
             }
+            if (rowFilter.isNoOp())
+                return in;
             B b = in, prev = in;
             short cols = in.cols, rows;
             var decision = DROP;

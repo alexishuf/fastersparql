@@ -245,6 +245,10 @@ public final class Modifier extends Plan {
             allowed = limit;
         }
 
+        @Override public boolean isNoOp() {
+            return skip <= 0 && allowed == Long.MAX_VALUE;
+        }
+
         @Override public Decision drop(B batch, int row) {
             if (skip > 0) {
                 --skip;
@@ -252,7 +256,8 @@ public final class Modifier extends Plan {
             } else if (allowed == 0) {
                 return Decision.TERMINATE;
             }
-            --allowed;
+            if (allowed != Long.MAX_VALUE)
+                --allowed;
             return Decision.KEEP;
         }
     }
@@ -322,9 +327,13 @@ public final class Modifier extends Plan {
         }
 
         @Override public void rebind(BatchBinding binding) {
+            super.rebind(binding);
             skip = offset;
             allowed = limit;
-            super.rebind(binding);
+        }
+
+        @Override public boolean isNoOp() {
+            return skip <= 0  && allowed == Long.MAX_VALUE && super.isNoOp();
         }
 
         @Override public Decision drop(B batch, int row) {
@@ -335,7 +344,8 @@ public final class Modifier extends Plan {
                 --skip;
                 return Decision.DROP;
             }
-            --allowed;
+            if (allowed != Long.MAX_VALUE)
+                --allowed;
             return Decision.KEEP;
         }
     }
@@ -383,6 +393,8 @@ public final class Modifier extends Plan {
         }
 
         @Override public Vars bindableVars() { return filterVars; }
+
+        @Override public boolean isNoOp() { return evaluators.length == 0; }
 
         @Override public Decision drop(B batch, int row) {
             var binding = this.tmpBinding.attach(batch, row);

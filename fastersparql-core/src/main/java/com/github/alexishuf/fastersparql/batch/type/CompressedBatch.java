@@ -1572,6 +1572,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 in = p.projectInPlace(in);
                 p = null;
             }
+            if (rowFilter.isNoOp())
+                return in;
             CompressedBatch b = in, prev = in;
             short cols = in.cols, rows;
             var decision = DROP;

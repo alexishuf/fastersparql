@@ -27,6 +27,8 @@ public interface RowFilter<B extends Batch<B>> extends Rebindable {
      */
     default boolean targetsProjection() { return false; }
 
+    default boolean isNoOp() { return false; }
+
     /**
      * Notifies that this {@link RowFilter} will not receive any subsequent calls and it
      * should release resources it holds.

@@ -547,6 +547,8 @@ public final class TermBatch extends Batch<TermBatch> {
                 in = p.projectInPlace(in);
                 p = null;
             }
+            if (rowFilter.isNoOp())
+                return in;
 
             TermBatch b = in, prev = in;
             short cols = in.cols;
