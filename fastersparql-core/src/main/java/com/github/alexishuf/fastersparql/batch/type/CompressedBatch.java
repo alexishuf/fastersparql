@@ -278,7 +278,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             rows  += b.rows;
             bytes += b.localsLen;
         }
-        return bytes/rows;
+        return rows == 0 ? cols*32 : bytes/rows;
     }
 
     @Override public boolean hasCapacity(int terms, int localBytes) {
