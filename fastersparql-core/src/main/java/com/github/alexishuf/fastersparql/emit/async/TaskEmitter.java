@@ -151,7 +151,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         }
 
         // add rows to REQUESTED protecting against overflow
-        long now = Async.safeAddAndGetRelease(REQUESTED, this, rows);
+        long now = Async.safeAddAndGetRelease(REQUESTED, this, plainRequested, rows);
         if (now > 0 && now-rows <= 0) {
             if (ENABLED) journal("resume with requested=", now, " on ", this);
             resume();

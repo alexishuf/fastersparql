@@ -471,8 +471,9 @@ public final class TermBatch extends Batch<TermBatch> {
 
         @Override public @Nullable TermBatch onBatch(TermBatch batch) {
             if (batch == null) return null;
+            int receivedRows = batch.totalRows();
             onBatchPrologue(batch);
-            return onBatchEpilogue(projectInPlace(batch));
+            return onBatchEpilogue(projectInPlace(batch), receivedRows);
         }
 
         @Override public TermBatch projectRow(@Nullable TermBatch dst, TermBatch in, int row) {
@@ -532,8 +533,9 @@ public final class TermBatch extends Batch<TermBatch> {
 
         @Override public @Nullable TermBatch onBatch(TermBatch batch) {
             if (batch == null) return null;
+            int receivedRows = batch.totalRows();
             onBatchPrologue(batch);
-            return onBatchEpilogue(filterInPlace(batch));
+            return onBatchEpilogue(filterInPlace(batch), receivedRows);
         }
 
 

@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,13 +13,15 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.safeAddAndGetRelease;
 
 public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> {
-    private static final VarHandle UP_REQUESTED, REQUEST_LIMIT;
+    private static final VarHandle REQ_LIMIT, REQ, PENDING;
     static {
         try {
-            UP_REQUESTED   = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainUpRequested",  long.class);
-            REQUEST_LIMIT  = MethodHandles.lookup().findVarHandle(BatchFilter.class, "requestLimit", long.class);
+            REQ_LIMIT = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainReqLimit", long.class);
+            REQ       = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainReq",      long.class);
+            PENDING   = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainPending",  long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -29,7 +30,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
     protected final short outColumns;
-    @SuppressWarnings("unused") protected long requestLimit, plainUpRequested;
+    private final short chunk;
+    @SuppressWarnings("unused") private long plainReqLimit, plainReq, plainPending;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -40,11 +42,12 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         this.bindableVars = rowFilter.bindableVars();
         this.before = before;
         this.outColumns = (short)outVars.size();
-        requestLimit = Long.MAX_VALUE;
-        for (var bf = this; bf != null && requestLimit == Long.MAX_VALUE; bf = bf.before)
-            requestLimit = bf.rowFilter.upstreamRequestLimit();
-        if (requestLimit < Long.MAX_VALUE)
-            ++requestLimit;
+        this.chunk = (short)(batchType.preferredTermsPerBatch()/Math.max(1, outColumns));
+        plainReqLimit = Long.MAX_VALUE;
+        for (var bf = this; bf != null && plainReqLimit == Long.MAX_VALUE; bf = bf.before)
+            plainReqLimit = bf.rowFilter.upstreamRequestLimit();
+        if (plainReqLimit < Long.MAX_VALUE)
+            ++plainReqLimit;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, outVars);
     }
@@ -80,8 +83,11 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     @Override public void request(long rows) throws NoReceiverException {
-        rows = Math.max(1, Math.min(rows, (long)REQUEST_LIMIT.getOpaque(this)));
-        Async.safeAddAndGetRelease(UP_REQUESTED, this, rows);
+        if (rows <= 0)
+            return;
+        rows = Math.max(1, Math.min(rows, (long)REQ_LIMIT.getAcquire(this)));
+        safeAddAndGetRelease(REQ,     this, plainReq,     rows); // awaited  by   downstream
+        safeAddAndGetRelease(PENDING, this, plainPending, rows); // awaiting from   upstream
         super.request(rows);
     }
 
@@ -98,8 +104,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (type.showState()) {
             sb.append("\nstate=").append(flags.render(state()))
                     .append(", upstreamCancelled=").append(upstreamCancelled());
-            appendRequested(sb.append(", requestLimit="), (long)REQUEST_LIMIT.getOpaque(this));
-            appendRequested(sb.append(", upRequested="), (long)UP_REQUESTED.getOpaque(this));
+            appendRequested(sb.append(", requestLimit="), (long)REQ_LIMIT.getOpaque(this));
+            appendRequested(sb.append(", pending="), (long)PENDING.getOpaque(this));
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -112,41 +118,55 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- Receiver methods --- --- --- */
 
-    @Override protected void onBatchPrologue(B batch) {
-        super.onBatchPrologue(batch);
-        if (batch != null)
-            REQUEST_LIMIT.getAndAddRelease(this, (long)-batch.totalRows());
+    @Override protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
+        B b = super.onBatchEpilogue(batch, receivedRows);
+        if (b != null)
+            REQ_LIMIT.getAndAddRelease(this, -(long)b.totalRows());
+
+        // request from upstream if pending requests are nearing exhaustion and are
+        // below what was requested from this filter by downstream
+        long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -receivedRows)-receivedRows;
+        if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
+            upstream.request(Math.max(chunk, reqSize)); // request at least chunk
+        return b;
     }
 
     @Override public void onRow(B batch, int row) {
         if (batch == null)
             return;
-        REQUEST_LIMIT.getAndAddRelease(this, -1L);
-        boolean trivial = !rowFilter.targetsProjection();
+
+        boolean trivial = !rowFilter.targetsProjection(), empty = false;
         if (trivial && before != null) {
             if (before.before != null || before.rowFilter.targetsProjection()) {
                 trivial = false;
             } else {
                 switch (before.rowFilter.drop(batch, row)) {
-                    case DROP      -> { return; }
-                    case TERMINATE -> { cancelUpstream(); return; }
+                    case DROP      ->                     empty = true;
+                    case TERMINATE -> { cancelUpstream(); empty = true; }
                 }
             }
         }
-        if (trivial) {
+        if (trivial && !empty) {
             switch (rowFilter.drop(batch, row)) {
                 case KEEP -> {
                     if (EmitterStats.ENABLED && stats != null)
                         stats.onRowDelivered();
                     if (ResultJournal.ENABLED)
                         ResultJournal.logRow(this, batch, row);
+                    REQ_LIMIT.getAndAddRelease(this, -1L);
                     downstream.onRow(batch, row);
                 }
                 case TERMINATE -> cancelUpstream();
             }
-        } else {
+        } else if (!trivial) {
             super.onRow(batch, row);
-        }
+        } // else: trivial && empty (before dropped/terminated)
+
+        // request from upstream if unfulfilled requests are nearing exhaustion and are
+        // below requested by downstream
+        long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -1L)-1L;
+        if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
+            upstream.request(Math.max(chunk, reqSize)); // request at least chunk
     }
 
     /* --- --- --- BatchProcessor methods --- --- --- */

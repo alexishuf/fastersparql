@@ -125,21 +125,23 @@ public class Async {
     }
 
     /**
-     * Adds {@code add} to the field wrapped by {@code varHandle} in {@code holder} capping
-     * the resulting value at {@link Long#MAX_VALUE} in case of overflow.
+     * Atomically performs {@code field = max(0, field) + add}, resulting in {@link Long#MAX_VALUE}
+     * instead wrap-around in case of overflow.
      *
-     * @param varHandle A {@link VarHandle} for a {@code long} field in {@code holder}
-     * @param holder object instance that has the {@code long} field accessed via {@code varHandle}
+     * @param handle A {@link VarHandle} for a {@code long} field in {@code holder}
+     * @param holder object instance that has the {@code long} field accessed via {@code handle}
+     * @param curr The estimated current value of the {@code long} field in {@code holder}. If
+     *             stale, a new value will be read before the operation is retried.
      * @param add value to atomically aff to the field in {@code holder}
      * @return the updated value
      */
-    public static long safeAddAndGetRelease(VarHandle varHandle, Object holder, long add) {
-        long curr = (long)varHandle.get(holder), next, ex;
+    public static long safeAddAndGetRelease(VarHandle handle, Object holder, long curr, long add) {
+        long next, ex;
         do {
-            next = curr + add;
-            if (curr > 0 && next < 0) // overflow detected
-                next = Long.MAX_VALUE;
-        } while ((curr=(long)varHandle.compareAndExchangeRelease(holder, ex=curr, next)) != ex);
+            next = Math.max(0, ex=curr)+add;
+            if (next < 0)
+                next = Long.MAX_VALUE; // overflow
+        } while ((curr=(long)handle.compareAndExchangeRelease(holder, ex, next)) != ex);
         return next;
     }
 }

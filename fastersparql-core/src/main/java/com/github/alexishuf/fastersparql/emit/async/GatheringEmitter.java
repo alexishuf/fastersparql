@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -211,12 +212,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             return;
         if (state == CREATED)
             state = ACTIVE;
-        long n = plainRequested, ex;
-        do {
-            n = Math.max(0, ex=n)+rows;
-            if (n < 0)
-                n = Long.MAX_VALUE;
-        } while ((n=(long)REQ.compareAndExchangeRelease(this, ex, n)) != ex);
+        Async.safeAddAndGetRelease(REQ, this, plainRequested, rows);
         for (int i = 0, count = connectorCount; i < count; i++)
             connectors[i].updateRequested(0);
     }

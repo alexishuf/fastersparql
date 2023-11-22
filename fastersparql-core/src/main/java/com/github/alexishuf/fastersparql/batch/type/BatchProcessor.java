@@ -169,12 +169,12 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
     /* --- --- --- Receiver --- --- --- */
 
-    protected void onBatchPrologue(B batch) {
+    protected final void onBatchPrologue(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(batch);
     }
 
-    protected final @Nullable B onBatchEpilogue(@Nullable B batch) {
+    protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
         if (downstream == null) {
             throw new NoDownstreamException(this);
         } else if (upstream == null) {
@@ -208,14 +208,21 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
 
     @Override public final void onCancelled() {
+        int st = state();
         try {
-            if (moveStateRelease(statePlain(), CANCELLED)) {
-                if (downstream == null) throw new NoDownstreamException(this);
-                if ((statePlain()&EXPECT_CANCELLED) != 0) downstream.onComplete();
-                else downstream.onCancelled();
+            if (downstream == null)
+                throw new NoDownstreamException(this);
+            if ((st&EXPECT_CANCELLED) != 0) {
+                if (moveStateRelease(st, COMPLETED)) {
+                    st = (st&FLAGS_MASK) | COMPLETED;
+                    downstream.onComplete();
+                }
+            } else if (moveStateRelease(st, CANCELLED)) {
+                st = (st&FLAGS_MASK) | CANCELLED;
+                downstream.onCancelled();
             }
         } finally {
-            markDelivered(CANCELLED);
+            markDelivered(st, st);
         }
     }
 
