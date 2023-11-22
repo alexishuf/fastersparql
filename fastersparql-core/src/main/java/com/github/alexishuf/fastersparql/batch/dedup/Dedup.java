@@ -77,6 +77,8 @@ public abstract class Dedup<B extends Batch<B>> extends ReentrantLock implements
         return isDuplicate(batch, row, 0) ? Decision.DROP : Decision.KEEP;
     }
 
+    @Override public boolean targetsProjection() { return true; }
+
     /**
      * Create a {@link RowFilter} that calls {@link Dedup#isDuplicate(Batch, int, int)}
      * with given {@code sourceIdx}.
