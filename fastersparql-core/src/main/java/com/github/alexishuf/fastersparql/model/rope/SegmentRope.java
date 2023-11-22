@@ -522,6 +522,14 @@ public class SegmentRope extends PlainRope {
         }
     }
 
+    public boolean equals(SegmentRope o) {
+        int len = this.len;
+        if (o == null || len != o.len) return false;
+        if (o == this || (o.utf8==utf8 && o.segment==segment && o.offset==offset)) return true;
+        return has(0, o, 0, len);
+    }
+
+
     @Override public boolean equals(Object o) {
         if (o instanceof SegmentRope r) {
             int rLen = r.len;

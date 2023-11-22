@@ -254,8 +254,9 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     public final int indexOf(Term term) {
         if (term == null || !term.isVar()) return -1;
         for (int i = 0, n = size; i < n; i++) {
-            SegmentRope local = term.local();
-            if (array[i].has(0, local, 1, term.len)) return i;
+            SegmentRope local = term.local(), name = array[i];
+            if (name.len+1 == local.len && name.has(0, local, 1, local.len))
+                return i;
         }
         return -1;
     }
