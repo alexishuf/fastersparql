@@ -485,22 +485,30 @@ public class StoreSparqlClient extends AbstractSparqlClient
         };
     }
 
-    @Override public <B extends Batch<B>> Emitter<B>
+    @SuppressWarnings("unchecked") @Override
+    public <B extends Batch<B>> Emitter<B>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         Plan plan = SparqlParser.parse(sparql);
         var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
-        Emitter<StoreBatch> storeEm;
+        Modifier m = plan instanceof Modifier mod ? mod : null;
+        boolean convertBefore = m != null && !m.filters.isEmpty() && bt != TYPE;
+        Emitter<?> em;
         if (tp != null) {
-            Modifier m = plan instanceof Modifier mod ? mod : null;
             Vars tpVars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
-            storeEm = new TPEmitter(tp, tpVars);
+            em = new TPEmitter(tp, tpVars);
+            if (convertBefore)
+                em = new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em);
             if (m != null) // apply any modification required (projection may be done already)
-                storeEm = m.processed(storeEm);
+                em = m.processed(em);
         } else {
-            storeEm = federator.emit(TYPE, plan, rebindHint);
+            if (convertBefore)
+                plan = plan.left();
+            em = federator.emit(TYPE, plan, rebindHint);
+            if (convertBefore)
+                em =  m.processed(new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em));
         }
-        //noinspection unchecked
-        return bt == TYPE ? (Emitter<B>) storeEm : new FromStoreConverter<>(bt, storeEm);
+        return bt.equals(em.batchType()) ? (Emitter<B>)em
+                                         : new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em);
     }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
