@@ -245,9 +245,14 @@ public final class Modifier extends Plan {
             allowed = limit;
         }
 
-        @Override public boolean isNoOp() {
-            return skip <= 0 && allowed == Long.MAX_VALUE;
+        @Override public String toString() {
+            var sb = new StringBuilder();
+            if (offset > 0) sb.append("OFFSET ").append(offset);
+            if (limit != Long.MAX_VALUE) sb.append("LIMIT ").append(limit);
+            return sb.toString();
         }
+
+        @Override public boolean isNoOp() { return skip <= 0 && allowed == Long.MAX_VALUE; }
 
         @Override public Decision drop(B batch, int row) {
             if (skip > 0) {
@@ -352,21 +357,16 @@ public final class Modifier extends Plan {
 
     private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
         private final BatchBinding tmpBinding;
-        private final List<Expr> filters;
-        private final ExprEvaluator[] evaluators;
-        private final Vars filterVars;
+        private final Vars inVars;
+        private List<Expr> filters;
+        private ExprEvaluator[] evaluators;
+        private Vars filterVars;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
+            this.inVars     = inVars;
             this.tmpBinding = new BatchBinding(inVars);
-            this.filters = filters;
-            this.filterVars = new Vars.Mutable(10);
-            this.evaluators = new ExprEvaluator[filters.size()];
-            for (int i = 0; i < evaluators.length; i++) {
-                Expr expr = filters.get(i);
-                evaluators[i] = expr.evaluator(inVars);
-                filterVars.addAll(expr.vars());
-            }
+            setFilters(filters);
         }
 
         private void logFailure(Throwable t) {
@@ -381,6 +381,17 @@ public final class Modifier extends Plan {
                 sb.append(e.toSparql()).append(" && ");
             sb.setLength(Math.max(7/*FILTER(*/, sb.length()-4));
             return sb.append(')').toString();
+        }
+
+        public void setFilters(List<Expr> filters) {
+            this.filters    = filters;
+            this.filterVars = new Vars.Mutable(10);
+            this.evaluators = new ExprEvaluator[filters.size()];
+            for (int i = 0; i < evaluators.length; i++) {
+                Expr expr = filters.get(i);
+                evaluators[i] = expr.evaluator(inVars);
+                filterVars.addAll(expr.vars());
+            }
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
