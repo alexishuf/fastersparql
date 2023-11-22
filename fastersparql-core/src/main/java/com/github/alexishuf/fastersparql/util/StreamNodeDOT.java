@@ -45,6 +45,7 @@ public class StreamNodeDOT {
 
     public static String toDOT(StreamNode root, Label type) {
         var sb = new StringBuilder();
+        IdentityHashMap<StreamNode, Boolean> visited = new IdentityHashMap<>();
         IdentityHashMap<StreamNode, String> node2id = new IdentityHashMap<>();
         Function<StreamNode, String> node2idMapper = key -> "ref" + node2id.size() + 1;
         ArrayDeque<NodeRef> stack = new ArrayDeque<>();
@@ -53,6 +54,8 @@ public class StreamNodeDOT {
         sb.append("digraph {\nbgcolor=\"#101010\";");
         while (!stack.isEmpty()) {
             var ref = stack.pop();
+            if (visited.put(ref.node, Boolean.TRUE) == Boolean.TRUE)
+                continue; // already visited
             var nId = node2id.computeIfAbsent(ref.node, node2idMapper);
             sb.append("  ").append(nId).append("[label=\"");
             if (ref.index >= 0)
