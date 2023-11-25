@@ -189,18 +189,21 @@ public class Measure implements Callable<Void>{
         return (int)((nanoTime()-start)/1_000_000L);
     }
 
-    @SuppressWarnings("unused") private void dump(QueryName qry, Plan debugPlan, StreamNode results) {
+    @SuppressWarnings("unused") private void dump(QueryName qry, Plan plan, StreamNode sn) {
         Async.uninterruptibleSleep(500);
         System.out.println(qry.opaque().sparql());
-        if (debugPlan != null)
-            System.out.println(debugPlan);
-        File dot = new File("/tmp/"+qry.name()+".dot");
-        File svg = new File(dot.getPath().replace(".dot", ".svg"));
-        try (var writer = new FileWriter(dot, UTF_8)) {
+        if (plan != null)
+            System.out.println(plan);
+        File dotFile = new File("/tmp/"+qry.name()+".dot");
+        File resultsFile = new File("/tmp/"+qry.name()+".results");
+        File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
+        try (var dot     = new FileWriter(dotFile,     UTF_8);
+             var results = new FileWriter(resultsFile, UTF_8)) {
             ThreadJournal.dumpAndReset(System.out, 100);
-            ResultJournal.dump(System.out);
-            writer.append(results.toDOT(WITH_STATE_AND_STATS));
-            results.renderDOT(svg, WITH_STATE_AND_STATS);
+            ResultJournal.dump(results);
+            dot.append(sn.toDOT(WITH_STATE_AND_STATS));
+            sn.renderDOT(svg, WITH_STATE_AND_STATS);
+            System.out.println("Wrote "+svg);
         } catch (IOException ignored) {}
         ThreadJournal.dumpAndReset(System.out, 100);
     }
