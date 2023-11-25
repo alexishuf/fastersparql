@@ -354,7 +354,7 @@ public class FS {
 
     /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#opportunisticDedupCapacity()}. */
     public static Modifier dedup(Plan input) {
-        return distinct(input, FSProperties.opportunisticDedupCapacity());
+        return distinct(input, FSProperties.opportunisticDedupCapacity() ? 1 : 0);
     }
 
     /**

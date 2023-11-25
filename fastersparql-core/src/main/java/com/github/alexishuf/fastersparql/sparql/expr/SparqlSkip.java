@@ -34,6 +34,7 @@ public class SparqlSkip {
     public static final byte[] WHERE_u8 = "WHERE".getBytes(UTF_8);
     public static final byte[] DISTINCT_u8 = "DISTINCT".getBytes(UTF_8);
     public static final byte[] REDUCED_u8 = "REDUCED".getBytes(UTF_8);
+    public static final byte[] PRUNED_u8 = "PRUNED".getBytes(UTF_8);
     public static final byte[] FROM_u8 = "FROM".getBytes(UTF_8);
     public static final byte[] LIMIT_u8 = "LIMIT".getBytes(UTF_8);
     public static final byte[] OFFSET_u8 = "OFFSET".getBytes(UTF_8);

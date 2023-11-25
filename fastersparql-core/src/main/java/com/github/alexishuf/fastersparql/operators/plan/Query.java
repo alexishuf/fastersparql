@@ -13,7 +13,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
+import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.DEDUP;
 
 public final class Query extends Plan {
     public SparqlQuery sparql;
@@ -35,13 +35,13 @@ public final class Query extends Plan {
     @Override public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, @Nullable Binding binding, boolean weakDedup) {
         var sparql = this.sparql;
         if (binding != null) sparql = sparql.bound(binding);
-        if (weakDedup)       sparql = sparql.toDistinct(WEAK);
+        if (weakDedup)       sparql = sparql.toDistinct(DEDUP);
         return client.query(batchType, sparql).metrics(Metrics.createIf(this));
     }
 
     @Override
     public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
-        var sparql = weakDedup ? this.sparql.toDistinct(WEAK) : this.sparql;
+        var sparql = weakDedup ? this.sparql.toDistinct(DEDUP) : this.sparql;
         return client.emit(type, sparql, rebindHint);
     }
 

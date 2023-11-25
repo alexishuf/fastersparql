@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import static com.github.alexishuf.fastersparql.FSProperties.opportunisticDedupCapacity;
 import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
 import static com.github.alexishuf.fastersparql.batch.dedup.StrongDedup.strongUntil;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
@@ -124,8 +125,9 @@ public final class Modifier extends Plan {
             groupGraphPattern(sb.append(ASK_u8).append(' '), 0, PrefixAssigner.NOP);
         } else {
             sb.append(SELECT_u8).append(' ');
-            if      (distinctCapacity > reducedCapacity()) sb.append(DISTINCT_u8).append(' ');
-            else if (distinctCapacity > 0)                 sb.append( REDUCED_u8).append(' ');
+            if      (distinctCapacity >  reducedCapacity()) sb.append(DISTINCT_u8).append(' ');
+            else if (distinctCapacity == reducedCapacity()) sb.append( REDUCED_u8).append(' ');
+            else if (distinctCapacity > 0)                  sb.append(  PRUNED_u8).append(' ');
 
             if (projection != null) {
                 for (var s : projection) sb.append('?').append(s).append(' ');
@@ -163,7 +165,8 @@ public final class Modifier extends Plan {
     @Override
     public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
                                                   boolean weakDedup) {
-        return processed(left().emit(type, rebindHint, weakDedup), weakDedup);
+        boolean dedupIn = weakDedup || (distinctCapacity > 0 && opportunisticDedupCapacity());
+        return processed(left().emit(type, rebindHint, dedupIn), weakDedup);
     }
 
     public <B extends Batch<B>>

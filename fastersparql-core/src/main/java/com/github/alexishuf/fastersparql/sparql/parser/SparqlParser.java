@@ -36,7 +36,7 @@ public class SparqlParser {
     private int start, pos, end;
     private final ExprParser exprParser = new ExprParser();
     private final GroupParser groupParser = new GroupParser();
-    private boolean distinct, reduce;
+    private boolean distinct, reduce, dedup;
     private long limit;
     private @Nullable Vars projection;
 
@@ -87,7 +87,9 @@ public class SparqlParser {
         pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin();
         groupParser.reset();
-        distinct = reduce = false;
+        reduce   = false;
+        distinct = false;
+        dedup    = false;
         limit = Long.MAX_VALUE;
         projection = null;
         exprParser.input(query);
@@ -235,7 +237,7 @@ public class SparqlParser {
                 require(ASK_u8);
                 limit = 1;
                 projection = Vars.EMPTY;
-                reduce = false;
+                distinct = reduce = dedup = false;
             }
             case 's', 'S' -> pSelect();
             default -> throw ex("SELECT or ASK", pos);
@@ -251,7 +253,8 @@ public class SparqlParser {
             switch (c) {
                 case '{', 'w', 'W', '\0' -> { return; }
                 case 'd', 'D'            -> { require(DISTINCT_u8); distinct = true; }
-                case 'r', 'R'            -> { require(REDUCED_u8); reduce = true; }
+                case 'r', 'R'            -> { require(REDUCED_u8);  reduce   = true; }
+                case 'p', 'P'            -> { require(PRUNED_u8);   dedup    = true; }
                 case '*'                 -> { pos++; projection = null; }
                 case '('                 -> throw new InvalidSparqlException("binding vars to expressions '(expr AS ?var)' is not supported yet");
                 case 'f', 'F'            -> {
@@ -283,11 +286,13 @@ public class SparqlParser {
                 default -> throw ex("LIMIT/OFFSET", pos);
             }
         }
-        if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinct || reduce) {
-            int distinctWindow = reduce ? FSProperties.reducedCapacity()
-                               : distinct ? Integer.MAX_VALUE : 0;
+        int distinctWindow;
+        if      (dedup)    distinctWindow = 1;
+        else if (reduce)   distinctWindow = FSProperties.reducedCapacity();
+        else if (distinct) distinctWindow = FSProperties.distinctCapacity();
+        else               distinctWindow = 0;
+        if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinctWindow > 0)
             return FS.modifiers(where, projection, distinctWindow, offset, limit, List.of());
-        }
         return where;
     }
 

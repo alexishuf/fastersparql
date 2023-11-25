@@ -24,11 +24,17 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         this.rows = batchType.createBucket(rowsCapacity, cols);
         this.rows.maximizeCapacity();
         this.capacity = this.rows.capacity();
+        if (this.capacity > HashBitset.BS_BITS)
+            throw new AssertionError("bucket capacity > HashBitset.BS_BITS");
     }
 
     @Override public void clear(int cols) {
         Arrays.fill(bitset, 0L);
-        rows.clear(rows.capacity(), cols);
+        if (rows.cols() != cols)
+            rows.clear(rows.capacity(), cols);
+        // since constructor asserts bitset has more bits than rows.capacity() and bitset
+        // is always checked before this.rows, clear() can be skipped if the number of
+        // columns is not changed.
     }
 
     @Override public void recycleInternals() {

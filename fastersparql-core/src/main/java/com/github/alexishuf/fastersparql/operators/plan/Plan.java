@@ -373,8 +373,9 @@ public abstract sealed class Plan implements SparqlQuery
 
     @Override public Plan toDistinct(DistinctType distinctType) {
         int capacity = switch (distinctType) {
-            case WEAK -> FSProperties.reducedCapacity();
-            case STRONG -> Integer.MAX_VALUE;
+            case STRONG -> FSProperties.distinctCapacity();
+            case WEAK   -> FSProperties.reducedCapacity();
+            case DEDUP  -> 1;
         };
         if (this instanceof Modifier m) {
             if (m.distinctCapacity == capacity) return m;

@@ -80,8 +80,11 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         byte c = sparql.get(verbBegin);
         if (c != 's' && c != 'S') return this; // not a select
         int i = sparql.skip(sparql.skip(verbBegin, len, UNTIL_WS), len, Rope.WS);
-        var current = sparql.hasAnyCase(i, DISTINCT_u8) ? DistinctType.STRONG
-                    : sparql.hasAnyCase(i, REDUCED_u8) ? DistinctType.WEAK : null;
+        DistinctType current;
+        if      (sparql.hasAnyCase(i, DISTINCT_u8)) current = DistinctType.STRONG;
+        else if (sparql.hasAnyCase(i,  REDUCED_u8)) current = DistinctType.WEAK;
+        else if (sparql.hasAnyCase(i,   PRUNED_u8)) current = DistinctType.DEDUP;
+        else                                        current = null;
         if (current == distinctType)
             return this; // distinctType already satisfied
         Binder b = new Binder(publicVars, aliasVars, allVars);
@@ -90,6 +93,8 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+8; // skip over DISTINCT
         else if (current == DistinctType.WEAK)
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+7; // skip over REDUCED
+        else if (current == DistinctType.DEDUP)
+            b.consumed = sparql.skipWS(b.consumed, sparql.len())+6; // skip over PRUNED
         b.b.append(' ').append(distinctType.sparql());
         b.growth = b.b.len()-b.consumed;
         b.nVerbEnd += b.growth;
@@ -186,6 +191,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             byte[] kw = switch (sparql.get(consumed)) {
                 case 'r', 'R' -> REDUCED_u8;
                 case 'd', 'D' -> DISTINCT_u8;
+                case 'p', 'P' -> PRUNED_u8;
                 default -> null;
             };
             if (kw != null && sparql.hasAnyCase(consumed, kw))

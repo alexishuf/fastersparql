@@ -565,11 +565,11 @@ public class FSProperties {
      *
      * @return 1 of opportunistic deduplication is enabled, 0 otherwise.
      */
-    public static int opportunisticDedupCapacity() {
+    public static boolean opportunisticDedupCapacity() {
         Boolean v = CACHE_OP_OPPORTUNISTIC_DEDUP;
         if (v == null)
             CACHE_OP_OPPORTUNISTIC_DEDUP = v = readBoolean(OP_OPPORTUNISTIC_DEDUP, DEF_OP_OPPORTUNISTIC_DEDUP);
-        return Boolean.TRUE.equals(v) ? 1 : 0;
+        return Boolean.TRUE.equals(v);
     }
 
     private static final class JoinReorderStrategyParser implements Parser<JoinReorderStrategy> {
