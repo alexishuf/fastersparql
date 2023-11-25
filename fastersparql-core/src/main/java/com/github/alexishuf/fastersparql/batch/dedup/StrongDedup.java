@@ -109,6 +109,10 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     @Override public void clear(int cols) {
         tableSize = 0;
         this.cols = cols;
+        for (Bucket<B> b : buckets) {
+            if (b != null)
+                b.clear();
+        }
     }
 
     @Override public void recycleInternals() {
