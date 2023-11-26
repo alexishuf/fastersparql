@@ -38,18 +38,23 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     public BatchFilter(BatchType<B> batchType, Vars outVars,
                        RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
         super(batchType, outVars, CREATED, PROC_FLAGS);
-        this.rowFilter = rowFilter;
+        this.rowFilter    = rowFilter;
         this.bindableVars = rowFilter.bindableVars();
-        this.before = before;
-        this.outColumns = (short)outVars.size();
-        this.chunk = (short)(batchType.preferredTermsPerBatch()/Math.max(1, outColumns));
-        plainReqLimit = Long.MAX_VALUE;
-        for (var bf = this; bf != null && plainReqLimit == Long.MAX_VALUE; bf = bf.before)
-            plainReqLimit = bf.rowFilter.upstreamRequestLimit();
-        if (plainReqLimit < Long.MAX_VALUE)
-            ++plainReqLimit;
+        this.before       = before;
+        this.outColumns   = (short)outVars.size();
+        this.chunk        = (short)(batchType.preferredTermsPerBatch()/Math.max(1, outColumns));
+        resetReqLimit();
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, outVars);
+    }
+
+    private void resetReqLimit() {
+        long limit = Long.MAX_VALUE;
+        for (var bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
+            limit = bf.rowFilter.upstreamRequestLimit();
+        if (limit < Long.MAX_VALUE)
+            ++limit;
+        REQ_LIMIT.setRelease(this, limit);
     }
 
     @Override protected void doRelease() {
@@ -77,6 +82,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
         super.rebind(binding);
+        resetReqLimit();
+        PENDING.setRelease(this, 0L);
         var rf = rowFilter;
         if (rf     != null)     rf.rebind(binding);
         if (before != null) before.rebind(binding);
