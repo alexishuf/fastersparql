@@ -177,7 +177,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         return sb.toString();
     }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Stream.concat(Stream.of(leftUpstream), Stream.ofNullable(rightRecv.upstream));
     }
 
@@ -645,7 +645,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             this.bindingListener = bindingListener;
         }
 
-        @Override public Stream<? extends StreamNode> upstream() {
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
             return Stream.of(upstream);
         }
 

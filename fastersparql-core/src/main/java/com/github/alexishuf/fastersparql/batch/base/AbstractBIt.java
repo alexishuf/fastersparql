@@ -61,7 +61,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         this.nColumns = (short) nColumns;
     }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Stream.empty();
     }
 

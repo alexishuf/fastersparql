@@ -21,7 +21,7 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
         this.inner = inner;
     }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Stream.of(inner);
     }
 

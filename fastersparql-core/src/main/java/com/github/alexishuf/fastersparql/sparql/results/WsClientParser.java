@@ -338,7 +338,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             upstream.subscribe(this);
         }
 
-        @Override public Stream<? extends StreamNode> upstream() {
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
             return Stream.of(upstream);
         }
 

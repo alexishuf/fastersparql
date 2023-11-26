@@ -61,7 +61,7 @@ class GatherAndScatterTest {
     }
 
     private record FakeRoot(Collection<? extends StreamNode> nodes) implements StreamNode {
-        @Override public Stream<? extends StreamNode> upstream() {return nodes.stream();}
+        @Override public Stream<? extends StreamNode> upstreamNodes() {return nodes.stream();}
     }
 
     record D(BatchType<?> batchType, int height, int nConsumers, int nProducers,
@@ -150,7 +150,7 @@ class GatherAndScatterTest {
                 Arrays.fill(this.history, 0);
             }
 
-            @Override public Stream<? extends StreamNode> upstream() {
+            @Override public Stream<? extends StreamNode> upstreamNodes() {
                 return Stream.of(emitter);
             }
 

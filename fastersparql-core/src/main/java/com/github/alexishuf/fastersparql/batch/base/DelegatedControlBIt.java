@@ -46,7 +46,7 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     public BIt<S> delegate() { return delegate; }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Optional.ofNullable(delegate).stream();
     }
 

@@ -185,7 +185,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         /* --- --- --- Receiver methods --- --- --- */
 
-        @Override public Stream<? extends StreamNode> upstream() {
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
             return Stream.of(upstream);
         }
 

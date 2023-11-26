@@ -94,7 +94,7 @@ class ScatterStageTest {
             return state|MUST_AWAKE;
         }
 
-        @Override public Stream<? extends StreamNode> upstream() { return Stream.of(); }
+        @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.of(); }
     }
 
     record D(int consumersCount, int height, @Nullable RuntimeException error, boolean cancel)

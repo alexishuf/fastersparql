@@ -113,7 +113,7 @@ class CallbackEmitterTest {
                 Semaphore ready = new Semaphore(0);
                 Throwable[] errorOrCancel = {null};
                 var receiver = new Receiver<CompressedBatch>() {
-                    @Override public Stream<? extends StreamNode> upstream() {
+                    @Override public Stream<? extends StreamNode> upstreamNodes() {
                         return Stream.of(cb);
                     }
                     @Override public CompressedBatch onBatch(CompressedBatch batch) {

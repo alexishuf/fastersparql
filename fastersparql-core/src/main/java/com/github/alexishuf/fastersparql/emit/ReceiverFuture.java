@@ -37,7 +37,7 @@ public abstract class ReceiverFuture<T, B extends Batch<B>> extends CompletableF
         return this;
     }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Stream.ofNullable(upstream);
     }
 

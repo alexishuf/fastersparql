@@ -164,7 +164,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         upstream.request(rows);
     }
 
-    @Override public final Stream<? extends StreamNode> upstream() {
+    @Override public final Stream<? extends StreamNode> upstreamNodes() {
         return Stream.ofNullable(upstream);
     }
     /* --- --- --- Receiver --- --- --- */

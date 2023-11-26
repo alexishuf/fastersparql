@@ -43,7 +43,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public Vars         vars()      { return vars;       }
     @Override public BatchType<O> batchType() { return batchType;  }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Optional.ofNullable(upstream).stream();
     }
 

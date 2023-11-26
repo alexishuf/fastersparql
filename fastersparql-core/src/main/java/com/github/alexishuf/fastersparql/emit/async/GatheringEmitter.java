@@ -98,7 +98,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
     /*  --- --- --- StreamNode implementation  --- --- --- */
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Arrays.stream(connectors, 0, connectorCount).map(c -> c.up);
     }
 
@@ -467,7 +467,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             up.rebind(binding);
         }
 
-        @Override public Stream<? extends StreamNode> upstream() { return Stream.of(up); }
+        @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.of(up); }
 
         @Override public String toString() {
             int i = 0;

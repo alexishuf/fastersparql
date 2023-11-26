@@ -29,7 +29,7 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
 
     @Override public String toString() { return it.toString(); }
 
-    @Override public Stream<? extends StreamNode> upstream() {
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
         return Optional.ofNullable(it).stream();
     }
 

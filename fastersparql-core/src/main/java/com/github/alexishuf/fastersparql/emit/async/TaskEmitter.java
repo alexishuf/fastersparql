@@ -92,7 +92,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     @Override public String toString() { return label(StreamNodeDOT.Label.MINIMAL); }
 
-    @Override public Stream<? extends StreamNode> upstream() { return Stream.empty(); }
+    @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.empty(); }
 
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);

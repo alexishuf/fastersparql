@@ -63,7 +63,7 @@ public class StreamNodeDOT {
             sb.append(ref.node.label(type).replace("\n", "\\n").replace("\"", "'"));
             sb.append("\", color=\"#f0f0f0\", fontcolor=\"#f0f0f0\"];\n");
             upstreamList.clear();
-            ref.node.upstream().forEachOrdered(upstreamList::add);
+            ref.node.upstreamNodes().forEachOrdered(upstreamList::add);
             for (int i = 0, n = upstreamList.size(); i < n; i++) {
                 StreamNode u = upstreamList.get(i);
                 var uId = node2id.computeIfAbsent(u, node2idMapper);

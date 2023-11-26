@@ -12,7 +12,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused") // this interface is used only for debugging
 public interface StreamNode {
-    Stream<? extends StreamNode> upstream();
+    Stream<? extends StreamNode> upstreamNodes();
 
     default String   label(StreamNodeDOT.Label type)                    { return toString(); }
     default String   toDOT(StreamNodeDOT.Label type)                    { return StreamNodeDOT.toDOT(this, type); }
