@@ -462,7 +462,7 @@ public abstract class Stateful {
         public static final Flags DEFAULT = new Builder()
                 .flag(LOCKED_MASK, "LOCKED")
                 .flag(RELEASED_MASK, "RELEASED")
-                .counter(DELAY_RELEASE_MASK, "delayReleased")
+                .counter(DELAY_RELEASE_MASK, "delayRelease")
                 .build();
         private final String[] flagNames;
         private final String[] counterNames;
