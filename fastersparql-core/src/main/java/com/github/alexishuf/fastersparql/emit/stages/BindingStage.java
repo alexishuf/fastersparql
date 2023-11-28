@@ -475,13 +475,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 this.error = error;
             if ((state & LEFT_TERM) == 0) {
                 state = setFlagsRelease(state, flag);
-                if ((state & (RIGHT_TERM|RIGHT_STARVED)) != 0) {
+                if ((state & (RIGHT_TERM|RIGHT_STARVED)) != 0)
                     state = terminateStage(state);
-                } else if ((lb == null ? lr == -1 : lr == lb.rows-1 && lb.next == null)
-                           && (fillingLB == null || fillingLB.rows == 0)
-                           && (state&DELAY_RELEASE_MASK) == 0) {
-                    rightRecv.rebindRelease();
-                }
             }
         } finally {
             if ((state&LOCKED_MASK) != 0)
