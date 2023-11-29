@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
@@ -12,11 +14,17 @@ import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import org.apache.commons.io.output.CloseShieldOutputStream;
+import org.apache.commons.io.output.TeeOutputStream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -24,8 +32,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Stream;
@@ -37,6 +44,9 @@ import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsCo
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.lrb.sources.SourceKind.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -171,25 +181,56 @@ class MeasureTest {
 
     public static void main(String[] args) {
         beforeAll();
-        String uri = "file://" + dataDir + "/DrugBank";
+        String uri = "file://" + dataDir + "/LMDB";
         try (var client = new StoreSparqlClient(SparqlEndpoint.parse(uri))) {
 //            var emitter = client.emit(COMPRESSED, new OpaqueSparqlQuery("""
 //                SELECT ?predicate ?object WHERE {
 //                  ?drug <http://purl.org/dc/elements/1.1/title> "Adenine (JAN/USP)"
 //                }"""), Vars.EMPTY);
             var query = new OpaqueSparqlQuery("""
-                    SELECT ?s ?p ?o WHERE {
-                      <http://bio2rdf.org/dr:D04682> <http://purl.org/dc/elements/1.1/title> ?o .
+                    SELECT * WHERE {
+                        ?imdbactor <http://data.linkedmdb.org/resource/movie/actor_name> ?actor_name .
+                        ?movie <http://data.linkedmdb.org/resource/movie/actor> ?imdbactor .
+                        ?movie <http://purl.org/dc/terms/date> ?movieDate .
+                        FILTER(str(?actor_name) = str(?actor_name_en))
                     }""");
-            var acc = Emitters.collect(client.emit(COMPRESSED, query, Vars.EMPTY));
+            var names = Emitters.ofBatch(Vars.of("actor_name_en"),
+                    COMPRESSED.convert(TermBatch.of(termList("\"John Merivale\"@en"))));
+            var lexJoined = client.emit(new EmitBindQuery<>(query, names, BindType.JOIN), Vars.EMPTY);
+            var em = client.emit(
+                    new EmitBindQuery<>(new OpaqueSparqlQuery("SELECT * WHERE { ?movie <http://purl.org/dc/terms/title> ?movieTitle. }"),
+                                        lexJoined, BindType.JOIN),
+                    Vars.of("movie"));
+            CompressedBatch acc;
+            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+                w.start(10_000_000_000L).andThen(() -> dump(em, true));
+                acc = Emitters.collect(em);
+                dump(em, false);
+            }
             var serializer = ResultsSerializer.create(TSV);
             var tsv = new ByteRope();
-            serializer.init(query.publicVars(), query.publicVars(), false, tsv);
+            serializer.init(em.vars(), em.vars(), false, tsv);
             serializer.serializeAll(acc, tsv);
             serializer.serializeTrailer(tsv);
             System.out.println(tsv);
         }
     }
+
+    private static void dump(StreamNode node, boolean append) {
+        try (var journal = new OutputStreamWriter(
+                new TeeOutputStream(new CloseShieldOutputStream(System.out),
+                                    new FileOutputStream("/tmp/main.journal", append)),
+                UTF_8);
+             var results = new FileWriter("/tmp/main.results", UTF_8, append)) {
+            ThreadJournal.dumpAndReset(journal, 100);
+            ResultJournal.dump(results);
+            node.renderDOT(new File("/tmp/main.svg"), WITH_STATE_AND_STATS);
+            System.err.println("DUMP");
+        } catch (IOException e) {//noinspection CallToPrintStackTrace
+            e.printStackTrace();
+        }
+    }
+
 
     static Stream<Arguments> test() {
         List<SourceKind> sources = List.of(FS_STORE, HDT_FILE, HDT_JSON, HDT_WS, FS_TSV, FS_WS);
@@ -212,7 +253,6 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, ITERATE);
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
 //        System.out.printf("""
 //                BindingStage.repeatRebind: %5d

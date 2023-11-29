@@ -85,6 +85,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
     private static final StoreBatchType TYPE = StoreBatchType.STORE;
+    private static final boolean PREFER_NATIVE = FSProperties.storePreferIds();
     private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
             (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
     private static final LIFOPool<SegmentRope[]> PREFIXES_POOL
@@ -149,6 +150,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return t;
     }
 
+    private static BatchType<?> maybeNative(BatchType<?> requested) {
+        return PREFER_NATIVE ? TYPE : requested;
+    }
+
     public class Guard extends RefGuard {
         public Guard() { }
         public StoreSparqlClient get() { return StoreSparqlClient.this; }
@@ -186,7 +191,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final float invAvgSP, invAvgSO, invAvgPO;
 
         public StoreSingletonFederator(StoreSparqlClient parent) {
-            super(parent, StoreSparqlClient.TYPE);
+            super(parent, StoreSparqlClient.PREFER_NATIVE ? StoreSparqlClient.TYPE : null);
             this.spo = parent.spo;
             this.pso = parent.pso;
             this.ops = parent.ops;
@@ -503,7 +508,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         } else {
             if (convertBefore)
                 plan = plan.left();
-            em = federator.emit(TYPE, plan, rebindHint);
+            em = federator.emit(maybeNative(bt), plan, rebindHint);
             if (convertBefore)
                 em =  m.processed(new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em));
         }

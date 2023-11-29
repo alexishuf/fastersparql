@@ -18,15 +18,15 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public class SingletonFederator extends Optimizer {
     protected final SparqlClient client;
     protected final CardinalityEstimator estimator;
-    private final BatchType<?> preferredBatchType;
+    private final @Nullable BatchType<?> preferredBatchType;
 
-    public SingletonFederator(SparqlClient client, BatchType<?> preferredBatchType) {
+    public SingletonFederator(SparqlClient client, @Nullable BatchType<?> preferredBatchType) {
         this.client = client;
         this.preferredBatchType = preferredBatchType;
         this.estimator = this;
         estimator(client, this);
     }
-    public SingletonFederator(SparqlClient client, BatchType<?> preferredBatchType,
+    public SingletonFederator(SparqlClient client, @Nullable BatchType<?> preferredBatchType,
                               CardinalityEstimator estimator) {
         this.client = client;
         this.preferredBatchType = preferredBatchType;
@@ -34,13 +34,14 @@ public class SingletonFederator extends Optimizer {
         estimator(client, estimator);
     }
 
-    public <B extends Batch<B>> BIt<B> execute(BatchType<B> batchType, Plan plan) {
+    public <B extends Batch<B>> BIt<B> execute(BatchType<B> type, Plan plan) {
         Vars pubVars = plan.publicVars();
         plan = Federation.copySanitize(plan);
         plan = optimize(plan, Vars.EMPTY);
         plan = bind2client(plan, QueryMode.ITERATOR);
         plan = FS.project(plan, pubVars);
-        return batchType.convert(plan.execute(preferredBatchType));
+        BatchType<?> preferred = preferredBatchType == null ? type : preferredBatchType;
+        return type.convert(plan.execute(preferred));
     }
 
     public <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Plan plan, Vars rebindHint) {
@@ -49,9 +50,10 @@ public class SingletonFederator extends Optimizer {
         plan = optimize(plan, rebindHint);
         plan = bind2client(plan, QueryMode.EMIT);
         plan = FS.project(plan, pubVars);
-        var emitter = plan.emit(preferredBatchType, rebindHint);
+        BatchType<?> preferred = preferredBatchType == null ? type : preferredBatchType;
+        var emitter = plan.emit(preferred, rebindHint);
         //noinspection unchecked
-        return preferredBatchType.equals(type) ? (Emitter<B>) emitter : convert(type, emitter);
+        return preferred == type ? (Emitter<B>) emitter : convert(type, emitter);
     }
 
     protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {

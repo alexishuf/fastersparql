@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import jdk.jfr.Event;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
@@ -49,6 +50,7 @@ public class FSProperties {
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
     public static final String EMIT_LOG_STATS            = "fastersparql.emit.log-stats";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
+    public static final String STORE_PREFER_IDS          = "fastersparql.store.prefer-ids";
     public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
 
     /* --- --- --- default values --- --- --- */
@@ -71,6 +73,7 @@ public class FSProperties {
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
     public static final boolean DEF_EMIT_LOG_STATS            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
+    public static final boolean DEF_STORE_PREFER_IDS          = true;
     public static final Boolean DEF_BATCH_POOLED_TRACE        = false;
 
     /* --- --- --- cached values --- --- --- */
@@ -95,6 +98,7 @@ public class FSProperties {
     private static Boolean CACHE_OP_OPPORTUNISTIC_DEDUP = null;
     private static Boolean CACHE_EMIT_LOG_STATS         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
+    private static Boolean CACHE_STORE_PREFER_IDS       = null;
     private static Boolean CACHE_BATCH_POOLED_MARK      = null;
     private static Boolean CACHE_BATCH_POOLED_TRACE     = null;
     private static Boolean CACHE_BATCH_JFR_ENABLED      = null;
@@ -200,6 +204,7 @@ public class FSProperties {
         CACHE_OP_JOIN_REORDER_HASH      = null;
         CACHE_OP_JOIN_REORDER_WCO       = null;
         CACHE_STORE_CLIENT_VALIDATE     = null;
+        CACHE_STORE_PREFER_IDS          = null;
     }
 
     /* --- --- --- accessors --- --- --- */
@@ -664,6 +669,22 @@ public class FSProperties {
         Boolean v = CACHE_STORE_CLIENT_VALIDATE;
         if (v == null)
             CACHE_STORE_CLIENT_VALIDATE = v = readBoolean(STORE_CLIENT_VALIDATE, DEF_STORE_CLIENT_VALIDATE);
+        return v;
+    }
+
+    /**
+     * Whether a BGP wholly assigned to a single {@link StoreSparqlClient} should be executed
+     * using the native {@link StoreBatch} even if another batch type was requested.
+     *
+     * <p>The default is {@link #DEF_STORE_PREFER_IDS} and this can be overridden using the
+     * {@link #STORE_PREFER_IDS} property. However, changes to the property will only have an
+     * effect if the change occurs before the {@code static final} fields whose initialization
+     * calls this method are initialized</p>
+     */
+    public static boolean storePreferIds() {
+        Boolean v = CACHE_STORE_PREFER_IDS;
+        if (v == null)
+            CACHE_STORE_PREFER_IDS = v = readBoolean(STORE_PREFER_IDS, DEF_STORE_PREFER_IDS);
         return v;
     }
 
