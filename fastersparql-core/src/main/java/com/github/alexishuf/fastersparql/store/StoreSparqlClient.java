@@ -967,6 +967,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
+        @Override public void rebindRelease() {
+            super.rebindRelease();
+            rebindPrefetchEnd();
+        }
+
         private int bindingVarsChanged(int state, Vars bindingVars) {
             if (ENABLED)
                 journal("bindingVarsChanged bindingVars", bindingVars, "em=", this);
