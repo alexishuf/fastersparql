@@ -96,6 +96,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         }
         return this;
     }
+    @Override public @MonotonicNonNull Emitter<I> upstream() { return upstream; }
     @Override public void onComplete() {
         if (downstream == null) throw new NoReceiverException();
         downstream.onComplete();

@@ -110,6 +110,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         return this;
     }
 
+    @Override public Emitter<B> upstream() { return upstream; }
+
     /* --- --- --- Emitter --- --- --- */
 
     @Override public final Vars vars() {return vars;}

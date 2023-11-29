@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
+import com.github.alexishuf.fastersparql.emit.Stage;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
@@ -568,55 +569,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
     @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
                                                             Vars rebindHint) {
         Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
-        BatchBinding lexJoinBinding;
-        if (right instanceof Modifier m0 && !m0.filters.isEmpty()) {
-            Modifier m = (Modifier)(right = splitFiltersForLexicalJoin(m0));
-            var l = bq.bindings;
-            lexJoinBinding = createLexJoinBinding(l.batchType(), right, m.filters, l.vars());
-            if (m.isNoOp())
-                right = m.left;
-        } else {
-            lexJoinBinding = null;
-        }
-        return new StoreBindingEmitter<>(bq, right, rebindHint, lexJoinBinding);
+        if (right instanceof Modifier m0 && !m0.filters.isEmpty())
+            right = splitFiltersForLexicalJoin(m0);
+        return new StoreBindingEmitter<>(bq, right, rebindHint);
     }
 
     private Modifier splitFiltersForLexicalJoin(Modifier m) {
         var m2 = (Modifier)m.copy();
         m2.filters = Optimizer.splitFilters(m2.filters);
         return m2;
-    }
-
-
-    private <B extends Batch<B>> BatchBinding
-    createLexJoinBinding(BatchType<B> batchType, Plan right, List<Expr> mFilters, Vars leftVars) {
-        Vars rightBindingVars = null;
-        var term = Term.pooledMutable();
-        var varRope = ByteRope.pooled(16);
-        for (SegmentRope name : right.allVars()) {
-            varRope.len = 1;
-            varRope.append(name).u8()[0] = '?';
-            term.set(ByteRope.EMPTY, varRope, false);
-            Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
-            if (leftVar != term) {
-                if (rightBindingVars == null)
-                    rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
-                int i = rightBindingVars.indexOf(leftVar);
-                if (i >= 0)
-                    rightBindingVars.set(i, name);
-            }
-        }
-        varRope.recycle();
-        term.recycle();
-        if (rightBindingVars != null) {
-            BatchBinding lexJoinBinding = new BatchBinding(rightBindingVars);
-            B b = batchType.create(rightBindingVars.size());
-            b.beginPut();
-            b.commitPut();
-            lexJoinBinding.attach(b, 0);
-            return lexJoinBinding;
-        }
-        return null;
     }
 
     private static boolean canExecuteRightBGP(Plan right, int rIdx) {
@@ -1583,78 +1544,295 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private final class StoreBindingEmitter<B extends Batch<B>> extends BindingStage<B> {
         private static final LocalityCompositeDict.LocalityLexIt [] EMPTY_LEX_ITS
                 = new LocalityCompositeDict.LocalityLexIt[0];
-
+        /** The right operand algebra used to create this emitter. Immutable */
+        private final Plan rightPlan;
+        /** Mutable copy of {@link Modifier#filters} if {@code rightPlan} is a {@link Modifier}.*/
+        private final List<Expr> tmpRightFilters;
         /** If a lexical join hold lexical variants of the left-provided binding using the
          *  var names of the right operand instead of the left-side binding var name. */
-        private final @Nullable BatchBinding lexJoinBinding;
+        private @Nullable BatchBinding lexJoinBinding;
         /** Next values for {@code lexJoinBinding}, continuously swapped with
          * {@code lexJoinBinding.batch} */
         private @Nullable B nextLexBatch;
         /** The i-th lexIt iterates over variants of the {@code lexItCols[i]}-th binding var */
-        private final int[] lexItsCols;
+        private int @MonotonicNonNull[] lexItsCols;
         /** array of non-null lexical variant iterators or null if there is no lexical join */
-        private final LocalityCompositeDict.LocalityLexIt [] lexIts;
+        private LocalityCompositeDict.LocalityLexIt  @MonotonicNonNull[] lexIts;
         /** used to convert ids from {@code lexIts} into values for {@code nextLexJoinBatch}. */
-        private final LocalityCompositeDict.@Nullable Lookup lookup;
+        private LocalityCompositeDict.@MonotonicNonNull Lookup lookup;
         /** shortcut bitset for checking if a column of {@code nextLexJoinBatch} should be
          * filled with a value from a {@code lexIt} instead of just copied from
          * {@code lexJoinBinding.batch}*/
-        private final long lexBindingCols;
-        private final @Nullable TwoSegmentRope lexView;
-        /** A 1-row batch used to convert lexical binding batches that are not of type B */
-        private @Nullable B convLeftBatch;
+        private long lexBindingCols;
+        private final short leftCols;
+        private @MonotonicNonNull TwoSegmentRope lexView;
+        private @MonotonicNonNull SegmentRope localView;
+        /** {@code bb} from last {@code rebind(bb)}, but all batches are instances of {@code B} */
+        private @MonotonicNonNull BatchBinding convIntBinding;
+        /** batches used in {@code convIntBinding} and owned by {@code this} */
+        private @MonotonicNonNull ArrayList<B> convBindingBatches;
 
         public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right,
-                                   Vars rebindHint, @Nullable BatchBinding lexJoinBinding) {
+                                   Vars rebindHint) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
                   emit(bq.bindings.batchType(), right,
                        bq.bindingsVars().union(rebindHint)));
-            Vars leftVars = bq.bindingsVars();
-
-            this.lexJoinBinding = lexJoinBinding;
-            if (lexJoinBinding == null) {
-                lexIts = EMPTY_LEX_ITS;
-                lexItsCols = ArrayPool.EMPTY_INT;
-                nextLexBatch = null;
-                lookup = null;
-                lexBindingCols = 0;
-                lexView = null;
-            } else { // fill lexIts & lexItsCols
-                Vars rightBindingVars = lexJoinBinding.vars;
-                int nVars = leftVars.size();
-                assert rightBindingVars.size() == nVars;
-                nextLexBatch = batchType.create(nVars);
-                lookup = dict.lookup();
-                int lexJoins = 0;
-                for (int i = 0; i < nVars; i++) {
-                    if (leftVars.get(i) != rightBindingVars.get(i)) lexJoins++;
-                }
-                lexItsCols = new int[lexJoins];
-                lexIts = new LocalityCompositeDict.LocalityLexIt[lexJoins];
-                long lexBindingCols = 0;
-                lexJoins = 0;
-                for (int i = 0; i < nVars; i++) {
-                    if (leftVars.get(i) == rightBindingVars.get(i)) continue;
-                    if (i < 64) lexBindingCols |= 1L << i;
-                    lexItsCols[lexJoins]   = i;
-                    lexIts    [lexJoins++] = dict.lexIt();
-                }
-                this.lexBindingCols = lexBindingCols;
-                lexView = new TwoSegmentRope();
+            int bindingsVarsCount = bq.bindings.vars().size();
+            if (bindingsVarsCount > Short.MAX_VALUE)
+                throw new IllegalArgumentException("Too many binding vars");
+            this.leftCols  = (short)bindingsVarsCount;
+            rightPlan      = right;
+            lexIts         = EMPTY_LEX_ITS;
+            lexItsCols     = ArrayPool.EMPTY_INT;
+            nextLexBatch   = null;
+            lookup         = null;
+            lexBindingCols = 0;
+            lexView        = null;
+            localView      = null;
+            if (right instanceof Modifier m && !m.filters.isEmpty()) {
+                tmpRightFilters = new ArrayList<>(m.filters);
+                updateExtRebindVars(BatchBinding.ofEmpty(batchType()));
+            } else {
+                tmpRightFilters = null;
             }
         }
 
 
         @Override protected void doRelease() {
             super.doRelease();
+            B lexBatch;
             if (lexJoinBinding != null) //noinspection unchecked
-                lexJoinBinding.attach(batchType.recycle((B)lexJoinBinding.batch), 0);
-            nextLexBatch = batchType.recycle(nextLexBatch);
-            convLeftBatch = batchType.recycle(convLeftBatch);
+                lexJoinBinding.attach(batchType.recycle(lexBatch=(B)lexJoinBinding.batch), 0);
+            else
+                lexBatch = null;
+            if (nextLexBatch != lexBatch)
+                nextLexBatch = batchType.recycle(nextLexBatch);
+            if (convBindingBatches != null) {
+                for (int i = 0, n = convBindingBatches.size(); i < n; i++)
+                    convBindingBatches.set(i, batchType.recycle(convBindingBatches.get(i)));
+                // detach recycled batches from binding, in case is is reachable elsewhere
+                for (var bb = convIntBinding; bb != null; bb = bb.remainder)
+                    bb.attach(null, 0);
+            }
+        }
+
+        private BatchBinding createLexJoinBinding(BatchBinding lexJoinBinding,
+                                                  Plan right, List<Expr> mFilters, Vars leftVars) {
+            Vars rightBindingVars = null;
+            var term = Term.pooledMutable();
+            var varRope = ByteRope.pooled(16);
+            for (SegmentRope name : right.allVars()) {
+                varRope.len = 1;
+                varRope.append(name).u8()[0] = '?';
+                term.set(ByteRope.EMPTY, varRope, false);
+                Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
+                if (leftVar != term) {
+                    if (rightBindingVars == null)
+                        rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
+                    int i = rightBindingVars.indexOf(leftVar);
+                    if (i >= 0)
+                        rightBindingVars.set(i, name);
+                }
+            }
+            varRope.recycle();
+            term.recycle();
+            if (rightBindingVars != null) {
+                if (lexJoinBinding == null)
+                    lexJoinBinding = new BatchBinding(rightBindingVars);
+                else
+                    lexJoinBinding.vars(rightBindingVars);
+                //noinspection unchecked
+                B b = batchType.empty((B)lexJoinBinding.batch, rightBindingVars.size());
+                b.beginPut();
+                b.commitPut();
+                lexJoinBinding.attach(b, 0);
+                return lexJoinBinding;
+            }
+            return null;
+        }
+
+        @Override public void rebind(BatchBinding binding) throws RebindException {
+            super.rebind(binding);
+            if (lexJoinBinding != null)  // updated by super.rebind()->updateExtRebindVars()
+                lexRebindExternal(binding);
+        }
+
+        @SuppressWarnings("DataFlowIssue")
+        private void lexRebindExternal(BatchBinding binding) {
+            BatchBinding conv = convIntBinding.remainder;
+            if (intBindingVars().size() == leftCols) {
+                // do not copy-convert external binding if its values will not be used
+                for (var bb = binding; bb != null; bb = bb.remainder) {
+                    conv.attach(bb.batch, bb.row);
+                    if (bb.remainder != null) {
+                        if (conv.remainder == null)
+                            conv.remainder = new BatchBinding(bb.remainder.vars);
+                        conv = conv.remainder;
+                    }
+                }
+            } else {
+                int i = 1;
+                for (BatchBinding bb = binding; bb != null; bb = bb.remainder) {
+                    convertBindingNode(conv, bb, i++);
+                    if (bb.remainder != null) {
+                        if (conv.remainder == null)
+                            conv.remainder = new BatchBinding(bb.remainder.vars);
+                        conv = conv.remainder;
+                    }
+                }
+            }
+        }
+
+        private void convertBindingNode(BatchBinding dst, BatchBinding src, int i) {
+            Batch<?> b = src.batch;
+            B cb;
+            short cr;
+            if (b == null || b.type().equals(batchType)) {
+                cr = src.row;
+                //noinspection unchecked
+                cb = (B)b;
+            } else {
+                cr = 0;
+                cb = batchType.empty(convBindingBatches.get(i), b.cols);
+                convBindingBatches.set(i, cb);
+                if (cb instanceof StoreBatch sb) sb.putRowConverting(b, src.row, dictId);
+                else                             cb.putRowConverting(b, src.row);
+            }
+            dst.attach(cb, cr);
+        }
+
+        @Override protected void updateExtRebindVars(BatchBinding binding) {
+            super.updateExtRebindVars(binding);
+            if (tmpRightFilters == null || !(rightPlan instanceof Modifier m))
+                return;
+            tmpRightFilters.clear();
+            tmpRightFilters.addAll(m.filters);
+            Vars union = intBindingVars();
+            lexJoinBinding = createLexJoinBinding(lexJoinBinding, m, tmpRightFilters, union);
+            if (lexJoinBinding != null) {
+                // setup lexIts/lexItsCols
+                Vars rightBindingVars = lexJoinBinding.vars;
+                int nVars = union.size();
+                assert rightBindingVars.size() == nVars;
+                int lexJoins = 0;
+                for (int i = 0; i < nVars; i++) {
+                    if (union.get(i) != rightBindingVars.get(i)) lexJoins++;
+                }
+                if (ENABLED)
+                    journal("enabling lexical join of ", lexJoins, "columns on", this);
+                lexItsCols = new int[lexJoins];
+                lexIts = new LocalityCompositeDict.LocalityLexIt[lexJoins];
+                long lexBindingCols = 0;
+                lexJoins = 0;
+                for (int i = 0; i < nVars; i++) {
+                    SegmentRope extVar = union.get(i), intVar = rightBindingVars.get(i);
+                    if (extVar == intVar) continue;
+                    if (ENABLED) journal("lexical join of ", extVar, "with", intVar);
+                    if (i  < 64) lexBindingCols |= 1L << i;
+                    lexItsCols[lexJoins]   = i;
+                    lexIts    [lexJoins++] = dict.lexIt();
+                }
+                this.lexBindingCols = lexBindingCols;
+
+                // update filters on upstream
+                for (Emitter<?> em = rightUpstream(); em != null; ) {
+                    if (em instanceof BatchFilter<?> bf) {
+                        em = null;
+                        if (bf.rowFilter instanceof Modifier.Filtering<?> f)
+                            f.setFilters(tmpRightFilters);
+                        else if ((em = bf.before) == null)
+                            em = bf.upstream();
+                    } else if (em instanceof Stage<?,?> s) {
+                        em = s.upstream();
+                    } else {
+                        throw new IllegalArgumentException("No Filtering found in right upstream");
+                    }
+                }
+
+                // lazy initializations
+                nextLexBatch = batchType.empty(nextLexBatch, nVars);
+                if (lookup == null)
+                    lookup = dict.lookup();
+                if (lexView == null)
+                    lexView = new TwoSegmentRope();
+                if (localView == null)
+                    localView = new SegmentRope();
+                if (convIntBinding == null) {
+                    convBindingBatches = new ArrayList<>();
+                    convIntBinding = new BatchBinding(union);
+                    convIntBinding.remainder = new BatchBinding(binding.vars);
+                } else {
+                    convIntBinding.vars(union);
+                    //noinspection DataFlowIssue
+                    convIntBinding.remainder.vars(binding.vars);
+                }
+            }
+        }
+
+        @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
+            if (lexJoinBinding != null)
+                binding = lexRebindInternal(binding, lexJoinBinding);
+            super.rebind(binding, rightEmitter);
+        }
+
+        private BatchBinding lexRebindInternal(BatchBinding binding, BatchBinding lexJoinBinding) {
+            var convBinding = convIntBinding;
+            convertBindingNode(convBinding, binding, 0);
+
+            @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
+            assert lexBatch != null && lexView != null && lookup != null;
+            clearAndCopyNonLexBindings(convBinding, lexBatch);
+            if (binding.vars.size() > 64)
+                copyNonLexBindingsExtra(convBinding, lexBatch);
+            for (int i = 0; i < lexIts.length; i++) {
+                if (convBinding.get(lexItsCols[i], lexView)) {
+                    var it = lexIts[i];
+                    it.find(lexView);
+                    if (it.advance())
+                        putLex(lexBatch, i, lookup);
+                    else
+                        convBinding.putTerm(lexItsCols[i], lexBatch, lexItsCols[i]);
+                }
+            }
+            lexBatch.commitPut();
+            binding = lexJoinBinding;
+            return binding;
+        }
+
+        private void clearAndCopyNonLexBindings(BatchBinding src, B dst) {
+            dst.clear();
+            dst.beginPut();
+            for (int c = 0, n = Math.min(64, dst.cols); c < n; c++) {
+                if ((lexBindingCols & (1L << c)) == 0)
+                    src.putTerm(c, dst, c);
+            }
+        }
+
+        private void copyNonLexBindingsExtra(BatchBinding src, B dst) {
+            outer:
+            for (int c = 64, n = src.cols; c < n; c++) {
+                for (int lexCol : lexItsCols) {
+                    if (lexCol == c) continue outer;
+                }
+                src.putTerm(c, dst, c);
+            }
+        }
+
+        private void putLex(B nextLexBatch, int lexIdx, LocalityCompositeDict.Lookup lookup) {
+            long id = lexIts[lexIdx].id;
+            int dstCol = lexItsCols[lexIdx];
+            SegmentRope local;
+            if (nextLexBatch instanceof StoreBatch sb) {
+                sb.putTerm(dstCol, source(id, dictId));
+            } else if ((local = lookup.getLocal(id)) != null) {
+                nextLexBatch.putTerm(dstCol, lookup.getShared(id), local,
+                                     0, local.len, lookup.sharedSuffixed(id));
+            }
         }
 
         @Override protected boolean lexContinueRight(BatchBinding binding,
                                                      Emitter<B> rightEmitter) {
+            BatchBinding lexJoinBinding = this.lexJoinBinding;
             if (lexJoinBinding == null)
                 return false;
             int nIts = lexIts.length, i = nIts-1;
@@ -1668,9 +1846,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             assert nextLexBatch != null && lookup != null && lexView != null && lexBatch != null;
             int nVars = lexBatch.cols;
 
-            clearAndCopyNonLexBindings(lexBatch, 0, nextLexBatch);
+            clearAndCopyNonLexBindings(lexJoinBinding, nextLexBatch);
             if (nVars > 64)
-                copyNonLexBindingsExtra(nextLexBatch, 0, lexBatch);
+                copyNonLexBindingsExtra(lexJoinBinding, lexBatch);
             putLex(nextLexBatch, i, lookup);
 
             while (++i < nIts) {
@@ -1687,74 +1865,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             lexJoinBinding.batch = nextLexBatch;
             rightEmitter.rebind(lexJoinBinding);
             return true;
-        }
-
-        private void clearAndCopyNonLexBindings(B src, int srcRow, B dst) {
-            dst.clear();
-            dst.beginPut();
-            for (int c = 0, n = Math.min(64, dst.cols); c < n; c++) {
-                if ((lexBindingCols & (1L << c)) == 0)
-                    dst.putTerm(c, src, srcRow, c);
-            }
-        }
-
-        private void copyNonLexBindingsExtra(B src, int srcRow, B dst) {
-            outer:
-            for (int c = 64, n = src.cols; c < n; c++) {
-                for (int lexCol : lexItsCols) {
-                    if (lexCol == c) continue outer;
-                }
-                dst.putTerm(c, src, srcRow, c);
-            }
-        }
-
-        private void putLex(B nextLexBatch, int lexIdx, LocalityCompositeDict.Lookup lookup) {
-            long id = lexIts[lexIdx].id;
-            SegmentRope local = lookup.getLocal(id);
-            if (local == null)
-                return;
-            nextLexBatch.putTerm(lexItsCols[lexIdx], lookup.getShared(id), local,
-                                 0, local.len, lookup.sharedSuffixed(id));
-        }
-
-        @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
-            if (lexJoinBinding != null)
-                binding = lexRebind(binding, lexJoinBinding);
-            super.rebind(binding, rightEmitter);
-        }
-
-        private BatchBinding lexRebind(BatchBinding binding, BatchBinding lexJoinBinding) {
-            Batch<?> bBatch = binding.batch;
-            if (bBatch == null)
-                throw new IllegalArgumentException("invalid binding");
-            B leftBatch;
-            if (bBatch.type().equals(batchType)) {//noinspection unchecked
-                leftBatch = (B)bBatch;
-            } else {
-                leftBatch = batchType.empty(convLeftBatch, bBatch.cols);
-                leftBatch.putConverting(bBatch);
-                convLeftBatch = leftBatch;
-            }
-
-            @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
-            assert lexBatch != null && lexView != null && lookup != null;
-            int leftRow = binding.row, nVars = leftBatch.cols;
-            clearAndCopyNonLexBindings(leftBatch, leftRow, lexBatch);
-            lexJoinBinding.batch = lexBatch;
-            if (nVars > 64)
-                copyNonLexBindingsExtra(leftBatch, leftRow, lexBatch);
-            for (int i = 0; i < lexIts.length; i++) {
-                if (leftBatch.getRopeView(leftRow, lexItsCols[i], lexView)) {
-                    var it = lexIts[i];
-                    it.find(lexView);
-                    if (it.advance())
-                        putLex(lexBatch, i, lookup);
-                    else
-                        lexBatch.putTerm(lexItsCols[i], leftBatch, leftRow, lexItsCols[i]);
-                }
-            }
-            binding = lexJoinBinding;
-            return binding;
         }
     }
 

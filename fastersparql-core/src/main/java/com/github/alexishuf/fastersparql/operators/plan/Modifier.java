@@ -358,17 +358,20 @@ public final class Modifier extends Plan {
         }
     }
 
-    private static class Filtering<B extends Batch<B>> implements RowFilter<B> {
+    public static class Filtering<B extends Batch<B>> implements RowFilter<B> {
+        private static final ExprEvaluator[] EMPTY_EVALUATORS = new ExprEvaluator[0];
+
         private final BatchBinding tmpBinding;
         private final Vars inVars;
         private List<Expr> filters;
         private ExprEvaluator[] evaluators;
-        private Vars filterVars;
+        private final Vars.Mutable filterVars;
         private int failures = 0;
 
         public Filtering(BatchType<B> bt, Vars inVars, List<Expr> filters) {
             this.inVars     = inVars;
             this.tmpBinding = new BatchBinding(inVars);
+            this.filterVars = new Vars.Mutable(10);
             setFilters(filters);
         }
 
@@ -387,9 +390,13 @@ public final class Modifier extends Plan {
         }
 
         public void setFilters(List<Expr> filters) {
-            this.filters    = filters;
-            this.filterVars = new Vars.Mutable(10);
-            this.evaluators = new ExprEvaluator[filters.size()];
+            this.filters = filters;
+            filterVars.clear();
+            int filtersCount = filters.size();
+            if (filtersCount == 0)
+                evaluators = EMPTY_EVALUATORS;
+            else if (evaluators == null || evaluators.length != filtersCount)
+                evaluators = new ExprEvaluator[filtersCount];
             for (int i = 0; i < evaluators.length; i++) {
                 Expr expr = filters.get(i);
                 evaluators[i] = expr.evaluator(inVars);

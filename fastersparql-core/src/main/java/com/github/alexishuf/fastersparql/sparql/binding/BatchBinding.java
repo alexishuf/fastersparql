@@ -83,6 +83,38 @@ public class BatchBinding extends Binding {
         throw new IndexOutOfBoundsException("var not found");
     }
 
+    public final <B extends Batch<B>> void putTerm(int dstCol, B dstBatch, int srcCol) {
+        if (srcCol >= cols) {
+            putTermFromRemainder(dstCol, dstBatch, srcCol);
+        } else {
+            Batch<?> srcBatch = this.batch;
+            if (srcBatch != null) {
+                if (!srcBatch.type().equals(dstBatch.type()))
+                    throw new IllegalArgumentException("Incompatible dstBatch type");
+                //noinspection unchecked
+                dstBatch.putTerm(dstCol, (B)srcBatch, row, srcCol);
+            }
+        }
+    }
+
+    private <B extends Batch<B>>
+    void putTermFromRemainder(int dstCol, B dstBatch, int srcCol) {
+        var name = vars.get(srcCol);
+        int c = -1;
+        var b = remainder;
+        while (b != null && (c=b.vars.indexOf(name)) >= b.cols)
+            b = b.remainder;
+        if (b != null && c >= 0) {
+            var batch = b.batch;
+            if (batch == null) return;
+            if (!batch.type().equals(dstBatch.type()))
+                throw new IllegalArgumentException("Incompatible dstBatch type");
+            //noinspection unchecked
+            dstBatch.putTerm(dstCol, (B)batch, b.row, srcCol);
+        }
+        throw new IndexOutOfBoundsException("var not found");
+    }
+
     /**
      * If there is a term at column {@code i}, set {@code view} to it and return {@code true}.
      *

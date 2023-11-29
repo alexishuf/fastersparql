@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
@@ -81,7 +82,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private int leftPending;
     private long requested;
     private final BatchBinding intBinding;
-    private @Nullable Vars extBindingVars;
+    private Vars extBindingVars = Vars.EMPTY;
     protected final Vars outVars;
     protected final Vars bindableVars;
     private Throwable error = UNSET_ERROR;
@@ -161,7 +162,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(64), this);
-        if (type != StreamNodeDOT.Label.MINIMAL)
+        if (type != MINIMAL)
             sb.append('[').append(rightRecv.type.name()).append("] vars=").append(outVars);
         if (type.showState()) {
             appendRequested(sb.append("\nrequested=" ), requested);
@@ -201,6 +202,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             throw new MultipleRegistrationUnsupportedException(this);
         return this;
     }
+
+    @Override public @MonotonicNonNull Emitter<B> upstream() { return leftUpstream; }
 
     @Override public @Nullable B onBatch(B batch) {
         if (EmitterStats.ENABLED && stats != null)
@@ -316,7 +319,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             requested = 0;
             leftPending = 0;
             leftUpstream.rebind(binding);
-            if (extBindingVars == null || !extBindingVars.equals(binding.vars)) {
+            if (!extBindingVars.equals(binding.vars)) {
                 updateExtRebindVars(binding);
 //                lastRebindC = COMPRESSED.recycle(lastRebindC);
 //                lastRebindI =      STORE.recycle(lastRebindI);
@@ -345,12 +348,18 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             unlock(st);
         } catch (Throwable t) {
             this.error = t;
+            journal("rebind failed for ", this, t.toString());
             moveStateRelease(unlock(st), REBIND_FAILED);
         }
     }
 
-    private void updateExtRebindVars(BatchBinding binding) {
+    protected Vars       intBindingVars() { return intBinding.vars;    }
+    protected Emitter<B>  rightUpstream() { return rightRecv.upstream; }
+
+    protected void updateExtRebindVars(BatchBinding binding) {
         var bindingVars = binding.vars;
+        if (ENABLED)
+            journal("updateExtRebindVars on", this, "to", bindingVars);
         extBindingVars = bindingVars;
         intBinding.vars(leftUpstream.vars().union(bindingVars));
 
