@@ -297,10 +297,9 @@ public class LocalityCompositeDict extends Dict {
     }
 
     public static class LocalityLexIt extends LexIt {
-        private static final int BEFORE_BEGIN = -4;
-        private static final int BLANK        = -3;
-        private static final int IRI          = -2;
-        private static final int PLAIN        = -1;
+        private static final int BLANK = -3;
+        private static final int IRI   = -2;
+        private static final int PLAIN = -1;
         private final Lookup lookup;
         private final ByteRope string;
         private final long[] suffixes;
@@ -309,7 +308,7 @@ public class LocalityCompositeDict extends Dict {
         public LocalityLexIt(Lookup lookup, long[] suffixes) {
             this.lookup = lookup;
             this.suffixes = suffixes;
-            this.string = new ByteRope(16);
+            this.string = new ByteRope(24);
             end();
         }
 
@@ -340,7 +339,7 @@ public class LocalityCompositeDict extends Dict {
             if (bad) {
                 end();
             } else {
-                suffix = BEFORE_BEGIN;
+                suffix = BLANK;
                 string.ensureFreeCapacity(6); /* "@en-US */
             }
         }
@@ -359,18 +358,17 @@ public class LocalityCompositeDict extends Dict {
             id = NOT_FOUND;
             while (id == NOT_FOUND && suffix < suffixes.length) {
                 switch (suffix) {
-                    case BEFORE_BEGIN -> suffix = BLANK;
-                    case BLANK -> {
+                    case BLANK -> suffix = IRI;
+                    case IRI -> {
                         System.arraycopy(u8, 2, u8, 1, string.len-2);
                         u8[0] = '<';
                         u8[lexEnd] = '>';
-                        suffix = IRI;
-                    }
-                    case IRI -> {
-                        u8[0] = '"'; u8[lexEnd] = '"';
                         suffix = PLAIN;
                     }
-                    case PLAIN -> suffix = 0;
+                    case PLAIN -> {
+                        u8[0] = '"'; u8[lexEnd] = '"';
+                        suffix = 0;
+                    }
                     default -> {
                         string.len = lexEnd;
                         string.append(lookup.shared.get(suffixes[suffix++]));
