@@ -585,38 +585,38 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 in = p.projectInPlace(in);
                 p = null;
             }
-            if (rowFilter.isNoOp())
-                return in;
-            B b = in, prev = in;
-            short cols = in.cols, rows;
-            var decision = DROP;
-            while (b != null) {
-                rows = b.rows;
-                int d = 0;
-                long[] ids = b.arr;
-                int [] hashes = b.hashes;
-                decision = DROP;
-                for (short r=0, start; r < rows && decision != TERMINATE; r++) {
-                    start = r;
-                    while (r < rows && (decision=rowFilter.drop(b, r)) == KEEP) ++r;
-                    if (r > start) {
-                        int n = (r-start)*cols, srcPos = start*cols;
-                        arraycopy(ids,    srcPos, ids,    d, n);
-                        arraycopy(hashes, srcPos, hashes, d, n);
-                        d += (short)n;
+            if (!rowFilter.isNoOp()) {
+                B b = in, prev = in;
+                short cols = in.cols, rows;
+                var decision = DROP;
+                while (b != null) {
+                    rows          = b.rows;
+                    int d         = 0;
+                    long[] ids    = b.arr;
+                    int [] hashes = b.hashes;
+                    decision = DROP;
+                    for (short r = 0, start; r < rows && decision != TERMINATE; r++) {
+                        start = r;
+                        while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
+                        if (r > start) {
+                            int n = (r-start)*cols, srcPos = start*cols;
+                            arraycopy(ids, srcPos, ids, d, n);
+                            arraycopy(hashes, srcPos, hashes, d, n);
+                            d += (short) n;
+                        }
                     }
+                    b.rows = (short) (d / cols);
+                    if (d == 0 && b != in)  // remove b from linked list
+                        b = filterInPlaceSkipEmpty(b, prev);
+                    if (decision == TERMINATE) {
+                        cancelUpstream();
+                        if (b.next != null) b.next = idBatchType.recycle(b.next);
+                        if (in.rows ==   0) in     = idBatchType.recycle(in);
+                    }
+                    b = (prev = b).next;
                 }
-                b.rows = (short)(d/cols);
-                if (d == 0 && b != in)  // remove b from linked list
-                    b = filterInPlaceSkipEmpty(b, prev);
-                if (decision == TERMINATE) {
-                    cancelUpstream();
-                    if (b.next  != null) b.next = idBatchType.recycle(b.next);
-                    if (in.rows ==    0) in     = idBatchType.recycle(in);
-                }
-                b = (prev = b).next;
+                in = filterInPlaceEpilogue(in, prev);
             }
-            in = filterInPlaceEpilogue(in, prev);
             if (p != null && in != null && in.rows > 0)
                 in = p.projectInPlace(in);
             return in;

@@ -549,36 +549,35 @@ public final class TermBatch extends Batch<TermBatch> {
                 in = p.projectInPlace(in);
                 p = null;
             }
-            if (rowFilter.isNoOp())
-                return in;
-
-            TermBatch b = in, prev = in;
-            short cols = in.cols;
-            var decision = DROP;
-            while (b != null) {
-                int rows = b.rows, d = 0;
-                Term[] arr = b.arr;
-                decision = DROP;
-                for (int r=0; r < rows && decision != TERMINATE; r++) {
-                    int start = r;
-                    while (r < rows && (decision=rowFilter.drop(b, r)) == KEEP) ++r;
-                    if (r > start) {
-                        int n = (r-start)*cols, srcPos = start*cols;
-                        arraycopy(arr, srcPos, arr,  d, n);
-                        d += n;
+            if (!rowFilter.isNoOp()) {
+                TermBatch b = in, prev = in;
+                short cols = in.cols;
+                var decision = DROP;
+                while (b != null) {
+                    int rows = b.rows, d = 0;
+                    Term[] arr = b.arr;
+                    decision = DROP;
+                    for (int r = 0; r < rows && decision != TERMINATE; r++) {
+                        int start = r;
+                        while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
+                        if (r > start) {
+                            int n = (r-start)*cols, srcPos = start*cols;
+                            arraycopy(arr, srcPos, arr, d, n);
+                            d += n;
+                        }
                     }
+                    b.rows = (short) (d / cols);
+                    if (d == 0 && b != in)  // remove b from linked list
+                        b = filterInPlaceSkipEmpty(b, prev);
+                    if (decision == TERMINATE) {
+                        cancelUpstream();
+                        if (b.next  != null) b.next = TERM.recycle(b.next);
+                        if (in.rows ==    0) in     = TERM.recycle(in);
+                    }
+                    b = (prev = b).next;
                 }
-                b.rows = (short)(d/cols);
-                if (d == 0 && b != in)  // remove b from linked list
-                    b = filterInPlaceSkipEmpty(b, prev);
-                if (decision == TERMINATE) {
-                    cancelUpstream();
-                    if (b.next  != null) b.next = TERM.recycle(b.next);
-                    if (in.rows ==    0) in     = TERM.recycle(in);
-                }
-                b = (prev = b).next;
+                in = filterInPlaceEpilogue(in, prev);
             }
-            in = filterInPlaceEpilogue(in, prev);
             if (p != null && in != null && in.rows > 0)
                 in = p.projectInPlace(in);
             return in;

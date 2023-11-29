@@ -1574,38 +1574,38 @@ public class CompressedBatch extends Batch<CompressedBatch> {
                 in = p.projectInPlace(in);
                 p = null;
             }
-            if (rowFilter.isNoOp())
-                return in;
-            CompressedBatch b = in, prev = in;
-            short cols = in.cols, rows;
-            var decision = DROP;
-            while (b != null) {
-                rows = b.rows;
-                int d = 0;
-                SegmentRope[] shared = b.shared;
-                short      [] slices = b.slices;
-                decision = DROP;
-                for (short r=0, start; r < rows && decision != TERMINATE; r++) {
-                    start = r;
-                    while (r < rows && (decision=rowFilter.drop(b, r)) == KEEP) ++r;
-                    if (r > start) {
-                        int n = (r-start)*cols, srcPos = start*cols;
-                        arraycopy(shared, srcPos, shared, d, n);
-                        arraycopy(slices, srcPos<<1, slices, d<<1, n<<1);
-                        d += (short)n;
+            if (!rowFilter.isNoOp()) {
+                CompressedBatch b = in, prev = in;
+                short cols = in.cols, rows;
+                var decision = DROP;
+                while (b != null) {
+                    rows     = b.rows;
+                    decision = DROP;
+                    int d    = 0;
+                    SegmentRope[] shared = b.shared;
+                    short      [] slices = b.slices;
+                    for (short r = 0, start; r < rows && decision != TERMINATE; r++) {
+                        start = r;
+                        while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
+                        if (r > start) {
+                            int n = (r-start)*cols, srcPos = start*cols;
+                            arraycopy(shared, srcPos, shared, d, n);
+                            arraycopy(slices, srcPos<<1, slices, d<<1, n<<1);
+                            d += (short) n;
+                        }
                     }
+                    b.rows = (short) (d / cols);
+                    if (d == 0 && b != in)  // remove b from linked list
+                        b = filterInPlaceSkipEmpty(b, prev);
+                    if (decision == TERMINATE) {
+                        cancelUpstream();
+                        if (b.next != null) b.next = COMPRESSED.recycle(b.next);
+                        if (in.rows == 0) in = COMPRESSED.recycle(in);
+                    }
+                    b = (prev = b).next;
                 }
-                b.rows = (short)(d/cols);
-                if (d == 0 && b != in)  // remove b from linked list
-                    b = filterInPlaceSkipEmpty(b, prev);
-                if (decision == TERMINATE) {
-                    cancelUpstream();
-                    if (b.next  != null) b.next = COMPRESSED.recycle(b.next);
-                    if (in.rows ==    0) in     = COMPRESSED.recycle(in);
-                }
-                b = (prev = b).next;
+                in = filterInPlaceEpilogue(in, prev);
             }
-            in = filterInPlaceEpilogue(in, prev);
             if (p != null && in != null && in.rows > 0)
                 in = p.projectInPlace(in);
             return in;
