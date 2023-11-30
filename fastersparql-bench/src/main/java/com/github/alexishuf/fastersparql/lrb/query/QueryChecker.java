@@ -10,9 +10,8 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -26,6 +25,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     private final int expectedRows;
     public B unexpected;
     private int rows;
+    private @Nullable Throwable error;
     private @Nullable String explanation;
 
     public QueryChecker(BatchType<B> batchType, QueryName queryName){
@@ -52,9 +52,12 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
 
     @Override public final void finish(@Nullable Throwable error) {
         try {
+            this.error = error;
             doFinish(error);
+            if (error != null)
+                explanation(); // generates explanation, allowing unexpected to be recycled
         } finally {
-            if (unexpected != null)
+            if (unexpected != null && explanation != null)
                 unexpected = unexpected.recycle();
         }
     }
@@ -70,7 +73,16 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     }
 
     private String validate() {
-        if (expected != null && observed != null) {
+        if (error != null) {
+            var sb = new StringBuilder().append("query execution failed with");
+            sb.append(error.getClass().getSimpleName());
+            var bos = new ByteArrayOutputStream();
+            try (var ps = new PrintStream(bos)) {
+                error.printStackTrace(ps);
+            }
+            sb.append(bos.toString(StandardCharsets.UTF_8));
+            return sb.toString();
+        } else if (expected != null && observed != null) {
             int[] missing = {0};
             StringBuilder sb = new StringBuilder()
                     .append("Expected rows: ").append(expectedRows)
