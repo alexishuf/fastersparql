@@ -82,6 +82,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private int leftPending;
     private long requested;
     private final BatchBinding intBinding;
+    protected int lastRebindSeq = -1;
     private Vars extBindingVars = Vars.EMPTY;
     protected final Vars outVars;
     protected final Vars bindableVars;
@@ -311,6 +312,9 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
+        if (lastRebindSeq == binding.sequence)
+            return; // duplicate rebind() due to diamond in processing graph
+        lastRebindSeq = binding.sequence;
         int st = resetForRebind(LEFT_TERM|RIGHT_TERM, RIGHT_STARVED|LOCKED_MASK);
         try {
             rightRecv.upstream.rebindPrefetchEnd();
@@ -596,6 +600,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 // release lock but forbid onBatch() from calling startNextBinding()
                 // and forbid request() from calling upstream.request()
                 st = unlock(st, RIGHT_STARVED, RIGHT_BINDING);
+                ++intBinding.sequence;
                 rebind(intBinding.attach(lb, lr), rightRecv.upstream);
                 st = lock(st);
                 ++rightRecv.bindingSeq;

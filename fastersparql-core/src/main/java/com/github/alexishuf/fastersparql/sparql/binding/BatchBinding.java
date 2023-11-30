@@ -28,6 +28,7 @@ public class BatchBinding extends Binding {
     public @Nullable Batch<?> batch;
     public short row, cols;
     public Vars vars;
+    public int sequence;
     public @Nullable BatchBinding remainder;
 
     public static BatchBinding ofEmpty(BatchType<?> type) {

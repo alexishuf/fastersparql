@@ -34,10 +34,9 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
     private int plainSubscribeLock;
     private boolean started;
     private byte delayRelease;
+    private int lastRebindSeq = -1;
 
-    public ScatterStage(BatchType<B> batchType, Vars vars) {
-        super(batchType, vars);
-    }
+    public ScatterStage(BatchType<B> batchType, Vars vars) { super(batchType, vars); }
 
     @Override public void subscribe(Receiver<B> receiver) {
         while ((int)SUBSCRIBE_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
@@ -61,6 +60,9 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
         started = false;
+        if (binding.sequence == lastRebindSeq)
+            return; //duplicate rebind() due to diamond in emitters graph
+        lastRebindSeq = binding.sequence;
         super.rebind(binding);
     }
 

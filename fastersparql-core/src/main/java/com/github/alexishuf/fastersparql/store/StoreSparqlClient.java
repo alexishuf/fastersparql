@@ -933,9 +933,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private long[] rowSkels = EMPTY_LONG;
         private int rowSkelBegin;
         // ---------- fields below this line are accessed only on construction/rebind()
+        private final PrefetchTask prefetcher;
+        private int lastRebindSeq = -1;
         private final TriplePattern tp;
         private @MonotonicNonNull Vars lastBindingsVars;
-        private final PrefetchTask prefetcher;
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
@@ -1034,6 +1035,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
+            if (binding.sequence == lastRebindSeq)
+                return; //duplicate rebind() due to diamond in emitter graph
+            lastRebindSeq = binding.sequence;
             Vars bVars = binding.vars;
             int st = resetForRebind(0, LOCKED_MASK);
             try {
@@ -1657,6 +1661,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
+            if (binding.sequence == lastRebindSeq)
+                return; // duplicate call due to diamond in emitter graph
             super.rebind(binding);
             if (lexJoinBinding != null)  // updated by super.rebind()->updateExtRebindVars()
                 lexRebindExternal(binding);
@@ -1800,6 +1806,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
             }
             lexBatch.commitPut();
+            ++lexJoinBinding.sequence;
             binding = lexJoinBinding;
             return binding;
         }
@@ -1868,6 +1875,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             nextLexBatch.commitPut();
             this.nextLexBatch = lexBatch;
             lexJoinBinding.batch = nextLexBatch;
+            ++lexJoinBinding.sequence;
             rightEmitter.rebind(lexJoinBinding);
             return true;
         }

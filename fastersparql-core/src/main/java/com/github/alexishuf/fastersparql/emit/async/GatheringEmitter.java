@@ -63,6 +63,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private short connectorTerminatedCount;
     private final short requestChunk;
     private final BatchType<B> batchType;
+    private int lastRebindSeq = -1;
     private final Vars vars;
     private Vars bindableVars = Vars.EMPTY;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
@@ -191,6 +192,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
+        if (binding.sequence == lastRebindSeq)
+            return; // duplicate rebind() due to diamond in emitter graph
+        lastRebindSeq = binding.sequence;
         // if state is an undelivered termination, we have onConnectorTerminated() up in
         // the stack
         boolean lock = (state&GRP_MASK) != IS_TERM;
