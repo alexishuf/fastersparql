@@ -146,7 +146,7 @@ public abstract class Stateful {
 
     /** Get a readable {@link String} for the current {@link #state()} */
     @SuppressWarnings("unused")
-    protected String stateName() { return flags.render(state()); }
+    public String stateName() { return flags.render(state()); }
 
     /* --- --- --- release management --- --- --- */
 
@@ -311,7 +311,7 @@ public abstract class Stateful {
         int st = (int)S.getOpaque(this), ex;
         int clear = UNLOCKED_FLAGS_MASK&~clearFlags, set = CREATED|setFlags;
         do {
-            if ((st & STATE_MASK) != CREATED && (st & IS_TERM) == 0)
+            if ((st&(IS_INIT|IS_TERM|IS_CANCEL_REQ)) == 0)
                 throw new RebindStateException(this);
             if ((st&RELEASED_MASK) != 0)
                 throw new RebindReleasedException(this);
