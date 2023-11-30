@@ -397,11 +397,15 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     @Override public void cancel() {
-        if (moveStateRelease(statePlain(), CANCEL_REQUESTED)) { // cancel both left and right
-            leftUpstream.cancel();
-            var rrUpstream = rightRecv.upstream;
-            if (rrUpstream != null)
-                rrUpstream.cancel();
+        int st = lock(statePlain()), next = st&STATE_MASK;
+        try {
+            if ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
+                next = CANCEL_REQUESTED;
+                leftUpstream.cancel();
+                rightRecv.upstream.cancel();
+            }
+        } finally {
+            unlock(st, STATE_MASK, next);
         }
     }
 
@@ -543,10 +547,28 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
     /* --- --- --- right-side processing --- --- --- */
 
+    private B startNextBindingWhenCancelled(int st, B lb) {
+        if (ENABLED)
+            journal("startNextBinding() after cancel() on ", this);
+        if (fillingLB != null)
+            fillingLB =      batchType.recycle(fillingLB);
+        if (lb != null) {
+            rightRecv.upstream.rebindPrefetchEnd();
+            this.lb = lb = batchType.recycle(lb);
+        }
+        if ((st&LEFT_TERM) == 0) {
+            if (ENABLED) journal("re-issuing leftUpstream.cancel() for", this);
+            leftUpstream.cancel();
+        }
+        return lb;
+    }
+
     private int startNextBinding(int st) {
         B lb = this.lb;
         short lr = (short)(this.lr+1);
         try {
+            if ((st&IS_CANCEL_REQ) != 0)
+                lb = startNextBindingWhenCancelled(st, lb);
             if (lb == null) {
                 lr = -1;
             } else if (lr >= lb.rows || lr < 0) {
@@ -556,7 +578,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 } else {
                     lb = fillingLB;
                     fillingLB = null;
-                    if (lb != null && lb.rows == 0) lb = lb.recycle();
+                    if (lb != null && lb.rows == 0) lb = batchType.recycle(lb);
                     lr = lb == null ? (short)-1 : 0;
                 }
                 this.lb = lb;
@@ -564,7 +586,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             this.lr = lr;
             if (ENABLED)
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
-            maybeRequestLeft();
+            if ((st&IS_CANCEL_REQ) == 0)
+                maybeRequestLeft();
             if (lb == null) {
                 rightRecv.upstream.rebindPrefetchEnd();
                 if ((st & LEFT_TERM) == 0) st = unlock(st, 0, RIGHT_STARVED);
