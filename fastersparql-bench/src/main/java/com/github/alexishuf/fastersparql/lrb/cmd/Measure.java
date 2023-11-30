@@ -24,6 +24,8 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import org.apache.commons.io.output.CloseShieldOutputStream;
+import org.apache.commons.io.output.TeeOutputStream;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -168,10 +170,13 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-//            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+//            try (var jWriter = new OutputStreamWriter(
+//                    new TeeOutputStream(new CloseShieldOutputStream(System.out),
+//                                        new FileOutputStream("/tmp/"+task.query()+".journal")));
+//                 var w = ThreadJournal.watchdog(jWriter, 100)) {
 //                var dp = debugPlan;
 //                var sn = (StreamNode)results;
-//                w.start(5_000_000_000L).andThen(() -> dump(task.query(), dp, sn));
+//                w.start(10_000_000_000L).andThen(() -> dump(task.query(), dp, sn));
 //            }
             switch (msrOp.flowModel) {
                 case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
@@ -195,9 +200,13 @@ public class Measure implements Callable<Void>{
         if (plan != null)
             System.out.println(plan);
         File dotFile = new File("/tmp/"+qry.name()+".dot");
+        File journalFile = new File("/tmp/"+qry.name()+".journal");
         File resultsFile = new File("/tmp/"+qry.name()+".results");
         File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
         try (var dot     = new FileWriter(dotFile,     UTF_8);
+             var journal = new OutputStreamWriter(
+                     new TeeOutputStream(new CloseShieldOutputStream(System.out),
+                                         new FileOutputStream(journalFile, true)));
              var results = new FileWriter(resultsFile, UTF_8)) {
             ThreadJournal.dumpAndReset(System.out, 100);
             ResultJournal.dump(results);
