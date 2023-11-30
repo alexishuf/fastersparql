@@ -34,22 +34,25 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.EN
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.System.identityHashCode;
+import static java.lang.Thread.currentThread;
 
 public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private static final Logger log = LoggerFactory.getLogger(GatheringEmitter.class);
-    private static final VarHandle LOCK, FILLING, REQ;
+    private static final Thread NO_OWNER = null;
+    private static final VarHandle OWNER, FILLING, REQ;
     static {
         assert ((STATE_MASK|GRP_MASK) & ~0xff) == 0
                 : "Stateful states do not fit in a byte";
         try {
-            LOCK    = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainLock", int.class);
+            OWNER   = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainOwner", Thread.class);
             FILLING = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainFilling", Batch.class);
             REQ     = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainRequested", long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
-    @SuppressWarnings("unused") private int plainLock;
+    @SuppressWarnings("unused") private Thread plainOwner;
+    private int lockedLevel;
     @SuppressWarnings("unused") private @Nullable B plainFilling;
     private Receiver<B> downstream;
     private short extraDownCount, connectorCount;
@@ -110,7 +113,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         StringBuilder sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
         if (type.showState()) {
             int flaggedState = 0xff&state;
-            if ((int)LOCK.getOpaque(this) != 0) flaggedState |= LOCKED_MASK;
+            if ((Thread)OWNER.getAcquire(this) != null) flaggedState |= LOCKED_MASK;
             if ((state&IS_TERM_DELIVERED) != 0 && delayRelease == 0)
                 flaggedState |= RELEASED_MASK;
             int drBit = numberOfTrailingZeros(DELAY_RELEASE_MASK);
@@ -197,7 +200,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 throw new RebindStateException(this);
             state = CREATED;
         } finally {
-            if (lock) LOCK.setRelease(this, 0);
+            if (lock) unlock();
         }
         for (int i = 0, count = connectorCount; i < count; i++)
             connectors[i].rebind(binding);
@@ -278,13 +281,22 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     }
 
     private void lock() {
-        if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-            lockCold();
+        var me = currentThread();
+        var curr = (Thread)OWNER.compareAndExchangeAcquire(this, NO_OWNER, me);
+        if (curr != NO_OWNER && curr != me)
+            lockCold(me);
+        ++lockedLevel;
     }
 
-    private void lockCold() {
+    private void unlock() {
+        assert lockedLevel > 0 && plainOwner == currentThread()
+                : "unlock() outside the owner thread";
+        if (--lockedLevel == 0) OWNER.setRelease(this, NO_OWNER);
+    }
+
+    private void lockCold(Thread me) {
         EmitterService.beginSpin();
-        for (int i = 0; (int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0; ++i) {
+        for (int i = 0; OWNER.compareAndExchangeAcquire(this, NO_OWNER, me) != NO_OWNER; ++i) {
             if ((i&15) == 0) Thread.yield();
             else             Thread.onSpinWait();
         }
@@ -297,8 +309,11 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
      * @return {@code true} iff this thread is the only one delivering to downstream
      */
     private boolean tryBeginDelivery() {
-        if ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+        var me = currentThread();
+        var current = (Thread)OWNER.compareAndExchangeAcquire(this, NO_OWNER, me);
+        if (current != NO_OWNER && current != me)
             return false; // another thread is delivering
+        ++lockedLevel;
         // got the mutex, we are obligated to deliver FILLING.
         deliverFilling();
         return true; // this thread is the only one delivering
@@ -312,7 +327,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (b != null)
                 batchType.recycle(deliver(b));
         } catch (Throwable t) {
-            LOCK.setRelease(this, 0);
+            unlock();
             throw t;
         }
     }
@@ -330,7 +345,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         do {
             // release LOCK before checking FILLING again, this allows another thread to
             // acquire LOCK and thus become responsible for delivery of the FILLING batch
-            LOCK.setRelease(this, 0);
+            unlock();
         } while (FILLING.getAcquire(this) != null && tryBeginDelivery());
         // (LOCK==0 && FILLING==null) || LOCK==1 (but not owned by this thread)
     }
