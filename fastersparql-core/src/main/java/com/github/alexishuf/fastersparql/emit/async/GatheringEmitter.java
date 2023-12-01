@@ -195,19 +195,18 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         if (binding.sequence == lastRebindSeq)
             return; // duplicate rebind() due to diamond in emitter graph
         lastRebindSeq = binding.sequence;
-        // if state is an undelivered termination, we have onConnectorTerminated() up in
-        // the stack
-        boolean lock = (state&GRP_MASK) != IS_TERM;
-        if (lock) lock();
+        lock();
         try {
-            if ((state & (IS_INIT|IS_TERM)) == 0)
+            if ((state&(IS_INIT|IS_TERM)) == 0)
                 throw new RebindStateException(this);
             state = CREATED;
+            connectorTerminatedCount = 0;
+            REQ.setRelease(this, 0);
+            for (int i = 0, count = connectorCount; i < count; i++)
+                connectors[i].rebind(binding);
         } finally {
-            if (lock) unlock();
+            unlock();
         }
-        for (int i = 0, count = connectorCount; i < count; i++)
-            connectors[i].rebind(binding);
     }
 
     @Override public Vars bindableVars() { return bindableVars; }
@@ -253,12 +252,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 } catch (Throwable t) {
                     Emitters.handleTerminationError(downstream, this, t);
                 } finally {
-                    if ((state&IS_TERM) != 0) {// no rebind() from downstream
-                        state |= (byte)IS_TERM_DELIVERED;
-                        if (delayRelease == 0) {
-                            doRelease();
-                        }
-                    }
+                    if ((state&IS_TERM) != 0) // no rebind() from downstream
+                        markDelivered();
                 }
             }
         } finally {
@@ -266,13 +261,17 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         }
     }
 
-    private void doRelease() {
-        for (int i = 0; i < connectorCount; i++) {
-            if (connectors[i].projector != null)
-                connectors[i].projector.release();
+    private void markDelivered() {
+        state |= (byte)IS_TERM_DELIVERED;
+        if (delayRelease == 0) {
+            if (ENABLED) journal("releasing", this);
+            for (int i = 0; i < connectorCount; i++) {
+                if (connectors[i].projector != null)
+                    connectors[i].projector.release();
+            }
+            if (EmitterStats.ENABLED && stats != null)
+                stats.report(log, this);
         }
-        if (EmitterStats.ENABLED && stats != null)
-            stats.report(log, this);
     }
 
 
@@ -483,6 +482,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
         public void rebind(BatchBinding binding) {
             CONN_REQ.setRelease(this, 0);
+            completed = false;
+            cancelled = false;
+            error = null;
             up.rebind(binding);
         }
 

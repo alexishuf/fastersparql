@@ -401,6 +401,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     @Override public void cancel() {
+        if (ENABLED) journal("cancel()", this);
         int st = lock(statePlain()), next = st&STATE_MASK;
         try {
             if ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
