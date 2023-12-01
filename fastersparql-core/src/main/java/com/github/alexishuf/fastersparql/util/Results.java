@@ -28,11 +28,14 @@ import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.Math.max;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -601,16 +604,25 @@ public final class Results {
         private final List<List<Term>> acList = new ArrayList<>();
 
         public void assertNoError() {
-            Throwable error = getSimple();
-            if (error != null) {
-                AssertionError assertionError = new AssertionError(error);
-                try {
-                    ThreadJournal.dumpAndReset(System.err, 80);
-                    ResultJournal.dump(System.err);
-                } catch (Throwable e) {
-                    throw new AssertionError(e.toString(), assertionError);
+            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+                w.start(20_000_000_000L).andThen(() -> {
+                    try {
+                        renderDOT(new File("/tmp/test.svg"), WITH_STATE_AND_STATS);
+                    } catch (IOException e) {//noinspection CallToPrintStackTrace
+                        e.printStackTrace();
+                    }
+                });
+                Throwable error = getSimple();
+                if (error != null) {
+                    AssertionError assertionError = new AssertionError(error);
+                    try {
+                        ThreadJournal.dumpAndReset(System.err, 80);
+                        ResultJournal.dump(System.err);
+                    } catch (Throwable e) {
+                        throw new AssertionError(e.toString(), assertionError);
+                    }
+                    throw assertionError;
                 }
-                throw assertionError;
             }
         }
 
