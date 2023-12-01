@@ -150,6 +150,9 @@ public class Measure implements Callable<Void>{
 //        Plan debugPlan = null;
 //        ResultJournal.clear();
 //        ThreadJournal.resetJournals();
+//        try {
+//            Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
+//        } catch (IOException ignored) { }
         Object results;
         try {
             if (plans != null) {
@@ -189,6 +192,8 @@ public class Measure implements Callable<Void>{
             consumer.finish(t);
             log.error("Error during rep {} of task={}:", rep, task, t);
         }
+//        if (results instanceof Stateful s && s.stateName().contains("FAILED"))
+//            dump(task.query(), debugPlan, (StreamNode)results);
 //        if (consumer instanceof Checker<?> c && !c.isValid())
 //            dump(task.query(), debugPlan, (StreamNode)results);
         return (int)((nanoTime()-start)/1_000_000L);
@@ -208,13 +213,13 @@ public class Measure implements Callable<Void>{
                      new TeeOutputStream(new CloseShieldOutputStream(System.out),
                                          new FileOutputStream(journalFile, true)));
              var results = new FileWriter(resultsFile, UTF_8)) {
-            ThreadJournal.dumpAndReset(System.out, 100);
+            ThreadJournal.dumpAndReset(journal, 100);
             ResultJournal.dump(results);
             dot.append(sn.toDOT(WITH_STATE_AND_STATS));
             sn.renderDOT(svg, WITH_STATE_AND_STATS);
+            ThreadJournal.dumpAndReset(journal, 100);
             System.out.println("Wrote "+svg);
         } catch (IOException ignored) {}
-        ThreadJournal.dumpAndReset(System.out, 100);
     }
 
     /* --- --- --- metrics collection --- --- --- */
