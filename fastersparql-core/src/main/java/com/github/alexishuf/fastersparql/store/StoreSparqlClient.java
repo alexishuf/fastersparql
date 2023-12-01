@@ -846,7 +846,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         short stop() {
             chunkRows = 0;
             batch = null;
-            short snapshot = disallowRun(false);
+            short snapshot = disallowRun();
             NEXT_ROW.setRelease(this, 0);
             return snapshot;
         }

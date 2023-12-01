@@ -129,34 +129,31 @@ public class EmitterService {
          * block until it finishes executing. If the thread calling this method is a worker
          * thread, it will attempt executing another task instead of busy-waiting.</p>
          *
-         * @param yieldDuringSpin If this is true and {@link #task(int)} is running on another
-         *                        worker thread, {@link Thread#yield()} will be caller on each
-         *                        spin instead of {@link Thread#onSpinWait()}
          * @return a counter value that must be passed to {@link #allowRun(short)}, so it can
          *         determine whether {@link #awake()} calls arrived while running was disallowed.
          */
-        public short disallowRun(boolean yieldDuringSpin) {
+        public short disallowRun() {
             short snapshot = (short)SCHEDULED.getAcquire(this);
             if (!compareAndSetFlagRelease(IS_RUNNING)) {
                 beginSpin();
-                while (!compareAndSetFlagRelease(IS_RUNNING)) {
-                    if (yieldDuringSpin) Thread.yield();
-                    else                 Thread.onSpinWait();
+                for (int i=0; !compareAndSetFlagRelease(IS_RUNNING); ++i) {
+                    if ((i&7) == 7) Thread.yield();
+                    else            Thread.onSpinWait();
                     snapshot = (short) SCHEDULED.getAcquire(this);
                 }
-                 endSpin();
+                endSpin();
             }
             return snapshot;
         }
 
         /**
          * Allows this {@link Task} to be scheduled upon {@link #awake()} after a call to
-         * {@link #disallowRun(boolean)} made that impossible.
+         * {@link #disallowRun()} made that impossible.
          *
          * <p>This call may itself trigger the effects of an {@link #awake()} if an
          * {@link #awake()}  arrived while running was disallowed.</p>
          *
-         * @param scheduledBeforeDisallowRun the value returned by {@link #disallowRun(boolean)}
+         * @param scheduledBeforeDisallowRun the value returned by {@link #disallowRun()}
          */
         public void allowRun(short scheduledBeforeDisallowRun) {
             clearFlagsRelease(statePlain(), IS_RUNNING);
