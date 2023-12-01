@@ -551,20 +551,21 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
     /* --- --- --- right-side processing --- --- --- */
 
-    private B startNextBindingWhenCancelled(int st, B lb) {
+    private void startNextBindingWhenCancelled(int st, B lb) {
         if (ENABLED)
             journal("startNextBinding() after cancel() on ", this);
-        if (fillingLB != null)
-            fillingLB =      batchType.recycle(fillingLB);
+        if (fillingLB != null) // cancelling, won't need more rows
+            fillingLB = batchType.recycle(fillingLB);
         if (lb != null) {
+            // wait to ensure right upstream will not read lb, then discard all remaining rows
             rightRecv.upstream.rebindPrefetchEnd();
-            this.lb = lb = batchType.recycle(lb);
+            lb.rows = (short)(this.lr+1);
+            lb.dropNext();
         }
         if ((st&LEFT_TERM) == 0) {
             if (ENABLED) journal("re-issuing leftUpstream.cancel() for", this);
             leftUpstream.cancel();
         }
-        return lb;
     }
 
     private int startNextBinding(int st) {
@@ -572,7 +573,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         short lr = (short)(this.lr+1);
         try {
             if ((st&IS_CANCEL_REQ) != 0)
-                lb = startNextBindingWhenCancelled(st, lb);
+                startNextBindingWhenCancelled(st, lb);
             if (lb == null) {
                 lr = -1;
             } else if (lr >= lb.rows || lr < 0) {

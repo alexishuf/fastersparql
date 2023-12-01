@@ -1208,6 +1208,13 @@ public abstract class Batch<B extends Batch<B>> {
         return next;
     }
 
+    @SuppressWarnings("unchecked") public final void dropNext() {
+        if (next != null) {
+            next = next.recycle();
+            tail = (B)this;
+        }
+    }
+
     @SuppressWarnings("unchecked") protected @Nullable B dropEmptyHeads() {
         B head = (B)this, next;
         while (head.rows == 0) {
