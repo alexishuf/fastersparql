@@ -2,84 +2,144 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.AbstractStage;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.Stage;
+import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
+import com.github.alexishuf.fastersparql.emit.exceptions.NoUpstreamException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.Arrays;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
-public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
-    private static final VarHandle SUBSCRIBE_LOCK;
-    static {
-        try {
-            SUBSCRIBE_LOCK = MethodHandles.lookup().findVarHandle(ScatterStage.class, "plainSubscribeLock", int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-    private int extraDownstreamCount;
-    @SuppressWarnings("unchecked")
-    private Receiver<B>[] extraDownstream = new Receiver[10];
-    @SuppressWarnings("unused")
-    private int plainSubscribeLock;
-    private boolean started;
-    private byte delayRelease;
+public class ScatterStage<B extends Batch<B>> extends Stateful implements Stage<B, B> {
+    private @MonotonicNonNull Emitter<B> upstream;
+    private int downstreamCount;
+    @SuppressWarnings("unchecked") private Receiver<B>[] downstream = new Receiver[12];
+    private final BatchType<B> batchType;
     private int lastRebindSeq = -1;
+    private final Vars vars;
+    private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
-    public ScatterStage(BatchType<B> batchType, Vars vars) { super(batchType, vars); }
-
-    @Override public void subscribe(Receiver<B> receiver) {
-        while ((int)SUBSCRIBE_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
-        try {
-            if (started)
-                throw new RegisterAfterStartException(this);
-            if (downstream == null || downstream == receiver) {
-                downstream = receiver;
-            } else {
-                for (int i = 0; i < extraDownstreamCount; i++) {
-                    if (extraDownstream[i] == receiver) return;
-                }
-                if (extraDownstreamCount == extraDownstream.length)
-                    extraDownstream = Arrays.copyOf(extraDownstream, extraDownstream.length*2);
-                extraDownstream[extraDownstreamCount++] = receiver;
-            }
-            if (ENABLED)
-                journal("subscribed", receiver, "to", this);
-        } finally { SUBSCRIBE_LOCK.setRelease(this, 0); }
+    public ScatterStage(BatchType<B> batchType, Vars vars) {
+        super(CREATED, Flags.DEFAULT);
+        this.batchType = batchType;
+        this.vars = vars;
     }
 
-    @Override public void rebind(BatchBinding binding) throws RebindException {
-        started = false;
-        if (binding.sequence == lastRebindSeq)
-            return; //duplicate rebind() due to diamond in emitters graph
-        lastRebindSeq = binding.sequence;
-        super.rebind(binding);
+    /* --- --- --- StreamNode --- --- --- */
+
+    @Override public String toString() {
+        return label(StreamNodeDOT.Label.MINIMAL)+"<-"+upstream;
     }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+        if (type.showState())
+            sb.append("state=").append(flags.render(state()));
+        if (type.showStats() && stats != null)
+            stats.appendToLabel(sb);
+        return sb.toString();
+    }
+
+    @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.of(upstream); }
+
+    /* --- --- --- Stage --- --- --- */
+
+    @Override public @This Stage<B, B> subscribeTo(Emitter<B> emitter) {
+        if (emitter != upstream) {
+            if (upstream != null) throw new MultipleRegistrationUnsupportedException(this);
+            (upstream = emitter).subscribe(this);
+        }
+        return this;
+    }
+
+    @Override public @MonotonicNonNull Emitter<B> upstream() { return upstream; }
+
+    /* --- --- --- rebindable --- --- --- */
 
     @Override public void rebindAcquire() {
-        super.rebindAcquire();
-        delayRelease = (byte)Math.min(0xff, (0xff&delayRelease)+1);
+        delayRelease();
+        upstream.rebindAcquire();
     }
 
     @Override public void rebindRelease() {
-        super.rebindRelease();
-        delayRelease = (byte)Math.max(0, (0xff&delayRelease)-1);
+        allowRelease();
+        upstream.rebindRelease();
     }
 
-    @Override public void request(long rows) {
-        started = true;
-        super.request(rows);
+    @Override public Vars bindableVars() { return upstream.bindableVars(); }
+
+    /* --- --- --- Emitter --- --- --- */
+
+    @Override public Vars              vars() { return vars; }
+    @Override public BatchType<B> batchType() { return batchType; }
+
+    @Override public void subscribe(Receiver<B> receiver) {
+        int st = lock(statePlain());
+        try {
+            if ((st&IS_INIT) == 0)
+                throw new RegisterAfterStartException(this);
+            for (int i = 0, n = downstreamCount; i < n; i++) {
+                if (downstream[i] == receiver) return;
+            }
+            if (downstreamCount == downstream.length)
+                downstream = Arrays.copyOf(downstream, downstream.length*2);
+            downstream[downstreamCount++] = receiver;
+            if (ENABLED)
+                journal("subscribed", receiver, "to", this);
+        } finally { unlock(st); }
     }
+
+    @Override public void rebind(BatchBinding binding) throws RebindException {
+        int st = resetForRebind(0, LOCKED_MASK);
+        try {
+            if (binding.sequence == lastRebindSeq)
+                return; // duplicate rebind() due to diamond in emitter graph
+            lastRebindSeq = binding.sequence;
+            if (ENABLED)
+                journal("rebind", this);
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onRebind(binding);
+            if (upstream == null)
+                throw new NoUpstreamException(this);
+            upstream.rebind(binding);
+        } finally {
+            unlock(st);
+        }
+    }
+
+    @Override public void cancel() {
+        moveStateRelease(statePlain(), CANCEL_REQUESTED);
+        upstream.cancel();
+    }
+
+   @Override public void request(long rows) {
+       if (ENABLED)
+           journal("request", rows, "on", this);
+        int st = lock(statePlain()), nextState = st;
+        try {
+            if ((st&IS_INIT) != 0)
+                nextState = ACTIVE;
+        } finally {
+            unlock(st, STATE_MASK, nextState&STATE_MASK);
+        }
+       upstream.request(rows);
+    }
+
+    /* --- --- --- Receiver --- --- --- */
 
     @Override public @Nullable B onBatch(B batch) {
         if (batch.rows == 1 && batch.next == null) {
@@ -88,46 +148,49 @@ public class ScatterStage<B extends Batch<B>> extends AbstractStage<B, B> {
         }
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchPassThrough(batch);
-        if (downstream == null)
-            throw new NoReceiverException();
+        int n = downstreamCount;
         B copy = null;
-        for (int i = 0; i < extraDownstreamCount; i++)
-            copy = extraDownstream[i].onBatch(copy == null ? batch.dup() : copy);
+        for (int i = 1; i < n; i++)
+            copy = downstream[i].onBatch(copy == null ? batch.dup() : copy);
         batchType.recycle(copy);
-        return downstream.onBatch(batch);
+        return downstream[0].onBatch(batch);
     }
 
     @Override public void onRow(B batch, int row) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onRowPassThrough();
-        if (downstream == null)
+        for (int i = 0, n = downstreamCount; i < n; i++)
+            downstream[i].onRow(batch, row);
+    }
+
+    private int beginTerminationDelivery(int termState) {
+        if (downstreamCount == 0)
             throw new NoReceiverException();
-        downstream.onRow(batch, row);
-        for (int i = 0; i < extraDownstreamCount; i++)
-            extraDownstream[i].onRow(batch, row);
+        int st = state();
+        if (!moveStateRelease(st, termState))
+            throw new IllegalStateException("received duplicate termination");
+        st = (st&FLAGS_MASK) | termState;
+        return st;
     }
 
     @Override public void onComplete() {
-        if (downstream == null)
-            throw new NoReceiverException();
-        downstream.onComplete();
-        for (int i = 0; i < extraDownstreamCount; i++)
-            extraDownstream[i].onComplete();
+        int st = beginTerminationDelivery(COMPLETED);
+        for (int i = 0, n = downstreamCount; i < n; i++)
+            downstream[i].onComplete();
+        markDelivered(st);
     }
 
     @Override public void onCancelled() {
-        if (downstream == null)
-            throw new NoReceiverException();
-        downstream.onCancelled();
-        for (int i = 0; i < extraDownstreamCount; i++)
-            extraDownstream[i].onCancelled();
+        int st = beginTerminationDelivery(CANCELLED);
+        for (int i = 0, n = downstreamCount; i < n; i++)
+            downstream[i].onCancelled();
+        markDelivered(st);
     }
 
     @Override public void onError(Throwable cause) {
-        if (downstream == null)
-            throw new NoReceiverException();
-        downstream.onError(cause);
-        for (int i = 0; i < extraDownstreamCount; i++)
-            extraDownstream[i].onError(cause);
+        int st = beginTerminationDelivery(FAILED);
+        for (int i = 0, n = downstreamCount; i < n; i++)
+            downstream[i].onError(cause);
+        markDelivered(st);
     }
 }
