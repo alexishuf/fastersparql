@@ -99,7 +99,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     @Override public String toString() {
-        return label(StreamNodeDOT.Label.WITH_STATE_AND_STATS) + "<-" + upstream;
+        return label(StreamNodeDOT.Label.MINIMAL) + "<-" + upstream;
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
