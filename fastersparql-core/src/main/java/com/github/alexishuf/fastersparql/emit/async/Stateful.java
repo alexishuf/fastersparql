@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
-import static com.github.alexishuf.fastersparql.util.concurrent.LongRenderer.HEX;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.*;
@@ -308,20 +307,29 @@ public abstract class Stateful {
     }
 
     protected int resetForRebind(int clearFlags, int setFlags) {
-        int st = (int)S.getOpaque(this), ex;
-        int clear = UNLOCKED_FLAGS_MASK&~clearFlags, set = CREATED|setFlags;
-        do {
-            if ((st&(IS_INIT|IS_TERM|IS_CANCEL_REQ)) == 0)
+        int st = lock(plainState);
+        try {
+            if ((st & (IS_INIT|IS_TERM|IS_CANCEL_REQ)) == 0)
                 throw new RebindStateException(this);
             if ((st&RELEASED_MASK) != 0)
                 throw new RebindReleasedException(this);
-            ex = st&UNLOCKED_MASK;
-        } while ((st=(int)S.compareAndExchangeRelease(this, ex, (st&clear)|set)) != ex);
-        if (ENABLED) {
-            journal((setFlags&LOCKED_MASK) == 0 ? "resetForRebind cl=" : "lock+resetForRebind, cl=",
-                    clearFlags, HEX, "set=", setFlags, HEX, "on", this);
+            clearFlags |= STATE_MASK;
+            setFlags   |= CREATED;
+        } catch (Throwable t) {
+            clearFlags = LOCKED_MASK;
+            setFlags   = 0;
+            throw t;
+        } finally {
+            int ex = st, ac, clMask = ~(clearFlags|(~setFlags&LOCKED_MASK));
+            while ((ac=(int)S.compareAndExchangeRelease(this, ex, st=(ex&clMask)|setFlags)) != ex)
+                ex = ac;
+            if (ENABLED) {
+                var op = (setFlags & LOCKED_MASK) == 0 ? "resetForRebind+unlock, cl="
+                                                       : "resetForRebind+lock, cl=";
+                journal(op, clearFlags, flags, "set=", setFlags, flags, "on", this);
+            }
         }
-        return (ex&clear)|set;
+        return st;
     }
 
     /**
