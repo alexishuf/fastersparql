@@ -1115,7 +1115,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return state;
             int termState = state;
             StoreBatch b = TYPE.createForThread(threadId, cols);
-            short sLimit = (short)Math.min(b.termsCapacity/cols, limit);
+            short sLimit = (short)Math.min(b.termsCapacity/Math.max(1, cols), limit);
             retry = false;
             switch (freeRoles) {
                 case                             EMPTY_BITS ->    fillAsk(b);
