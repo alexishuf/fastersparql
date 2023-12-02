@@ -582,7 +582,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             B copy;
             if (projector != null) {
                 copy = (B)FILLING.getAndSetRelease(down, null);
-                projector.projectRow(copy, batch, row);
+                copy = projector.projectRow(copy, batch, row);
             } else if (onRow0(batch, row)) {
                 return;
             } else {
