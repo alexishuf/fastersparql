@@ -1234,8 +1234,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             for (var b = batch; b != null; b = b.next) {
                 dst.reserveAddLocals((rows=b.rows) * rll);
                 long[] ids = b.arr;
-                for (int base = 0, terms = rows * cols; base < terms; base += cols)
-                    putRowConverting(dst, ids, cols, base);
+                for (int r = 0; r < rows; ++r)
+                    putRowConverting(dst, ids, cols, r*cols);
             }
             avgRowLocalLen = (7*rll + dst.avgLocalBytesUsed())>>3;
             batchType.recycleForThread(threadId, downstream.onBatch(dst));
