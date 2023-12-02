@@ -14,6 +14,8 @@ import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.safeAddAndGetRelease;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 
@@ -55,6 +57,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         for (var bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
             limit = bf.rowFilter.upstreamRequestLimit();
         REQ_LIMIT.setRelease(this, limit);
+        REQ      .setRelease(this, 0);
     }
 
     @Override protected void doRelease() {
@@ -89,10 +92,12 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (before != null) before.rebind(binding);
     }
 
-    @Override public void request(long rows) throws NoReceiverException {
-        if (rows <= 0)
+    @Override public void request(long downstreamRequest) throws NoReceiverException {
+        if (downstreamRequest <= 0)
             return;
-        rows = max(1, min(rows, (long)REQ_LIMIT.getAcquire(this)));
+        long rows = max(1, min(downstreamRequest, (long)REQ_LIMIT.getAcquire(this)));
+        if (ENABLED)
+            journal("request rows=", rows, "reqLimit=", plainReqLimit, "on", this);
         safeAddAndGetRelease(REQ,     this, plainReq,     rows); // awaited  by   downstream
         safeAddAndGetRelease(PENDING, this, plainPending, rows); // awaiting from   upstream
         super.request(rows);
@@ -111,7 +116,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (type.showState()) {
             sb.append("\nstate=").append(flags.render(state()))
                     .append(", upstreamCancelled=").append(upstreamCancelled());
-            appendRequested(sb.append(", requestLimit="), (long)REQ_LIMIT.getOpaque(this));
+            appendRequested(sb.append(", requestLimit="), (long)REQ_LIMIT.getAcquire(this));
+            appendRequested(sb.append(", requested="), (long)REQ.getAcquire(this));
             appendRequested(sb.append(", pending="), (long)PENDING.getOpaque(this));
         }
         if (type.showStats() && stats != null)
@@ -126,16 +132,20 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     /* --- --- --- Receiver methods --- --- --- */
 
     @Override protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
-        B b = super.onBatchEpilogue(batch, receivedRows);
-        if (b != null)
-            REQ_LIMIT.getAndAddRelease(this, -(long)b.totalRows());
+        if (batch != null) {
+            long delta = -batch.totalRows();
+            REQ.getAndAddRelease(this, delta);
+            if ((long)REQ_LIMIT.getAndAddRelease(this, delta)+delta <= 0)
+                cancelUpstream();
+        }
+        B offer = super.onBatchEpilogue(batch, receivedRows);
 
         // request from upstream if pending requests are nearing exhaustion and are
         // below what was requested from this filter by downstream
         long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -receivedRows)-receivedRows;
         if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
             upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
-        return b;
+        return offer;
     }
 
     @Override public void onRow(B batch, int row) {
@@ -160,7 +170,9 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
                         stats.onRowDelivered();
                     if (ResultJournal.ENABLED)
                         ResultJournal.logRow(this, batch, row);
-                    REQ_LIMIT.getAndAddRelease(this, -1L);
+                    REQ.getAndAddRelease(this, -1L);
+                    if ((long)REQ_LIMIT.getAndAddRelease(this, -1L)-1L <= 0)
+                        cancelUpstream();
                     downstream.onRow(batch, row);
                 }
                 case TERMINATE -> cancelUpstream();

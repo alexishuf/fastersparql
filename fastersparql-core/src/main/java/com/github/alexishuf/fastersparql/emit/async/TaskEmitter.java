@@ -115,7 +115,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
 
     @Override public void cancel() {
-        if (moveStateRelease(statePlain(), CANCEL_REQUESTING))
+        int st = statePlain();
+        if ((st&IS_CANCEL_REQ) != 0 || moveStateRelease(statePlain(), CANCEL_REQUESTING))
             awake();
     }
 
