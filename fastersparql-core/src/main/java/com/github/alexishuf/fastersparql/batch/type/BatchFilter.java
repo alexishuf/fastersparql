@@ -54,8 +54,6 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         long limit = Long.MAX_VALUE;
         for (var bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
             limit = bf.rowFilter.upstreamRequestLimit();
-        if (limit < Long.MAX_VALUE)
-            ++limit;
         REQ_LIMIT.setRelease(this, limit);
     }
 
