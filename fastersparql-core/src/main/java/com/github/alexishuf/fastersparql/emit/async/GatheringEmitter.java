@@ -39,14 +39,15 @@ import static java.lang.Thread.currentThread;
 public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private static final Logger log = LoggerFactory.getLogger(GatheringEmitter.class);
     private static final Thread NO_OWNER = null;
-    private static final VarHandle OWNER, FILLING, REQ;
+    private static final VarHandle OWNER, FILLING, REQ, STATS_RCV_LOCK;
     static {
         assert ((STATE_MASK|GRP_MASK) & ~0xff) == 0
                 : "Stateful states do not fit in a byte";
         try {
-            OWNER   = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainOwner", Thread.class);
-            FILLING = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainFilling", Batch.class);
-            REQ     = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainRequested", long.class);
+            OWNER          = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainOwner", Thread.class);
+            FILLING        = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainFilling", Batch.class);
+            REQ            = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainRequested", long.class);
+            STATS_RCV_LOCK = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainStatsRcvLock", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -66,6 +67,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private int lastRebindSeq = -1;
     private final Vars vars;
     private Vars bindableVars = Vars.EMPTY;
+    @SuppressWarnings("unused") private int plainStatsRcvLock;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
     public GatheringEmitter(BatchType<B> batchType, Vars vars) {
@@ -274,6 +276,23 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         }
     }
 
+    private void onBatchReceived(B b) {
+        if (stats == null) return;
+        while ((int)STATS_RCV_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.onSpinWait();
+        try {
+            stats.onBatchReceived(b);
+        } finally { STATS_RCV_LOCK.setRelease(this, 0); }
+    }
+
+    private void onRowReceived() {
+        if (stats == null) return;
+        while ((int)STATS_RCV_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.onSpinWait();
+        try {
+            stats.onRowReceived();
+        } finally { STATS_RCV_LOCK.setRelease(this, 0); }
+    }
 
     /**
      * Acquires the {@code LOCK} mutex, waiting for its release if it is locked.
@@ -517,7 +536,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
         @Override public @Nullable B onBatch(B in) {
             if (EmitterStats.ENABLED && down.stats != null)
-                down.stats.onBatchReceived(in);
+                down.onBatchReceived(in);
             updateRequested(in.totalRows());
             if (projector != null) {
                 in = projector.projectInPlace(in);
@@ -558,7 +577,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
         @SuppressWarnings("unchecked") @Override public void onRow(B batch, int row) {
             if (EmitterStats.ENABLED && down.stats != null)
-                down.stats.onRowReceived();
+                down.onRowReceived();
             updateRequested(1);
             B copy;
             if (projector != null) {
