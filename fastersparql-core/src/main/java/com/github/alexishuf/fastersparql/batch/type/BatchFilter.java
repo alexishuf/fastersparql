@@ -14,6 +14,8 @@ import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.safeAddAndGetRelease;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> {
     private static final VarHandle REQ_LIMIT, REQ, PENDING;
@@ -42,7 +44,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         this.bindableVars = rowFilter.bindableVars();
         this.before       = before;
         this.outColumns   = (short)outVars.size();
-        this.chunk        = (short)(batchType.preferredTermsPerBatch()/Math.max(1, outColumns));
+        this.chunk        = (short)(batchType.preferredTermsPerBatch()/max(1, outColumns));
         resetReqLimit();
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, outVars);
@@ -92,7 +94,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     @Override public void request(long rows) throws NoReceiverException {
         if (rows <= 0)
             return;
-        rows = Math.max(1, Math.min(rows, (long)REQ_LIMIT.getAcquire(this)));
+        rows = max(1, min(rows, (long)REQ_LIMIT.getAcquire(this)));
         safeAddAndGetRelease(REQ,     this, plainReq,     rows); // awaited  by   downstream
         safeAddAndGetRelease(PENDING, this, plainPending, rows); // awaiting from   upstream
         super.request(rows);
@@ -134,7 +136,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         // below what was requested from this filter by downstream
         long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -receivedRows)-receivedRows;
         if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
-            upstream.request(Math.max(chunk, reqSize)); // request at least chunk
+            upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
         return b;
     }
 
@@ -173,7 +175,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         // below requested by downstream
         long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -1L)-1L;
         if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
-            upstream.request(Math.max(chunk, reqSize)); // request at least chunk
+            upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
     }
 
     /* --- --- --- BatchProcessor methods --- --- --- */
