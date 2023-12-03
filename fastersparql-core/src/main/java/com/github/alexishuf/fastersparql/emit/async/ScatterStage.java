@@ -144,12 +144,12 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Stage<
     @Override public @Nullable B onBatch(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchPassThrough(batch);
-        int n = downstreamCount;
+        int last = downstreamCount-1;
         B copy = null;
-        for (int i = 1; i < n; i++)
+        for (int i = 0; i < last; i++)
             copy = downstream[i].onBatch(copy == null ? batch.dup() : copy);
         batchType.recycle(copy);
-        return downstream[0].onBatch(batch);
+        return downstream[last].onBatch(batch);
     }
 
     private int beginTerminationDelivery(int termState) {
