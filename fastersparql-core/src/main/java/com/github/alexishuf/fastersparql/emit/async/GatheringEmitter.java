@@ -370,7 +370,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private @Nullable B deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
-        REQ.getAndAddRelease(this, (long)-b.totalRows());
         B copy = null;
         for (int i = 0, n = extraDownCount; i < n; i++)
             copy = deliver(extraDown[i], copy == null ? b.dup() : copy);
@@ -445,9 +444,10 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         }
 
         void updateRequested(int received) {
+            long downReq = (long)REQ.getAndAddRelease(down, (long)-received)-received;
             int curr = (int)CONN_REQ.getAndAddAcquire(this, -received)-received;
             while (curr <= down.requestChunk>>1) {
-                int req = (int)Math.min((long)REQ.getOpaque(down), down.requestChunk);
+                int req = (int)Math.min(downReq, down.requestChunk);
                 if (req > 0) {
                     int ex = curr, n = Math.max(curr, 0) + req;
                     if ((curr = (int)CONN_REQ.compareAndExchangeRelease(this, ex, n)) == ex) {
@@ -457,6 +457,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 } else {
                     break;
                 }
+                downReq = (long)REQ.getAcquire(down);
             }
         }
 
@@ -499,16 +500,12 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             return sb.toString();
         }
 
-        @Override public @Nullable B onBatch(B in) {
+        @SuppressWarnings("unchecked") @Override public @Nullable B onBatch(B in) {
             if (EmitterStats.ENABLED && down.stats != null)
                 down.onBatchReceived(in);
             updateRequested(in.totalRows());
             if (projector != null)
                 in = projector.projectInPlace(in);
-            return onBatch0(in);
-        }
-
-        @SuppressWarnings("unchecked") private @Nullable B onBatch0(B in) {
             B f, b = in;
             boolean spinNotified = false;
             while (true) {
