@@ -28,22 +28,6 @@ public interface Receiver<B extends Batch<B>> extends StreamNode {
     @Nullable B onBatch(B batch);
 
     /**
-     * Delivers a single row for processing.
-     *
-     * <p>Unlike, {@link #onBatch(Batch)} ownership of {@code batch} stays with the caller and
-     * implementations must not retain references to to {@code batch} or to data within it.
-     * A typical implementation will simply {@link Batch#putRow(Batch, int)} onto a batch it owns</p>
-     *
-     * @param batch a batch containing a row that is being delivered.
-     * @param row the row in {@code batch} being delivered
-     */
-    default void onRow(B batch, int row) {
-        if (batch == null) return;
-        B tmp = onBatch(batch.dupRow(row));
-        if (tmp != null) tmp.recycle();
-    }
-
-    /**
      * Called once the {@link Emitter} has exhausted its data source and no more batches
      * will be delivered.
      */

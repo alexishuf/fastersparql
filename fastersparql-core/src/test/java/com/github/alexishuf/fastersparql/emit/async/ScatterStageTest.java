@@ -84,11 +84,7 @@ class ScatterStageTest {
                 else                         return COMPLETED;
             }
             assert current != null;
-            if ((absRow&1) == 0) {
-                deliverRow(current, relRow);
-            } else {
-                COMPRESSED.recycleForThread(threadId, deliver(current.dupRow(relRow, threadId)));
-            }
+            COMPRESSED.recycleForThread(threadId, deliver(current.dupRow(relRow, threadId)));
             ++absRow;
             ++relRow;
             return state|MUST_AWAKE;

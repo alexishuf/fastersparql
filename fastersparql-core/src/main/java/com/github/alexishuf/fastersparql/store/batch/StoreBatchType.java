@@ -99,12 +99,5 @@ public class StoreBatchType extends IdBatchType<StoreBatch> {
             }
             return b;
         }
-
-        @Override public void onRow(I batch, int row) {
-            if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
-            var conv = STORE.createForThread(threadId, cols);
-            conv.putRowConverting(batch, row, dictId);
-            batchType.recycleForThread(threadId, downstream.onBatch(conv));
-        }
     }
 }

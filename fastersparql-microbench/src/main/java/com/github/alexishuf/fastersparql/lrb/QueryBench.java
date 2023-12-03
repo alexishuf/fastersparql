@@ -125,7 +125,6 @@ public class QueryBench {
         public int rows() { return rows; }
         @Override public void start(Vars vars)                  { rows = 0; }
         @Override public void accept(Batch<?> batch)            { rows += batch.totalRows(); }
-        @Override public void accept(Batch<?> batch, int row)   { rows++; }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
     }
 
@@ -146,12 +145,6 @@ public class QueryBench {
                             acc += tmp.len;
                     }
                 }
-            }
-        }
-        @Override public void accept(Batch<?> batch, int r) {
-            for (int c = 0, cols = batch.cols; c < cols; c++) {
-                if (batch.getRopeView(r, c, tmp))
-                    acc += tmp.len;
             }
         }
     }
@@ -177,12 +170,6 @@ public class QueryBench {
                             acc += tmp.len;
                     }
                 }
-            }
-        }
-        @Override public void accept(Batch<?> batch, int r) {
-            for (int c = 0, cols = batch.cols; c < cols; c++) {
-                if (batch.getView(r, c, tmp))
-                    acc += tmp.len;
             }
         }
     }

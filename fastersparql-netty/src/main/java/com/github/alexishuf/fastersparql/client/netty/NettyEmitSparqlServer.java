@@ -194,10 +194,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             return batch;
         }
 
-        @Override public void onRow(CompressedBatch batch, int row) {
-            sendSerialized(batch, row, 1);
-        }
-
         @Override public void onComplete() {
             sendTrailer();
             terminate(false, null);

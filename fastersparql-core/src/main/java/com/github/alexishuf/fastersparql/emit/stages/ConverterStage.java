@@ -59,13 +59,4 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         }
         return b;
     }
-
-    @Override public void onRow(I b, int row) {
-        if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
-        if (b != null) {
-            O dst = batchType.createForThread(threadId, cols);
-            dst.putRowConverting(b, row);
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
-        }
-    }
 }

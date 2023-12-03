@@ -285,15 +285,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         } finally { STATS_RCV_LOCK.setRelease(this, 0); }
     }
 
-    private void onRowReceived() {
-        if (stats == null) return;
-        while ((int)STATS_RCV_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-            Thread.onSpinWait();
-        try {
-            stats.onRowReceived();
-        } finally { STATS_RCV_LOCK.setRelease(this, 0); }
-    }
-
     /**
      * Acquires the {@code LOCK} mutex, waiting for its release if it is locked.
      */
@@ -388,18 +379,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     }
 
     /**
-     * Calls {@link Receiver#onRow(Batch, int)} for all downstream receivers.
-     */
-    private void deliver(B b, int row) {
-        if (ResultJournal.ENABLED)
-            ResultJournal.logRow(this, b, row);
-        REQ.getAndAddRelease(this, -1L);
-        deliver(downstream, b, row);
-        for (int i = 0, n = extraDownCount; i < n; i++)
-            deliver(extraDown[i], b, row);
-    }
-
-    /**
      * Safely call {@link Receiver#onBatch(Batch)} for {@code receiver} and {@code b}
      * @return the batch returned be {@link Receiver#onBatch(Batch)}
      */
@@ -411,20 +390,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         } catch (Throwable t) {
             handleEmitError(downstream, this, (state&IS_TERM)!=0, t);
             return null;
-        }
-    }
-
-    /**
-     * Safely call {@link Receiver#onRow(Batch, int)} for {@code downstream}, {@code b}
-     * and {@code row}.
-     */
-    private void deliver(Receiver<B> downstream, B b, int row) {
-        try {
-            if (EmitterStats.ENABLED && stats != null)
-                stats.onRowDelivered();
-            downstream.onRow(b, row);
-        } catch (Throwable t) {
-            handleEmitError(downstream, this, (state&IS_TERM)!=0, t);
         }
     }
 
@@ -538,11 +503,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (EmitterStats.ENABLED && down.stats != null)
                 down.onBatchReceived(in);
             updateRequested(in.totalRows());
-            if (projector != null) {
+            if (projector != null)
                 in = projector.projectInPlace(in);
-            }
-            if (in.rows == 1 && in.next == null && onRow0(in, 0))
-                return in;
             return onBatch0(in);
         }
 
@@ -573,37 +535,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             if (spinNotified)
                 EmitterService.endSpin();
             return b;
-        }
-
-        @SuppressWarnings("unchecked") @Override public void onRow(B batch, int row) {
-            if (EmitterStats.ENABLED && down.stats != null)
-                down.onRowReceived();
-            updateRequested(1);
-            B copy;
-            if (projector != null) {
-                copy = (B)FILLING.getAndSetRelease(down, null);
-                copy = projector.projectRow(copy, batch, row);
-            } else if (onRow0(batch, row)) {
-                return;
-            } else {
-                (copy = bt.create(batch.cols)).putRow(batch, row);
-            }
-            bt.recycle(onBatch0(copy));
-        }
-
-        @SuppressWarnings("unchecked") private boolean onRow0(B batch, int row) {
-            B f;
-            if (down.tryBeginDelivery()) {
-                try {
-                    down.deliver(batch, row);
-                    return true;
-                } finally { down.endDelivery(); }
-            } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                f.putRow(batch, row);
-                bt.recycle(onBatch0(f));
-                return true;
-            }
-            return false;
         }
 
         @Override public void onComplete() {

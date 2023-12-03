@@ -19,8 +19,6 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
-
 public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implements Stage<B, B> {
     protected static final int EXPECT_CANCELLED  = 0x80000000;
     protected static final int ASSUME_THREAD_SAFE = 0x40000000;
@@ -191,11 +189,6 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
             batch = downstream.onBatch(batch);
         }
         return batch;
-    }
-
-    @Override public void onRow(B batch, int row) {
-        if (batch != null)
-            recycle(onBatch(batch.dupRow(row)));
     }
 
     @Override public final void onComplete() {

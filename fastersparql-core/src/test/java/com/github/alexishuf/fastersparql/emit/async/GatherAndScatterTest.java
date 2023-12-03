@@ -207,29 +207,6 @@ class GatherAndScatterTest {
                 return batch;
             }
 
-            @Override public void onRow(B batch, int row) {
-                if (EmitterStats.ENABLED && stats != null)
-                    stats.onRowReceived();
-                lock();
-                try {
-                    if (state == Stateful.CREATED)
-                        state = Stateful.ACTIVE;
-                    if (cancelAtRow >= 0 && historyLen  >= cancelAtRow)
-                        emitter.cancel();
-                    assertNotNull(batch);
-                    assertTrue(row >= 0 && row < batch.rows);
-                    assertEquals(1, batch.cols);
-                    if (historyLen == history.length) {
-                        history = ArrayPool.grow(history, historyLen + 1);
-                        Arrays.fill(history, historyLen, history.length, 0);
-                    }
-                    SegmentRope view = SegmentRope.pooled();
-                    assertTrue(batch.localView(row, 0, view));
-                    history[historyLen++] = (int)view.parseLong(1);
-                    view.recycle();
-                } finally { unlock(); }
-            }
-
             @Override public void onComplete() {
                 lock();
                 try {

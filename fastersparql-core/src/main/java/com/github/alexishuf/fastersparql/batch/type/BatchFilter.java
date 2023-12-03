@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -146,46 +145,6 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
             upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
         return offer;
-    }
-
-    @Override public void onRow(B batch, int row) {
-        if (batch == null)
-            return;
-
-        boolean trivial = !rowFilter.targetsProjection(), empty = false;
-        if (trivial && before != null) {
-            if (before.before != null || before.rowFilter.targetsProjection()) {
-                trivial = false;
-            } else {
-                switch (before.rowFilter.drop(batch, row)) {
-                    case DROP      ->                     empty = true;
-                    case TERMINATE -> { cancelUpstream(); empty = true; }
-                }
-            }
-        }
-        if (trivial && !empty) {
-            switch (rowFilter.drop(batch, row)) {
-                case KEEP -> {
-                    if (EmitterStats.ENABLED && stats != null)
-                        stats.onRowDelivered();
-                    if (ResultJournal.ENABLED)
-                        ResultJournal.logRow(this, batch, row);
-                    REQ.getAndAddRelease(this, -1L);
-                    if ((long)REQ_LIMIT.getAndAddRelease(this, -1L)-1L <= 0)
-                        cancelUpstream();
-                    downstream.onRow(batch, row);
-                }
-                case TERMINATE -> cancelUpstream();
-            }
-        } else if (!trivial) {
-            super.onRow(batch, row);
-        } // else: trivial && empty (before dropped/terminated)
-
-        // request from upstream if unfulfilled requests are nearing exhaustion and are
-        // below requested by downstream
-        long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -1L)-1L;
-        if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
-            upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
     }
 
     /* --- --- --- BatchProcessor methods --- --- --- */

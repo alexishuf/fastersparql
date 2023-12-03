@@ -222,31 +222,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         }
     }
 
-    protected void deliverRow(@Nullable B batch, int row) {
-        if (ResultJournal.ENABLED)
-            ResultJournal.logRow(this, batch, row);
-        deliverRow(receiver0, batch, row);
-        if (receiver1 != null)
-            deliverRow(receiver1, batch, row);
-        if (extra != null) {
-            for (int i = 0, n = extra.nReceivers; i < n; i++)
-                deliverRow(extra.receivers[i], batch, row);
-        }
-    }
-
-    protected void deliverRow(Receiver<B> receiver, B batch, int row) {
-        try {
-            if (ENABLED)
-                journal("deliver from/to row=", row, this, receiver);
-            if (EmitterStats.ENABLED && stats != null)
-                stats.onRowDelivered();
-            receiver.onRow(batch, row);
-        } catch (Throwable t) {
-            Emitters.handleEmitError(receiver, this,
-                    (statePlain()&IS_TERM) != 0, t);
-        }
-    }
-
     @Override protected int resetForRebind(int clearFlags, int setFlags) throws RebindException {
         int state = super.resetForRebind(clearFlags, setFlags);
         REQUESTED.setOpaque(this, 0L);

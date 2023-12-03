@@ -136,9 +136,6 @@ public class MergeBench {
             }
             return batch;
         }
-        @Override public void onRow(B batch, int row) {
-            h ^= batch.hash(row);
-        }
         @Override public void onComplete() { complete(this); }
     }
 

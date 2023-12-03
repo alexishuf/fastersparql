@@ -95,13 +95,5 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
             batchType.recycleForThread(threadId, downstream.onBatch(dst));
             return b;
         }
-
-        @Override public void onRow(I batch, int row) {
-            if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
-            if (batch == null) return;
-            var dst = HDT.createForThread(threadId, cols);
-            dst.putRowConverting(batch, row, dictId);
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
-        }
     }
 }

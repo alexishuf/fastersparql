@@ -91,16 +91,6 @@ public class BItProducerTest {
                 return batch;
             }
 
-            @Override public void onRow(TermBatch batch, int row) {
-                Term view = Term.pooledMutable();
-                if (batch.getView(row, 0, view)) {
-                    if (size == ints.length)
-                        ints = ArrayPool.grow(ints, size << 1);
-                    ints[size++] = IntsBatch.parse(view);
-                }
-                view.recycle();
-            }
-
             @Override public void onComplete() { complete(ints); }
         }
     }

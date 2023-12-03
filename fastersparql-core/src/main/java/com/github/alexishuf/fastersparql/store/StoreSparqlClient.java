@@ -1242,15 +1242,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return batch;
         }
 
-        @Override public void onRow(StoreBatch batch, int row) {
-            if (EmitterStats.ENABLED && stats != null) stats.onRowPassThrough();
-            if (batch == null) return;
-            B dst = batchType.createForThread(threadId, cols);
-            dst.reserveAddLocals(avgRowLocalLen);
-            putRowConverting(dst, batch.arr, cols, row*cols);
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
-        }
-
         private SegmentRope shared(TwoSegmentRope t, byte fst) {
             return switch (fst) {
                 case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);

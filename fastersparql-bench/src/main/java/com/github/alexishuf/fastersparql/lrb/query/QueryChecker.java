@@ -190,16 +190,4 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         if (amputated != gb)
             Batch.recycle(amputated);
     }
-
-    @Override public void accept(Batch<?> gb, int r) {
-        //noinspection unchecked
-        B singleton = queryName.dupRowAmputatingNumbers((BatchType<B>) batchType, (B)gb, r);
-        ++rows;
-        if (expected == null || observed == null) return;
-        if (!expected.contains(singleton, 0))
-            unexpected.putRow(singleton, 0);
-        else
-            observed.add(singleton, 0);
-        singleton.recycle();
-    }
 }

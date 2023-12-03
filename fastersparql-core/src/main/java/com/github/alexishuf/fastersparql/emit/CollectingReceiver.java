@@ -17,6 +17,5 @@ public final class CollectingReceiver<B extends Batch<B>> extends ReceiverFuture
         return null;
     }
 
-    @Override public void onRow(B batch, int row) { collected.putRow(batch, row); }
     @Override public void onComplete()            { complete(collected); }
 }

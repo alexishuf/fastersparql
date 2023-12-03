@@ -47,15 +47,6 @@ public final class MetricsStage<B extends Batch<B>> extends AbstractStage<B, B> 
         return downstream.onBatch(batch);
     }
 
-    @Override public void onRow(B batch, int row) {
-        if (EmitterStats.ENABLED && stats != null)
-            stats.onRowPassThrough();
-        if (batch == null) return;
-        if (downstream == null) throw new NoDownstreamException(this);
-        metrics.batch(1);
-        downstream.onRow(batch, row);
-    }
-
     @Override public void onComplete() {
         if (rebindAcquired == 0)
             metrics.completeAndDeliver(null, false);

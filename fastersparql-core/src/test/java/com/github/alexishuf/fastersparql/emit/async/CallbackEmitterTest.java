@@ -121,10 +121,6 @@ class CallbackEmitterTest {
                         actual[0].copy(batch);
                         return batch;
                     }
-                    @Override public void onRow(CompressedBatch batch, int row) {
-                        actual[0].putRow(batch, row);
-                        cb.request(1);
-                    }
                     @Override public void onComplete() {
                         ready.release();
                     }

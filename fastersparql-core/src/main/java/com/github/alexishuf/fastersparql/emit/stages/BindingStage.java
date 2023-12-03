@@ -187,8 +187,9 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (EmitterStats.ENABLED && stats != null)
             stats.report(log, this);
         rightRecv.rebindRelease();
-        lb        = batchType.recycle(lb);
-        fillingLB = batchType.recycle(fillingLB);
+        lb                   = batchType.recycle(lb);
+        fillingLB            = batchType.recycle(fillingLB);
+        rightRecv.lSingleton = batchType.recycle(rightRecv.lSingleton);
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
@@ -239,24 +240,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         else                        throw new IllegalStateException("fillingLB != null");
         leftPending -= rows;
         return (state&CAN_BIND_MASK) == LEFT_CAN_BIND ? startNextBinding(state) : state;
-    }
-
-    @Override public void onRow(B b, int row) {
-        if (EmitterStats.ENABLED && stats != null)
-            stats.onRowReceived();
-        int state = lock(statePlain());
-        try {
-            if (ENABLED)
-                journal("onRow", row, "st=", state, flags, "bStage=", this);
-            B dst = fillingLB;
-            if   (dst == null) dst = batchType.create(b.cols);
-            else               fillingLB = null;
-            state = unlock(state);
-            dst.putRow(b, row);
-            state = pushBatch(dst, 1, lock(state));
-        } finally {
-            if ((state&LOCKED_MASK) != 0) unlock(state);
-        }
     }
 
     @Override public void onError(Throwable cause) { leftTerminated(LEFT_FAILED,    cause); }
@@ -666,6 +649,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         private final @Nullable BindListener bindingListener;
         private final byte passThrough;
         private boolean upstreamEmpty, listenerNotified, rebindReleased;
+        private @Nullable B lSingleton;
         private final BatchType<B> bt;
         private long bindingSeq = -1;
 
@@ -693,50 +677,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             upstream.rebindRelease();
         }
 
-        @Override public void onRow(B batch, int row) {
-            if (batch == null)
-                return;
-            if (passThrough == PASSTHROUGH_NOT) {
-                bt.recycle(onBatch(batch.dupRow(row)));
-            } else {
-                upstreamEmpty = false;
-                switch (type) {
-                    case NOT_EXISTS,MINUS -> {
-                        if (!listenerNotified && bindingListener != null) {
-                            bindingListener.emptyBinding(bindingSeq);
-                            listenerNotified = true;
-                        }
-                        upstream.cancel();
-                    }
-                    default ->  {
-                        B b;
-                        int bRow;
-                        if (passThrough == PASSTHROUGH_LEFT) {
-                            b = lb;
-                            bRow = lr;
-                        } else {
-                            b = batch;
-                            bRow = row;
-                        }
-                        try {
-                            if (!listenerNotified && bindingListener != null) {
-                                bindingListener.nonEmptyBinding(bindingSeq);
-                                listenerNotified = true;
-                            }
-                            if (ResultJournal.ENABLED)
-                                ResultJournal.logRow(BindingStage.this, b, bRow);
-                            downstream.onRow(b, bRow);
-                            int st = lock(statePlain());
-                            --requested;
-                            unlock(st);
-                        } catch (Throwable t) {
-                            handleEmitError(downstream, BindingStage.this, false, t);
-                        }
-                    }
-                }
-            }
-        }
-
         @Override public B onBatch(B rb) {
             if (rb == null || rb.rows == 0)
                 return rb;
@@ -756,12 +696,16 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
         private @Nullable B merge(@Nullable B rb) {
             assert lb != null;
-            B b = null;
+            B b;
             boolean rightPassThrough = merger == null && passThrough == PASSTHROUGH_RIGHT;
             if (rightPassThrough) {
                 b = rb;
                 assert rb != null;
-            } else if (merger != null) {
+            } else if (merger == null) {
+                b = bt.empty(lSingleton, lb.cols);
+                lSingleton = null;
+                b.putRow(lb, lr);
+            } else {
                 b = merger.merge(null, lb, lr, rb);
             }
 
@@ -782,16 +726,13 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
                 unlock(state);
 
                 // deliver batch/row
-                if (b == null) {
-                    if (ResultJournal.ENABLED)
-                        ResultJournal.logRow(BindingStage.this, lb, lr);
-                    downstream.onRow(lb, lr);
-                } else {
-                    if (ResultJournal.ENABLED)
-                        ResultJournal.logBatch(BindingStage.this, b);
-                    b = downstream.onBatch(b);
-                    if (!rightPassThrough && b != null)
-                        b.recycle();
+                if (ResultJournal.ENABLED)
+                    ResultJournal.logBatch(BindingStage.this, b);
+                b = downstream.onBatch(b);
+                if (!rightPassThrough) {
+                    if (merger == null) lSingleton = b;
+                    else                bt.recycle(b);
+                    b = null;
                 }
             } catch (Throwable t) {
                 handleEmitError(downstream, BindingStage.this, false, t);

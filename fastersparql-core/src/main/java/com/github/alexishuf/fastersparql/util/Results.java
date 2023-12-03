@@ -634,10 +634,6 @@ public final class Results {
             return b;
         }
 
-        @Override public void onRow(B batch, int row) {
-            acList.add(normalizeRow(batch, row));
-        }
-
         @Override public boolean complete(Throwable error) {
             try {
                 Results.this.check(acList, error, upstream.vars());

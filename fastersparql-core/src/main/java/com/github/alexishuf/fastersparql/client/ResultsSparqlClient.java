@@ -392,10 +392,6 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                     return downstream.onBatch(batch);
                 }
 
-                @Override public void onRow(TermBatch batch, int row) {
-                    downstream.onRow(batch, row);
-                }
-
                 @Override public String toString() { return "CheckBindings<-"+upstream; }
 
                 @Override public void request(long rows) {
