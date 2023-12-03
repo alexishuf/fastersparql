@@ -4096,7 +4096,7 @@
         "operator": "FILTER",
         "params": {
           "filters": [
-            "((?position >= ?start) && (?position <= ?stop)) && (str(?chromosome) = str(?lookupChromosome))"
+            "(?position >= ?start) && (?position <= ?stop)"
           ]
         },
         "operands": [
@@ -4169,7 +4169,7 @@
                                             "name": "query-88",
                                             "operator": "query",
                                             "params": {
-                                              "query": "SELECT ?geneId WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
+                                              "query": "SELECT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                               "endpoint": "http://linkedtcga-m/sparql"
                                             },
                                             "operands": []
@@ -4178,7 +4178,7 @@
                                             "name": "query-89",
                                             "operator": "query",
                                             "params": {
-                                              "query": "SELECT ?geneId WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
+                                              "query": "SELECT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                               "endpoint": "http://linkedtcga-e/sparql"
                                             },
                                             "operands": []
@@ -4187,7 +4187,7 @@
                                             "name": "query-90",
                                             "operator": "query",
                                             "params": {
-                                              "query": "SELECT ?geneId WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
+                                              "query": "SELECT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                               "endpoint": "http://linkedtcga-a/sparql"
                                             },
                                             "operands": []
@@ -4342,7 +4342,7 @@
                     "name": "query-107",
                     "operator": "query",
                     "params": {
-                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
                       "endpoint": "http://linkedtcga-m/sparql"
                     },
                     "operands": []
@@ -4351,7 +4351,7 @@
                     "name": "query-108",
                     "operator": "query",
                     "params": {
-                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
                       "endpoint": "http://linkedtcga-e/sparql"
                     },
                     "operands": []
@@ -4360,7 +4360,7 @@
                     "name": "query-109",
                     "operator": "query",
                     "params": {
-                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                      "query": "SELECT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
                       "endpoint": "http://linkedtcga-a/sparql"
                     },
                     "operands": []
@@ -4396,128 +4396,83 @@
             "params": {},
             "operands": [
               {
-                "name": "filter-152",
-                "operator": "FILTER",
-                "params": {
-                  "filters": [
-                    "str(?lookupChromosome) = str(?chromosome)"
-                  ]
-                },
+                "name": "join-150",
+                "operator": "JOIN",
+                "params": {},
                 "operands": [
                   {
-                    "name": "join-150",
+                    "name": "join-149",
                     "operator": "JOIN",
                     "params": {},
                     "operands": [
                       {
-                        "name": "join-149",
+                        "name": "join-148",
                         "operator": "JOIN",
                         "params": {},
                         "operands": [
                           {
-                            "name": "join-148",
+                            "name": "join-147",
                             "operator": "JOIN",
                             "params": {},
                             "operands": [
                               {
-                                "name": "join-147",
+                                "name": "join-146",
                                 "operator": "JOIN",
                                 "params": {},
                                 "operands": [
                                   {
-                                    "name": "join-146",
+                                    "name": "join-145",
                                     "operator": "JOIN",
                                     "params": {},
                                     "operands": [
                                       {
-                                        "name": "join-145",
-                                        "operator": "JOIN",
-                                        "params": {},
-                                        "operands": [
-                                          {
-                                            "name": "query-121",
-                                            "operator": "query",
-                                            "params": {
-                                              "query": "SELECT DISTINCT ?geneId WHERE {\n  ?s <http://bio2rdf.org/affymetrix_vocabulary:x-symbol> <http://bio2rdf.org/symbol:KRAS> .\n  ?s <http://bio2rdf.org/affymetrix_vocabulary:x-geneid> ?geneId .\n}",
-                                              "endpoint": "http://affymetrix/sparql"
-                                            },
-                                            "operands": []
-                                          },
-                                          {
-                                            "name": "query-122",
-                                            "operator": "query",
-                                            "params": {
-                                              "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://tcga.deri.ie/schema/expression_gene_lookup> .\n  ?recordNo <http://tcga.deri.ie/schema/scaled_estimate> ?geneExpVal .\n}",
-                                              "endpoint": "http://linkedtcga-a/sparql"
-                                            },
-                                            "operands": []
-                                          }
-                                        ]
+                                        "name": "query-121",
+                                        "operator": "query",
+                                        "params": {
+                                          "query": "SELECT DISTINCT ?geneId WHERE {\n  ?s <http://bio2rdf.org/affymetrix_vocabulary:x-symbol> <http://bio2rdf.org/symbol:KRAS> .\n  ?s <http://bio2rdf.org/affymetrix_vocabulary:x-geneid> ?geneId .\n}",
+                                          "endpoint": "http://affymetrix/sparql"
+                                        },
+                                        "operands": []
                                       },
                                       {
-                                        "name": "merge-126",
-                                        "operator": "MERGE",
-                                        "params": {},
-                                        "operands": [
-                                          {
-                                            "name": "query-123",
-                                            "operator": "query",
-                                            "params": {
-                                              "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
-                                              "endpoint": "http://linkedtcga-m/sparql"
-                                            },
-                                            "operands": []
-                                          },
-                                          {
-                                            "name": "query-124",
-                                            "operator": "query",
-                                            "params": {
-                                              "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
-                                              "endpoint": "http://linkedtcga-e/sparql"
-                                            },
-                                            "operands": []
-                                          },
-                                          {
-                                            "name": "query-125",
-                                            "operator": "query",
-                                            "params": {
-                                              "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
-                                              "endpoint": "http://linkedtcga-a/sparql"
-                                            },
-                                            "operands": []
-                                          }
-                                        ]
+                                        "name": "query-122",
+                                        "operator": "query",
+                                        "params": {
+                                          "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://tcga.deri.ie/schema/expression_gene_lookup> .\n  ?recordNo <http://tcga.deri.ie/schema/scaled_estimate> ?geneExpVal .\n}",
+                                          "endpoint": "http://linkedtcga-a/sparql"
+                                        },
+                                        "operands": []
                                       }
                                     ]
                                   },
                                   {
-                                    "name": "merge-130",
+                                    "name": "merge-126",
                                     "operator": "MERGE",
                                     "params": {},
                                     "operands": [
                                       {
-                                        "name": "query-127",
+                                        "name": "query-123",
                                         "operator": "query",
                                         "params": {
-                                          "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
+                                          "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                           "endpoint": "http://linkedtcga-m/sparql"
                                         },
                                         "operands": []
                                       },
                                       {
-                                        "name": "query-128",
+                                        "name": "query-124",
                                         "operator": "query",
                                         "params": {
-                                          "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
+                                          "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                           "endpoint": "http://linkedtcga-e/sparql"
                                         },
                                         "operands": []
                                       },
                                       {
-                                        "name": "query-129",
+                                        "name": "query-125",
                                         "operator": "query",
                                         "params": {
-                                          "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
+                                          "query": "SELECT DISTINCT * WHERE {\n  ?geneId <http://tcga.deri.ie/schema/chromosome> ?lookupChromosome .\n}",
                                           "endpoint": "http://linkedtcga-a/sparql"
                                         },
                                         "operands": []
@@ -4527,33 +4482,33 @@
                                 ]
                               },
                               {
-                                "name": "merge-134",
+                                "name": "merge-130",
                                 "operator": "MERGE",
                                 "params": {},
                                 "operands": [
                                   {
-                                    "name": "query-131",
+                                    "name": "query-127",
                                     "operator": "query",
                                     "params": {
-                                      "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                                      "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
                                       "endpoint": "http://linkedtcga-m/sparql"
                                     },
                                     "operands": []
                                   },
                                   {
-                                    "name": "query-132",
+                                    "name": "query-128",
                                     "operator": "query",
                                     "params": {
-                                      "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                                      "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
                                       "endpoint": "http://linkedtcga-e/sparql"
                                     },
                                     "operands": []
                                   },
                                   {
-                                    "name": "query-133",
+                                    "name": "query-129",
                                     "operator": "query",
                                     "params": {
-                                      "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                                      "query": "SELECT DISTINCT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?recordNo .\n}",
                                       "endpoint": "http://linkedtcga-a/sparql"
                                     },
                                     "operands": []
@@ -4563,33 +4518,33 @@
                             ]
                           },
                           {
-                            "name": "merge-138",
+                            "name": "merge-134",
                             "operator": "MERGE",
                             "params": {},
                             "operands": [
                               {
-                                "name": "query-135",
+                                "name": "query-131",
                                 "operator": "query",
                                 "params": {
-                                  "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                                  "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
                                   "endpoint": "http://linkedtcga-m/sparql"
                                 },
                                 "operands": []
                               },
                               {
-                                "name": "query-136",
+                                "name": "query-132",
                                 "operator": "query",
                                 "params": {
-                                  "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                                  "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
                                   "endpoint": "http://linkedtcga-e/sparql"
                                 },
                                 "operands": []
                               },
                               {
-                                "name": "query-137",
+                                "name": "query-133",
                                 "operator": "query",
                                 "params": {
-                                  "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome .\n}",
+                                  "query": "SELECT DISTINCT ?patient WHERE {\n  ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
                                   "endpoint": "http://linkedtcga-a/sparql"
                                 },
                                 "operands": []
@@ -4599,29 +4554,63 @@
                         ]
                       },
                       {
-                        "name": "merge-141",
+                        "name": "merge-138",
                         "operator": "MERGE",
                         "params": {},
                         "operands": [
                           {
-                            "name": "query-139",
+                            "name": "query-135",
                             "operator": "query",
                             "params": {
-                              "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/start> ?start .\n}",
+                              "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
+                              "endpoint": "http://linkedtcga-m/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-136",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
                               "endpoint": "http://linkedtcga-e/sparql"
                             },
                             "operands": []
                           },
                           {
-                            "name": "query-140",
+                            "name": "query-137",
                             "operator": "query",
                             "params": {
-                              "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/start> ?start .\n}",
+                              "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/chromosome> ?chromosome . FILTER(str(?chromosome) = str(?lookupChromosome))\n}",
                               "endpoint": "http://linkedtcga-a/sparql"
                             },
                             "operands": []
                           }
                         ]
+                      }
+                    ]
+                  },
+                  {
+                    "name": "merge-141",
+                    "operator": "MERGE",
+                    "params": {},
+                    "operands": [
+                      {
+                        "name": "query-139",
+                        "operator": "query",
+                        "params": {
+                          "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/start> ?start .\n}",
+                          "endpoint": "http://linkedtcga-e/sparql"
+                        },
+                        "operands": []
+                      },
+                      {
+                        "name": "query-140",
+                        "operator": "query",
+                        "params": {
+                          "query": "SELECT DISTINCT * WHERE {\n  ?recordNo <http://tcga.deri.ie/schema/start> ?start .\n}",
+                          "endpoint": "http://linkedtcga-a/sparql"
+                        },
+                        "operands": []
                       }
                     ]
                   }
