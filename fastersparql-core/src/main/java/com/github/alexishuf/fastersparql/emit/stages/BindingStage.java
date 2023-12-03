@@ -453,7 +453,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         // count queued left rows into LEFT_REQUESTED_MAX limit
         int queued = (       lb == null ? 0 :        lb.totalRows()-lr)
                    + (fillingLB == null ? 0 : fillingLB.totalRows());
-        int pendingOrQueued = leftPending + queued;
+        int pendingOrQueued = Math.max(0, leftPending) + queued;
         // - request at most leftChunk (a full default-sized batch) from upstream
         // - never request from left upstream more than downstream has requested
         // - prefer issuing requests >= leftChunk/2
