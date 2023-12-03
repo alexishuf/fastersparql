@@ -32,21 +32,24 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         super(batchType);
         vars = queryName.parsed().publicVars();
         this.queryName = queryName;
-        B b = queryName.amputateNumbers(batchType, queryName.expected(batchType));
-        if (b == null) {
+        B original = queryName.expected(batchType);
+        if (original == null) {
             expectedRows = 0;
             expected = observed = null;
             unexpected = batchType.create(vars.size());
         } else {
-            int rows = b.totalRows();
+            B sanitized = queryName.amputateNumbers(batchType, original);
+            int rows = sanitized.totalRows();
             expectedRows = rows;
-            expected = StrongDedup.strongForever(batchType, rows, b.cols);
-            for (var n = b; n != null; n = n.next) {
+            expected = StrongDedup.strongForever(batchType, rows, sanitized.cols);
+            for (var n = sanitized; n != null; n = n.next) {
                 for (int r = 0, nRows = n.rows; r < nRows; r++)
                     expected.add(n, r);
             }
-            observed = StrongDedup.strongForever(batchType, rows, b.cols);
-            unexpected = batchType.create(b.cols);
+            observed = StrongDedup.strongForever(batchType, rows, sanitized.cols);
+            unexpected = batchType.create(sanitized.cols);
+            if (sanitized != original)
+                batchType.recycle(sanitized);
         }
     }
 
