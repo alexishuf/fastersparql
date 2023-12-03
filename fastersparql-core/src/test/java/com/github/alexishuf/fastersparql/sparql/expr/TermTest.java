@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -538,10 +539,16 @@ class TermTest {
 
     @ParameterizedTest @MethodSource
     void testEscapedLexical(String in, String ex) {
-        assertEquals(ex, requireNonNull(valueOf(SegmentRope.of(in)).escapedLexical()).toString());
-        assertEquals(ex, requireNonNull(valueOf(in).escapedLexical()).toString());
+        TwoSegmentRope lex = new TwoSegmentRope();
+        valueOf(SegmentRope.of(in)).escapedLexical(lex);
+        assertEquals(ex, requireNonNull(lex).toString());
+
+        valueOf(in).escapedLexical(lex);
+        assertEquals(ex, requireNonNull(lex).toString());
+
         var padded = SegmentRope.of("\"" + in + "\"");
-        assertEquals(ex, requireNonNull(valueOf(padded, 1, 1+in.length()).escapedLexical()).toString());
+        valueOf(padded, 1, 1+in.length()).escapedLexical(lex);
+        assertEquals(ex, requireNonNull(lex).toString());
 
     }
 

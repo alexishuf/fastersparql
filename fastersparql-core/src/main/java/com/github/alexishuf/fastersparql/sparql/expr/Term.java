@@ -1222,10 +1222,20 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
      * Get the lexical form of  this literal with escapes as required by {@code "}-quoted
      * N-Triples literals but without the surrounding quotes.
      */
-    public @Nullable SegmentRope escapedLexical() {
+    public void escapedLexical(TwoSegmentRope dst) {
         int endLex = endLex();
-        if (endLex < 0) return null;
-        return first.sub(1, endLex);
+        if (endLex > 0) {
+            dst.wrapFirst(first.segment, first.utf8, first.offset+1, endLex-1);
+            dst.wrapSecond(EMPTY.segment, EMPTY.utf8, 0, 0);
+        } else {
+            short left = 1, right = 0;
+            switch (type()) {
+                case IRI   -> right   = 1;
+                case BLANK -> left = 2;
+            }
+            dst.wrapFirst(first.segment, first.utf8, first.offset+left, first.len-left);
+            dst.wrapSecond(second.segment, second.utf8, second.offset, second.len-right);
+        }
     }
 
     /** The number of UTF-8 bytes that would be output by {@link #unescapedLexical(ByteRope)}. */
