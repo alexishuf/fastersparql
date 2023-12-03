@@ -8,6 +8,8 @@ import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 
 import java.util.Arrays;
 
+import static java.lang.Math.max;
+
 public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     private final RowBucket<B> table;
     private int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
@@ -18,7 +20,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
         super(batchType, cols);
         if (cols < 0)
             throw new IllegalArgumentException();
-        int rowsCapacity = Math.max(batchType.preferredTermsPerBatch()/cols, 1);
+        int rowsCapacity = max(batchType.preferredTermsPerBatch()/max(cols, 1), 1);
         this.table = batchType.createBucket(rowsCapacity, cols);
         this.table.maximizeCapacity();
         clear0(table.capacity());
@@ -35,7 +37,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public void clear(int cols) {
-        int rowsCapacity = Math.max(table.batchType().preferredTermsPerBatch()/cols, 1);
+        int rowsCapacity = max(table.batchType().preferredTermsPerBatch()/cols, 1);
         table.clear(rowsCapacity, cols);
         table.maximizeCapacity();
         rowsCapacity = table.capacity();
