@@ -157,6 +157,8 @@ public final class PlanRegistry {
                case "SLICE" -> FS.slice(left(), longParam("offset", 0),
                                                 longParam("limit", Long.MAX_VALUE));
                case "DISTINCT" -> FS.distinct(left());
+               case "PRUNED" -> FS.dedup(left());
+               case "NOP" -> left();
                case "EMPTY" -> new Empty(vars("publicVars"), vars("allVars"));
                case "QUERY" -> {
                    var client = (SparqlClient)params.get("sparqlClient");
