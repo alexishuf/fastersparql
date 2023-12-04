@@ -18,14 +18,6 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable {
     BatchType<B> batchType();
 
     /**
-     * Whether {@link #subscribe(Receiver)} can be called with multiple receivers and this emitter
-     * will handle delivering copies of every batch to every downstream receiver.
-     *
-     * @return whether {@link #subscribe(Receiver)} accepts multiple receivers
-     */
-    default boolean canScatter() { return false; }
-
-    /**
      * Attaches a receiver to this Emitter. This <strong>MUST</strong> be called before
      * the first {@link #request(long)} call.
      *

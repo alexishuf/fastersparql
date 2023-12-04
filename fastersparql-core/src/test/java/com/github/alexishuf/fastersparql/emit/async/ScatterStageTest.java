@@ -97,12 +97,11 @@ class ScatterStageTest {
             implements Runnable {
         public void run() {
             var expected = makeExpected();
-            var scatter = new ScatterStage<>(COMPRESSED, XY);
             P producer = new P(expected, cancel, error);
-            scatter.subscribeTo(producer);
+            var scatter = new ScatterStage<>(producer);
             List<CollectingReceiver<CompressedBatch>> receivers = new ArrayList<>();
             for (int i = 0; i < consumersCount; i++) {
-                var r = new CollectingReceiver<>(scatter);
+                var r = new CollectingReceiver<>(scatter.createConnector());
                 receivers.add(r);
             }
             for (int i = 0; i < consumersCount; i++)

@@ -191,14 +191,7 @@ public class NativeBind {
     multiBindEmit(Emitter<B> left, BindType type, Vars outVars, Union right,
                   Vars rebindHints, boolean weakDedup, SparqlClient clientForAlgebra) {
         var bt = left.batchType();
-        Emitter<B> scatter;
-        if (left.canScatter()) {
-            scatter = left;
-        } else {
-            var ss = new ScatterStage<>(bt, left.vars());
-            ss.subscribeTo(left);
-            scatter = ss;
-        }
+        var scatter = new ScatterStage<>(left);
         var gather = new GatheringEmitter<>(left.batchType(), outVars);
         for (int i = 0, n = right.opCount(); i < n; i++) {
             Plan operand = right.op(i);
@@ -213,7 +206,8 @@ public class NativeBind {
             }
             if (weakDedup)
                 sparql = sparql.toDistinct(DEDUP);
-            var bind = client.emit(new EmitBindQuery<>(sparql, scatter, type), rebindHints);
+            var conn = scatter.createConnector();
+            var bind = client.emit(new EmitBindQuery<>(sparql, conn, type), rebindHints);
             gather.subscribeTo(bind);
         }
 

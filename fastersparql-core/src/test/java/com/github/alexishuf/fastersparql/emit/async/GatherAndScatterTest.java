@@ -273,13 +273,14 @@ class GatherAndScatterTest {
             ThreadJournal.resetJournals();
             ResultJournal.clear();
             //noinspection unchecked
-            BatchType<B> batchType = (BatchType<B>) this.batchType;
-            GatheringEmitter<B> gatherScatter = new GatheringEmitter<>(batchType, X);
+            var batchType        = (BatchType<B>) this.batchType;
+            var gather           = new GatheringEmitter<>(batchType, X);
+            var scatter          = new ScatterStage<>(gather);
             List<P<B>> producers = new ArrayList<>();
             for (int i = 0, begin = 0; i < nProducers; i++, begin += height) {
                 int failAt = i == failingProducer ? begin+this.failAtRow : -1;
                 P<B> p = new P<>(batchType, X, EMITTER_SVC, i, begin, failAt);
-                gatherScatter.subscribeTo(p);
+                gather.subscribeTo(p);
                 producers.add(p);
             }
             Set<C<B>> consumers = new HashSet<>();
@@ -287,7 +288,7 @@ class GatherAndScatterTest {
             try {
                 ConsumerBarrier<B> consumerBarrier = new ConsumerBarrier<>(consumers);
                 for (int i = 0; i < nConsumers; i++)
-                    consumers.add(new C<>(gatherScatter, consumerBarrier, i));
+                    consumers.add(new C<>(scatter.createConnector(), consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
                 try (var w = ThreadJournal.watchdog(System.out, 100)) {
                     w.start(10_000_000_000L).andThen(() -> {
@@ -302,7 +303,7 @@ class GatherAndScatterTest {
                     });
                     if (requestSize > 32)
                         Batch.makeValidationCheaper();
-                    gatherScatter.request(requestSize);
+                    gather.request(requestSize);
                     consumerBarrier.await();
                 } finally {
                     Batch.restoreValidationCheaper();

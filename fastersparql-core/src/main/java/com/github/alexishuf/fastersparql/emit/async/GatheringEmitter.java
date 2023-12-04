@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
@@ -16,7 +17,6 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,13 +56,12 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private int lockedLevel;
     @SuppressWarnings("unused") private @Nullable B plainFilling;
     private Receiver<B> downstream;
-    private short extraDownCount, connectorCount;
-    private @MonotonicNonNull Receiver<B>[] extraDown;
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[10];
+    private short connectorCount;
+    private final short requestChunk;
     @SuppressWarnings("unused") private long plainRequested;
     private byte state = CREATED, delayRelease;
     private short connectorTerminatedCount;
-    private final short requestChunk;
     private final BatchType<B> batchType;
     private int lastRebindSeq = -1;
     private final Vars vars;
@@ -134,7 +133,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
     @Override public Vars               vars() { return vars; }
     @Override public BatchType<B>  batchType() { return batchType; }
-    @Override public boolean      canScatter() { return true; }
 
     @Override
     public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException {
@@ -142,20 +140,11 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         try {
             if (downstream == receiver)
                 return;
-            if (state != CREATED) {
+            if (state != CREATED)
                 throw new RegisterAfterStartException(this);
-            } else if (downstream == null) {
-                downstream = receiver;
-            } else {
-                if (extraDown == null)//noinspection unchecked
-                    extraDown = new Receiver[10];
-                for (int i = 0; i < extraDownCount; i++) {
-                    if (extraDown[i] == receiver) return;
-                }
-                if (extraDownCount == extraDown.length)
-                    extraDown = Arrays.copyOf(extraDown, extraDownCount<<1);
-                extraDown[extraDownCount++] = receiver;
-            }
+            else if (downstream != null)
+                throw new MultipleRegistrationUnsupportedException(this);
+            downstream = receiver;
         } finally {
             endDelivery();
         }
@@ -249,8 +238,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 state = (byte)termState;
                 try {
                     deliverTermination(downstream, termState, firstError);
-                    for (int i = 0, n = extraDownCount; i < n; i++)
-                        deliverTermination(extraDown[i], termState, firstError);
                 } catch (Throwable t) {
                     Emitters.handleTerminationError(downstream, this, t);
                 } finally {
@@ -370,21 +357,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private @Nullable B deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
-        B copy = null;
-        for (int i = 0, n = extraDownCount; i < n; i++)
-            copy = deliver(extraDown[i], copy == null ? b.dup() : copy);
-        batchType.recycle(copy);
-        return deliver(downstream, b);
-    }
-
-    /**
-     * Safely call {@link Receiver#onBatch(Batch)} for {@code receiver} and {@code b}
-     * @return the batch returned be {@link Receiver#onBatch(Batch)}
-     */
-    private @Nullable B deliver(Receiver<B> downstream, B b) {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onBatchDelivered(b);
         try {
-            if (EmitterStats.ENABLED && stats != null)
-                stats.onBatchDelivered(b);
             return downstream.onBatch(b);
         } catch (Throwable t) {
             handleEmitError(downstream, this, (state&IS_TERM)!=0, t);

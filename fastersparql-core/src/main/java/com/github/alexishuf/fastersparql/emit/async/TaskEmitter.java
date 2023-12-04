@@ -22,7 +22,6 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.Arrays;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
@@ -46,30 +45,12 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             .build();
 
     @SuppressWarnings("unused") protected long plainRequested;
-    private @MonotonicNonNull Receiver<B> receiver0;
-    private @MonotonicNonNull Receiver<B> receiver1;
+    private @MonotonicNonNull Receiver<B> downstream;
     protected final BatchType<B> bt;
     protected short threadId, outCols;
-    private @Nullable Extra<B> extra;
     protected final Vars vars;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
     protected Throwable error = UNSET_ERROR;
-
-    private static class Extra<B extends Batch<B>> {
-        private int nReceivers;
-        @SuppressWarnings("unchecked") private Receiver<B>[] receivers = new Receiver[10];
-
-        private void add(Receiver<B> receiver) {
-            Receiver<B>[] arr = receivers;
-            for (int i = 0, n = nReceivers; i < n; i++) {
-                if (arr[i] == receiver)
-                    return;
-            }
-            if (nReceivers >= arr.length)
-                receivers = arr = Arrays.copyOf(arr, nReceivers+(nReceivers>>1));
-            arr[nReceivers++] = receiver;
-        }
-    }
 
     protected TaskEmitter(BatchType<B> batchType, Vars vars,
                           EmitterService runner, int worker,
@@ -109,7 +90,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     protected void appendToSimpleLabel(StringBuilder out) {}
 
-    @Override public boolean      canScatter() { return true; }
     @Override public Vars         vars()       { return vars; }
     @Override public BatchType<B> batchType()  { return bt; }
 
@@ -128,10 +108,9 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
                 throw new RegisterAfterStartException(this);
             if (EmitterStats.ENABLED && stats != null)
                 ++stats.receivers;
-            if      (receiver0 == null || receiver0 == receiver) receiver0 = receiver;
-            else if (receiver1 == null || receiver1 == receiver) receiver1 = receiver;
-            else
-                (extra == null ? extra = new Extra<>() : extra).add(receiver);
+            if (downstream != null && downstream != receiver)
+                throw new MultipleRegistrationUnsupportedException(this);
+            downstream = receiver;
         } finally {
             unlock(st);
         }
@@ -197,26 +176,12 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     protected @Nullable B deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
-        if (receiver1 != null) {
-            B copy = b.dup();
-            copy = deliver(receiver1, copy);
-            if (extra != null) {
-                var recs = extra.receivers;
-                for (int i = 0, n = extra.nReceivers; i < n; i++)
-                    copy = deliver(recs[i], copy == null ? b.dup() : copy);
-            }
-            bt.recycle(copy);
-        }
-        return deliver(receiver0, b);
-    }
-
-    protected B deliver(Receiver<B> receiver, B b) {
         try {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onBatchDelivered(b);
-            return receiver.onBatch(b);
+            return downstream.onBatch(b);
         } catch (Throwable t) {
-            Emitters.handleEmitError(receiver, this,
+            Emitters.handleEmitError(downstream, this,
                     (statePlain()&IS_TERM) != 0, t);
             return null;
         }
@@ -232,27 +197,16 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     protected void deliverTermination(int current, int termState) {
         assert (state()&IS_TERM) == 0 : "deliverTermination() while already terminated";
         if (moveStateRelease(current, termState)) {
-            deliverTermination(receiver0, termState);
-            if (receiver1 != null)
-                deliverTermination(receiver1, termState);
-            if (extra != null) {
-                Receiver<B>[] others = extra.receivers;
-                for (int i = 0, n = extra.nReceivers; i < n; i++)
-                    deliverTermination(others[i], termState);
+            try {
+                switch ((termState &STATE_MASK)) {
+                    case COMPLETED -> downstream.onComplete();
+                    case CANCELLED -> downstream.onCancelled();
+                    case FAILED    -> downstream.onError(error);
+                }
+            } catch (Throwable t) {
+                Emitters.handleTerminationError(downstream, this, t);
             }
             markDelivered(current, termState);
-        }
-    }
-
-    protected void deliverTermination(Receiver<B> receiver, int termState) {
-        try {
-            switch ((termState&STATE_MASK)) {
-                case COMPLETED -> receiver.onComplete();
-                case CANCELLED -> receiver.onCancelled();
-                case FAILED    -> receiver.onError(error);
-            }
-        } catch (Throwable t) {
-            Emitters.handleTerminationError(receiver, this, t);
         }
     }
 
