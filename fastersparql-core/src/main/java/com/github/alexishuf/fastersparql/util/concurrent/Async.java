@@ -125,23 +125,40 @@ public class Async {
     }
 
     /**
-     * Atomically performs {@code field = max(0, field) + add}, resulting in {@link Long#MAX_VALUE}
-     * instead wrap-around in case of overflow.
+     * Atomically sets the field of {@code holder} accessed via {@code handle} to {@code offer}
+     * if its current value is less than {@code offer}.
      *
      * @param handle A {@link VarHandle} for a {@code long} field in {@code holder}
      * @param holder object instance that has the {@code long} field accessed via {@code handle}
-     * @param curr The estimated current value of the {@code long} field in {@code holder}. If
-     *             stale, a new value will be read before the operation is retried.
-     * @param add value to atomically aff to the field in {@code holder}
-     * @return the updated value
+     * @param offer a value that if larger than the current value, will be written to the
+     *              {@code long} field in {@code holder}
+     * @return the result of {@code offer-actual}, where {@code actual} has been updated to the
+     *         current value of the field. If {@code <= 0}, it means the field was not changed,
+     *         else a value {@code > 0} indicates that the field has been set to {@code offer}
      */
-    public static long safeAddAndGetRelease(VarHandle handle, Object holder, long curr, long add) {
-        long next, ex;
-        do {
-            next = Math.max(0, ex=curr)+add;
-            if (next < 0)
-                next = Long.MAX_VALUE; // overflow
-        } while ((curr=(long)handle.compareAndExchangeRelease(holder, ex, next)) != ex);
-        return next;
+    public static long maxAndGetDeltaRelease(VarHandle handle, Object holder, long offer) {
+        long ac = (long)handle.getAcquire(holder), ex = ac;
+        while (offer > ex && (ac=(long)handle.compareAndExchangeRelease(holder, ex, offer)) != ex)
+            ex = ac;
+        return offer-ac;
+    }
+    
+    /**
+     * Atomically sets the field of {@code holder} accessed via {@code handle} to {@code offer}
+     * if its current value is less than {@code offer}.
+     *
+     * @param handle A {@link VarHandle} for a {@code int} field in {@code holder}
+     * @param holder object instance that has the {@code int} field accessed via {@code handle}
+     * @param offer a value that if larger than the current value, will be written to the
+     *              {@code int} field in {@code holder}
+     * @return the result of {@code offer-actual}, where {@code actual} has been updated to the
+     *         current value of the field. If {@code <= 0}, it means the field was not changed,
+     *         else a value {@code > 0} indicates that the field has been set to {@code offer}
+     */
+    public static int maxAndGetDeltaRelease(VarHandle handle, Object holder, int offer) {
+        int ac = (int)handle.getAcquire(holder), ex = ac;
+        while (offer > ex && (ac=(int)handle.compareAndExchangeRelease(holder, ex, offer)) != ex)
+            ex = ac;
+        return offer-ac;
     }
 }

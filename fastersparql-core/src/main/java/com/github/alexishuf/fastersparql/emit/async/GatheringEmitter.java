@@ -15,7 +15,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -30,6 +29,7 @@ import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleTerminationError;
 import static com.github.alexishuf.fastersparql.emit.async.Stateful.*;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxAndGetDeltaRelease;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.numberOfTrailingZeros;
@@ -46,7 +46,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         try {
             OWNER          = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainOwner", Thread.class);
             FILLING        = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainFilling", Batch.class);
-            REQ            = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainRequested", long.class);
+            REQ            = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainReq", long.class);
             STATS_RCV_LOCK = MethodHandles.lookup().findVarHandle(GatheringEmitter.class, "plainStatsRcvLock", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
@@ -59,7 +59,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[10];
     private short connectorCount;
     private final short requestChunk;
-    @SuppressWarnings("unused") private long plainRequested;
+    @SuppressWarnings("unused") private long plainReq;
     private byte state = CREATED, delayRelease;
     private short connectorTerminatedCount;
     private final BatchType<B> batchType;
@@ -73,7 +73,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         this.vars         = vars;
         this.batchType    = batchType;
         int cols = Math.max(1, vars.size());
-        this.requestChunk = (short)Math.max(8, batchType.preferredTermsPerBatch()/cols);
+        this.requestChunk = (short)Math.max(8, 8*batchType.preferredTermsPerBatch()/cols);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
@@ -122,7 +122,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             int drMax = DELAY_RELEASE_MASK>> drBit;
             flaggedState |= Math.min(drMax, delayRelease) << drBit;
             sb.append("\nstate=").append(Flags.DEFAULT.render(flaggedState));
-            StreamNodeDOT.appendRequested(sb.append(", requested="), plainRequested);
+            StreamNodeDOT.appendRequested(sb.append(", requested="), plainReq);
         }
         if (EmitterStats.ENABLED && type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -203,15 +203,17 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     @Override public Vars bindableVars() { return bindableVars; }
 
     @Override public void request(long rows) throws NoReceiverException {
-        if (ENABLED)
-            journal("request", rows, "on", this);
         if (rows == 0 || (state&IS_TERM) != 0)
             return;
         if (state == CREATED)
             state = ACTIVE;
-        Async.safeAddAndGetRelease(REQ, this, plainRequested, rows);
-        for (int i = 0, count = connectorCount; i < count; i++)
-            connectors[i].updateRequested(0);
+        long delta = maxAndGetDeltaRelease(REQ, this, rows);
+        if (ENABLED)
+            journal("request rows=", rows, "delta=", delta, "on", this);
+        if (delta > 0) {
+            for (int i = 0, count = connectorCount; i < count; i++)
+                connectors[i].requestNextChunk(0);
+        }
     }
 
     /*  --- --- --- Receiver implementation  --- --- --- */
@@ -397,7 +399,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         private static final VarHandle CONN_REQ;
         static {
             try {
-                CONN_REQ = MethodHandles.lookup().findVarHandle(Connector.class, "plainConnectorRequested", int.class);
+                CONN_REQ = MethodHandles.lookup().findVarHandle(Connector.class, "plainConnReq", int.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
@@ -405,7 +407,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         final Emitter<B> up;
         final GatheringEmitter<B> down;
         final BatchType<B> bt;
-        int plainConnectorRequested;
+        int plainConnReq;
         final BatchMerger<B> projector;
         private boolean completed, cancelled;
         private @Nullable Throwable error;
@@ -418,21 +420,14 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             this.projector    = bt.projector(downstream.vars, upstream.vars());
         }
 
-        void updateRequested(int received) {
-            long downReq = (long)REQ.getAndAddRelease(down, (long)-received)-received;
-            int curr = (int)CONN_REQ.getAndAddAcquire(this, -received)-received;
-            while (curr <= down.requestChunk>>1) {
-                int req = (int)Math.min(downReq, down.requestChunk);
-                if (req > 0) {
-                    int ex = curr, n = Math.max(curr, 0) + req;
-                    if ((curr = (int)CONN_REQ.compareAndExchangeRelease(this, ex, n)) == ex) {
-                        up.request(req);
-                        break;
-                    }
-                } else {
-                    break;
-                }
-                downReq = (long)REQ.getAcquire(down);
+        void requestNextChunk(int received) {
+            short chunk   = down.requestChunk;
+            long  downReq = (long)REQ     .getAndAddAcquire(down, (long)-received)-received;
+            int   ac      = (int )CONN_REQ.getAndAddRelease(this,       -received)-received;
+            if (ac <= chunk>>1) {
+                int req = (int)Math.min(downReq, chunk);
+                if (req > 0 && maxAndGetDeltaRelease(CONN_REQ, this, req) > 0)
+                    up.request(req);
             }
         }
 
@@ -478,7 +473,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         @SuppressWarnings("unchecked") @Override public @Nullable B onBatch(B in) {
             if (EmitterStats.ENABLED && down.stats != null)
                 down.onBatchReceived(in);
-            updateRequested(in.totalRows());
+            requestNextChunk(in.totalRows());
             if (projector != null)
                 in = projector.projectInPlace(in);
             B f, b = in;

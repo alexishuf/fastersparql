@@ -1110,7 +1110,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected int produceAndDeliver(int state) {
-            long limit = (long)REQUESTED.getOpaque(this);
+            long limit = requested();
             if (limit <= 0)
                 return state;
             int termState = state;
@@ -1128,12 +1128,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 termState = COMPLETED;
             int rows = b.rows; // fill*() only fills up to b.arr.length
             if (rows > 0) {
-                if ((long)REQUESTED.getAndAddRelease(this, -rows) > rows)
-                    termState |= MUST_AWAKE;
-                journal("produced rows=", rows, "upd req=", (long)REQUESTED.getOpaque(this));
+                journal("produced rows=", rows, "upd req=", requested());
                 b = deliver(b);
             }
             TYPE.recycleForThread(threadId, b);
+            if (requested() > 0)
+                termState |= MUST_AWAKE;
             return termState;
         }
 

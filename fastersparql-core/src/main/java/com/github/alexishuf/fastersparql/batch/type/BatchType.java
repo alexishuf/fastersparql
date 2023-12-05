@@ -14,7 +14,7 @@ import java.lang.invoke.VarHandle;
 
 public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B> {
     protected static final int POOL_THREADS = Runtime.getRuntime().availableProcessors();
-    protected static final int POOL_SHARED = POOL_THREADS*1024;
+    protected static final int POOL_SHARED = POOL_THREADS*2048;
     /**
      * Preferred number of terms in the default size of batches obtained via
      * {@link #create(int)} and other related methods. {@link BatchType} implementations may

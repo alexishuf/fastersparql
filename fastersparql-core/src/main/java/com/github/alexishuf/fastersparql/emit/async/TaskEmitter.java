@@ -31,10 +31,10 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
 public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Task
                                                       implements Emitter<B> {
     private static final Logger log = LoggerFactory.getLogger(TaskEmitter.class);
-    protected static final VarHandle REQUESTED;
+    private static final VarHandle REQ;
     static {
         try {
-            REQUESTED = MethodHandles.lookup().findVarHandle(TaskEmitter.class, "plainRequested", long.class);
+            REQ = MethodHandles.lookup().findVarHandle(TaskEmitter.class, "plainRequested", long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -81,7 +81,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             appendToSimpleLabel(sb);
         if (type.showState()) {
             sb.append("\nstate=").append(flags.render(state())).append(", requested=");
-            StreamNodeDOT.appendRequested(sb, (long)REQUESTED.getOpaque(this));
+            StreamNodeDOT.appendRequested(sb, (long)REQ.getOpaque(this));
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -118,23 +118,25 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             ThreadJournal.journal("subscribed", receiver, "to", this);
     }
 
-    public long requested() { return (long)REQUESTED.getOpaque(this); }
+    public long requested() { return (long)REQ.getOpaque(this); }
 
     @Override public void request(long rows) throws NoReceiverException {
-        if (ENABLED) journal("request", rows, this);
         if (rows <= 0)
             return;
         // on first request(), transition from CREATED to LIVE
-        if ((statePlain() & IS_INIT) != 0) {
-            if (ENABLED)  journal("onFirstRequest on", this);
+        if ((statePlain()&IS_INIT) != 0) {
+            if (ENABLED) journal("onFirstRequest on", this);
             onFirstRequest();
         }
-
-        // add rows to REQUESTED protecting against overflow
-        long now = Async.safeAddAndGetRelease(REQUESTED, this, plainRequested, rows);
-        if (now > 0 && now-rows <= 0) {
-            if (ENABLED) journal("resume with requested=", now, " on ", this);
-            resume();
+        boolean awake = requested() <= 0;
+        long delta = Async.maxAndGetDeltaRelease(REQ, this, rows);
+        if (delta > 0) {
+            if (ENABLED) {
+                journal(awake ? "request+resume" : "request rows=", rows,
+                        "delta=", delta, "on", this);
+            }
+            if (awake)
+                resume();
         }
     }
 
@@ -176,6 +178,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     protected @Nullable B deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
+        REQ.getAndAddRelease(this, (long)-b.totalRows());
         try {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onBatchDelivered(b);
@@ -189,7 +192,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     @Override protected int resetForRebind(int clearFlags, int setFlags) throws RebindException {
         int state = super.resetForRebind(clearFlags, setFlags);
-        REQUESTED.setOpaque(this, 0L);
+        REQ.setRelease(this, 0L);
         error = UNSET_ERROR;
         return state;
     }

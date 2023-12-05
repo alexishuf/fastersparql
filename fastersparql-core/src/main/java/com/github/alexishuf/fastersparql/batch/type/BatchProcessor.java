@@ -157,9 +157,12 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
 
     @Override public void request(long rows) throws NoReceiverException {
-        if (upstream == null) throw new NoUpstreamException(this);
+        if (rows <= 0)
+            return;
+        if (upstream == null)
+            throw new NoUpstreamException(this);
         int state = statePlain();
-        if ((state&STATE_MASK) == CREATED)
+        if ((state&IS_INIT) != 0)
             moveStateRelease(state, ACTIVE);
         upstream.request(rows);
     }

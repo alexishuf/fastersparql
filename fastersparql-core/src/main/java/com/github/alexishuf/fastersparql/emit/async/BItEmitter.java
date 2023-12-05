@@ -47,8 +47,7 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     /* --- --- --- Task methods --- --- --- */
 
     @Override protected int produceAndDeliver(int state) {
-        long limit = (long)REQUESTED.getOpaque(this);
-        if (limit <= 0)
+        if (requested() <= 0)
             return state;
         int termState = state;
         B b;
@@ -63,12 +62,10 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
             else if ((st&IS_TERM) != 0)       termState = st;
             else                              throw t;
         }
-        if (b != null) {
-            int bRows = b.totalRows();
-            if ((long) REQUESTED.getAndAddRelease(this, -bRows) > bRows)
-                termState |= MUST_AWAKE;
+        if (b != null)
             bt.recycleForThread(threadId, deliver(b));
-        }
+        if (requested() > 0)
+            termState |= MUST_AWAKE;
         return termState;
     }
 }

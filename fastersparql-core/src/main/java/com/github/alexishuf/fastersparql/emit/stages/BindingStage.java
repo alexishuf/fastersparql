@@ -146,7 +146,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         this.rightRecv = new RightReceiver(merger, passthrough, type, rightUpstream, listener);
         this.leftUpstream = bindings;
         int safeCols = Math.max(1, bindings.vars().size());
-        this.leftChunk = (short)(batchType.preferredTermsPerBatch()/safeCols);
+        this.leftChunk = (short)Math.max(4, batchType.preferredTermsPerBatch()/safeCols);
         this.intBinding = new BatchBinding(lVars);
         bindings.subscribe(this);
         rightUpstream.subscribe(rightRecv);
@@ -409,11 +409,12 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
 
         state = lock(state);
         try {
-            long maybeOverflow = requested + rows;
-            requested = maybeOverflow < 0 ? Long.MAX_VALUE : maybeOverflow;
-            maybeRequestLeft();
-            if ((state&CAN_REQ_RIGHT_MASK) == CAN_REQ_RIGHT)
-                rightRecv.upstream.request(rightRows);
+            if (rows > requested) {
+                requested = rows;
+                maybeRequestLeft();
+                if ((state&CAN_REQ_RIGHT_MASK) == CAN_REQ_RIGHT)
+                    rightRecv.upstream.request(rightRows);
+            }
         } finally {
             unlock(state);
         }
@@ -453,17 +454,10 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         // count queued left rows into LEFT_REQUESTED_MAX limit
         int queued = (       lb == null ? 0 :        lb.totalRows()-lr)
                    + (fillingLB == null ? 0 : fillingLB.totalRows());
-        int pendingOrQueued = Math.max(0, leftPending) + queued;
-        // - request at most leftChunk (a full default-sized batch) from upstream
-        // - never request from left upstream more than downstream has requested
-        // - prefer issuing requests >= leftChunk/2
-        if (requested > pendingOrQueued && pendingOrQueued < leftChunk
-                                        && leftPending <= leftChunk<<1) {
-            short n = (short)Math.min(requested-pendingOrQueued, leftChunk);
-            leftPending += n;
+        if (requested > Math.max(0, leftPending)+queued && leftPending < leftChunk>>1) {
+            int n = (int)Math.min(requested, leftChunk);
+            leftPending = n;
             leftUpstream.request(n);
-        } else if (ENABLED) {
-            journal("skip leftUpstream.request(): queued=", queued, " leftPending=", leftPending);
         }
     }
 

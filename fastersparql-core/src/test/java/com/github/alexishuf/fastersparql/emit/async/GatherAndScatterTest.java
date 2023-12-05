@@ -100,7 +100,7 @@ class GatherAndScatterTest {
 
             @Override protected int produceAndDeliver(int state) {
                 int rem = end - next;
-                int limit = (int)Math.min(rem, (long)REQUESTED.getOpaque(this));
+                int limit = (int)Math.min(rem, requested());
                 int n = switch (id & 3) {
                     case 0  ->             Math.min( 1,               rem);
                     case 1  -> Math.max(1, Math.min( limit,           rem));
@@ -288,7 +288,7 @@ class GatherAndScatterTest {
             try {
                 ConsumerBarrier<B> consumerBarrier = new ConsumerBarrier<>(consumers);
                 for (int i = 0; i < nConsumers; i++)
-                    consumers.add(new C<>(scatter.createConnector(), consumerBarrier, i));
+                    consumers.add(new C<>(scatter, consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
                 try (var w = ThreadJournal.watchdog(System.out, 100)) {
                     w.start(10_000_000_000L).andThen(() -> {

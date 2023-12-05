@@ -12,19 +12,19 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
-import static com.github.alexishuf.fastersparql.util.concurrent.Async.safeAddAndGetRelease;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxAndGetDeltaRelease;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 
 public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> {
-    private static final VarHandle REQ_LIMIT, REQ, PENDING;
+    private static final VarHandle REQ_LIMIT, DOWN_REQ;
+
     static {
         try {
             REQ_LIMIT = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainReqLimit", long.class);
-            REQ       = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainReq",      long.class);
-            PENDING   = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainPending",  long.class);
+            DOWN_REQ  = MethodHandles.lookup().findVarHandle(BatchFilter.class, "plainDownReq",  long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -33,8 +33,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     public final RowFilter<B> rowFilter;
     public final @Nullable BatchFilter<B> before;
     protected final short outColumns;
-    private final short chunk;
-    @SuppressWarnings("unused") private long plainReqLimit, plainReq, plainPending;
+    @SuppressWarnings("unused") private long plainReqLimit, plainDownReq;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -45,7 +44,6 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         this.bindableVars = rowFilter.bindableVars();
         this.before       = before;
         this.outColumns   = (short)outVars.size();
-        this.chunk        = (short)(batchType.preferredTermsPerBatch()/max(1, outColumns));
         resetReqLimit();
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, outVars);
@@ -56,7 +54,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         for (var bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
             limit = bf.rowFilter.upstreamRequestLimit();
         REQ_LIMIT.setRelease(this, limit);
-        REQ      .setRelease(this, 0);
+        DOWN_REQ .setRelease(this, 0);
     }
 
     @Override protected void doRelease() {
@@ -85,7 +83,6 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     @Override public void rebind(BatchBinding binding) throws RebindException {
         super.rebind(binding);
         resetReqLimit();
-        PENDING.setRelease(this, 0L);
         var rf = rowFilter;
         if (rf     != null)     rf.rebind(binding);
         if (before != null) before.rebind(binding);
@@ -95,11 +92,11 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (downstreamRequest <= 0)
             return;
         long rows = max(1, min(downstreamRequest, (long)REQ_LIMIT.getAcquire(this)));
+        long delta = maxAndGetDeltaRelease(DOWN_REQ, this, rows);
         if (ENABLED)
-            journal("request rows=", rows, "reqLimit=", plainReqLimit, "on", this);
-        safeAddAndGetRelease(REQ,     this, plainReq,     rows); // awaited  by   downstream
-        safeAddAndGetRelease(PENDING, this, plainPending, rows); // awaiting from   upstream
-        super.request(rows);
+            journal("request delta=", delta, "reqLimit=", plainReqLimit, "on", this);
+        if (delta > 0)
+            super.request(rows);
     }
 
     @Override public String toString() {
@@ -116,8 +113,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
             sb.append("\nstate=").append(flags.render(state()))
                     .append(", upstreamCancelled=").append(upstreamCancelled());
             appendRequested(sb.append(", requestLimit="), (long)REQ_LIMIT.getAcquire(this));
-            appendRequested(sb.append(", requested="), (long)REQ.getAcquire(this));
-            appendRequested(sb.append(", pending="), (long)PENDING.getOpaque(this));
+            appendRequested(sb.append(", requested="), (long) DOWN_REQ.getAcquire(this));
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -131,19 +127,18 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     /* --- --- --- Receiver methods --- --- --- */
 
     @Override protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
+        boolean request = false;
         if (batch != null) {
-            long delta = -batch.totalRows();
-            REQ.getAndAddRelease(this, delta);
-            if ((long)REQ_LIMIT.getAndAddRelease(this, delta)+delta <= 0)
+            long survivors = batch.totalRows();
+            DOWN_REQ.getAndAddRelease(this, -survivors);
+            if ((long)REQ_LIMIT.getAndAddRelease(this, -survivors)-survivors <= 0)
                 cancelUpstream();
+            else if (survivors < receivedRows)
+                request = true;
         }
         B offer = super.onBatchEpilogue(batch, receivedRows);
-
-        // request from upstream if pending requests are nearing exhaustion and are
-        // below what was requested from this filter by downstream
-        long reqSize, pending = (long)PENDING.getAndAddAcquire(this, -receivedRows)-receivedRows;
-        if (pending <= chunk>>1 && (reqSize=plainReq-pending) > 0)
-            upstream.request(max(min(plainReqLimit, chunk), reqSize)); // request at least chunk
+        if (request)
+            upstream.request((long)DOWN_REQ.getOpaque(this));
         return offer;
     }
 

@@ -101,7 +101,7 @@ class ScatterStageTest {
             var scatter = new ScatterStage<>(producer);
             List<CollectingReceiver<CompressedBatch>> receivers = new ArrayList<>();
             for (int i = 0; i < consumersCount; i++) {
-                var r = new CollectingReceiver<>(scatter.createConnector());
+                var r = new CollectingReceiver<>(scatter);
                 receivers.add(r);
             }
             for (int i = 0; i < consumersCount; i++)

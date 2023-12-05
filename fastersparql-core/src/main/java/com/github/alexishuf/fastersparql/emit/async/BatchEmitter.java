@@ -40,7 +40,7 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     @Override public Vars bindableVars() { return Vars.EMPTY; }
 
     @Override protected int produceAndDeliver(int state) {
-        long limit = (long)REQUESTED.getOpaque(this);
+        long limit = requested();
         if (limit <= 0)
             return state;
         B b = this.batch;
@@ -48,7 +48,6 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         if (bRows == 0)
             return COMPLETED;
         int n = (int)Math.min(limit, bRows-nextRow);
-        REQUESTED.getAndAddRelease(this, (long)-n);
 
         B copy;
         if (nextRow == 0 && n == bRows) {

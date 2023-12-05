@@ -156,7 +156,7 @@ public class MergeBench {
             if (curr == null)
                 return COMPLETED;
             B b = bt.createForThread(threadId, 1);
-            int end = r+(int)Math.min(curr.rows-r, (long)REQUESTED.getOpaque(this));
+            int end = r+(int)Math.min(curr.rows-r, requested());
             long deadline = Timestamp.nextTick(1);
             while (r < end) {
                 b.putRow(curr, r++);
@@ -169,7 +169,9 @@ public class MergeBench {
                 this.current = curr.next;
                 return COMPLETED;
             }
-            return state|MUST_AWAKE;
+            if (requested() > 0)
+                state |= MUST_AWAKE;
+            return state;
         }
 
         @Override public void rebind(BatchBinding binding) {

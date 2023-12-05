@@ -338,7 +338,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
 
         @Override protected int produceAndDeliver(int state) {
-            long limit = (long)REQUESTED.getOpaque(this);
+            long limit = requested();
             if (limit <= 0)
                 return state;
             int termState = state;
@@ -346,12 +346,11 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             if (!retry)
                 termState = COMPLETED;
             int rows = b.rows; // fill() only fills up to b.termsCapacity
-            if (rows > 0) {
-                if ((long)REQUESTED.getAndAddRelease(this, -rows) > rows)
-                    termState |= MUST_AWAKE;
+            if (rows > 0)
                 b = deliver(b);
-            }
             HDT.recycleForThread(threadId, b);
+            if (requested() > 0)
+                termState |= MUST_AWAKE;
             return termState;
         }
     }
