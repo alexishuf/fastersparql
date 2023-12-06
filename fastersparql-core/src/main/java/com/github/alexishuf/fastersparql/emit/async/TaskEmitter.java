@@ -128,16 +128,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             if (ENABLED) journal("onFirstRequest on", this);
             onFirstRequest();
         }
-        boolean awake = requested() <= 0;
-        long delta = Async.maxAndGetDeltaRelease(REQ, this, rows);
-        if (delta > 0) {
-            if (ENABLED) {
-                journal(awake ? "request+resume" : "request rows=", rows,
-                        "delta=", delta, "on", this);
-            }
-            if (awake)
-                resume();
-        }
+        if (Async.maxRelease(REQ, this, rows))
+            resume();
     }
 
     @Override public void rebindAcquire() { delayRelease(); }
@@ -192,8 +184,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     @Override protected int resetForRebind(int clearFlags, int setFlags) throws RebindException {
         int state = super.resetForRebind(clearFlags, setFlags);
-        REQ.setRelease(this, 0L);
         error = UNSET_ERROR;
+        REQ.setRelease(this, 0L);
         return state;
     }
 

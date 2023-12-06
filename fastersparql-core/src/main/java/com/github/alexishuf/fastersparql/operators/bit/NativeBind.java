@@ -206,7 +206,8 @@ public class NativeBind {
             }
             if (weakDedup)
                 sparql = sparql.toDistinct(DEDUP);
-            var bind = client.emit(new EmitBindQuery<>(sparql, scatter, type), rebindHints);
+            var conn = scatter.createConnector();
+            var bind = client.emit(new EmitBindQuery<>(sparql, conn, type), rebindHints);
             gather.subscribeTo(bind);
         }
 

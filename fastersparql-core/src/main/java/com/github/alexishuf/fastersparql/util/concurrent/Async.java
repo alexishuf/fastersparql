@@ -136,29 +136,35 @@ public class Async {
      *         current value of the field. If {@code <= 0}, it means the field was not changed,
      *         else a value {@code > 0} indicates that the field has been set to {@code offer}
      */
-    public static long maxAndGetDeltaRelease(VarHandle handle, Object holder, long offer) {
-        long ac = (long)handle.getAcquire(holder), ex = ac;
-        while (offer > ex && (ac=(long)handle.compareAndExchangeRelease(holder, ex, offer)) != ex)
-            ex = ac;
-        return offer-ac;
+    public static boolean maxRelease(VarHandle handle, Object holder, long offer) {
+        for (long ac, ex=(long)handle.getAcquire(holder); offer > ex; ex = ac) {
+            if ((ac=(long)handle.compareAndExchangeRelease(holder, ex, offer)) == ex)
+                return true;
+        }
+        return false;
     }
-    
+
     /**
-     * Atomically sets the field of {@code holder} accessed via {@code handle} to {@code offer}
-     * if its current value is less than {@code offer}.
-     *
-     * @param handle A {@link VarHandle} for a {@code int} field in {@code holder}
-     * @param holder object instance that has the {@code int} field accessed via {@code handle}
-     * @param offer a value that if larger than the current value, will be written to the
-     *              {@code int} field in {@code holder}
-     * @return the result of {@code offer-actual}, where {@code actual} has been updated to the
-     *         current value of the field. If {@code <= 0}, it means the field was not changed,
-     *         else a value {@code > 0} indicates that the field has been set to {@code offer}
+     * Equivalent to {@link #maxRelease(VarHandle, Object, long)} but uses
+     * {@link VarHandle#compareAndExchangeAcquire(Object...)}.
      */
-    public static int maxAndGetDeltaRelease(VarHandle handle, Object holder, int offer) {
-        int ac = (int)handle.getAcquire(holder), ex = ac;
-        while (offer > ex && (ac=(int)handle.compareAndExchangeRelease(holder, ex, offer)) != ex)
-            ex = ac;
-        return offer-ac;
+    public static boolean maxAcquire(VarHandle handle, Object holder, long offer) {
+        for (long ac, ex=(long)handle.getAcquire(holder); offer > ex; ex = ac) {
+            if ((ac=(long)handle.compareAndExchangeAcquire(holder, ex, offer)) == ex)
+                return true;
+        }
+        return false;
+    }
+
+    /**
+     * Equivalent to {@link #maxRelease(VarHandle, Object, long)} but updates a
+     * {@code int} field instead of a {@code long} field.
+     */
+    public static boolean maxRelease(VarHandle handle, Object holder, int offer) {
+        for (int ac, ex=(int)handle.getAcquire(holder); offer > ex; ex = ac) {
+            if ((ac=(int)handle.compareAndExchangeRelease(holder, ex, offer)) == ex)
+                return true;
+        }
+        return false;
     }
 }

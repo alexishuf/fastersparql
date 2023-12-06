@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
@@ -48,6 +49,7 @@ public class FSProperties {
     public static final String OP_JOIN_REORDER_WCO       = "fastersparql.op.join.reorder.wco";
     public static final String FED_ASK_POS_CAP           = "fastersparql.fed.ask.pos.cap";
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
+    public static final String EMIT_REQ_CHUNK_BATCHES    = "fastersparql.emit.request.chunk.batches";
     public static final String EMIT_LOG_STATS            = "fastersparql.emit.log-stats";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
     public static final String STORE_PREFER_IDS          = "fastersparql.store.prefer-ids";
@@ -69,6 +71,7 @@ public class FSProperties {
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
+    public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 8;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
     public static final boolean DEF_EMIT_LOG_STATS            = false;
@@ -91,6 +94,7 @@ public class FSProperties {
     private static int CACHE_OP_REDUCED_CAPACITY       = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
+    private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
     private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
     private static Boolean CACHE_USE_VECTORIZATION      = null;
     private static Boolean CACHE_USE_UNSAFE             = null;
@@ -191,6 +195,7 @@ public class FSProperties {
         CACHE_OP_REDUCED_CAPACITY       = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
+        CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
         CACHE_NETTY_EVLOOP_THREADS      = -1;
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
@@ -263,6 +268,27 @@ public class FSProperties {
         Boolean v = CACHE_EMIT_LOG_STATS;
         if (v == null)
             CACHE_EMIT_LOG_STATS = v = readBoolean(EMIT_LOG_STATS, DEF_EMIT_LOG_STATS);
+        return v;
+    }
+
+    /**
+     * {@link GatheringEmitter} fragments {@link Emitter#request(long)} into fragments which
+     * are sized to roughly correspond to {@code emitReqChunkBatches} batches. This fragmentation
+     * avoids the {@link GatheringEmitter} downstream receiver from being overwhelmed due to
+     * having its request multiplied by the number of upstreams of the {@link GatheringEmitter}.
+     *
+     * <p>The default value is {@link #DEF_EMIT_REQ_CHUNK_BATCHES} and this can be changed at
+     * runtime by setting the {@link #EMIT_REQ_CHUNK_BATCHES} property (and calling
+     * {@link #refresh()}).</p>
+     *
+     * @return the number of batches that a request chunk should comprise.
+     */
+    public static int emitReqChunkBatches() {
+        int v = CACHE_EMIT_REQ_CHUNK_BATCHES;
+        if (v == -1) {
+            v = readPositiveInt(EMIT_REQ_CHUNK_BATCHES, DEF_EMIT_REQ_CHUNK_BATCHES);
+            CACHE_EMIT_REQ_CHUNK_BATCHES = v;
+        }
         return v;
     }
 

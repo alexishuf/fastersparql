@@ -288,7 +288,7 @@ class GatherAndScatterTest {
             try {
                 ConsumerBarrier<B> consumerBarrier = new ConsumerBarrier<>(consumers);
                 for (int i = 0; i < nConsumers; i++)
-                    consumers.add(new C<>(scatter, consumerBarrier, i));
+                    consumers.add(new C<>(scatter.createConnector(), consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
                 try (var w = ThreadJournal.watchdog(System.out, 100)) {
                     w.start(10_000_000_000L).andThen(() -> {

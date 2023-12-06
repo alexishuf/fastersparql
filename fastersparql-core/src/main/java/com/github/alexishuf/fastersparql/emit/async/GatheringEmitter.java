@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -15,6 +16,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -29,7 +31,7 @@ import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleTerminationError;
 import static com.github.alexishuf.fastersparql.emit.async.Stateful.*;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
-import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxAndGetDeltaRelease;
+import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxRelease;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.numberOfTrailingZeros;
@@ -73,7 +75,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         this.vars         = vars;
         this.batchType    = batchType;
         int cols = Math.max(1, vars.size());
-        this.requestChunk = (short)Math.max(8, 8*batchType.preferredTermsPerBatch()/cols);
+        int b = FSProperties.emitReqChunkBatches();
+        this.requestChunk = (short)Math.max(b, b*batchType.preferredTermsPerBatch()/cols);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
@@ -207,10 +210,10 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             return;
         if (state == CREATED)
             state = ACTIVE;
-        long delta = maxAndGetDeltaRelease(REQ, this, rows);
+        boolean added = Async.maxRelease(REQ, this, rows);
         if (ENABLED)
-            journal("request rows=", rows, "delta=", delta, "on", this);
-        if (delta > 0) {
+            journal(added?"request, rows=":"nop-request, rows=", rows, "on", this);
+        if (added) {
             for (int i = 0, count = connectorCount; i < count; i++)
                 connectors[i].requestNextChunk(0);
         }
@@ -426,7 +429,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             int   ac      = (int )CONN_REQ.getAndAddRelease(this,       -received)-received;
             if (ac <= chunk>>1) {
                 int req = (int)Math.min(downReq, chunk);
-                if (req > 0 && maxAndGetDeltaRelease(CONN_REQ, this, req) > 0)
+                if (maxRelease(CONN_REQ, this, req))
                     up.request(req);
             }
         }

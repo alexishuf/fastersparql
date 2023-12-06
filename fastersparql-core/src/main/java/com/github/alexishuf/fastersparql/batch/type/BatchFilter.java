@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -12,9 +13,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
-import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxAndGetDeltaRelease;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 
@@ -92,10 +90,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         if (downstreamRequest <= 0)
             return;
         long rows = max(1, min(downstreamRequest, (long)REQ_LIMIT.getAcquire(this)));
-        long delta = maxAndGetDeltaRelease(DOWN_REQ, this, rows);
-        if (ENABLED)
-            journal("request delta=", delta, "reqLimit=", plainReqLimit, "on", this);
-        if (delta > 0)
+        if (Async.maxRelease(DOWN_REQ, this, rows))
             super.request(rows);
     }
 

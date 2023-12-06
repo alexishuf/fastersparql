@@ -146,7 +146,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         this.rightRecv = new RightReceiver(merger, passthrough, type, rightUpstream, listener);
         this.leftUpstream = bindings;
         int safeCols = Math.max(1, bindings.vars().size());
-        this.leftChunk = (short)Math.max(4, batchType.preferredTermsPerBatch()/safeCols);
+        this.leftChunk = (short)Math.max(8, 2*batchType.preferredTermsPerBatch()/safeCols);
         this.intBinding = new BatchBinding(lVars);
         bindings.subscribe(this);
         rightUpstream.subscribe(rightRecv);
