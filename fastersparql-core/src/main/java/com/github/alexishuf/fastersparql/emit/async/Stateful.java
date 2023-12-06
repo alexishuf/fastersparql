@@ -396,8 +396,7 @@ public abstract class Stateful {
                 current = lockCold();
         }
         current |= LOCKED_MASK;
-        if (ENABLED)
-            journal("locked, s=", current, flags, this);
+        //if (ENABLED) journal("locked, s=", current, flags, this);
         return current;
     }
 
@@ -432,8 +431,7 @@ public abstract class Stateful {
         while ((current=(int)S.compareAndExchangeRelease(this, ex, ex&UNLOCKED_MASK)) != ex)
             ex = current;
         current = ex&UNLOCKED_MASK;
-        if (ENABLED)
-            journal("unlckd, next=", current, flags, "now=", state(), flags, "on", this);
+        //if (ENABLED) journal("unlckd, next=", current, flags, "now=", state(), flags, "on", this);
         return current;
     }
 
