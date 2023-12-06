@@ -271,18 +271,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         }
     }
 
-//    public static int plainRepeatRebind;
-//    public static final VarHandle REPEAT_REBIND;
-//    static {
-//        try {
-//            REPEAT_REBIND = MethodHandles.lookup().findStaticVarHandle(BindingStage.class, "plainRepeatRebind", int.class);
-//        } catch (NoSuchFieldException | IllegalAccessException e) {
-//            throw new ExceptionInInitializerError(e);
-//        }
-//    }
-//    private CompressedBatch lastRebindC;
-//    private StoreBatch lastRebindI;
-
     @Override public Vars bindableVars() { return bindableVars; }
 
 
@@ -306,30 +294,9 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             requested = 0;
             leftPending = 0;
             leftUpstream.rebind(binding);
-            if (!extBindingVars.equals(binding.vars)) {
-                updateExtRebindVars(binding);
-//                lastRebindC = COMPRESSED.recycle(lastRebindC);
-//                lastRebindI =      STORE.recycle(lastRebindI);
-            }
-//            B storage = extBindingForLeftMerger;
-//            if (storage != null) {
-//                storage.clear();
-//                storage.putRowConverting(binding.batch, binding.row);
-//            }
+            if (extBindingVars.equals(binding.vars)) intBinding.remainder = binding;
+            else                                     updateExtRebindVars(binding);
 
-//            if (binding.batch instanceof CompressedBatch cb) {
-//                if (lastRebindC != null && lastRebindC.equals(0, cb, binding.row))
-//                    REPEAT_REBIND.getAndAdd(1);
-//                lastRebindC = COMPRESSED.empty(lastRebindC, cb.cols);
-//                lastRebindC.putRow(cb, binding.row);
-//            } else if (binding.batch instanceof StoreBatch sb) {
-//                if (lastRebindI != null && lastRebindI.equals(0, sb, binding.row))
-//                    REPEAT_REBIND.getAndAdd(1);
-//                lastRebindI =      STORE.empty(lastRebindI, sb.cols);
-//                lastRebindI.putRow(sb, binding.row);
-//            }
-
-            intBinding.remainder = binding;
             if (ResultJournal.ENABLED)
                 ResultJournal.rebindEmitter(this, binding);
             unlock(st);
@@ -349,6 +316,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             journal("updateExtRebindVars on", this, "to", bindingVars);
         extBindingVars = bindingVars;
         intBinding.vars(leftUpstream.vars().union(bindingVars));
+        intBinding.remainder = binding;
 
 //        Vars bindingVars = binding.vars;
 //        extBindingVars = bindingVars;
