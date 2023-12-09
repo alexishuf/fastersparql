@@ -24,6 +24,7 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.apache.commons.io.output.CloseShieldOutputStream;
 import org.apache.commons.io.output.TeeOutputStream;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -173,13 +174,9 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-//            try (var jWriter = new OutputStreamWriter(
-//                    new TeeOutputStream(new CloseShieldOutputStream(System.out),
-//                                        new FileOutputStream("/tmp/"+task.query()+".journal")));
-//                 var w = ThreadJournal.watchdog(jWriter, 100)) {
-//                var dp = debugPlan;
-//                var sn = (StreamNode)results;
-//                w.start(10_000_000_000L).andThen(() -> dump(task.query(), dp, sn));
+//            try (var watchdog = watchdog(25, task, debugPlan, results)) {
+//                dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
+//                watchdog.stop();
 //            }
             switch (msrOp.flowModel) {
                 case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
@@ -193,27 +190,36 @@ public class Measure implements Callable<Void>{
             log.error("Error during rep {} of task={}:", rep, task, t);
         }
 //        if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-//            dump(task.query(), debugPlan, (StreamNode)results);
+//            dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
 //        if (consumer instanceof Checker<?> c && !c.isValid())
-//            dump(task.query(), debugPlan, (StreamNode)results);
+//            dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
         return (int)((nanoTime()-start)/1_000_000L);
     }
 
-    @SuppressWarnings("unused") private void dump(QueryName qry, Plan plan, StreamNode sn) {
+    @SuppressWarnings("unused")
+    private Watchdog watchdog(@SuppressWarnings("SameParameterValue") int secs,
+                              MeasureTask task, Plan plan, Object results) {
+        String name = task.query().name()+"."+secs+"s";
+        var w = new Watchdog(() -> dump(task.query(), name, plan, (StreamNode)results));
+        w.start(secs*1_000_000_000L);
+        return w;
+    }
+
+    @SuppressWarnings("unused") private void dump(QueryName qry, String name, Plan plan, StreamNode sn) {
         Async.uninterruptibleSleep(500);
         System.out.println(qry.opaque().sparql());
         if (plan != null)
             System.out.println(plan);
-        File dotFile = new File("/tmp/"+qry.name()+".dot");
-        File journalFile = new File("/tmp/"+qry.name()+".journal");
-        File resultsFile = new File("/tmp/"+qry.name()+".results");
+        File dotFile = new File("/tmp/"+name+".dot");
+        File journalFile = new File("/tmp/"+name+".journal");
+        File resultsFile = new File("/tmp/"+name+".results");
         File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
         try (var dot     = new FileWriter(dotFile,     UTF_8);
              var journal = new OutputStreamWriter(
                      new TeeOutputStream(new CloseShieldOutputStream(System.out),
-                                         new FileOutputStream(journalFile, true)));
+                                         new FileOutputStream(journalFile, false)));
              var results = new FileWriter(resultsFile, UTF_8)) {
-            ThreadJournal.dumpAndReset(journal, 100);
+//            ThreadJournal.dumpAndReset(journal, 100);
             ResultJournal.dump(results);
             dot.append(sn.toDOT(WITH_STATE_AND_STATS));
             sn.renderDOT(svg, WITH_STATE_AND_STATS);
