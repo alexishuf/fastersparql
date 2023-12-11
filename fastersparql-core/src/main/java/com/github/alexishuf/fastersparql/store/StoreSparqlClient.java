@@ -987,6 +987,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             rebindPrefetchEnd(true);
         }
 
+        @Override public void cancel() {
+            int st = lock(statePlain());
+            try {
+                rebindPrefetchEnd(false);
+            } finally { unlock(st); }
+            super.cancel();
+        }
+
         private int bindingVarsChanged(int state, Vars bindingVars) {
             if (ENABLED)
                 journal("bindingVarsChanged bindingVars", bindingVars, "em=", this);
