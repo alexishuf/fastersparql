@@ -81,6 +81,7 @@ import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 import static java.lang.System.arraycopy;
 import static java.util.Arrays.copyOfRange;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
 
 public class StoreSparqlClient extends AbstractSparqlClient
@@ -983,16 +984,21 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public void rebindRelease() {
-            super.rebindRelease();
-            rebindPrefetchEnd(true);
+            try {
+                rebindPrefetchEnd(true);
+            } finally {
+                super.rebindRelease();
+            }
         }
 
         @Override public void cancel() {
             int st = lock(statePlain());
             try {
                 rebindPrefetchEnd(false);
-            } finally { unlock(st); }
-            super.cancel();
+            } finally {
+                unlock(st);
+                super.cancel();
+            }
         }
 
         private int bindingVarsChanged(int state, Vars bindingVars) {
@@ -1553,10 +1559,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final List<Expr> tmpRightFilters;
         /** If a lexical join hold lexical variants of the left-provided binding using the
          *  var names of the right operand instead of the left-side binding var name. */
-        private @Nullable BatchBinding lexJoinBinding;
-        /** Next values for {@code lexJoinBinding}, continuously swapped with
-         * {@code lexJoinBinding.batch} */
-        private @Nullable B nextLexBatch;
+        private @MonotonicNonNull BatchBinding lexJoinBinding;
+        /** Next {@code lexJoinBinding} with its own captive {@link Batch}, continuously
+         * swapped with {@code lexJoinBinding} */
+        private @MonotonicNonNull BatchBinding nextLexJoinBinding;
         /** The i-th lexIt iterates over variants of the {@code lexItCols[i]}-th binding var */
         private int @MonotonicNonNull[] lexItsCols;
         /** array of non-null lexical variant iterators or null if there is no lexical join */
@@ -1587,11 +1593,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             rightPlan      = right;
             lexIts         = EMPTY_LEX_ITS;
             lexItsCols     = ArrayPool.EMPTY_INT;
-            nextLexBatch   = null;
-            lookup         = null;
-            lexBindingCols = 0;
-            lexView        = null;
-            localView      = null;
             if (right instanceof Modifier m && !m.filters.isEmpty()) {
                 tmpRightFilters = new ArrayList<>(m.filters);
                 updateExtRebindVars(BatchBinding.ofEmpty(batchType()));
@@ -1601,15 +1602,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
 
-        @Override protected void doRelease() {
+        @SuppressWarnings("unchecked") @Override protected void doRelease() {
             super.doRelease();
-            B lexBatch;
-            if (lexJoinBinding != null) //noinspection unchecked
-                lexJoinBinding.attach(batchType.recycle(lexBatch=(B)lexJoinBinding.batch), 0);
-            else
-                lexBatch = null;
+            B lexBatch = null, nextLexBatch = null;
+            if (lexJoinBinding != null) {
+                lexBatch = (B)lexJoinBinding.batch;
+                nextLexBatch = (B)requireNonNull(nextLexJoinBinding).batch;
+                lexJoinBinding.attach(batchType.recycle(lexBatch), 0);
+            }
             if (nextLexBatch != lexBatch)
-                nextLexBatch = batchType.recycle(nextLexBatch);
+                batchType.recycle(nextLexBatch);
             if (convBindingBatches != null) {
                 for (int i = 0, n = convBindingBatches.size(); i < n; i++)
                     convBindingBatches.set(i, batchType.recycle(convBindingBatches.get(i)));
@@ -1755,7 +1757,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
 
                 // lazy initializations
-                nextLexBatch = batchType.empty(nextLexBatch, nVars);
+                if (nextLexJoinBinding == null)
+                    nextLexJoinBinding = new BatchBinding(lexJoinBinding.vars);
+                //noinspection unchecked
+                nextLexJoinBinding.batch = batchType.empty((B)nextLexJoinBinding.batch, nVars);
                 if (lookup == null)
                     lookup = dict.lookup();
                 if (lexView == null)
@@ -1776,15 +1781,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
             if (lexJoinBinding != null)
-                binding = lexRebindInternal(binding, lexJoinBinding);
+                binding = lexRebindInternal(binding);
             super.rebind(binding, rightEmitter);
         }
 
-        private BatchBinding lexRebindInternal(BatchBinding binding, BatchBinding lexJoinBinding) {
+        private BatchBinding lexRebindInternal(BatchBinding binding) {
             var convBinding = convIntBinding;
             convertBindingNode(convBinding, binding, 0);
 
-            @SuppressWarnings("unchecked") B lexBatch = (B)lexJoinBinding.batch;
+            @SuppressWarnings("unchecked") B lexBatch = (B)nextLexJoinBinding.batch;
             assert lexBatch != null && lexView != null && lookup != null;
             clearAndCopyNonLexBindings(convBinding, lexBatch);
             if (binding.vars.size() > 64)
@@ -1800,9 +1805,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
             }
             lexBatch.commitPut();
-            ++lexJoinBinding.sequence;
-            binding = lexJoinBinding;
-            return binding;
+            return swapLexJoinBinding();
+        }
+
+        private BatchBinding swapLexJoinBinding() {
+            BatchBinding b     = nextLexJoinBinding;
+            b.sequence         = ++lexJoinBinding.sequence;
+            nextLexJoinBinding = lexJoinBinding;
+            lexJoinBinding     = b;
+            return b;
         }
 
         private void clearAndCopyNonLexBindings(BatchBinding src, B dst) {
@@ -1848,13 +1859,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return false;
 
             //noinspection unchecked
-            B lexBatch = (B)lexJoinBinding.batch, nextLexBatch = this.nextLexBatch;
-            assert nextLexBatch != null && lookup != null && lexView != null && lexBatch != null;
+            B lexBatch = (B)lexJoinBinding.batch, nextLexBatch = (B)nextLexJoinBinding.batch;
+            assert lexBatch != null && nextLexBatch != null;
             int nVars = lexBatch.cols;
 
             clearAndCopyNonLexBindings(lexJoinBinding, nextLexBatch);
             if (nVars > 64)
-                copyNonLexBindingsExtra(lexJoinBinding, lexBatch);
+                copyNonLexBindingsExtra(lexJoinBinding, nextLexBatch);
             putLex(nextLexBatch, i, lookup);
 
             while (++i < nIts) {
@@ -1867,10 +1878,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 putLex(nextLexBatch, i, lookup);
             }
             nextLexBatch.commitPut();
-            this.nextLexBatch = lexBatch;
-            lexJoinBinding.batch = nextLexBatch;
-            ++lexJoinBinding.sequence;
-            rightEmitter.rebind(lexJoinBinding);
+            rightEmitter.rebind(swapLexJoinBinding());
             return true;
         }
     }

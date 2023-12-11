@@ -81,7 +81,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     private final short leftChunk;
     private int leftPending;
     private long requested;
-    private final BatchBinding intBinding;
+    private BatchBinding intBinding, nextIntBinding;
     protected int lastRebindSeq = -1;
     private Vars extBindingVars = Vars.EMPTY;
     protected final Vars outVars;
@@ -147,7 +147,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         this.leftUpstream = bindings;
         int safeCols = Math.max(1, bindings.vars().size());
         this.leftChunk = (short)Math.max(8, 2*batchType.preferredTermsPerBatch()/safeCols);
-        this.intBinding = new BatchBinding(lVars);
+        this.intBinding     = new BatchBinding(lVars);
+        this.nextIntBinding = new BatchBinding(lVars);
         bindings.subscribe(this);
         rightUpstream.subscribe(rightRecv);
         if (ResultJournal.ENABLED)
@@ -193,6 +194,10 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
+        }
+        if (nextIntBinding != null) {
+            nextIntBinding.remainder = null;
+            nextIntBinding.attach(null, 0);
         }
         super.doRelease();
     }
@@ -294,8 +299,12 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             requested = 0;
             leftPending = 0;
             leftUpstream.rebind(binding);
-            if (extBindingVars.equals(binding.vars)) intBinding.remainder = binding;
-            else                                     updateExtRebindVars(binding);
+            if (extBindingVars.equals(binding.vars)) {
+                intBinding.remainder     = binding;
+                nextIntBinding.remainder = binding;
+            } else {
+                updateExtRebindVars(binding);
+            }
 
             if (ResultJournal.ENABLED)
                 ResultJournal.rebindEmitter(this, binding);
@@ -315,8 +324,11 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         if (ENABLED)
             journal("updateExtRebindVars on", this, "to", bindingVars);
         extBindingVars = bindingVars;
-        intBinding.vars(leftUpstream.vars().union(bindingVars));
-        intBinding.remainder = binding;
+        Vars union = leftUpstream.vars().union(bindingVars);
+        intBinding    .vars(union);
+        nextIntBinding.vars(union);
+        intBinding    .remainder = binding;
+        nextIntBinding.remainder = binding;
 
 //        Vars bindingVars = binding.vars;
 //        extBindingVars = bindingVars;
@@ -514,28 +526,36 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         }
     }
 
+    private B advanceLB(B lb) {
+        rightRecv.upstream.rebindPrefetchEnd(false);
+        nextIntBinding.sequence = intBinding.sequence; // sync bindings sequence number
+        // swap intBinding and nextIntBinding
+        var intBinding  = this.intBinding;
+        intBinding      = nextIntBinding;
+        nextIntBinding  = this.intBinding;
+        this.intBinding = intBinding;
+        lb = lb.dropHead();
+        if (lb  == null) { // no linked batch, take fillingLB
+            lb        = fillingLB;
+            fillingLB = null;
+            if (lb != null && lb.rows == 0) // recycle if fillingLB was empty
+                lb = batchType.recycle(lb);
+        }
+        this.lb = lb;
+        return lb;
+    }
+
     private int startNextBinding(int st) {
         B lb = this.lb;
         short lr = (short)(this.lr+1);
         try {
             if ((st&IS_CANCEL_REQ) != 0)
                 startNextBindingWhenCancelled(st, lb);
-            if (lb == null) {
+            if (lb == null)
                 lr = -1;
-            } else if (lr >= lb.rows || lr < 0) {
-                if (lr > 1)
-                    rightRecv.upstream.rebindPrefetchEnd(false);
-                lb = lb.dropHead();
-                if (lb != null) {
-                    lr = 0;
-                } else {
-                    lb = fillingLB;
-                    fillingLB = null;
-                    if (lb != null && lb.rows == 0) lb = batchType.recycle(lb);
-                    lr = lb == null ? (short)-1 : 0;
-                }
-                this.lb = lb;
-            }// else: lb != null && lr < lb.rows
+            else if (lr >= lb.rows || lr < 0)
+                lr = (lb = advanceLB(lb)) == null ? (short)-1 : 0;
+            // else: lb != null && lr < lb.rows
             this.lr = lr;
             if (ENABLED)
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
