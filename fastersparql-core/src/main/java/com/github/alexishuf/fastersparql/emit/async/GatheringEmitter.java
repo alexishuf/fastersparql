@@ -180,9 +180,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             connectors[i].rebindPrefetch(binding);
     }
 
-    @Override public void rebindPrefetchEnd() {
+    @Override public void rebindPrefetchEnd(boolean sync) {
         for (int i = 0; i < connectorCount; i++)
-            connectors[i].rebindPrefetchEnd();
+            connectors[i].rebindPrefetchEnd(sync);
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -436,7 +436,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
         public void rebindPrefetch(BatchBinding binding) { up.rebindPrefetch(binding); }
 
-        public void rebindPrefetchEnd() { up.rebindPrefetchEnd(); }
+        public void rebindPrefetchEnd(boolean sync) { up.rebindPrefetchEnd(sync); }
 
         public void rebind(BatchBinding binding) {
             CONN_REQ.setRelease(this, 0);

@@ -79,7 +79,7 @@ public interface Rebindable {
      * {@link BatchBinding} to the same {@link Batch} but pointing to rows {@code >= binding.row}
      * will follow this call.
      *
-     * <p>The effects of {@link #rebindPrefetchEnd()} are implicit at entry on this method.</p>
+     * <p>The effects of {@link #rebindPrefetchEnd(boolean)} are implicit at entry on this method.</p>
      *
      * <p>Implementations of this method may start a background task to process all rows
      * {@code >= binding.row} in {@code binding.batch} in advance, reducing latency of future
@@ -93,16 +93,25 @@ public interface Rebindable {
     /**
      * If there is a background task spawned by {@link #rebindPrefetch(BatchBinding)}, stop it.
      *
-     * <p>This method will block until it is confirmed there is no such task or until the task
-     * is successfully stopped</p>
+     * <p>If {@code sync == true}, this method will block until it is confirmed there is no
+     * such task or until the task is successfully stopped. Else, this method will return ASAP
+     * and the prefetching will eventually stop. Note that if {@code sync == false}, the
+     * {@link BatchBinding} last passed to {@link #rebindPrefetch(BatchBinding)} and the then
+     * attached {@link Batch} must not be modified until this method is called again with
+     * {@code sync == true}</p>
      *
      * <p>There is no need to call this method before {@link #rebindPrefetch(BatchBinding)},
      * but this method <strong>MUST</strong> be called if no {@link #rebind(BatchBinding)} or
      * {@link #rebindPrefetch(BatchBinding)} calls will follow (to avoid wasteful processing)
      * and before {@code binding.batch} gets recycled (else the background tasks will process
      * garbage)</p>
+     *
+     * @param sync whether this call must wait until the background tasks have finished running
+     *             and the {@link BatchBinding} given in the last
+     *             {@link #rebindPrefetch(BatchBinding)} along with the then attached {@link Batch}
+     *             can be safely mutated;
      */
-    default void rebindPrefetchEnd()  {}
+    default void rebindPrefetchEnd(boolean sync)  {}
 
     /**
      * Set of vars that can be assigned via {@link #rebind(BatchBinding)}.

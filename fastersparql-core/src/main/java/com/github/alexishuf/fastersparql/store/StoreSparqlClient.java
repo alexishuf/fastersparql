@@ -740,8 +740,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //            }
 //        }
 
+        private Batch<?> prefetchedForBatch;
         private BatchBinding binding;
-        private Batch<?> batch;
         @SuppressWarnings("unused") private volatile int plainNextRow;
         private final short dictId;
         private byte chunkRows;
@@ -764,6 +764,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.sId          = lookup.find(tp.s);
             this.pId          = lookup.find(tp.p);
             this.oId          = lookup.find(tp.o);
+        }
+
+        @Override public String toString() {
+            return String.format("StoreSparqlClient$PrefetchTask@%x", System.identityHashCode(this));
         }
 
         @Override protected void doRelease() {
@@ -800,18 +804,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        void forceRequest(Batch<?> b, BatchBinding binding, short r) {
-            short snapshot = stop(), rows;
+        void request(BatchBinding binding, short r) {
+            short snapshot = stop();
             try {
-                rows = b.rows;
-                // reserve storage capacity for results of conversion
-                if (rows*unsrcIdsCols > unsrcIds.length)
-                    unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
-                if (rows*rowSkelCols > (rowSkels == null ? 0 : rowSkels.length))
-                    rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
-
                 this.binding   = binding;
-                this.batch     = b;
                 this.chunkRows = 1; // on first task(), process at most one row
                 NEXT_ROW.setRelease(this, (int) r);
             } finally {
@@ -819,14 +815,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        void requestIfChanged(Batch<?> batch, BatchBinding binding,
-                              short startRow) {
-            if (batch != this.batch)
-                forceRequest(batch, binding, startRow);
-        }
-
-        void awaitRow(short row, short tpEmitterWorker) {
-            if ((int)NEXT_ROW.getAcquire(this) <= row) {
+        void awaitRow(BatchBinding binding, short tpEmitterWorker) {
+            short row = binding.row;
+            int nextRow = (int)NEXT_ROW.getAcquire(this);
+            if (this.binding != binding || prefetchedForBatch != binding.batch) {
+                request(binding, row);
+                nextRow = 0;
+            }
+            if (nextRow <= row) {
                 chunkRows = 1;
                 avoidWorkers(currentWorker(), tpEmitterWorker);
                 if (!runNow() || (int)NEXT_ROW.getAcquire(this) <= row)
@@ -845,10 +841,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         short stop() {
             chunkRows = 0;
-            batch = null;
+            binding = null;
             short snapshot = disallowRun();
             NEXT_ROW.setRelease(this, 0);
             return snapshot;
+        }
+
+        void asyncStop() {
+            chunkRows = 0;    // makes current task() exit
+            binding   = null; // prevents next task()
         }
 
         /**
@@ -884,23 +885,33 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void task(int threadId) {
             short r = (short)(int)NEXT_ROW.getAcquire(this), rows;
-            Batch<?> b = this.batch;
-            if (b == null || r >= (rows=b.rows))
-                return;
+            var binding     = this.binding;
+            long[] rowSkels = this.rowSkels;
             long[] unsrcIds = this.unsrcIds;
-            BatchBinding binding = this.binding;
+            Batch<?> b;
+            if (binding == null || (b = binding.batch) == null || r >= (rows=b.rows))
+                return;
+            this.prefetchedForBatch = b;
             byte sInCol = this.sInCol, pInCol = this.pInCol, oInCol = this.oInCol;
             byte unsrcIdsCols = this.unsrcIdsCols;
             short base = (short)(r*unsrcIdsCols);
             byte rowSkelCols = this.rowSkelCols, i = 0;
+            if (rows*unsrcIdsCols > unsrcIds.length)
+                this.unsrcIds = unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
+            if (rows*rowSkelCols > (rowSkels == null ? 0 : rowSkels.length))
+                this.rowSkels = rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
+            assert rowSkelCols == 0 || (rowSkels != null && skelCol2InCol != null);
             for (; i < chunkRows && r < rows; ++i, base+=unsrcIdsCols) {
+                if (binding != this.binding || b != binding.batch) {
+                    awake();
+                    break;
+                }
                 if (sInCol >= 0) unsrcIds[base+sOutCol] = toUnsourcedId(sInCol, b, r, binding);
                 if (pInCol >= 0) unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, b, r, binding);
                 if (oInCol >= 0) unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, b, r, binding);
                 if (rowSkelCols != 0) {
                     int rsBase = r*rowSkelCols;
                     short[] skelCol2InCol = this.skelCol2InCol;
-                    long[] rowSkels = this.rowSkels;
                     for (int c = 0; c < rowSkelCols; c++) {
                         int bc = skelCol2InCol[c];
                         rowSkels[rsBase+c] = bc < 0
@@ -909,7 +920,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 NEXT_ROW.setRelease(this, ++r);
             }
-            if (r < rows) {
+            if (r < rows || binding != this.binding || b != binding.batch) {
                 chunkRows = CHUNK_ROWS;
                 awake();
             }
@@ -951,7 +962,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             BatchBinding empty = BatchBinding.ofEmpty(TYPE);
             rebindPrefetch(empty);
             rebind(empty);
-            rebindPrefetchEnd();
+            rebindPrefetchEnd(true);
             if (stats != null)
                 stats.rebinds = 0;
             if (ResultJournal.ENABLED)
@@ -970,7 +981,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public void rebindRelease() {
             super.rebindRelease();
-            rebindPrefetchEnd();
+            rebindPrefetchEnd(true);
         }
 
         private int bindingVarsChanged(int state, Vars bindingVars) {
@@ -1014,11 +1025,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-//        private CompressedBatch lastBindingC;
-//        private StoreBatch lastBindingI;
-
-        @Override public void rebindPrefetchEnd() {
-            prefetcher.allowRun(prefetcher.stop());
+        @Override public void rebindPrefetchEnd(boolean sync) {
+            if (sync)
+                prefetcher.allowRun(prefetcher.stop());
+            else
+                prefetcher.asyncStop();
         }
 
         @Override public void rebindPrefetch(BatchBinding binding) {
@@ -1030,7 +1041,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     st = bindingVarsChanged(st, binding.vars);
                 Batch<?> bb = binding.batch;
                 if (bb != null)
-                    prefetcher.forceRequest(bb, binding, binding.row);
+                    prefetcher.request(binding, binding.row);
             } finally { unlock(st); }
         }
 
@@ -1038,6 +1049,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (binding.sequence == lastRebindSeq)
                 return; //duplicate rebind() due to diamond in emitter graph
             lastRebindSeq = binding.sequence;
+            Batch<?> bb = binding.batch;
+            short bRow = binding.row;
+            if (bb == null || bRow >= bb.rows)
+                throw new IllegalArgumentException("invalid binding");
             Vars bVars = binding.vars;
             int st = resetForRebind(0, LOCKED_MASK);
             try {
@@ -1045,38 +1060,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     stats.onRebind(binding);
                 if (ResultJournal.ENABLED)
                     ResultJournal.rebindEmitter(this, binding);
-                if (!bVars.equals(lastBindingsVars)) {
+                if (!bVars.equals(lastBindingsVars))
                     st = bindingVarsChanged(st, bVars);
-//                    lastBindingC = COMPRESSED.recycle(lastBindingC);
-//                    lastBindingI =       TYPE.recycle(lastBindingI);
-                }
-//                if (binding.batch instanceof StoreBatch sb) {
-//                    if (lastBindingI != null && lastBindingI.equals(0, sb, binding.row)) {
-//                        new Exception("repeat rebind on "+this+" vars="+bVars+", terms="+sb.toString(binding.row)).printStackTrace();
-//                        REPEAT_REBIND.getAndAdd(1);
-//                    }
-//                    lastBindingI = TYPE.empty(lastBindingI, bVars.size());
-//                    lastBindingI.putRow(sb, binding.row);
-//                } else if (binding.batch instanceof CompressedBatch cb) {
-//                    if (lastBindingC != null && lastBindingC.equals(0, cb, binding.row)) {
-//                        new Exception("repeat rebind on "+this+" vars="+bVars+", terms="+cb.toString(binding.row)).printStackTrace();
-//                        REPEAT_REBIND.getAndAdd(1);
-//                    }
-//                    lastBindingC = COMPRESSED.empty(lastBindingC, bVars.size());
-//                    lastBindingC.putRow(cb, binding.row);
-//                }
-                Batch<?> bb = binding.batch;
-                short bRow = binding.row;
-                if (bb == null || bRow >= bb.rows)
-                    throw new IllegalArgumentException("invalid binding");
 
-                prefetcher.requestIfChanged(bb, binding, bRow);
                 int base = prefetcher.unsrcIdsCols *bRow;
                 int si = prefetcher.sOutCol < 0 ? -1 : base+prefetcher.sOutCol;
                 int pi = prefetcher.pOutCol < 0 ? -1 : base+prefetcher.pOutCol;
                 int oi = prefetcher.oOutCol < 0 ? -1 : base+prefetcher.oOutCol;
                 rowSkelBegin = cols*bRow;
-                prefetcher.awaitRow(bRow, preferredWorker);
+                prefetcher.awaitRow(binding, preferredWorker);
                 rowSkels = prefetcher.rowSkels;
                 long[] unsourcedIds = prefetcher.unsrcIds;
                 long s = si < 0 ? prefetcher.sId : unsourcedIds[si];
