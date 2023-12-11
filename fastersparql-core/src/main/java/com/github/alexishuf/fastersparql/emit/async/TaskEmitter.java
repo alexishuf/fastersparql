@@ -25,8 +25,6 @@ import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Task
                                                       implements Emitter<B> {
@@ -95,6 +93,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
 
     @Override public void cancel() {
+        rebindPrefetchEnd(false);
         int st = statePlain();
         if ((st&IS_CANCEL_REQ) != 0 || moveStateRelease(statePlain(), CANCEL_REQUESTING))
             awake();

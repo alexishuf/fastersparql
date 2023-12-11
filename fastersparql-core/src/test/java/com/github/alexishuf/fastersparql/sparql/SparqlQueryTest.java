@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.sparql;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
@@ -15,8 +14,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.STRONG;
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.REDUCED;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.STRONG;
 import static java.util.Comparator.naturalOrder;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -545,8 +544,8 @@ class SparqlQueryTest {
 
     static List<T> distinctData() {
         List<T> base = List.of(
-                new T("ASK { ?s ?p ?o }", WEAK, "ASK { ?s ?p ?o }"),
-                new T("ASK { ?s ?p ?o. }", WEAK, "ASK { ?s ?p ?o. }"),
+                new T("ASK { ?s ?p ?o }", REDUCED, "ASK { ?s ?p ?o }"),
+                new T("ASK { ?s ?p ?o. }", REDUCED, "ASK { ?s ?p ?o. }"),
                 new T("CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}", STRONG,
                       "CONSTRUCT {?o ?p ?s} WHERE {?s ?p ?o}"),
                 new T("SELECT REDUCED * WHERE {?s ?p ?o}", STRONG,
@@ -559,19 +558,19 @@ class SparqlQueryTest {
                       "SELECT \tdistinct * WHERE {?s ?p ?o}"),
                 new T("SELECT ?o WHERE {?s :p ?o}", STRONG,
                       "SELECT DISTINCT ?o WHERE {?s :p ?o}"),
-                new T("SELECT ?o WHERE {?s :p ?o}", WEAK,
+                new T("SELECT ?o WHERE {?s :p ?o}", REDUCED,
                       "SELECT REDUCED ?o WHERE {?s :p ?o}"),
                 new T("select ?o WHERE {?s :p ?o}", STRONG,
                       "select DISTINCT ?o WHERE {?s :p ?o}"),
-                new T("select ?o WHERE {?s :p ?o}", WEAK,
+                new T("select ?o WHERE {?s :p ?o}", REDUCED,
                       "select REDUCED ?o WHERE {?s :p ?o}"),
                 new T("Select ?o WHERE {?s :p ?o}", STRONG,
                       "Select DISTINCT ?o WHERE {?s :p ?o}"),
-                new T("Select ?o WHERE {?s :p ?o}", WEAK,
+                new T("Select ?o WHERE {?s :p ?o}", REDUCED,
                       "Select REDUCED ?o WHERE {?s :p ?o}"),
                 new T("SELECT\n?o WHERE {<a> :p ?o}", STRONG,
                       "SELECT DISTINCT\n?o WHERE {<a> :p ?o}"),
-                new T("SELECT\n?o WHERE {<a> :p ?o}", WEAK,
+                new T("SELECT\n?o WHERE {<a> :p ?o}", REDUCED,
                       "SELECT REDUCED\n?o WHERE {<a> :p ?o}")
         );
         List<T> list = new ArrayList<>();

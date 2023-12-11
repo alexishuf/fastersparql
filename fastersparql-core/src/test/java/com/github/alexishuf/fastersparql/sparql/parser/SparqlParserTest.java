@@ -108,7 +108,7 @@ class SparqlParserTest {
         ));
 
         //limit + offset
-        var lo0 = FS.modifiers(tp("?s", "?p", "?o"), null, 0, 2, 3, List.of());
+        var lo0 = FS.modifiers(tp("?s", "?p", "?o"), null, null, 2, 3, List.of());
         list.addAll(List.of(
                 new D("SELECT * WHERE { ?s ?p ?o } LIMIT 3 OFFSET 2", lo0),
                 new D("SELECT * WHERE { ?s ?p ?o } OFFSET 2 LIMIT 3 ", lo0),

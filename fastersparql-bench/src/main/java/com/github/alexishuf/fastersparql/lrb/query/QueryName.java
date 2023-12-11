@@ -58,6 +58,14 @@ public enum QueryName {
     B7,
     B8;
 
+    public QueryGroup group() {
+        return switch (this) {
+            case S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13, S14 -> QueryGroup.S;
+            case C1, C2, C3, C4, C5, C6, C7, C8, C9, C10 -> QueryGroup.C;
+            case B1, B2, B3, B4, B5, B6, B7, B8 -> QueryGroup.B;
+        };
+    }
+
     private static final List<Map<BatchType<?>, Batch<?>>> name2type2expected;
     static  {
         int n = values().length;
@@ -139,27 +147,22 @@ public enum QueryName {
     public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
         if (b == null || (this != C7 && this != C8 && this != C10))
             return b;
-        B fixed = amputateNumbersInNode(type, b, 0, b.rows);
+        B fixed = amputateNumbersInNode(type, b, b.rows);
         for (B n = b.next; n != null; n = n.next) {
-            B a = amputateNumbersInNode(type, n, 0, n.rows);
+            B a = amputateNumbersInNode(type, n, n.rows);
             fixed.quickAppend(a == n ? n.dup() : a);
         }
         return fixed;
     }
-    public <B extends Batch<B>> B dupRowAmputatingNumbers(BatchType<B> type, B b, int row) {
-        if (b == null || (this != C7 && this != C8 && this != C10))
-            return b;
-        return amputateNumbersInNode(type, b, row, row+1);
-    }
 
-    private <B extends Batch<B>> B amputateNumbersInNode(BatchType<B> type, B b, int beginRow, int endRow) {
+    private <B extends Batch<B>> B amputateNumbersInNode(BatchType<B> type, B b, int endRow) {
         if (this != C7 && this != C8 && this != C10)
             return b;
         B fixed = type.create(b.cols);
         fixed.reserveAddLocals(b.localBytesUsed());
         var tmp = Term.pooledMutable();
         var tr = new ByteRope();
-        for (int r = beginRow, cols = b.cols; r < endRow; r++) {
+        for (int r = 0, cols = b.cols; r < endRow; r++) {
             fixed.beginPut();
             for (int c = 0; c < cols; c++) {
                 if (Term.isNumericDatatype(b.shared(r, c))) {

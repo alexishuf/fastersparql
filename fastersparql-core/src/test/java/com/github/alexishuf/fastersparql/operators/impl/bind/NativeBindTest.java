@@ -24,8 +24,8 @@ import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.BindType.*;
 import static com.github.alexishuf.fastersparql.operators.bit.NativeBind.preferNative;
 import static com.github.alexishuf.fastersparql.operators.bit.NativeBind.preferNativeEmit;
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.STRONG;
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.WEAK;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.REDUCED;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.STRONG;
 import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.ALLOW_DEDUP;
 import static com.github.alexishuf.fastersparql.util.Results.DuplicatesPolicy.EXACT;
 import static com.github.alexishuf.fastersparql.util.Results.results;
@@ -54,7 +54,7 @@ class NativeBindTest {
                 var rSparqlTmp = new OpaqueSparqlQuery("SELECT * WHERE { ?x <http://example.org/p> ?y }");
                 var rSparql = switch (results.bindType()) {
                     case EXISTS,NOT_EXISTS -> rSparqlTmp.toAsk();
-                    default -> dedup ? rSparqlTmp.toDistinct(WEAK) : rSparqlTmp;
+                    default -> dedup ? rSparqlTmp.toDistinct(REDUCED) : rSparqlTmp;
                 };
                 var exRightSparql = results.bindType() == MINUS ? rSparql.toAsk() : rSparql;
                 for (int i = 0; i < operands; i++)

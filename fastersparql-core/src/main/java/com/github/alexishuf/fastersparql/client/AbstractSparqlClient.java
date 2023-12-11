@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +32,9 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     }
     protected final SparqlEndpoint endpoint;
     protected boolean bindingAwareProtocol;
+    protected boolean localInProcess;
     private boolean closeCalled;
+    protected DistinctType cheapestDistinct = DistinctType.REDUCED;
     @SuppressWarnings("unused") private int plainRefs;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -167,9 +170,9 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         }
     }
 
-    @Override public final boolean usesBindingAwareProtocol() {
-        return bindingAwareProtocol;
-    }
+    @Override public final boolean usesBindingAwareProtocol() { return bindingAwareProtocol; }
+    @Override public DistinctType          cheapestDistinct() { return cheapestDistinct; }
+    @Override public boolean               isLocalInProcess() { return localInProcess; }
 
     @Override public String toString() {
         String name = getClass().getSimpleName();

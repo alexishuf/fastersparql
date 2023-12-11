@@ -4,11 +4,17 @@ package com.github.alexishuf.fastersparql.batch.dedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowBucket;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
+import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 
 import java.util.Arrays;
 
+import static com.github.alexishuf.fastersparql.FSProperties.reducedBatches;
 import static com.github.alexishuf.fastersparql.batch.dedup.HashBitset.HASH_MASK;
+import static java.lang.Runtime.getRuntime;
 
 public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     /** Rows in the set. This works as a list of buckets of size 1. */
@@ -17,18 +23,65 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     private final int capacity;
     /** If bit {@code hash(r) & bitsetMask} is set, r MAY be present, else it certainly is not. */
     private long[] bitset = HashBitset.get();
+    private final boolean big;
+    private boolean recycled;
 
-    public WeakDedup(BatchType<B> batchType, int cols) {
+    private static final int THREADS = getRuntime().availableProcessors();
+    private static final int REDUCED_POOL_CAPACITY = 16*THREADS;
+    @SuppressWarnings("unchecked") private static LIFOPool<RowBucket<?>>[] POOLS = new LIFOPool[10];
+
+    @SuppressWarnings("unchecked")
+    private static <B extends Batch<B>> LIFOPool<RowBucket<B>> bucketPool(BatchType<B> bt) {
+        int id = bt.id;
+        if (POOLS[id] == null)
+            registerBatchType(bt);
+        return (LIFOPool<RowBucket<B>>)(Object)POOLS[id];
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <B extends Batch<B>> void registerBatchType(BatchType<B> bt) {
+        int id = bt.id;
+        var pools = POOLS;
+        if (id > pools.length) // grow POOLS, if necessary
+            POOLS = pools = Arrays.copyOf(pools, pools.length << 1);
+        if (pools[id] == null) { // only create pool once
+            var pool = new LIFOPool<>(RowBucket.class, REDUCED_POOL_CAPACITY);
+            pools[id] = (LIFOPool<RowBucket<?>>)(Object)pool;
+            PoolCleaner.INSTANCE.monitor(pool); // clear refs of buckets removed from pool
+            // prime pool
+            int capacity = Math.min(Short.MAX_VALUE, bt.preferredTermsPerBatch()*reducedBatches());
+            for (int thread = 0; thread < THREADS; thread++)
+                pool.offer(bt.createBucket(capacity, 1));
+        }
+    }
+
+    public WeakDedup(BatchType<B> batchType, int cols, DistinctType type) {
         super(batchType, cols);
         int rowsCapacity = batchType.preferredTermsPerBatch()/cols;
-        this.rows = batchType.createBucket(rowsCapacity, cols);
-        this.rows.maximizeCapacity();
-        this.capacity = this.rows.capacity();
+        RowBucket<B> rows = null;
+        this.big = DistinctType.WEAK.compareTo(type) < 0;
+        if (this.big) {
+            rowsCapacity = Math.min(Short.MAX_VALUE, rowsCapacity*reducedBatches());
+            if ((rows = bucketPool(batchType).get()) != null)
+                rows.clear(rowsCapacity, cols);
+        }
+        if (rows == null)
+            rows = batchType.createBucket(rowsCapacity, cols);
+        rows.maximizeCapacity();
+        this.rows     = rows;
+        this.capacity = rows.capacity();
         if (this.capacity > HashBitset.BS_BITS)
             throw new AssertionError("bucket capacity > HashBitset.BS_BITS");
     }
 
+    @Override public String toString() {
+        return String.format("%s(%d)@%x", getClass().getSimpleName(), rows.capacity(),
+                             System.identityHashCode(this));
+    }
+
     @Override public void clear(int cols) {
+        if (recycled)
+            throw new InvalidSparqlException("Recycled");
         Arrays.fill(bitset, 0L);
         if (rows.cols() != cols)
             rows.clear(rows.capacity(), cols);
@@ -38,7 +91,11 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public void recycleInternals() {
-        rows.recycleInternals();
+        if (recycled)
+            throw new IllegalStateException("Already recycled");
+        recycled = true;
+        if (!big || bucketPool(bt).offer(rows) != null)
+            rows.recycleInternals();
         bitset = HashBitset.recycle(bitset);
     }
 
@@ -59,6 +116,8 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * @return whether row is a duplicate.
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
+        if (recycled)
+            throw new InvalidSparqlException("Recycled");
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
         int bucket = (hash&Integer.MAX_VALUE)%capacity, wordIdx = (hash&HASH_MASK)>>6;
@@ -86,6 +145,8 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      * in the set.
      */
     @Override public boolean contains(B batch, int row) {
+        if (recycled)
+            throw new InvalidSparqlException("Recycled");
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
         if ((bitset[(hash&HASH_MASK) >> 6] & (1L << hash)) == 0)
@@ -97,6 +158,8 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
 
     /** Execute {@code consumer.accept(r)} for every row in this set. */
     @Override public <E extends Throwable> void forEach(ThrowingConsumer<B, E> consumer) throws E {
+        if (recycled)
+            throw new InvalidSparqlException("Recycled");
         for (B b : rows)
             if (b != null) consumer.accept(b);
     }

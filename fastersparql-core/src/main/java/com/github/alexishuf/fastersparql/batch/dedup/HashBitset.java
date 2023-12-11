@@ -11,13 +11,14 @@ public class HashBitset {
     private static final AffinityPool<long[]> POOL
             = new AffinityPool<>(long[].class, POOL_CAPACITY, POOL_THREADS);
 
-    public static final int BS_BITS   = 1 << 15;
-    public static final int BS_WORDS  = BS_BITS>>6;
+    public static final int BS_BITS   = 1<<16;
+    public static final int BS_WORDS  = BS_BITS/64;
     public static final int HASH_MASK = BS_BITS-1;
 
     static {
         assert Integer.bitCount(BS_WORDS) == 1;
-        for (int i = 0; i < 64; i++)
+        int baseline = 8*Runtime.getRuntime().availableProcessors();
+        for (int i = 0; i < baseline; i++)
             POOL.offer(new long[BS_WORDS]);
     }
 

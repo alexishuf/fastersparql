@@ -22,7 +22,7 @@ class DistinctTest {
         List<DistinctFactory> factories = List.of(
                 FS::distinct,
                 FS::reduced,
-                i -> FS.distinct(i, 2)
+                FS::dedup
         );
         List<Results> inputs = List.of(
                 // no duplicates

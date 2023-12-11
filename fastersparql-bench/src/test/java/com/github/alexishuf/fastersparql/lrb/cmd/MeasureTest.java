@@ -4,17 +4,15 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
-import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
@@ -44,7 +42,6 @@ import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsCo
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.lrb.sources.SourceKind.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
@@ -54,6 +51,7 @@ class MeasureTest {
     private static final Logger log = LoggerFactory.getLogger(MeasureTest.class);
     public static final String DATA_DIR_PROP = "fastersparql.bench.test.data-dir";
     private static File dataDir;
+    private static final boolean originalCrossDedup = FSProperties.crossDedup();
     private static boolean hasHDT, hasStore;
     private static boolean hasAllHDT, hasAllStore;
 
@@ -77,23 +75,24 @@ class MeasureTest {
 
     @AfterAll static void afterAll() {
         Batch.restoreValidationCheaper();
-        System.setProperty(FSProperties.OP_CROSS_DEDUP,
-                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP));
+        System.setProperty(FSProperties.OP_CROSS_DEDUP, String.valueOf(originalCrossDedup));
         FSProperties.refresh();
     }
 
     private final List<File> tempDirs = new ArrayList<>();
 
-    @BeforeEach void setUp() {
-        NettyChannelDebugger.flushActive();
+    private static void disableCrossDedup() {
         System.setProperty(FSProperties.OP_CROSS_DEDUP, "false");
         FSProperties.refresh();
     }
 
+    @BeforeEach void setUp() {
+        NettyChannelDebugger.flushActive();
+    }
+
     @AfterEach void tearDown() {
         NettyChannelDebugger.flushActive();
-        System.setProperty(FSProperties.OP_CROSS_DEDUP,
-                           String.valueOf(FSProperties.DEF_OP_CROSS_DEDUP));
+        System.setProperty(FSProperties.OP_CROSS_DEDUP, String.valueOf(originalCrossDedup));
         FSProperties.refresh();
         for (File d : tempDirs) {
             if (d.isDirectory()) {
@@ -147,6 +146,8 @@ class MeasureTest {
                 "--cool-ms", "1", // minimal amount, just to touch the code
                 "--reps", Integer.toString(nReps),
                 "--seed", "728305461",
+                "--no-weaken-distinct",
+                "--weaken-distinct-B",
                 "--consumer", consumer.name(),
                 "--flow", flowModel.name()
         ));
@@ -163,14 +164,14 @@ class MeasureTest {
             String ctx = m.task().query() + ", rep="+m.rep()+", rows="+ rows;
             assertTrue(m.error() == null || m.error().isEmpty(),
                     ctx+", error="+m.error());
-            assertTrue(m.firstRowNs() >= 0, "firstRowNs="+m.firstRowNs()+", "+ctx);
-            assertTrue(m.allRowsNs() >= 0, "allRowsNs="+m.allRowsNs()+", "+ctx);
-            assertTrue(rows >= 0, "negative row count for "+m.task()+ctx);
             int exRows = expectedRows.getOrDefault(m.task().query(), -1);
             if (exRows == -1)
                 expectedRows.put(m.task().query(), rows);
             else
                 assertEquals(exRows, rows, "unstable row count "+ctx);
+            assertTrue(m.firstRowNs() >= 0, "firstRowNs="+m.firstRowNs()+", "+ctx);
+            assertTrue(m.allRowsNs() >= 0, "allRowsNs="+m.allRowsNs()+", "+ctx);
+            assertTrue(rows >= 0, "negative row count for "+m.task()+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
             log.debug("{}, rep {} rows={}, allRows={}us", m.task().query(), m.rep(),
@@ -181,26 +182,23 @@ class MeasureTest {
 
     public static void main(String[] args) {
         beforeAll();
-        String uri = "file://" + dataDir + "/LMDB";
-        try (var client = new StoreSparqlClient(SparqlEndpoint.parse(uri))) {
-//            var emitter = client.emit(COMPRESSED, new OpaqueSparqlQuery("""
-//                SELECT ?predicate ?object WHERE {
-//                  ?drug <http://purl.org/dc/elements/1.1/title> "Adenine (JAN/USP)"
-//                }"""), Vars.EMPTY);
+        String uriA = "file://" + dataDir + "/LinkedTCGA-A";
+        String uriM = "file://" + dataDir + "/LinkedTCGA-M";
+        String uriE = "file://" + dataDir + "/LinkedTCGA-E";
+        try (var clientA = new StoreSparqlClient(SparqlEndpoint.parse(uriA));
+             var clientM = new StoreSparqlClient(SparqlEndpoint.parse(uriM));
+             var clientE = new StoreSparqlClient(SparqlEndpoint.parse(uriE))) {
             var query = new OpaqueSparqlQuery("""
-                    SELECT * WHERE {
-                        ?imdbactor <http://data.linkedmdb.org/resource/movie/actor_name> ?actor_name .
-                        ?movie <http://data.linkedmdb.org/resource/movie/actor> ?imdbactor .
-                        ?movie <http://purl.org/dc/terms/date> ?movieDate .
-                        FILTER(str(?actor_name) = str(?actor_name_en))
+                    ASK {
+                        ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> <http://tcga.deri.ie/TCGA-D9-A1X3>
                     }""");
-            var names = Emitters.ofBatch(Vars.of("actor_name_en"),
-                    COMPRESSED.convert(TermBatch.of(termList("\"John Merivale\"@en"))));
-            var lexJoined = client.emit(new EmitBindQuery<>(query, names, BindType.JOIN), Vars.EMPTY);
-            var em = client.emit(
-                    new EmitBindQuery<>(new OpaqueSparqlQuery("SELECT * WHERE { ?movie <http://purl.org/dc/terms/title> ?movieTitle. }"),
-                                        lexJoined, BindType.JOIN),
-                    Vars.of("movie"));
+            var emA = clientA.emit(COMPRESSED, query, Vars.EMPTY);
+            var emM = clientM.emit(COMPRESSED, query, Vars.EMPTY);
+            var emE = clientE.emit(COMPRESSED, query, Vars.EMPTY);
+            var em = new GatheringEmitter<>(COMPRESSED, Vars.EMPTY);
+            em.subscribeTo(emA);
+            em.subscribeTo(emM);
+            em.subscribeTo(emE);
             CompressedBatch acc;
             try (var w = ThreadJournal.watchdog(System.out, 100)) {
                 w.start(10_000_000_000L).andThen(() -> dump(em, true));
@@ -225,7 +223,6 @@ class MeasureTest {
             ThreadJournal.dumpAndReset(journal, 100);
             ResultJournal.dump(results);
             node.renderDOT(new File("/tmp/main.svg"), WITH_STATE_AND_STATS);
-            System.err.println("DUMP");
         } catch (IOException e) {//noinspection CallToPrintStackTrace
             e.printStackTrace();
         }
@@ -246,12 +243,14 @@ class MeasureTest {
 
     @ParameterizedTest @MethodSource("test")
     void testSQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+        disableCrossDedup();
         doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, ITERATE);
         doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
     void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+        disableCrossDedup();
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
 //        System.out.printf("""
@@ -265,8 +264,10 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-//        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, ITERATE);
-        doTest(sourceKind, jsonPlans, "B2", sel, COUNT, EMIT);
+        // B2: dedup too slow
+        // B5: slow
+        // B6: slow -- 5m with modified plan
+        doTest(sourceKind, jsonPlans, "B[134678]", sel, COUNT, EMIT);
     }
 
     @RepeatedTest(10) void testS10Unexpected() throws Exception {

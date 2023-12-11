@@ -158,7 +158,7 @@ public class Optimizer extends CardinalityEstimator {
                 filters.addAll(tmpFilters);
             } else {
                 var filters = new ArrayList<>(tmpFilters);
-                p = new Modifier(p, null, 0, 0, MAX_VALUE, filters);
+                p = new Modifier(p, null, null, 0, MAX_VALUE, filters);
             }
             tmpFilters.clear();
             return p;
@@ -195,7 +195,7 @@ public class Optimizer extends CardinalityEstimator {
                             ops[i] = join.op(i);
                         subJoin = new Join(ops);
                     }
-                    join.replace(0, childIdx + 1, new Modifier(subJoin, null, 0, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
+                    join.replace(0, childIdx + 1, new Modifier(subJoin, null, null, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
                     tmpFilters.clear();
                 }
             }

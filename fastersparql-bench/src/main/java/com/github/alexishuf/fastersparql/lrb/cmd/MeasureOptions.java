@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
+import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.slf4j.Logger;
@@ -16,8 +18,10 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Random;
 
+import static com.github.alexishuf.fastersparql.FSProperties.OP_WEAKEN_DISTINCT;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleSleep;
+import static java.lang.System.setProperty;
 
 @Command
 public class MeasureOptions {
@@ -127,6 +131,21 @@ public class MeasureOptions {
     @Option(names = "--seed", description = "Seed for the random generator")
     public void seed(long seed) {
         random = new Random(seed);
+    }
 
+    @Option(names = {"--weaken-distinct"}, negatable = true, description = "Use fixed-cost" +
+            "implementation of distinct for all queries other than B* queries.")
+    public boolean weakenDistinct = false;
+
+    @Option(names = {"--weaken-distinct-B"}, negatable = true, defaultValue = "true",
+            fallbackValue = "true", description = "Use fixed-cost cheaper distinct " +
+            "implementation that may not remove all duplicates")
+    public boolean weakenDistinctForBQueries = true;
+
+    void updateWeakenDistinct(QueryName queryName) {
+        boolean weaken = queryName.group() == QueryGroup.B
+                ? weakenDistinctForBQueries
+                : weakenDistinct;
+        setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weaken));
     }
 }

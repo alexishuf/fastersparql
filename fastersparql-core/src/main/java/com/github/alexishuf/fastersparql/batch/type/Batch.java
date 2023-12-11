@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
@@ -177,18 +178,18 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
-//    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
-//        if (MARK_POOLED) {
-//            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
-//                BatchEvent.Leaked.record(this);
-//                PoolEvent e;
-//                if (poolTraces != null && (e = poolTraces[1]) != null)
-//                    //noinspection CallToPrintStackTrace
-//                    new Exception("Leaked &batch="+ identityHashCode(this), e).printStackTrace();
-//            }
-//        }
-//    }
-//
+    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
+        if (MARK_POOLED) {
+            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
+                BatchEvent.Leaked.record(this);
+                PoolEvent e;
+                if (poolTraces != null && (e = poolTraces[1]) != null)
+                    //noinspection CallToPrintStackTrace
+                    new Exception("Leaked &batch="+System.identityHashCode(this), e).printStackTrace();
+            }
+        }
+    }
+
     /**
      * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
      * this instance. MAy be a no-op for some implementations.

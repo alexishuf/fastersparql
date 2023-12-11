@@ -26,6 +26,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
+import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.operators.plan.Union;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -37,7 +38,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 
-import static com.github.alexishuf.fastersparql.sparql.SparqlQuery.DistinctType.DEDUP;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 
 public class NativeBind {
     private static final Logger log = LoggerFactory.getLogger(NativeBind.class);
@@ -140,8 +141,10 @@ public class NativeBind {
                 sparql = operand;
                 client = clientForAlgebra;
             }
-            if (weakDedup)        sparql = sparql.toDistinct(DEDUP);
-            if (binding != null) sparql = sparql.bound(binding);
+            if (weakDedup && !(client.isLocalInProcess() && sparql instanceof TriplePattern))
+                sparql = sparql.toDistinct(client.cheapestDistinct());
+            if (binding != null)
+                sparql = sparql.bound(binding);
             boundIts.add(client.query(new ItBindQuery<>(sparql, queue, type)));
         }
         // If something goes wrong really fast, scatter could remove items from queues while
@@ -150,7 +153,7 @@ public class NativeBind {
         boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols);
+        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols, WEAK);
         else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
         else               return new MergeBIt<>(boundIts, bt, outVars, metrics);
         return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
@@ -172,7 +175,7 @@ public class NativeBind {
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
                 if (binding != null) sparql = sparql.bound(binding);
-                if (weakDedup)        sparql = sparql.toDistinct(DEDUP);
+                if (weakDedup)       sparql = sparql.toDistinct(q.client.cheapestDistinct());
                 left = q.client.query(new ItBindQuery<>(sparql, left, type, jm));
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
                 left = multiBind(left, type, projection, rUnion, binding, weakDedup, jm, null);
@@ -204,8 +207,8 @@ public class NativeBind {
                 sparql = operand;
                 client = clientForAlgebra;
             }
-            if (weakDedup)
-                sparql = sparql.toDistinct(DEDUP);
+            if (weakDedup && !(client.isLocalInProcess() && sparql instanceof TriplePattern))
+                sparql = sparql.toDistinct(client.cheapestDistinct());
             var conn = scatter.createConnector();
             var bind = client.emit(new EmitBindQuery<>(sparql, conn, type), rebindHints);
             gather.subscribeTo(bind);
@@ -214,7 +217,7 @@ public class NativeBind {
         boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
         Dedup<B> dedup;
-        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols);
+        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols, WEAK);
         else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
         else                return gather;
         return bt.filter(outVars, dedup).subscribeTo(gather);
@@ -232,7 +235,7 @@ public class NativeBind {
                     : type.resultVars(left.vars(), r.publicVars());
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
-                if (weakDedup)        sparql = sparql.toDistinct(DEDUP);
+                if (weakDedup)        sparql = sparql.toDistinct(q.client.cheapestDistinct());
                 left = q.client.emit(new EmitBindQuery<>(sparql, left, type), rebindHint);
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
                 left = multiBindEmit(left, type, projection, rUnion, rebindHint,

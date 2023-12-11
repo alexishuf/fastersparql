@@ -145,6 +145,7 @@ public class Measure implements Callable<Void>{
     }
 
     private int run(Federation fed, MeasureTask task, int rep, int timeoutMs) {
+        msrOp.updateWeakenDistinct(task.query());
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
 //        Stateful.INSTANCES.clear();

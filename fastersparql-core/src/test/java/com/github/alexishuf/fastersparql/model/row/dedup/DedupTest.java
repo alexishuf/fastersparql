@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -88,7 +89,7 @@ class DedupTest {
 
     private static final Function<Integer, Dedup<TermBatch>> wFac = new Function<>() {
         @Override public Dedup<TermBatch> apply(Integer c) {
-            return new WeakDedup<>(TermBatchType.TERM, 1);
+            return new WeakDedup<>(TermBatchType.TERM, 1, DistinctType.WEAK);
         }
         @Override public String toString() { return "WeakDedup"; }
     };
@@ -211,7 +212,7 @@ class DedupTest {
     static Stream<Arguments> testHasAndAdd() {
         return Stream.of(
                 StrongDedup.strongUntil(TermBatchType.TERM, 128, 1),
-                new WeakDedup<>(TermBatchType.TERM, 1),
+                new WeakDedup<>(TermBatchType.TERM, 1, DistinctType.WEAK),
                 new WeakCrossSourceDedup<>(TermBatchType.TERM, 1)
         ).map(Arguments::arguments);
     }

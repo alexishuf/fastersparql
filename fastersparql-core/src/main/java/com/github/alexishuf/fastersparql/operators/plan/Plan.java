@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -13,6 +12,7 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -371,29 +371,24 @@ public abstract sealed class Plan implements SparqlQuery
         return this;
     }
 
-    @Override public Plan toDistinct(DistinctType distinctType) {
-        int capacity = switch (distinctType) {
-            case STRONG -> FSProperties.distinctCapacity();
-            case WEAK   -> FSProperties.reducedCapacity();
-            case DEDUP  -> 1;
-        };
+    @Override public Plan toDistinct(DistinctType distinct) {
         if (this instanceof Modifier m) {
-            if (m.distinctCapacity == capacity) return m;
-            return new Modifier(m.left, m.projection, capacity, m.offset, m.limit, m.filters);
+            if (m.distinct == distinct) return m;
+            return new Modifier(m.left, m.projection, distinct, m.offset, m.limit, m.filters);
         }
-        return new Modifier(this, null, capacity, 0, Long.MAX_VALUE, null);
+        return new Modifier(this, null, distinct, 0, Long.MAX_VALUE, null);
     }
 
     @Override public Plan toAsk() {
         if (this instanceof Modifier m) {
             if (m.limit == 1 && m.projection == Vars.EMPTY)
                 return this;
-            return new Modifier(m.left, Vars.EMPTY, 0, m.offset, 1, m.filters);
+            return new Modifier(m.left, Vars.EMPTY, null, m.offset, 1, m.filters);
         } else if (this instanceof Query q) {
             if (q.sparql.isAsk()) return this;
             return new Query(q.sparql.toAsk(), q.client);
         }
-        return new Modifier(this, Vars.EMPTY, 0, 0, 1, null);
+        return new Modifier(this, Vars.EMPTY, null, 0, 1, null);
     }
 
     /**

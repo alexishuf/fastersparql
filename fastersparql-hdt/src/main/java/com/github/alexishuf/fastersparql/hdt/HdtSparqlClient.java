@@ -31,6 +31,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -72,6 +73,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     public HdtSparqlClient(SparqlEndpoint ep) {
         super(ep);
         this.bindingAwareProtocol = true;
+        this.cheapestDistinct = DistinctType.WEAK;
+        this.localInProcess = true;
         if (ep.protocol() != Protocol.FILE)
             throw new FSInvalidArgument("HdtSparqlClient requires file:// endpoint");
         var path = endpoint.asFile().getAbsolutePath();

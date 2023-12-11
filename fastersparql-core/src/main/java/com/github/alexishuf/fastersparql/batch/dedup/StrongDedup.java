@@ -28,36 +28,6 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     private static final int RH_THREADS       = ForkJoinPool.commonPool().getParallelism();
     private static final int PAR_RH_THRESHOLD = RH_THREADS == 1 ? MAX_VALUE : RH_THREADS*64;
 
-
-//    public static final VarHandle BA_CREATED, BA_REUSED, BA_RECYCLED, BA_ASYNC_RECYCLED, BA_LIVE;
-//    static {
-//        try {
-//            BA_CREATED        = MethodHandles.lookup().findStaticVarHandle(StrongDedup.class, "plainBACreated",       int.class);
-//            BA_REUSED         = MethodHandles.lookup().findStaticVarHandle(StrongDedup.class, "plainBAReused",        int.class);
-//            BA_RECYCLED       = MethodHandles.lookup().findStaticVarHandle(StrongDedup.class, "plainBARecycled",      int.class);
-//            BA_ASYNC_RECYCLED = MethodHandles.lookup().findStaticVarHandle(StrongDedup.class, "plainBAAsyncRecycled", int.class);
-//            BA_LIVE           = MethodHandles.lookup().findStaticVarHandle(StrongDedup.class, "plainBALive", int.class);
-//        } catch (NoSuchFieldException | IllegalAccessException e) {
-//            throw new ExceptionInInitializerError(e);
-//        }
-//        FS.addShutdownHook(StrongDedup::reportStats);
-//    }
-//    private static int plainBACreated, plainBAReused, plainBARecycled, plainBAAsyncRecycled, plainBALive;
-//    private static final ConcurrentHashMap<Bucket<?>[], Boolean> BA_LIVESET = new ConcurrentHashMap<>();
-//    private static void reportStats() {
-//        System.err.printf("""
-//                StrongDedup#Bucket[] instances:
-//                         created: %,6d
-//                          reused: %,6d
-//                        recycled: %,6d
-//                  async recycled: %,6d
-//                            live: %,6d
-//                """, (int)BA_CREATED.getAcquire(), (int)BA_REUSED.getAcquire(),
-//                (int)BA_RECYCLED.getAcquire(), (int)BA_ASYNC_RECYCLED.getAcquire(),
-//                (int)BA_LIVE.getAcquire());
-//        System.out.println("##");
-//    }
-
     /** Counter that is incremented for every addition */
     private volatile int version;
     /** How many items are stored across all buckets */
@@ -122,12 +92,8 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
         var buckets = this.buckets;
         //noinspection unchecked
         this.buckets = (Bucket<B>[])EMPTY_BUCKETS;
-//        BA_LIVE.getAndAddRelease(-1);
-//        BA_LIVESET.remove(buckets);
-//        BA_RECYCLED.getAndAddRelease(1);
-        if (bucketArrayPool.offer(buckets, buckets.length) != null) {
+        if (bucketArrayPool.offer(buckets, buckets.length) != null)
             asyncRecycleInternals(buckets);
-        }
     }
 
     private record BucketArrayGarbage<B extends Batch<B>>
@@ -156,7 +122,6 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     private void asyncRecycleInternals(Bucket<B>[] buckets) {
-//        BA_ASYNC_RECYCLED.getAndAddRelease(1);
         BUCKET_ARRAY_RECYCLER_QEUUE.addLast(new BucketArrayGarbage<>(buckets, bucketPool));
         LockSupport.unpark(BUCKET_ARRAY_RECYCLER);
     }

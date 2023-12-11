@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 
 public final class Values extends Plan {
     private @Nullable TermBatch values;
@@ -66,7 +67,7 @@ public final class Values extends Plan {
     private TermBatch dedupValues() {
         TermBatch dedupValues = this.dedupValues;
         if (dedupValues == null && values != null) {
-            var filter = TERM.filter(publicVars, new WeakDedup<>(TERM, values.cols));
+            var filter = TERM.filter(publicVars, new WeakDedup<>(TERM, values.cols, WEAK));
             this.dedupValues = dedupValues = filter.filterInPlace(values.dup());
             filter.release();
         }

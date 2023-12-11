@@ -58,7 +58,8 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         for(; i < d.length; ++i) {
             byte[] row = d[i];
             d[i] = null;
-            if (row != null && BYTE.offer(row, row.length) != null) break;
+            if (row != null && BYTE.offer(row, row.length) != null)
+                break; // stop recycling once pool rejects
         }
         Arrays.fill(d, i, d.length, null);
     }

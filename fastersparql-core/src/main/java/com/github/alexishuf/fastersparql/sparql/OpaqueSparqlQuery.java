@@ -82,8 +82,8 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         int i = sparql.skip(sparql.skip(verbBegin, len, UNTIL_WS), len, Rope.WS);
         DistinctType current;
         if      (sparql.hasAnyCase(i, DISTINCT_u8)) current = DistinctType.STRONG;
-        else if (sparql.hasAnyCase(i,  REDUCED_u8)) current = DistinctType.WEAK;
-        else if (sparql.hasAnyCase(i,   PRUNED_u8)) current = DistinctType.DEDUP;
+        else if (sparql.hasAnyCase(i,  REDUCED_u8)) current = DistinctType.REDUCED;
+        else if (sparql.hasAnyCase(i,   PRUNED_u8)) current = DistinctType.WEAK;
         else                                        current = null;
         if (current == distinctType)
             return this; // distinctType already satisfied
@@ -91,9 +91,9 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         b.b.append(sparql, 0, b.consumed = verbBegin+6);
         if (current == DistinctType.STRONG)
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+8; // skip over DISTINCT
-        else if (current == DistinctType.WEAK)
+        else if (current == DistinctType.REDUCED)
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+7; // skip over REDUCED
-        else if (current == DistinctType.DEDUP)
+        else if (current == DistinctType.WEAK)
             b.consumed = sparql.skipWS(b.consumed, sparql.len())+6; // skip over PRUNED
         b.b.append(' ').append(distinctType.sparql());
         b.growth = b.b.len()-b.consumed;

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -10,6 +11,10 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class StoreBatchType extends IdBatchType<StoreBatch> {
     public static final StoreBatchType STORE = new StoreBatchType();
+
+    static {
+        WeakDedup.registerBatchType(STORE);
+    }
 
     private static final class StoreBatchFactory implements BatchPool.Factory<StoreBatch> {
         @Override public StoreBatch create() {

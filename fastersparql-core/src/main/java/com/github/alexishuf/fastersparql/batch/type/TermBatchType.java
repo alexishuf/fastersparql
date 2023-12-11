@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -17,6 +18,10 @@ import static java.lang.Thread.currentThread;
 public final class TermBatchType extends BatchType<TermBatch> {
     public static final short DEF_BATCH_TERMS = PREFERRED_BATCH_TERMS*2;
     public static final TermBatchType TERM = new TermBatchType();
+
+    static {
+        WeakDedup.registerBatchType(TERM);
+    }
 
     private final LevelBatchPool<TermBatch> levelPool;
 

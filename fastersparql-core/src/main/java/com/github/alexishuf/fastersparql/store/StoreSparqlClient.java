@@ -36,6 +36,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.*;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -105,6 +106,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         SegmentRope[] prefixes = PREFIXES_POOL.get();
         this.prefixes = prefixes == null ? new SegmentRope[PREFIXES_MASK+1] : prefixes;
         this.bindingAwareProtocol = true;
+        this.cheapestDistinct = DistinctType.WEAK;
+        this.localInProcess = true;
         Path dir = endpoint.asFile().toPath();
         boolean validate = FSProperties.storeClientValidate();
         log.debug("Loading{} {}...", validate ? "/validating" : "", dir);
@@ -603,8 +606,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         int n             = join.opCount();
         var left          = bq.bindings;
         var bindNotifier  = new BindingNotifier(bq);
-        int weakDedup = outerMod != null && outerMod.distinctCapacity > 0
-                                         && outerMod.offset == 0 ? 1 : 0;
+        var weakDedup = outerMod != null && outerMod.distinct != null && outerMod.offset == 0
+                      ? DistinctType.WEAK : null;
         for (int i = 0; i < n; i++) {
             var op = join.op(i);
             var tp = op instanceof TriplePattern t ? t : (TriplePattern)op.left();
@@ -621,14 +624,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     op = modifyLastOperand(outerMod.filters, weakDedup, op);
                 vars = outVars;
                 opBindNotifier = bindNotifier;
-            } else if (weakDedup > 0) {
+            } else if (weakDedup != null) {
                 op = FS.distinct(op, weakDedup);
             }
             left = new StoreBindingBIt<>(left, BindType.JOIN, op, tp, s, p, o, vars,
                                          i == 0 ? bindNotifier : null, opBindNotifier, lookup);
         }
         if (outerMod != null && (outerMod.limit != Long.MAX_VALUE || outerMod.offset > 0
-                || outerMod.distinctCapacity > weakDedup)) {
+                || DistinctType.compareTo(outerMod.distinct, weakDedup) > 0)) {
             if (!outerMod.filters.isEmpty() || outerMod.projection != null) {
                 var m2 = (Modifier) outerMod.copy();
                 m2.filters = List.of();
@@ -692,7 +695,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //        return left;
 //    }
 
-    private Plan modifyLastOperand(List<Expr> filters, int dedupCap, Plan op) {
+    private Plan modifyLastOperand(List<Expr> filters, DistinctType distinctType, Plan op) {
         if (filters.isEmpty())
             return op; // no op
         if (op instanceof Modifier m) {
@@ -704,7 +707,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
             op = m.left();
         }
-        return new Modifier(op, null, dedupCap, 0, Long.MAX_VALUE, filters);
+        return new Modifier(op, null, distinctType, 0, Long.MAX_VALUE, filters);
     }
 
     /* --- --- --- emitters --- --- --- */
@@ -2190,7 +2193,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (m != null && (!mFilters.isEmpty()
                     || (m.limit > 1 && m.limit < Long.MAX_VALUE)
                     || m.offset > 0
-                    || m.distinctCapacity > 0)) {
+                    || m.distinct != null)) {
                 boolean needsLeftVars = false;
                 for (Expr expr : mFilters) {
                     if (!tpFree.containsAll(expr.vars())) { needsLeftVars = true; break; }
@@ -2203,7 +2206,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     procRightFree = tpFree;
                     preFilterMerger = null;
                 }
-                rightFilter = (BatchFilter<B>) m.processorFor(batchType, procRightFree, null, false);
+                rightFilter = (BatchFilter<B>)m.processorFor(batchType, procRightFree, null, m.distinct);
                 rightFilter.rebindAcquire();
             } else {
                 procRightFree = tpFree;

@@ -21,6 +21,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
 
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
+
 
 public final class Union extends Plan {
     public final boolean crossDedup;
@@ -81,7 +83,7 @@ public final class Union extends Plan {
     private <B extends Batch<B>> @Nullable Dedup<B> createDedup(BatchType<B> bt, boolean weak) {
         if (weak || crossDedup) {
             int cs = publicVars().size();
-            return weak ? new WeakDedup<>(bt, cs) : new WeakCrossSourceDedup<>(bt, cs);
+            return weak ? new WeakDedup<>(bt, cs, WEAK) : new WeakCrossSourceDedup<>(bt, cs);
         }
         return null;
     }

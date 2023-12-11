@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -26,9 +27,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.FSProperties.opportunisticDedupCapacity;
-import static com.github.alexishuf.fastersparql.FSProperties.reducedCapacity;
+import static com.github.alexishuf.fastersparql.FSProperties.*;
 import static com.github.alexishuf.fastersparql.batch.dedup.StrongDedup.strongUntil;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.STRONG;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 
 @SuppressWarnings("unused")
@@ -36,16 +38,16 @@ public final class Modifier extends Plan {
     private static final Logger log = LoggerFactory.getLogger(Modifier.class);
 
     public @Nullable Vars projection;
-    public int distinctCapacity;
+    public @Nullable DistinctType distinct;
     public long offset, limit;
     public List<Expr> filters;
 
-    public Modifier(Plan in, @Nullable Vars projection, int distinctCapacity,
+    public Modifier(Plan in, @Nullable Vars projection, @Nullable DistinctType distinct,
                     long offset, long limit, List<Expr> filters) {
         super(Operator.MODIFIER);
         this.left = in;
         this.projection = projection;
-        this.distinctCapacity = distinctCapacity;
+        this.distinct = distinct;
         this.offset = offset;
         this.limit = limit;
         this.filters = filters == null ? List.of() : filters;
@@ -53,19 +55,19 @@ public final class Modifier extends Plan {
 
     @Override public Modifier copy(@Nullable Plan[] ops) {
         Plan left = ops == null ? this.left : ops[0];
-        return new Modifier(left, projection, distinctCapacity, offset, limit, filters);
+        return new Modifier(left, projection, distinct, offset, limit, filters);
     }
 
-    public @Nullable Vars     projection() { return projection; }
-    public int distinctCapacity() { return distinctCapacity; }
-    public long                   offset() { return offset; }
-    public long                    limit() { return limit; }
-    public List<Expr>            filters() { return filters; }
+    public @Nullable Vars       projection() { return projection; }
+    public @Nullable DistinctType distinct() { return distinct; }
+    public long                     offset() { return offset; }
+    public long                      limit() { return limit; }
+    public List<Expr>              filters() { return filters; }
 
     public boolean isNoOp() {
         //noinspection DataFlowIssue
         return (projection == null || projection.equals(left.publicVars()))
-                && distinctCapacity == 0 && offset == 0 && limit == Long.MAX_VALUE
+                && distinct == null && offset == 0 && limit == Long.MAX_VALUE
                 && filters.isEmpty();
     }
 
@@ -81,10 +83,8 @@ public final class Modifier extends Plan {
             rb.append(OFFSET_LBRA).append(offset).append(']').append('(');
         if (limit > 0 && limit < Long.MAX_VALUE)
             rb.append(LIMIT_LBRA).append(limit).append(']').append('(');
-        if (distinctCapacity > 0) {
-            rb.append(DISTINCT);
-            if (distinctCapacity < Integer.MAX_VALUE)
-                rb.append(LBRA_WINDOW).append(distinctCapacity).append(']');
+        if (distinct != null) {
+            rb.append(distinct.sparql());
             rb.append('(');
         }
         if (projection != null)
@@ -96,15 +96,15 @@ public final class Modifier extends Plan {
 
     @Override public boolean equals(Object o) {
         return o instanceof Modifier m
-                && Objects.equals(m.projection,       projection)
-                && Objects.equals(m.distinctCapacity, distinctCapacity)
-                && Objects.equals(m.offset,           offset)
-                && Objects.equals(m.limit,            limit)
-                && Objects.equals(m.filters,          filters);
+                && Objects.equals(m.projection, projection)
+                && Objects.equals(m.distinct,   distinct)
+                && Objects.equals(m.offset,     offset)
+                && Objects.equals(m.limit,      limit)
+                && Objects.equals(m.filters,    filters);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(type, left, projection, distinctCapacity, offset, limit, filters);
+        return Objects.hash(type, left, projection, distinct, offset, limit, filters);
     }
 
     @Override public String toString() {
@@ -112,7 +112,7 @@ public final class Modifier extends Plan {
         sb.append(algebraName()).append(left);
 
         if (!filters.isEmpty())                  sb.append(')');
-        if (distinctCapacity > 0)                sb.append(')');
+        if (distinct != null)                    sb.append(')');
         if (limit > 0 && limit < Long.MAX_VALUE) sb.append(')');
         if (offset > 0)                          sb.append(')');
         if (projection != null)                  sb.append(')');
@@ -125,10 +125,12 @@ public final class Modifier extends Plan {
             groupGraphPattern(sb.append(ASK_u8).append(' '), 0, PrefixAssigner.NOP);
         } else {
             sb.append(SELECT_u8).append(' ');
-            if      (distinctCapacity >  reducedCapacity()) sb.append(DISTINCT_u8).append(' ');
-            else if (distinctCapacity == reducedCapacity()) sb.append( REDUCED_u8).append(' ');
-            else if (distinctCapacity > 0)                  sb.append(  PRUNED_u8).append(' ');
-
+            switch (distinct) {
+                case STRONG  -> sb.append(DISTINCT_u8).append(' ');
+                case REDUCED -> sb.append(REDUCED_u8).append(' ');
+                case WEAK    -> sb.append(PRUNED_u8).append(' ');
+                case null    -> {}
+            }
             if (projection != null) {
                 for (var s : projection) sb.append('?').append(s).append(' ');
                 sb.unAppend(1);
@@ -158,51 +160,54 @@ public final class Modifier extends Plan {
     public <B extends Batch<B>>
     BIt<B> execute(BatchType<B> bt, @Nullable Binding binding, boolean weakDedup) {
         BIt<B> in = left().execute(bt, binding,
-                (weakDedup && offset <= 0) || distinctCapacity > 0);
-        return executeFor(in, binding, weakDedup && distinctCapacity == 0);
+                (weakDedup && offset <= 0) || distinct != null);
+        return executeFor(in, binding, weakDedup && distinct == null);
     }
 
     @Override
     public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
                                                   boolean weakDedup) {
-        boolean dedupIn = weakDedup || (distinctCapacity > 0 && opportunisticDedupCapacity());
-        return processed(left().emit(type, rebindHint, dedupIn), weakDedup);
+        boolean weakDedupIn = weakDedup || (distinct != null && opportunisticDedup());
+        var in = left().emit(type, rebindHint, weakDedupIn);
+        var pDedup = DistinctType.compareTo(distinct, weakDedupIn ? WEAK : null) > 0
+                   ? distinct : null;
+        var p = processorFor(type, in.vars(), null, pDedup);
+        if (p == null)
+            return in;
+        p.subscribeTo(in);
+        return p;
     }
 
     public <B extends Batch<B>>
     BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean weakDedup) {
-        var processor = processorFor(in.batchType(), in.vars(), binding, weakDedup);
+        var distinct = weakDedup ? WEAK : this.distinct;
+        var processor = processorFor(in.batchType(), in.vars(), binding, distinct);
         if (processor == null) return in;
         return new ProcessorBIt<>(in, processor, Metrics.createIf(this));
     }
 
     public <B extends Batch<B>> Emitter<B> processed(Emitter<B> in) {
-        return processed(in, false);
-    }
-
-    public <B extends Batch<B>> Emitter<B>
-    processed(Emitter<B> in, boolean weakDedup) {
-        var proc = processorFor(in.batchType(), in.vars(), null, weakDedup);
-        if (proc == null)
+        var p = processorFor(in.batchType(), in.vars(), null, distinct);
+        if (p == null)
             return in;
-        proc.subscribeTo(in);
-        return proc;
+        p.subscribeTo(in);
+        return p;
     }
 
     public <B extends Batch<B>>
     BatchProcessor<B> processorFor(BatchType<B> bt, Vars inVars,
-                                   @Nullable Binding binding, boolean weakDedup) {
+                                   @Nullable Binding binding, DistinctType distinct) {
         Vars outVars = projection == null ? inVars : projection;
         if (binding != null)
             outVars = outVars.minus(binding.vars());
         List<Expr> filters = binding == null ? this.filters : boundFilters(binding);
-        int dCap = distinctCapacity, cols = outVars.size();
+        int cols = outVars.size();
         long limit = this.limit;
 
         Dedup<B> dedup = null;
-        if      (cols == 0)                               limit = dCap > 0 || weakDedup ? 1 : limit;
-        else if (dCap >= reducedCapacity() && !weakDedup) dedup = strongUntil(bt, dCap, cols);
-        else if (dCap > 0)                                dedup = new WeakDedup<>(bt, cols);
+        if      (cols == 0)                               limit = distinct != null ? 1 : limit;
+        else if (distinct == STRONG && !weakenDistinct()) dedup = strongUntil(bt, distinctCapacity(), cols);
+        else if (distinct != null)                        dedup = new WeakDedup<>(bt, cols, distinct);
 
         BatchProcessor<B> processor;
         boolean slice = limit < Long.MAX_VALUE || offset > 0;
@@ -279,6 +284,13 @@ public final class Modifier extends Plan {
             this.dedup = dedup;
             skip = this.offset = offset;
             allowed = this.limit = limit;
+        }
+
+        @Override public String toString() {
+            var sb = new StringBuilder();
+            if (limit != Long.MAX_VALUE) sb.append("LIMIT " ).append(limit);
+            if (offset >              0) sb.append("OFFSET ").append(offset);
+            return sb.append(' ').append(dedup).toString();
         }
 
         @Override public void rebindAcquire() {

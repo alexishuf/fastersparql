@@ -40,7 +40,8 @@ public class FSProperties {
     public static final String WS_SERVER_BINDINGS        = "fastersparql.ws.server.bindings";
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
-    public static final String OP_REDUCED_CAPACITY       = "fastersparql.op.reduced.capacity";
+    public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
+    public static final String OP_REDUCED_BATCHES        = "fastersparql.op.reduced.batches";
     public static final String OP_CROSS_DEDUP            = "fastersparql.op.cross-dedup";
     public static final String OP_OPPORTUNISTIC_DEDUP    = "fastersparql.op.opportunistic-dedup";
     public static final String OP_JOIN_REORDER           = "fastersparql.op.join.reorder";
@@ -67,11 +68,12 @@ public class FSProperties {
     public static final int     DEF_WS_SERVER_BINDINGS        = 256;
     public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
-    public static final int     DEF_OP_REDUCED_CAPACITY       = 1<<16; // 64 Ki rows --> 512KiB
+    public static final int     DEF_OP_REDUCED_BATCHES        = 256;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
     public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 8;
+    public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
     public static final boolean DEF_EMIT_LOG_STATS            = false;
@@ -91,11 +93,12 @@ public class FSProperties {
     private static int CACHE_WS_SERVER_BINDINGS        = -1;
     private static int CACHE_BATCH_QUEUE_ROWS          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
-    private static int CACHE_OP_REDUCED_CAPACITY       = -1;
+    private static int CACHE_OP_REDUCED_BATCHES        = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
     private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
+    private static Boolean CACHE_OP_WEAKEN_DISTINCT     = null;
     private static Boolean CACHE_USE_VECTORIZATION      = null;
     private static Boolean CACHE_USE_UNSAFE             = null;
     private static Boolean CACHE_OP_CROSS_DEDUP         = null;
@@ -192,11 +195,12 @@ public class FSProperties {
         CACHE_WS_SERVER_BINDINGS        = -1;
         CACHE_BATCH_QUEUE_ROWS          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
-        CACHE_OP_REDUCED_CAPACITY       = -1;
+        CACHE_OP_REDUCED_BATCHES        = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
         CACHE_NETTY_EVLOOP_THREADS      = -1;
+        CACHE_OP_WEAKEN_DISTINCT        = null;
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
         CACHE_OP_CROSS_DEDUP            = null;
@@ -544,21 +548,45 @@ public class FSProperties {
     }
 
     /**
-     * fixed capacity of rows used to implement REDUCED.
+     * Whether {@code DISTINCT} should be transparently evaluated as {@code REDUCED}.
      *
-     * <p>Unlike a DISTINCT implemented with fixed-capacity, a query that uses REDUCED already
-     * expects a low-effort de-duplication, thus the value for this should be smaller than
-     * {@link FSProperties#distinctCapacity()}.</p>
+     * <p>This does not apply to {@code DISTINCT} clauses in queries sent to endpoints where
+     * {@link SparqlClient#isLocalInProcess()}{@code == false}.</p>
      *
-     * <p>The default is 128*1024 rows ({@link FSProperties#DEF_OP_REDUCED_CAPACITY}),
-     * which consumes 512KiB in row pointers.</p>
+     * <p>The default is {@link #DEF_OP_WEAKEN_DISTINCT} and this can be modified by setting
+     * the {@link #OP_WEAKEN_DISTINCT} java property at startup. Setting the property after
+     * startup may have no effect since the property value is loaded into a
+     * {@code public static final} field.</p>
+     *
+     * @return whether {@code DISTINCT} should be evaluated as {@code REDUCED}.
+     */
+    public static boolean weakenDistinct() {
+        Boolean v = CACHE_OP_WEAKEN_DISTINCT;
+        if (v == null)
+            CACHE_OP_WEAKEN_DISTINCT = v = readBoolean(OP_WEAKEN_DISTINCT, DEF_OP_WEAKEN_DISTINCT);
+        return Boolean.TRUE.equals(v);
+    }
+
+    /**
+     * fixed capacity of rows used to implement {@code REDUCED}.
+     *
+     * <p>Since {@code REDUCED} allow for both duplicate removal as well as non-removal, a
+     * de-duplication is implemented in constant-time (even under heavy hash collision)
+     * using a storage equivalent of this many <strong>batches</strong>. Note that unlike
+     * {@link #distinctCapacity()}, this is expressed in abtches since de-duplication cost
+     * is more important than de-duplication correctness.</p>
+     *
+     * <p>The default is {@link #DEF_OP_REDUCED_BATCHES} batches and can be configured via the
+     * {@link #OP_REDUCED_BATCHES} java property. Due to pooling, the old capacity may still
+     * be occasionally used if the property is changed at runtime after some queries using
+     * {@code REDUCED} have already been processed.</p>
      *
      * @return a positive ({@code n > 0}) integer
      */
-    public static @NonNegative int reducedCapacity() {
-        int i = CACHE_OP_REDUCED_CAPACITY;
+    public static @NonNegative int reducedBatches() {
+        int i = CACHE_OP_REDUCED_BATCHES;
         if (i < 0)
-            CACHE_OP_REDUCED_CAPACITY = i =  readPositiveInt(OP_REDUCED_CAPACITY, DEF_OP_REDUCED_CAPACITY);
+            CACHE_OP_REDUCED_BATCHES = i =  readPositiveInt(OP_REDUCED_BATCHES, DEF_OP_REDUCED_BATCHES);
         return i;
     }
 
@@ -596,7 +624,7 @@ public class FSProperties {
      *
      * @return 1 of opportunistic deduplication is enabled, 0 otherwise.
      */
-    public static boolean opportunisticDedupCapacity() {
+    public static boolean opportunisticDedup() {
         Boolean v = CACHE_OP_OPPORTUNISTIC_DEDUP;
         if (v == null)
             CACHE_OP_OPPORTUNISTIC_DEDUP = v = readBoolean(OP_OPPORTUNISTIC_DEDUP, DEF_OP_OPPORTUNISTIC_DEDUP);

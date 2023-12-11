@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
@@ -253,7 +254,7 @@ public class FS {
      * {@link Modifier}, apply to its first (and only) operand.
      *
      * <p>If {@code input} is a modifier, no-op values for parameters {@code projection},
-     * {@code distinctCapacity}, {@code offset}, {@code limit} and {@code filters} will be
+     * {@code distinct}, {@code offset}, {@code limit} and {@code filters} will be
      * replaced with the values set in {@code input}. In the specific case of {@code filters},
      * the expressions given in this call will be concatenated with any filters in {@code input}.</p>
      *
@@ -262,9 +263,9 @@ public class FS {
      *
      * @param input input of the modifier. May also be a {@link Modifier}.
      * @param projection If non-null applies a projection of the given vars over {@code input}
-     * @param distinctCapacity If 0, do not apply DISTINCT; If {@link Integer#MAX_VALUE}, apply
+     * @param distinct If 0, do not apply DISTINCT; If {@link Integer#MAX_VALUE}, apply
      *                       strict DISTINCT semantics; else apply weaker DISTINCT semantics
-     *                       but keep at most {@code distinctCapacity} rows in main memory, which
+     *                       but keep at most {@code distinct} rows in main memory, which
      *                       might lead to duplicate rows not being filtered-out.
      * @param offset discard the first {@code offset} rows that passed Filter and Distinct evaluation
      * @param limit discard all subsequent rows after {@code offset+limit} rows passed Filter
@@ -275,9 +276,9 @@ public class FS {
      *                {@link Object#toString()} evaluates to a valid SPARQL expression.
      */
     public static Plan modifiers(Plan input, @Nullable Vars projection,
-                                              int distinctCapacity, long offset, long limit,
+                                              DistinctType distinct, long offset, long limit,
                                               Collection<?> filters) {
-        boolean nop = distinctCapacity == 0
+        boolean nop = distinct == null
                 && offset == 0 && limit == Long.MAX_VALUE
                 && filters.isEmpty()
                 && (projection == null || projection.equals(input.publicVars()));
@@ -288,14 +289,14 @@ public class FS {
             input = input.left;
             if (projection == null)
                 projection = m.projection;
-            if (distinctCapacity == 0)
-                distinctCapacity = m.distinctCapacity;
+            if (distinct == null)
+                distinct = m.distinct;
             if (offset == 0)
                 offset = m.offset;
             if (limit == Long.MAX_VALUE)
                 limit = m.limit;
         }
-        return new Modifier(input, projection, distinctCapacity, offset, limit,
+        return new Modifier(input, projection, distinct, offset, limit,
                             parsed);
     }
 
@@ -308,10 +309,10 @@ public class FS {
      */
     public static Modifier limit(Plan input, long limit) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinctCapacity, m.offset,
+            return new Modifier(m.left, m.projection, m.distinct, m.offset,
                                   limit, m.filters);
         }
-        return new Modifier(input, null, 0, 0, limit, null);
+        return new Modifier(input, null, null, 0, limit, null);
     }
 
     /**
@@ -322,57 +323,54 @@ public class FS {
      */
     public static Modifier offset(Plan input, long offset) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinctCapacity, offset,
+            return new Modifier(m.left, m.projection, m.distinct, offset,
                                   m.limit, m.filters);
         }
-        return new Modifier(input, null, 0, offset, Long.MAX_VALUE, null);
+        return new Modifier(input, null, null, offset, Long.MAX_VALUE, null);
     }
 
     /** Equivalent to {@link FS#limit(Plan, long)} over {@link FS#offset(Plan, long)}. */
     public static Modifier slice(Plan input, long offset, long limit) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinctCapacity, offset,
+            return new Modifier(m.left, m.projection, m.distinct, offset,
                                   limit, m.filters);
         }
-        return new Modifier(input, null, 0, offset, limit, null);
+        return new Modifier(input, null, null, offset, limit, null);
     }
 
-    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link Integer#MAX_VALUE}. */
+    /** Equivalent to {@link FS#distinct(Plan, DistinctType)} with {@link Integer#MAX_VALUE}. */
     public static Modifier distinct(Plan input) {
-        return distinct(input, Integer.MAX_VALUE);
+        return distinct(input, DistinctType.STRONG);
     }
 
-    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#distinctCapacity()}. */
+    /** Equivalent to {@link FS#distinct(Plan, DistinctType)} with {@link DistinctType#STRONG}. */
     public static Modifier boundedDistinct(Plan input) {
-        return distinct(input, FSProperties.distinctCapacity());
+        return distinct(input, DistinctType.STRONG);
     }
 
-    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#reducedCapacity()}. */
+    /** Equivalent to {@link FS#distinct(Plan, DistinctType)} with {@link DistinctType#REDUCED}. */
     public static Modifier reduced(Plan input) {
-        return distinct(input, FSProperties.reducedCapacity());
+        return distinct(input, DistinctType.REDUCED);
     }
 
-    /** Equivalent to {@link FS#distinct(Plan, int)} with {@link FSProperties#opportunisticDedupCapacity()}. */
+    /** Equivalent to {@link FS#distinct(Plan, DistinctType)} with {@link DistinctType#WEAK}
+     * if {@link FSProperties#opportunisticDedup()}. */
     public static Modifier dedup(Plan input) {
-        return distinct(input, FSProperties.opportunisticDedupCapacity() ? 1 : 0);
+        return distinct(input,  FSProperties.opportunisticDedup() ? DistinctType.WEAK : null);
     }
 
     /**
-     * Deduplicate the rows from {@code input} keeping a history of at most {@code capacity}
+     * Deduplicate the rows from {@code input} keeping a history of at most {@code type}
      * previous rows from {@code input}.
      *
      * @param input source of rows to deduplicate
-     * @param capacity maximum number of previous rows to be kept in memory for performing
-     *                 de-duplication. {@link Integer#MAX_VALUE} will implement a proper
-     *                 DISTINCT. See also {@link FSProperties#distinctCapacity()},
-     *                 {@link FSProperties#reducedCapacity()} and
-     *                 {@link FSProperties#opportunisticDedupCapacity()}.
+     * @param type type de-duplication.
      */
-    public static Modifier distinct(Plan input, int capacity) {
+    public static Modifier distinct(Plan input, DistinctType type) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, capacity, m.offset, m.limit, m.filters);
+            return new Modifier(m.left, m.projection, type, m.offset, m.limit, m.filters);
         }
-        return new Modifier(input, null, capacity, 0, Long.MAX_VALUE, null);
+        return new Modifier(input, null, type, 0, Long.MAX_VALUE, null);
     }
 
     /**
@@ -386,9 +384,9 @@ public class FS {
         if (vars.equals(input.publicVars()))
             return input;
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, vars, m.distinctCapacity, m.offset, m.limit, m.filters);
+            return new Modifier(m.left, vars, m.distinct, m.offset, m.limit, m.filters);
         }
-        return new Modifier(input, vars, 0, 0, Long.MAX_VALUE, null);
+        return new Modifier(input, vars, null, 0, Long.MAX_VALUE, null);
     }
 
     private static List<Expr> parseFilters(Plan maybeModifier, Collection<?> filters) {
@@ -421,10 +419,10 @@ public class FS {
     public static Modifier filter(Plan input, Collection<?> filters) {
         var parsed = parseFilters(input, filters);
         if (input instanceof Modifier m) {
-            return new Modifier(input.left, m.projection, m.distinctCapacity,
+            return new Modifier(input.left, m.projection, m.distinct,
                                 m.offset, m.limit, parsed);
         } else {
-            return new Modifier(input, null, 0, 0, Long.MAX_VALUE,
+            return new Modifier(input, null, null, 0, Long.MAX_VALUE,
                                 parsed);
         }
     }
@@ -439,10 +437,10 @@ public class FS {
                 union.addAll(m.filters);
                 union.addAll(filters);
             }
-            return new Modifier(input.left, m.projection, m.distinctCapacity,
+            return new Modifier(input.left, m.projection, m.distinct,
                                 m.offset, m.limit, union);
         } else {
-            return new Modifier(input, null, 0, 0, Long.MAX_VALUE,
+            return new Modifier(input, null, null, 0, Long.MAX_VALUE,
                                 filters);
         }
     }

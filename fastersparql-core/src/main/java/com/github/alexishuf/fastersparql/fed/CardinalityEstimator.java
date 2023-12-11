@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.fed;
 
-import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -45,8 +43,6 @@ public abstract class CardinalityEstimator {
     };
 
     /* --- --- --- fields & lifecycle --- --- --- */
-    private final int lowDistinctCap = CompressedBatchType.COMPRESSED.preferredTermsPerBatch()/4;
-    private final int highDistinctCap = 2*FSProperties.reducedCapacity();
     protected final CompletableFuture<CardinalityEstimator> ready;
 
     public CardinalityEstimator(CompletableFuture<CardinalityEstimator> ready) {
@@ -85,12 +81,13 @@ public abstract class CardinalityEstimator {
                 cost = (cost+len)>>2;
         }
 
-        // If distinct capacity is too low or too high, reduce cost by 1/8 (12.5%)
-        // else if capacity within a range that will drop results without reasonable
-        // memory overhead, reduce cost by 1/4 (25%).
-        int dCap = modifier.distinctCapacity;
-        if (dCap > 0)
-            cost -= cost>>(dCap > lowDistinctCap && dCap < highDistinctCap ? 2 : 4);
+        // Apply a bonus depending on selectivity and cost of de-duplication
+        cost -= switch (modifier.distinct) {
+            case WEAK -> cost>>3; // 12.50% bonus (1/8) WeakDedup is fast but not that selective
+            case REDUCED -> cost>>2; // 25.00% bonus (1/4) still fast, but more selective
+            case STRONG -> cost>>4; //  6.25% bonus (1/16) selective, but dreadfully slow slow
+            case null   -> 0;
+        };
         return cost;
     }
 

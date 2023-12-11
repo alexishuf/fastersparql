@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.parser;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -11,6 +10,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.operators.plan.Values;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
@@ -26,6 +26,7 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
+import static com.github.alexishuf.fastersparql.sparql.DistinctType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -36,7 +37,7 @@ public class SparqlParser {
     private int start, pos, end;
     private final ExprParser exprParser = new ExprParser();
     private final GroupParser groupParser = new GroupParser();
-    private boolean distinct, reduce, dedup;
+    private DistinctType distinct;
     private long limit;
     private @Nullable Vars projection;
 
@@ -87,9 +88,7 @@ public class SparqlParser {
         pos = start;
         exprParser.termParser.prefixMap.resetToBuiltin();
         groupParser.reset();
-        reduce   = false;
-        distinct = false;
-        dedup    = false;
+        distinct = null;
         limit = Long.MAX_VALUE;
         projection = null;
         exprParser.input(query);
@@ -237,7 +236,7 @@ public class SparqlParser {
                 require(ASK_u8);
                 limit = 1;
                 projection = Vars.EMPTY;
-                distinct = reduce = dedup = false;
+                distinct = null;
             }
             case 's', 'S' -> pSelect();
             default -> throw ex("SELECT or ASK", pos);
@@ -252,9 +251,9 @@ public class SparqlParser {
         while (true) {
             switch (c) {
                 case '{', 'w', 'W', '\0' -> { return; }
-                case 'd', 'D'            -> { require(DISTINCT_u8); distinct = true; }
-                case 'r', 'R'            -> { require(REDUCED_u8);  reduce   = true; }
-                case 'p', 'P'            -> { require(PRUNED_u8);   dedup    = true; }
+                case 'd', 'D'            -> { require(DISTINCT_u8); distinct = STRONG; }
+                case 'r', 'R'            -> { require(REDUCED_u8);  distinct = REDUCED; }
+                case 'p', 'P'            -> { require(PRUNED_u8);   distinct = WEAK; }
                 case '*'                 -> { pos++; projection = null; }
                 case '('                 -> throw new InvalidSparqlException("binding vars to expressions '(expr AS ?var)' is not supported yet");
                 case 'f', 'F'            -> {
@@ -286,13 +285,9 @@ public class SparqlParser {
                 default -> throw ex("LIMIT/OFFSET", pos);
             }
         }
-        int distinctWindow;
-        if      (dedup)    distinctWindow = 1;
-        else if (reduce)   distinctWindow = FSProperties.reducedCapacity();
-        else if (distinct) distinctWindow = FSProperties.distinctCapacity();
-        else               distinctWindow = 0;
-        if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinctWindow > 0)
-            return FS.modifiers(where, projection, distinctWindow, offset, limit, List.of());
+
+        if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinct != null)
+            return FS.modifiers(where, projection, distinct, offset, limit, List.of());
         return where;
     }
 

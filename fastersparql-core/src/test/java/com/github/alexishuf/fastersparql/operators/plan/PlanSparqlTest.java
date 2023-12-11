@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.junit.jupiter.api.Test;
 
@@ -69,7 +69,7 @@ public class PlanSparqlTest {
                           <s> $p "27" .
                          }
                         }"""),
-                new D(FS.distinct(FS.exists(FS.filter(t1, "?p < 23", "NOT EXISTS {?p a rdf:Property}"), false, t4), FSProperties.reducedCapacity()), """
+                new D(FS.distinct(FS.exists(FS.filter(t1, "?p < 23", "NOT EXISTS {?p a rdf:Property}"), false, t4), DistinctType.REDUCED), """
                         SELECT REDUCED *
                         {
                          <s> $p "27" .

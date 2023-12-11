@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -13,6 +14,10 @@ import static java.lang.Thread.currentThread;
 
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
     public static final CompressedBatchType COMPRESSED = new CompressedBatchType();
+
+    static {
+        WeakDedup.registerBatchType(COMPRESSED);
+    }
 
     private static final class CompressedBatchFactory
             implements BatchPool.Factory<CompressedBatch> {

@@ -1,11 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 public interface SparqlQuery {
     /** Gets the SPARQL representation of this query. The representation may use prefixed IRIs. */
@@ -45,21 +42,4 @@ public interface SparqlQuery {
      */
     SparqlQuery bound(Binding binding);
 
-    enum DistinctType {
-        STRONG,
-        WEAK,
-        DEDUP;
-
-        private static final ByteRope DISTINCT_ROPE = new ByteRope("DISTINCT".getBytes(UTF_8));
-        private static final ByteRope  REDUCED_ROPE = new ByteRope( "REDUCED".getBytes(UTF_8));
-        private static final ByteRope   PRUNED_ROPE = new ByteRope(  "PRUNED".getBytes(UTF_8));
-
-        public ByteRope sparql() {
-            return switch (this) {
-                case STRONG -> DISTINCT_ROPE;
-                case WEAK   ->  REDUCED_ROPE;
-                case DEDUP  ->   PRUNED_ROPE;
-            };
-        }
-    }
 }

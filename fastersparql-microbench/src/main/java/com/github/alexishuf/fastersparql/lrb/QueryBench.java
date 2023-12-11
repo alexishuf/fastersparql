@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.OP_CROSS_DEDUP;
+import static com.github.alexishuf.fastersparql.FSProperties.OP_WEAKEN_DISTINCT;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.System.setProperty;
@@ -64,6 +65,7 @@ public class QueryBench {
     @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
     @Param({"ITERATE", "EMIT"}) MeasureOptions.FlowModel flowModel;
+    @Param({"false", "true"}) boolean weakenDistinct;
 //    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
@@ -187,6 +189,7 @@ public class QueryBench {
 
     @Setup(Level.Trial) public void trialSetup() throws IOException {
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
+        setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weakenDistinct));
         FSProperties.refresh();
         String dataDirPath = System.getProperty("fs.data.dir");
         if (dataDirPath == null || dataDirPath.isEmpty())

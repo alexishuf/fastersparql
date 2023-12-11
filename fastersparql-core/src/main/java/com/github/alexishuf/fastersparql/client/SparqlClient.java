@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQuery;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
@@ -82,6 +83,15 @@ public interface SparqlClient extends AutoCloseable {
      * and {@code MINUS} SPARQL operators.
      */
     boolean usesBindingAwareProtocol();
+
+    /** Cheapest {@link DistinctType} supported by the server. */
+    DistinctType cheapestDistinct();
+
+    /**
+     * Whether this {@link SparqlClient} executes queries within this JVM process against an
+     * in-memory collection of triples or a local file.
+     */
+    boolean isLocalInProcess();
 
     /**
      * Execute a SELECT or ASK query and retrieve a {@link BIt} over the solutions (rows)

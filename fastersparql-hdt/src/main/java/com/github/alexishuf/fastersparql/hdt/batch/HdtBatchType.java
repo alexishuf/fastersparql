@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -10,6 +11,10 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class HdtBatchType extends IdBatchType<HdtBatch> {
     public static final HdtBatchType HDT = new HdtBatchType();
+
+    static {
+        WeakDedup.registerBatchType(HDT);
+    }
 
     private static final class HdtBatchFactory implements BatchPool.Factory<HdtBatch> {
         @Override public HdtBatch create() {

@@ -118,8 +118,8 @@ public final class TermBatch extends Batch<TermBatch> {
     /* --- --- --- batch accessors --- --- --- */
 
     @Override public TermBatchType type()         { return TERM; }
-    @Override public int           rowsCapacity() { return arr.length/Math.max(1, cols); }
-    @Override public int          termsCapacity() { return arr.length; }
+    @Override public int           rowsCapacity() { return Math.min(Short.MAX_VALUE, arr.length/Math.max(1, cols)); }
+    @Override public int          termsCapacity() { return Math.min(Short.MAX_VALUE, arr.length); }
     @Override public int     totalBytesCapacity() { return arr.length*4; }
 
     @Override public boolean hasCapacity(int terms, int localBytes) { return terms <= arr.length; }
