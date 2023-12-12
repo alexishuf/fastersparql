@@ -283,8 +283,8 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         leftUpstream.rebindPrefetch(binding);
     }
 
-    @Override public void rebindPrefetchEnd(boolean sync) {
-        leftUpstream.rebindPrefetchEnd(sync);
+    @Override public void rebindPrefetchEnd() {
+        leftUpstream.rebindPrefetchEnd();
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -293,7 +293,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
         lastRebindSeq = binding.sequence;
         int st = resetForRebind(LEFT_TERM|RIGHT_TERM, RIGHT_STARVED|LOCKED_MASK);
         try {
-            rightRecv.upstream.rebindPrefetchEnd(true);
+            rightRecv.upstream.rebindPrefetchEnd();
             if (EmitterStats.ENABLED && stats != null)
                 stats.onRebind(binding);
             requested = 0;
@@ -516,7 +516,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             fillingLB = batchType.recycle(fillingLB);
         if (lb != null) {
             // wait to ensure right upstream will not read lb, then discard all remaining rows
-            rightRecv.upstream.rebindPrefetchEnd(true);
+            rightRecv.upstream.rebindPrefetchEnd();
             lb.rows = (short)(this.lr+1);
             lb.dropNext();
         }
@@ -527,7 +527,6 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
     }
 
     private B advanceLB(B lb) {
-        rightRecv.upstream.rebindPrefetchEnd(false);
         nextIntBinding.sequence = intBinding.sequence; // sync bindings sequence number
         // swap intBinding and nextIntBinding
         var intBinding  = this.intBinding;
@@ -562,7 +561,7 @@ public abstract class BindingStage<B extends Batch<B>> extends Stateful implemen
             if ((st&IS_CANCEL_REQ) == 0)
                 maybeRequestLeft();
             if (lb == null) {
-                rightRecv.upstream.rebindPrefetchEnd(true);
+                rightRecv.upstream.rebindPrefetchEnd();
                 if ((st & LEFT_TERM) == 0) st = unlock(st, 0, RIGHT_STARVED);
                 else                       st = terminateStage(st);
             } else {

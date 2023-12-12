@@ -135,8 +135,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         if (upstream != null) upstream.rebindPrefetch(binding);
     }
 
-    @Override public void rebindPrefetchEnd(boolean sync) {
-        if (upstream != null) upstream.rebindPrefetchEnd(sync);
+    @Override public void rebindPrefetchEnd() {
+        if (upstream != null) upstream.rebindPrefetchEnd();
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {

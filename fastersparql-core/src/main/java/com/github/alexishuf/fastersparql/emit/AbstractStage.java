@@ -71,8 +71,8 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         if (upstream != null) upstream.rebindPrefetch(binding);
     }
 
-    @Override public void rebindPrefetchEnd(boolean sync) {
-        if (upstream != null) upstream.rebindPrefetchEnd(sync);
+    @Override public void rebindPrefetchEnd() {
+        if (upstream != null) upstream.rebindPrefetchEnd();
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {

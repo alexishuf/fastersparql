@@ -948,7 +948,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private long[] rowSkels = EMPTY_LONG;
         private int rowSkelBegin;
         // ---------- fields below this line are accessed only on construction/rebind()
-        private final PrefetchTask prefetcher;
+        private final PrefetchTask pref;
         private int lastRebindSeq = -1;
         private final TriplePattern tp;
         private @MonotonicNonNull Vars lastBindingsVars;
@@ -962,11 +962,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.cols         = (byte) cols;
             this.tp           = tp;
             this.bindableVars = tp.allVars();
-            this.prefetcher   = new PrefetchTask(dictId, dict, tp);
+            this.pref = new PrefetchTask(dictId, dict, this);
             BatchBinding empty = BatchBinding.ofEmpty(TYPE);
             rebindPrefetch(empty);
             rebind(empty);
-            rebindPrefetchEnd(true);
+            rebindPrefetchEnd();
             if (stats != null)
                 stats.rebinds = 0;
             if (ResultJournal.ENABLED)
@@ -976,7 +976,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void doRelease() {
             try {
-                prefetcher.release();
+                pref.release();
                 releaseRef();
             } finally {
                 super.doRelease();
@@ -985,7 +985,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public void rebindRelease() {
             try {
-                rebindPrefetchEnd(true);
+                rebindPrefetchEnd();
             } finally {
                 super.rebindRelease();
             }
@@ -994,7 +994,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         @Override public void cancel() {
             int st = lock(statePlain());
             try {
-                rebindPrefetchEnd(false);
+                rebindPrefetchEnd();
             } finally {
                 unlock(st);
                 super.cancel();
@@ -1010,9 +1010,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
             if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
             if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
-            short snapshot = prefetcher.stop();
+            short snapshot = pref.stop();
             try {
-                prefetcher.setInCols(sInCol, pInCol, oInCol);
+                pref.setInCols(sInCol, pInCol, oInCol);
                 byte sc = (byte)vars.indexOf(tp.s);
                 byte pc = (byte)vars.indexOf(tp.p);
                 byte oc = (byte)vars.indexOf(tp.o);
@@ -1034,19 +1034,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (o0 != -1                        ) ++colsSet;
                 if (o1 != -1 && o1 != o0            ) ++colsSet;
                 if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
-                prefetcher.setupBindSkel(colsSet < cols, vars, bindingVars);
+                pref.setupBindSkel(colsSet < cols, vars, bindingVars);
                 return colsSet < cols ?   setFlagsRelease(state, HAS_UNSET_OUT)
                                       : clearFlagsRelease(state, HAS_UNSET_OUT);
             } finally {
-                prefetcher.allowRun(snapshot);
+                pref.allowRun(snapshot);
             }
         }
 
-        @Override public void rebindPrefetchEnd(boolean sync) {
-            if (sync)
-                prefetcher.allowRun(prefetcher.stop());
-            else
-                prefetcher.asyncStop();
+        @Override public void rebindPrefetchEnd() {
+            pref.allowRun(pref.stop());
         }
 
         @Override public void rebindPrefetch(BatchBinding binding) {
@@ -1056,9 +1053,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     return; // not rebind()able
                 if (!binding.vars.equals(lastBindingsVars))
                     st = bindingVarsChanged(st, binding.vars);
-                Batch<?> bb = binding.batch;
-                if (bb != null)
-                    prefetcher.request(binding, binding.row);
+                pref.request(binding);
             } finally { unlock(st); }
         }
 
@@ -1080,18 +1075,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (!bVars.equals(lastBindingsVars))
                     st = bindingVarsChanged(st, bVars);
 
-                int base = prefetcher.unsrcIdsCols *bRow;
-                int si = prefetcher.sOutCol < 0 ? -1 : base+prefetcher.sOutCol;
-                int pi = prefetcher.pOutCol < 0 ? -1 : base+prefetcher.pOutCol;
-                int oi = prefetcher.oOutCol < 0 ? -1 : base+prefetcher.oOutCol;
-                rowSkelBegin = cols*bRow;
-                prefetcher.awaitRow(binding, preferredWorker);
-                rowSkels = prefetcher.rowSkels;
-                long[] unsourcedIds = prefetcher.unsrcIds;
-                long s = si < 0 ? prefetcher.sId : unsourcedIds[si];
-                long p = pi < 0 ? prefetcher.pId : unsourcedIds[pi];
-                long o = oi < 0 ? prefetcher.oId : unsourcedIds[oi];
-
+                int dstRow = pref.awaitRow(binding);
+                int base = pref.unsrcIdsCols*dstRow;
+                rowSkels     = pref.rowSkels;
+                rowSkelBegin = cols*dstRow;
+                long[] unsourcedIds = pref.unsrcIds;
+                long s = pref.sOutCol < 0 ? pref.sId : unsourcedIds[base+pref.sOutCol];
+                long p = pref.pOutCol < 0 ? pref.pId : unsourcedIds[base+pref.pOutCol];
+                long o = pref.oOutCol < 0 ? pref.oId : unsourcedIds[base+pref.oOutCol];
                 switch (freeRoles) {
                     case       EMPTY_BITS -> it = spo.contains(s, p, o);
                     case         OBJ_BITS -> spo.values (s, p, (Triples.ValueIt )it);

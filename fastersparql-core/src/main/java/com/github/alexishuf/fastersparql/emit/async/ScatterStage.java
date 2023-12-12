@@ -228,7 +228,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             p.upstream.rebindRelease();
         }
         @Override public void rebindPrefetch(BatchBinding b) { p.upstream.rebindPrefetch(b); }
-        @Override public void rebindPrefetchEnd(boolean s)   { p.upstream.rebindPrefetchEnd(s); }
+        @Override public void rebindPrefetchEnd()            { p.upstream.rebindPrefetchEnd(); }
         @Override public Vars bindableVars()                 { return p.upstream.bindableVars(); }
 
         @Override public void rebind(BatchBinding binding)   {

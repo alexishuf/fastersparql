@@ -79,7 +79,7 @@ public interface Rebindable {
      * {@link BatchBinding} to the same {@link Batch} but pointing to rows {@code >= binding.row}
      * will follow this call.
      *
-     * <p>The effects of {@link #rebindPrefetchEnd(boolean)} are implicit at entry on this method.</p>
+     * <p>The effects of {@link #rebindPrefetchEnd()} are implicit at entry on this method.</p>
      *
      * <p>Implementations of this method may start a background task to process all rows
      * {@code >= binding.row} in {@code binding.batch} in advance, reducing latency of future
@@ -105,13 +105,8 @@ public interface Rebindable {
      * {@link #rebindPrefetch(BatchBinding)} calls will follow (to avoid wasteful processing)
      * and before {@code binding.batch} gets recycled (else the background tasks will process
      * garbage)</p>
-     *
-     * @param sync whether this call must wait until the background tasks have finished running
-     *             and the {@link BatchBinding} given in the last
-     *             {@link #rebindPrefetch(BatchBinding)} along with the then attached {@link Batch}
-     *             can be safely mutated;
      */
-    default void rebindPrefetchEnd(boolean sync)  {}
+    default void rebindPrefetchEnd()  {}
 
     /**
      * Set of vars that can be assigned via {@link #rebind(BatchBinding)}.
