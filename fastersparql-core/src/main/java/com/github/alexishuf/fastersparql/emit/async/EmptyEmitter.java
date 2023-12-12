@@ -14,7 +14,7 @@ import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 public class EmptyEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     public EmptyEmitter(BatchType<B> batchType, Vars vars, @Nullable Throwable error) {
-        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
         this.error = error == null ? UNSET_ERROR : error;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

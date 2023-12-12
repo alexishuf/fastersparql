@@ -80,7 +80,7 @@ class GatherAndScatterTest {
 
             public P(BatchType<B> batchType, Vars vars, EmitterService runner,
                      int id, int begin, int failAt) {
-                super(batchType, vars, runner, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+                super(batchType, vars, runner, RR_WORKER, CREATED, TASK_FLAGS);
                 this.id     = id;
                 this.next   = begin;
                 this.end    = begin+height;
@@ -119,7 +119,7 @@ class GatherAndScatterTest {
                     }
                     bt.recycleForThread(preferredWorker, deliver(b));
                 }
-                return next < end ? state|MUST_AWAKE : COMPLETED;
+                return next < end ? state : COMPLETED;
             }
 
             @Override public void rebind(BatchBinding binding) {

@@ -40,7 +40,7 @@ class CallbackEmitterTest {
         private @MonotonicNonNull Future<?> feedTask;
 
         public Cb(CompressedBatch expected, boolean fail, boolean cancel) {
-            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
             this.expected = expected;
             this.fail     = fail;
             this.cancel   = cancel;

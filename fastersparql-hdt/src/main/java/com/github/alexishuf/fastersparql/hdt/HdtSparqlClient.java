@@ -189,7 +189,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private static final int LIMIT_TICKS = 1;
         private static final int TIME_CHK_MASK = 0x1f;
         private static final int HAS_UNSET_OUT = 0x01000000;
-        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
+        private static final Flags FLAGS = TASK_FLAGS.toBuilder()
                 .flag(HAS_UNSET_OUT, "UNSET_OUT").build();
 
         private IteratorTripleID it;
@@ -352,8 +352,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             if (rows > 0)
                 b = deliver(b);
             HDT.recycleForThread(threadId, b);
-            if (requested() > 0)
-                termState |= MUST_AWAKE;
             return termState;
         }
     }

@@ -935,7 +935,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private static final int LIMIT_TICKS       = 1;
         private static final int DEADLINE_CHK      = 0x3f;
         private static final int HAS_UNSET_OUT     = 0x01000000;
-        private static final Flags FLAGS = TASK_EMITTER_FLAGS.toBuilder()
+        private static final Flags FLAGS = TASK_FLAGS.toBuilder()
                 .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
                 .build();
 
@@ -1141,8 +1141,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 b = deliver(b);
             }
             TYPE.recycleForThread(threadId, b);
-            if (requested() > 0)
-                termState |= MUST_AWAKE;
             return termState;
         }
 

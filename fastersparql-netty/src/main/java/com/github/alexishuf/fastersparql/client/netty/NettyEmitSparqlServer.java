@@ -706,7 +706,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             private @Nullable Runnable resumeTask;
 
             private BindingsQueue(Vars vars) {
-                super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+                super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
                 if (ResultJournal.ENABLED)
                     ResultJournal.initEmitter(this, vars);
             }

@@ -56,7 +56,7 @@ class ScatterStageTest {
 
         public P(@NonNull CompressedBatch expected, boolean injectCancel,
                  @Nullable RuntimeException injectFail) {
-            super(COMPRESSED, XY, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+            super(COMPRESSED, XY, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
             assert expected.validate(Batch.Validation.CHEAP);
             this.current = expected;
             this.totalRows = expected.totalRows();
@@ -87,7 +87,7 @@ class ScatterStageTest {
             COMPRESSED.recycleForThread(threadId, deliver(current.dupRow(relRow, threadId)));
             ++absRow;
             ++relRow;
-            return state|MUST_AWAKE;
+            return state;
         }
 
         @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.of(); }
@@ -122,7 +122,7 @@ class ScatterStageTest {
                     if (error != null)
                         assertSame(error, e.getCause());
                     if (cancel)
-                        assertTrue(e.getCause() instanceof FSCancelledException);
+                        assertInstanceOf(FSCancelledException.class, e.getCause());
                 }
             }
         }

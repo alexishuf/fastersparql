@@ -146,7 +146,7 @@ public class MergeBench {
         private int row;
 
         public SourceProducer(BatchType<B> type, @NonNull B source) {
-            super(type, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+            super(type, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
             this.current = source;
         }
 
@@ -169,8 +169,6 @@ public class MergeBench {
                 this.current = curr.next;
                 return COMPLETED;
             }
-            if (requested() > 0)
-                state |= MUST_AWAKE;
             return state;
         }
 

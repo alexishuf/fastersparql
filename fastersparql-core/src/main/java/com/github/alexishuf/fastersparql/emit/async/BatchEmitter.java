@@ -16,7 +16,7 @@ public class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B> {
     private int nextRow;
 
     public BatchEmitter(Vars vars, B batch) {
-        super(batch.type(), vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+        super(batch.type(), vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
         this.batch = batch;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

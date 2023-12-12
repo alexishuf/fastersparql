@@ -36,7 +36,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static final int CLOGGED = 0x80000000;
+    private static final int CLOGGED       = 0x80000000;
     private static final Flags SCATTER_FLAGS = Flags.DEFAULT.toBuilder()
             .flag(CLOGGED, "CLOGGED")
             .build();
@@ -49,7 +49,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     private long delivered;
     @SuppressWarnings("unused") private long plainOldest;
     @SuppressWarnings("unused") private long plainReq;
-    private final int requestChunk;
+    private final int maxDelta;
     private long[] clocks = new long[12];
     private int lastRebindSeq = -1;
     private final Vars vars;
@@ -62,7 +62,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
         this.upstream  = upstream;
         int b = FSProperties.emitReqChunkBatches();
         int safeCols = Math.max(1, vars.size());
-        this.requestChunk = Math.max(b, b*batchType.preferredTermsPerBatch()/safeCols);
+        this.maxDelta = Math.max(b, b*batchType.preferredTermsPerBatch()/safeCols)<<CLOG_SHIFT;
         upstream.subscribe(this);
     }
 
@@ -83,7 +83,6 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     }
 
     /* --- --- --- helpers --- --- --- */
-
     private int onFirstRequest(int current) {
         if (moveStateRelease(current, ACTIVE))
             current = (current&FLAGS_MASK) | ACTIVE;
@@ -91,7 +90,6 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             current = statePlain();
         return current;
     }
-
     private int updateDelta() {
         long min = delivered, max = min, t;
         for (int i = 0, n = connectorsCount; i < n; i++) {
@@ -100,7 +98,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             if (t > max) max = t;
         }
         int state = statePlain();
-        boolean clogged = max - min > (long)requestChunk<<CLOG_SHIFT;
+        boolean clogged = max-min > maxDelta;
         if (clogged && (state&CLOGGED) == 0)
             state = setFlagsRelease(state, CLOGGED);
         else if (!clogged && (state&CLOGGED) != 0)
@@ -181,7 +179,6 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     public static final class Connector<B extends Batch<B>> implements Stage<B, B> {
         private final ScatterStage<B> p;
         private Receiver<B> downstream;
-        @SuppressWarnings("unused") private long plainRequested;
         private final int index;
 
         public Connector(ScatterStage<B> parent, int index) {
@@ -279,8 +276,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             downstream = receiver;
         }
 
-        @Override public void  request(long rows) {
-            int     chunk     = p.requestChunk;
+        @Override public void request(long rows) {
             long[]  clocks    = p.clocks;
             int     state     = p.state();
             if ((state&IS_INIT) != 0)
@@ -291,15 +287,13 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             boolean wasOldest = clocks[index] <= oldest;
             boolean added     = maxAcquire(REQ, p, rows);
             clocks[index]     = now = p.delivered; // onBatch() wrote this before REQ.release
-            if (wasOldest || now-oldest > (long)chunk<<CLOG_SHIFT)
+            if (wasOldest || now-oldest > p.maxDelta)
                 state = p.updateDelta();
 
             // do not request upstream if the oldest request() was more than 2 chunks ago
             if ((wasOldest || added) && (state&CLOGGED) == 0) {
-                if (p.plainReq < chunk)
-                    chunk = (int) p.plainReq;
-                if (chunk > 0)
-                    p.upstream.request(chunk);
+                if ((rows = Math.max(p.plainReq, rows)) > 0)
+                    p.upstream.request(rows);
             }
 
         }

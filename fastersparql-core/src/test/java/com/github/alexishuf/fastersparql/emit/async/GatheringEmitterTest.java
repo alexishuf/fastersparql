@@ -56,7 +56,7 @@ class GatheringEmitterTest {
         private final int cancelAt, failAt;
 
         public P(@NonNull CompressedBatch expected, int cancelAt, int failAt) {
-            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_EMITTER_FLAGS);
+            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
             assert expected.validate(Batch.Validation.CHEAP);
             this.current = expected;
             this.failAt = failAt;
@@ -86,7 +86,7 @@ class GatheringEmitterTest {
             COMPRESSED.recycle(deliver(current.dupRow(relRow)));
             ++relRow;
             ++absRow;
-            return state|MUST_AWAKE;
+            return state;
         }
     }
 

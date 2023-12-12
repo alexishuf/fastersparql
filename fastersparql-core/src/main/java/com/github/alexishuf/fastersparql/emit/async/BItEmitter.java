@@ -16,7 +16,7 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
 
     public BItEmitter(BIt<B> it) { this(EmitterService.EMITTER_SVC, RR_WORKER, it); }
     public BItEmitter(EmitterService runner, int worker, BIt<B> it) {
-        super(it.batchType(), it.vars(), runner, worker, CREATED, TASK_EMITTER_FLAGS);
+        super(it.batchType(), it.vars(), runner, worker, CREATED, TASK_FLAGS);
         this.it = it;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
@@ -64,8 +64,6 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
         }
         if (b != null)
             bt.recycleForThread(threadId, deliver(b));
-        if (requested() > 0)
-            termState |= MUST_AWAKE;
         return termState;
     }
 }

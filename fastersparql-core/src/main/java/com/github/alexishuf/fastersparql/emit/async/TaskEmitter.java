@@ -37,10 +37,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             throw new ExceptionInInitializerError(e);
         }
     }
-    protected static final int MUST_AWAKE =  0x80000000;
-    protected static final Flags TASK_EMITTER_FLAGS = TASK_FLAGS.toBuilder()
-            .flag(MUST_AWAKE, "MUST_AWAKE")
-            .build();
 
     @SuppressWarnings("unused") protected long plainRequested;
     private @MonotonicNonNull Receiver<B> downstream;
@@ -60,7 +56,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         if (ouCols > Short.MAX_VALUE)
             throw new IllegalArgumentException("too many columns");
         this.outCols = (short)ouCols;
-        assert flags.contains(TASK_EMITTER_FLAGS);
     }
 
     @Override protected void doRelease() {
@@ -160,7 +155,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
         if ((termState&IS_TERM) != 0)
             deliverTermination(st, termState);
-        else if ((termState&MUST_AWAKE) != 0)
+        else if ((long)REQ.getOpaque(this) > 0)
             awake();
     }
 

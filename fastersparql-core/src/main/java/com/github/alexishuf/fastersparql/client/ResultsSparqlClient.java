@@ -234,7 +234,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         public ResultsEmitter(Plan parsedQuery) {
             super(TermBatchType.TERM, parsedQuery.publicVars(), EMITTER_SVC, RR_WORKER,
-                  CREATED, TASK_EMITTER_FLAGS);
+                  CREATED, TASK_FLAGS);
             this.parsedQuery = parsedQuery;
             this.expected = qry2emitResults.getOrDefault(parsedQuery, null);
             if (ResultJournal.ENABLED)
