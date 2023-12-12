@@ -178,17 +178,17 @@ public abstract class Batch<B extends Batch<B>> {
         }
     }
 
-    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
-        if (MARK_POOLED) {
-            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
-                BatchEvent.Leaked.record(this);
-                PoolEvent e;
-                if (poolTraces != null && (e = poolTraces[1]) != null)
-                    //noinspection CallToPrintStackTrace
-                    new Exception("Leaked &batch="+System.identityHashCode(this), e).printStackTrace();
-            }
-        }
-    }
+//    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
+//        if (MARK_POOLED) {
+//            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
+//                BatchEvent.Leaked.record(this);
+//                PoolEvent e;
+//                if (poolTraces != null && (e = poolTraces[1]) != null)
+//                    //noinspection CallToPrintStackTrace
+//                    new Exception("Leaked &batch="+System.identityHashCode(this), e).printStackTrace();
+//            }
+//        }
+//    }
 
     /**
      * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
