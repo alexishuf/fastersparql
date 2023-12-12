@@ -87,26 +87,23 @@ public class EmitterService {
         }
 
         /**
-         * If the {@code preferredWorker} for this task has ID {@code w0} or {@code w1}, change
-         * it to the worker that is not {@code w1} and is also the least likely to steal from
-         * {@code w0} or to have tasks stole by {@code w0}.
+         * If this task and {@code task} share the same {@code preferredWorker}, change the
+         * preferred worker of this task to the one that is least likely to steal from
+         * (or to have tasks stolen by) the preferred worker of {@code task}.
          *
          * <p>If the task is already scheduled or being executed, the change enacted by this
          * method (if any) will only apply upon the next {@code awake}</p>
          *
-         * @param w0 The ID of a worker to be avoided
-         * @param w1 The ID of another worker to be avoided, or {@code < 0} if this
-         *           parameter is to be ignored.
+         * @param task A Task for which this task should not be scheduled to a nearby worker
          */
-        protected final void avoidWorkers(short w0, short w1) {
-            short preferred = preferredWorker;
-            if (preferred == w0 || preferred == w1) {
+        protected final void avoidWorker(Task task) {
+            short other = task.preferredWorker;
+            if (preferredWorker == other) {
                 short mask = runner.threadsMask;
-                if ((preferred = (short)( (w0+1+(mask>>1)) & mask )) == w1)
-                    preferred = (short)((preferred+1)&mask);
-                preferredWorker = preferred;
+                preferredWorker = (short)( (other+1+(mask>>1)) & mask );
             }
         }
+
 
         /**
          * Arbitrary code that does whatever is the purpose of this task. Implementations
@@ -154,15 +151,18 @@ public class EmitterService {
          * {@link #awake()}  arrived while running was disallowed.</p>
          *
          * @param scheduledBeforeDisallowRun the value returned by {@link #disallowRun()}
+         * @return whether the task was enqueued for execution by this method call.
          */
-        public void allowRun(short scheduledBeforeDisallowRun) {
+        public boolean allowRun(short scheduledBeforeDisallowRun) {
             clearFlagsRelease(statePlain(), IS_RUNNING);
             short ac;
             ac = (short)SCHEDULED.compareAndExchange(this, scheduledBeforeDisallowRun, (short)0);
             if (ac != scheduledBeforeDisallowRun) {
                 SCHEDULED.setRelease(this, (short)1);
                 runner.add(this);
+                return true;
             } // else: S = 0 and not enqueued, future awake() can enqueue
+            return false;
         }
 
         /**
@@ -547,7 +547,7 @@ public class EmitterService {
             w.endSpin();
     }
 
-    public static short currentWorker() {
+    @SuppressWarnings("unused") public static short currentWorker() {
         if (Thread.currentThread() instanceof Worker w)
             return w.id;
         return Task.RR_WORKER;
