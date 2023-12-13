@@ -48,9 +48,15 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     @Override public int                        cols()       { return cols; }
     @Override public boolean                    has(int row) { return rowsData[row] != null; }
 
-    private static short read(byte[] d, int i) {
-        int i2 = i<<1;
-        return (short)((d[i2]&0xff) | (d[i2+1]&0xff) << 8);
+    static { assert Integer.bitCount(SL_OFF) == 0; }
+    private static short readOff(byte[] d, int c) {
+        int i = c<<2;
+        return (short)( (d[i]&0xff) | ((d[i+1]&0xff) << 8) );
+    }
+    static { assert Integer.bitCount(SL_LEN-1) == 0; }
+    private static short readLen(byte[] d, int c) {
+        int i = (c<<2) + 2;
+        return (short)( (d[i]&0xff) | ((d[i+1]&0xff) << 8) );
     }
 
     private static void clearRowsData(byte[][] d) {
@@ -230,10 +236,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         boolean eq = true;
         var tmp     = Term.pooledMutable();
         var dataSeg = MemorySegment.ofArray(data);
-        for (int c = 0, c2; c < cols; c++) {
+        for (int c = 0; c < cols; c++) {
             SegmentRope sh = shared[shIdx++];
             if (sh == null) sh = ByteRope.EMPTY;
-            int len = read(data, (c2=c<<1)+SL_LEN);
+            int len = readLen(data, c);
             boolean suffixed = (len & SH_SUFF_MASK) != 0;
             len &= LEN_MASK;
             if (sh.len+len == 0) {
@@ -242,7 +248,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                     break;
                 }
             } else {
-                tmp.set(sh, dataSeg, data, read(data, c2+SL_OFF), len, suffixed);
+                tmp.set(sh, dataSeg, data, readOff(data, c), len, suffixed);
                 if (!other.equals(otherRow, c, tmp)) {
                     eq = false;
                     break;
@@ -261,10 +267,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         byte[] d = rowsData[row];
         MemorySegment dSeg = null;
         Term tmp = null;
-        for (int c = 0, c2 = 0, cols = this.cols, si = cols*row; c < cols; c++, c2=c<<1, si++) {
-            SegmentRope sh = shared[si];
-            int flLen = read(d, c2+SL_LEN), fstLen, sndLen = flLen&LEN_MASK;
-            long fstOff, sndOff = read(d, c2+SL_OFF);
+        for (int c = 0, cols = this.cols, shIdx = cols*row; c < cols; c++, shIdx++) {
+            SegmentRope sh = shared[shIdx];
+            int flLen = readLen(d, c), fstLen, sndLen = flLen&LEN_MASK;
+            long fstOff, sndOff = readOff(d, c);
             if (sh == null) {
                 sh = ByteRope.EMPTY;
             } else if (Term.isNumericDatatype(sh)) {
@@ -277,7 +283,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
                 continue;
             }
             fstLen = sh.len;
-            fstOff = sh.offset;
+            fstOff = sh.segment.address()+sh.offset;
             byte[] fst = sh.utf8, snd = d;
             if ((flLen & SH_SUFF_MASK) != 0) {
                 fst = d;       fstOff = sndOff;    fstLen = sndLen;
@@ -295,10 +301,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         byte[] d = rowsData[row];
         var dSeg = MemorySegment.ofArray(d);
         Term tmp = null;
-        for (int c = 0, c2 = 0, cols = this.cols, si = cols*row; c < cols; c++, c2=c<<1, si++) {
-            SegmentRope sh = shared[si];
-            int flLen = read(d, c2+SL_LEN), fstLen, sndLen = flLen&LEN_MASK;
-            long fstOff, sndOff = read(d, c2+SL_OFF);
+        for (int c = 0, cols = this.cols, shIdx = cols*row; c < cols; c++, shIdx++) {
+            SegmentRope sh = shared[shIdx];
+            int flLen = readLen(d, c), fstLen, sndLen = flLen&LEN_MASK;
+            long fstOff, sndOff = readOff(d, c);
             if (sh == null) {
                 sh = ByteRope.EMPTY;
             } else if (Term.isNumericDatatype(sh)) {
@@ -329,9 +335,9 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             return;
         }
         dest.append('[');
-        for (int c = 0, shBase=row*cols, c2; c < cols; c++) {
-            int flagLen = read(d, (c2=c<<1)+SL_LEN);
-            int off = read(d, c2+SL_OFF);
+        for (int c = 0, shBase=row*cols; c < cols; c++) {
+            int flagLen = readLen(d, c);
+            int off = readOff(d, c);
             SegmentRope sh = shared[shBase + c];
             if ((flagLen&SH_SUFF_MASK) == 0) {
                 if (sh == null) {
