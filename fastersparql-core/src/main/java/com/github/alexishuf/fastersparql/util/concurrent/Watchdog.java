@@ -3,14 +3,21 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintWriter;
 import java.lang.invoke.VarHandle;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class Watchdog implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(Watchdog.class);
     private static final VarHandle DEADLINE;
 
     static {
@@ -102,6 +109,16 @@ public class Watchdog implements AutoCloseable {
         shutdown = true;
         DEADLINE.setRelease(this, Long.MAX_VALUE);
         LockSupport.unpark(thread);
+        try {
+            if (!thread.join(Duration.ofSeconds(5))) {
+                StringBuilder sb = new StringBuilder();
+                for (StackTraceElement e : thread.getStackTrace())
+                    sb.append("\n\tat").append(e);
+                log.warn("Watchdog thread blocked at{}", sb);
+            }
+        } catch (InterruptedException e) {
+            log.error("Interrupted, will not join thread", e);
+        }
         Async.uninterruptibleJoin(thread);
     }
 }
