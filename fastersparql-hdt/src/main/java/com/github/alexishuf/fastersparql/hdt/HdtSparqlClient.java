@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.batch.operators.BindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
-import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.Protocol;
@@ -18,7 +17,6 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
-import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.fed.CardinalityEstimatorProvider;
@@ -167,11 +165,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             return (BIt<B>) new HdtBindingBIt((ItBindQuery<HdtBatch>) bq, q);
         }
         return new ClientBindingBIt<>(bq, this);
-    }
-
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
-                                                               Vars rebindHint) {
-        return new BindingStage.ForPlan<>(bq, rebindHint, false, null);
     }
 
     /* --- --- --- emitters --- --- --- */
