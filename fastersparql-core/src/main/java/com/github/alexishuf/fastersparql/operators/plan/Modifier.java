@@ -170,6 +170,7 @@ public final class Modifier extends Plan {
         boolean weakDedupIn = weakDedup || (distinct != null && opportunisticDedup());
         var in = left().emit(type, rebindHint, weakDedupIn);
         var pDedup = DistinctType.compareTo(distinct, weakDedupIn ? WEAK : null) > 0
+                  || projection != null && !projection.equals(in.vars())
                    ? distinct : null;
         var p = processorFor(type, in.vars(), null, pDedup);
         if (p == null)
