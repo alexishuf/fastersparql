@@ -74,8 +74,8 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
     }
 
     @Override public BatchType<TermBatch> batchType()        { return TERM; }
-    @Override public int                       cols()        { return b.cols; }
-    @Override public int                   capacity()        { return b.rows; }
+    @Override public int                       cols()        { return b == null ? 0 : b.cols; }
+    @Override public int                   capacity()        { return b == null ? 0 : b.rows; }
     @Override public int                   hashCode(int row) { return b.hash(row); }
 
     @Override public void set(int dst, TermBatch batch, int row) {

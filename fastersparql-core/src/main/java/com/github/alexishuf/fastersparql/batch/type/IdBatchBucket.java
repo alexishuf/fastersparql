@@ -73,8 +73,8 @@ public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
         b = type.recycleSpecial(b);
         return null;
     }
-    @Override public int            cols() { return b.cols; }
-    @Override public int        capacity() { return b.rowsCapacity(); }
+    @Override public int            cols() { return b == null ? 0 : b.cols; }
+    @Override public int        capacity() { return b == null ? 0 : b.rowsCapacity(); }
     @Override public int hashCode(int row) { return b.hash(row); }
 
     @Override public boolean has(int row) {
