@@ -231,6 +231,17 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             acquireRef();
         }
 
+        @Override public String toString() {
+            return super.toString()+'('+tp+')';
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder out) {
+            String uri = endpoint.uri();
+            int begin = uri.lastIndexOf('/');
+            String file = begin < 0 ? uri : uri.substring(begin);
+            out.append('\n').append(tp).append(file);
+        }
+
         @Override protected void doRelease() {
             try {
                 ArrayPool.LONG.offer(rowSkel, rowSkel.length);

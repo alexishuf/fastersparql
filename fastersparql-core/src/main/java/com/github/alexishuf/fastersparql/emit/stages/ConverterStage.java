@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.AbstractStage;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -40,6 +41,14 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
                 batchType.getClass().getSimpleName().replace("BatchType", ""),
                 System.identityHashCode(this),
                 upstream);
+    }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = new StringBuilder().append(batchType.toString()).append("@");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        if (type.showStats() && stats != null)
+            return stats.appendToLabel(sb).toString();
+        return sb.toString();
     }
 
     @Override public @This ConverterStage<I, O> subscribeTo(Emitter<I> emitter) {
