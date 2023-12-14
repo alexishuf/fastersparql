@@ -257,7 +257,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
 
         private int bindingsVarsChanged(int state, Vars bVars) {
-            lastBindingVars = vars;
+            lastBindingVars = bVars;
             int sInCol = bVars.indexOf(tp.s);
             int pInCol = bVars.indexOf(tp.p);
             int oInCol = bVars.indexOf(tp.o);
