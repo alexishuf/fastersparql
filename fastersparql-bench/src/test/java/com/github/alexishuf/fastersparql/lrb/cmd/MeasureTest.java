@@ -120,7 +120,7 @@ class MeasureTest {
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer,
                         MeasureOptions.FlowModel flowModel) throws IOException {
-        int nReps = 2;
+        int nReps = queries.startsWith("S") ? 4 : queries.startsWith("C") ? 2 : 1;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",
