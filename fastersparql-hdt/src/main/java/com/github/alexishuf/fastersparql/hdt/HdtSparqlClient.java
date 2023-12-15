@@ -326,7 +326,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             HdtBatch dst = HDT.createForThread(threadId, cols);
             long[] arr = dst.arr;
-            limit = Math.min(dst.termsCapacity/cols, limit);
+            limit = Math.min(dst.termsCapacity/Math.max(1, cols), limit);
             short rows = 0;
             long[] rowSkel = (statePlain()&HAS_UNSET_OUT) != 0 ? this.rowSkel : null;
             for (int base = 0; (retry = it.hasNext()) && rows < limit; base += cols)  {
