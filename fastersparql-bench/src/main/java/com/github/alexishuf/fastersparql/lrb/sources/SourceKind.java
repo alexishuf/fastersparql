@@ -28,14 +28,16 @@ public enum SourceKind {
 
     public boolean isHdt() {
         return switch (this) {
-            case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS -> true;
+            case HDT_FILE, HDT_TSV, HDT_JSON, HDT_WS,
+                    HDT_TSV_EMIT, HDT_JSON_EMIT, HDT_WS_EMIT -> true;
             default -> false;
         };
     }
 
     public boolean isFsStore() {
         return switch (this) {
-            case FS_STORE,FS_TSV,FS_JSON,FS_WS -> true;
+            case FS_STORE,FS_TSV,FS_JSON,FS_WS,
+                    FS_TSV_EMIT, FS_JSON_EMIT, FS_WS_EMIT -> true;
             default -> false;
         };
     }

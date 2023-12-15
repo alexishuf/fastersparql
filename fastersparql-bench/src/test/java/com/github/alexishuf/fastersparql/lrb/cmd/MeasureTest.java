@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
+import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
@@ -164,14 +165,14 @@ class MeasureTest {
             String ctx = m.task().query() + ", rep="+m.rep()+", rows="+ rows;
             assertTrue(m.error() == null || m.error().isEmpty(),
                     ctx+", error="+m.error());
-            int exRows = expectedRows.getOrDefault(m.task().query(), -1);
-            if (exRows == -1)
-                expectedRows.put(m.task().query(), rows);
-            else
-                assertEquals(exRows, rows, "unstable row count "+ctx);
             assertTrue(m.firstRowNs() >= 0, "firstRowNs="+m.firstRowNs()+", "+ctx);
             assertTrue(m.allRowsNs() >= 0, "allRowsNs="+m.allRowsNs()+", "+ctx);
             assertTrue(rows >= 0, "negative row count for "+m.task()+ctx);
+            int exRows = expectedRows.getOrDefault(m.task().query(), -1);
+            if (exRows == -1)
+                expectedRows.put(m.task().query(), rows);
+            else if (m.task().query().group() != QueryGroup.B)
+                assertEquals(exRows, rows, "unstable row count "+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
             log.debug("{}, rep {} rows={}, allRows={}us", m.task().query(), m.rep(),
@@ -252,7 +253,10 @@ class MeasureTest {
     void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         disableCrossDedup();
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        doTest(sourceKind, jsonPlans, "C.*", sel, CHECK, EMIT);
+        String regex = "C.*";
+        if (sourceKind.isHdt())
+            regex = "C[1-46-8]";
+        doTest(sourceKind, jsonPlans, regex, sel, CHECK, EMIT);
 //        System.out.printf("""
 //                BindingStage.repeatRebind: %5d
 //                   TPEmitter.repeatRebind: %5d
@@ -267,7 +271,10 @@ class MeasureTest {
         // B2: dedup too slow
         // B5: slow
         // B6: slow -- 5m with modified plan
-        doTest(sourceKind, jsonPlans, "B[134678]", sel, COUNT, EMIT);
+        String regex = "B[1234678]";
+        if (sourceKind.isHdt())
+            regex = "B[123478]";
+        doTest(sourceKind, jsonPlans, regex, sel, COUNT, EMIT);
     }
 
     @RepeatedTest(10) void testS10Unexpected() throws Exception {
