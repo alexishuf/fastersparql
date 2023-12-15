@@ -6,10 +6,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintWriter;
 import java.lang.invoke.VarHandle;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
@@ -38,7 +35,7 @@ public class Watchdog implements AutoCloseable {
         this.thread = Thread.startVirtualThread(() -> {
             LockSupport.park(); // wait until first start() call
             while (!shutdown) {
-                long now = Timestamp.nanoTime(), deadline = (long) DEADLINE.getAcquire(this);
+                long now = Timestamp.nanoTime(), deadline = (long)DEADLINE.getAcquire(this);
                 if (now >= deadline) {
                     if (shutdown) { // re-check for racing close()
                         break;
@@ -50,7 +47,8 @@ public class Watchdog implements AutoCloseable {
                                 a.run();
                         }
                     }
-                    LockSupport.park(); //wake on start() or close()
+                    if (!shutdown)
+                        LockSupport.park(); //wake on start() or close()
                 } else {
                     long delta = deadline - now;
                     LockSupport.parkNanos(delta); // wake at deadline/start()/close()
@@ -113,12 +111,11 @@ public class Watchdog implements AutoCloseable {
             if (!thread.join(Duration.ofSeconds(5))) {
                 StringBuilder sb = new StringBuilder();
                 for (StackTraceElement e : thread.getStackTrace())
-                    sb.append("\n\tat").append(e);
+                    sb.append("\n\tat ").append(e);
                 log.warn("Watchdog thread blocked at{}", sb);
             }
         } catch (InterruptedException e) {
             log.error("Interrupted, will not join thread", e);
         }
-        Async.uninterruptibleJoin(thread);
     }
 }
