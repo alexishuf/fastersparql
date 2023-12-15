@@ -184,7 +184,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
             throw new NoUpstreamException(this);
         } else if (batch == null) {
             cancelUpstream();
-        } else {
+        } else if (batch.rows > 0) {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onBatchDelivered(batch);
             if (ResultJournal.ENABLED)
