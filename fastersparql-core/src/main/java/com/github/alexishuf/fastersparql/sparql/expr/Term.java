@@ -22,9 +22,10 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
-import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -923,7 +924,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     }
 
     public int cmp(int begin, int end, Rope rope, int rBegin, int rEnd) {
-        if (!HAS_UNSAFE)
+        if (U == null)
             return cmpNoUnsafe(begin, end, rope, rBegin, rEnd);
         if (begin < 0 || end > len || rBegin < 0 || rEnd > rope.len)
             throw new IndexOutOfBoundsException();
@@ -1434,17 +1435,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
     }
 
     public int compareNumeric(Term rhs) {
-        Number l = asNumber(), r = rhs.asNumber();
-        if (l instanceof BigInteger || r instanceof BigInteger) {
-            return asBigInteger(l).compareTo(asBigInteger(r));
-        } else if (l instanceof BigDecimal || r instanceof  BigDecimal) {
-            return asBigDecimal(l, r).compareTo(asBigDecimal(r, l));
-        } else if (l instanceof Float || l instanceof Double
-                || r instanceof Float || r instanceof Double) {
-            return Double.compare(l.doubleValue(), r.doubleValue());
-        } else {
-            return Long.compare(l.longValue(), r.longValue());
-        }
+        SegmentRope l = first, r = rhs.first;
+        long lOff = l.segment.address()+l.offset+1, rOff = r.segment.address()+r.offset+1;
+        if (U == null)
+            return compareNumbers(l.segment, lOff, l.len-1, r.segment, rOff, r.len-1);
+        return compareNumbers(l.utf8, lOff, l.len-1, r.utf8, rOff, r.len-1);
     }
 
     public Term add(Term rhs) {

@@ -11,11 +11,13 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 
 import static com.github.alexishuf.fastersparql.model.rope.ByteRope.*;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
+import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
@@ -834,5 +836,155 @@ public class SegmentRope extends PlainRope {
         return compare1_2(segment, offset, len,
                           o.fst, o.fstOff+begin, Math.min(o.fstLen,end)-begin,
                           o.snd, o.sndOff+Math.max(0, begin-o.fstLen), end-o.fstLen);
+    }
+
+    private static int compareNumbersExp(MemorySegment lSeg, long lOff, int lLen,
+                                         MemorySegment rSeg, long rOff, int rLen) {
+        char[] tmp = new char[Math.max(lLen, rLen)];
+        for (int i = 0; i < lLen; i++)
+            tmp[i] = (char)lSeg.get(JAVA_BYTE, lOff+i);
+        var left = new BigDecimal(tmp, 0, lLen);
+        for (int i = 0; i < rLen; i++)
+            tmp[i] = (char)rSeg.get(JAVA_BYTE, rOff+i);
+        var right = new BigDecimal(tmp, 0, lLen);
+        return left.compareTo(right);
+    }
+    private static final int CMP_NUM_HAS_EXP    = 0x80000000;
+    private static final int CMP_NUM_HAS_DOT    = 0x40000000;
+    private static final int CMP_NUM_SKIP_MASK  = 0x3fff0000;
+    private static final int CMP_NUM_SKIP_ONE   = 0x00010000;
+    private static final int CMP_NUM_SKIP_BIT   = numberOfTrailingZeros(CMP_NUM_SKIP_MASK);
+    private static final int CMP_NUM_POWER_MASK = 0x0000ffff;
+    private static int compareNumbersScan(MemorySegment s, long off, int len) {
+        int result = 0;
+        boolean skipping = true;
+        for (int i = 0; i < len; i++) {
+            byte c = s.get(JAVA_BYTE, off+i);
+            if (c > '9') {
+                return CMP_NUM_HAS_EXP;
+            } else if (c == '.') {
+                result |= CMP_NUM_HAS_DOT;
+                result |= i-((result&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT);
+                skipping = false;
+            } else if (c > '0') {
+                skipping = false;
+            } else if (skipping) {
+                result += CMP_NUM_SKIP_ONE;
+            }
+        }
+        if ((result&CMP_NUM_HAS_DOT) == 0)
+            result |= len-((result&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT);
+        return result;
+    }
+    public static int compareNumbers(MemorySegment lSeg, long lOff, int lLen,
+                                     MemorySegment rSeg, long rOff, int rLen) {
+        int lScan = compareNumbersScan(lSeg, lOff, lLen);
+        int rScan = compareNumbersScan(rSeg, rOff, rLen);
+        if (((lScan|rScan)&CMP_NUM_HAS_EXP) != 0)
+            return compareNumbersExp(lSeg, lOff, lLen, rSeg, rOff, rLen);
+        int diff = (lScan&CMP_NUM_POWER_MASK) - (rScan&CMP_NUM_POWER_MASK);
+        if (diff != 0) return diff;
+
+        long lEnd = lOff+lLen, rEnd = rOff+rLen;
+        lOff += (lScan&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT;
+        rOff += (rScan&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT;
+        while (lOff < lEnd && rOff < rEnd) {
+            if ((diff=lSeg.get(JAVA_BYTE, lOff++) - rSeg.get(JAVA_BYTE, rOff++)) != 0) return diff;
+        }
+
+        int sign = 0;
+        if (rOff < rEnd) {
+            if ((rScan&CMP_NUM_HAS_DOT) == 0) return -1;
+            if ((lScan&CMP_NUM_HAS_DOT) == 0) ++rOff;
+            lSeg = rSeg;
+            lOff = rOff;
+            lEnd = rEnd;
+            sign = -1;
+        } else if (lOff < lEnd) {
+            if ((lScan&CMP_NUM_HAS_DOT) == 0) return 1;
+            if ((rScan&CMP_NUM_HAS_DOT) == 0) ++lOff;
+        }
+        while (lOff < lEnd) {
+            if ((diff=lSeg.get(JAVA_BYTE, lOff++) - '0') != 0) return sign*diff;
+        }
+        return 0;
+    }
+
+    private static int compareNumbersScan(byte[] u8, long off, int len) {
+        int result = 0;
+        boolean skipping = true;
+        for (int i = 0; i < len; i++) {
+            byte c = U.getByte(u8, off+i);
+            if (c > '9') {
+                return CMP_NUM_HAS_EXP;
+            } else if (c == '.') {
+                result |= CMP_NUM_HAS_DOT;
+                result |= i-((result&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT);
+                skipping = false;
+            } else if (c > '0') {
+                skipping = false;
+            } else if (skipping) {
+                result += CMP_NUM_SKIP_ONE;
+            }
+        }
+        if ((result&CMP_NUM_HAS_DOT) == 0)
+            result |= len-((result&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT);
+        return result;
+    }
+    private static int compareNumbersExp(byte[] lU8, long lOff, int lLen,
+                                         byte[] rU8, long rOff, int rLen) {
+        char[] tmp = new char[Math.max(lLen, rLen)];
+        for (int i = 0; i < lLen; i++)
+            tmp[i] = (char)U.getByte(lU8, lOff+i);
+        var left = new BigDecimal(tmp, 0, lLen);
+        for (int i = 0; i < rLen; i++)
+            tmp[i] = (char)U.getByte(rU8, rOff+i);
+        var right = new BigDecimal(tmp, 0, rLen);
+        return left.compareTo(right);
+    }
+    public static int compareNumbers(byte[] lU8, long lOff, int lLen,
+                                     byte[] rU8, long rOff, int rLen) {
+        if (lU8 != null)
+            lOff += U8_BASE;
+        if (rU8 != null)
+            rOff += U8_BASE;
+        int lScan = compareNumbersScan(lU8, lOff, lLen);
+        int rScan = compareNumbersScan(rU8, rOff, rLen);
+        if (((lScan|rScan)&CMP_NUM_HAS_EXP) != 0)
+            return compareNumbersExp(lU8, lOff, lLen, rU8, rOff, rLen);
+        int diff = (lScan&CMP_NUM_POWER_MASK) - (rScan&CMP_NUM_POWER_MASK);
+        if (diff != 0) return diff;
+
+        long lEnd = lOff+lLen, rEnd = rOff+rLen;
+        lOff += (lScan&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT;
+        rOff += (rScan&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT;
+        while (lOff < lEnd && rOff < rEnd) {
+            if((diff=U.getByte(lU8, lOff++) - U.getByte(rU8, rOff++)) != 0) return diff;
+        }
+
+        int sign = 0;
+        if (rOff < rEnd) {
+            if ((rScan&CMP_NUM_HAS_DOT) == 0) return -1;
+            if ((lScan&CMP_NUM_HAS_DOT) == 0) ++rOff;
+            lU8  = rU8;
+            lOff = rOff;
+            lEnd = rEnd;
+            sign = -1;
+        } else if (lOff < lEnd) {
+            if ((lScan&CMP_NUM_HAS_DOT) == 0) return 1;
+            if ((rScan&CMP_NUM_HAS_DOT) == 0) ++lOff;
+        }
+        while (lOff < lEnd) {
+            if ((diff=U.getByte(lU8, lOff++) - '0') != 0) return sign*diff;
+        }
+        return 0;
+    }
+
+    public static int compareNumbers(SegmentRope l, int lOff, int lLen,
+                                     SegmentRope r, int rOff, int rLen) {
+        long alOff = l.offset+lOff, arOff = r.offset+rOff;
+        if (U == null)
+            return compareNumbers(l.segment, alOff, lLen, r.segment, arOff, rLen);
+        return compareNumbers(l.utf8, alOff, lLen, r.utf8, arOff, rLen);
     }
 }

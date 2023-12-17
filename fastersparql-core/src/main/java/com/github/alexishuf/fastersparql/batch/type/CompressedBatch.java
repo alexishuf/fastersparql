@@ -357,7 +357,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         int cols = this.cols;
         if (cols != other.cols) return false;
         if (cols == 0) return true;
-        MemorySegment localsSeg = this.localsSeg, oLocalsSeg = other.localsSeg;
         byte       [] oLocals = other.locals;
         short      [] osl     = other.slices;
         int slw = cols<<1, slb = row*slw, oslb = oRow*slw;
@@ -366,8 +365,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             SegmentRope sh = shared[shBase+c], osh = other.shared[oShBase+c];
             cslb = slb + (c2 = c << 1);
             ocslb = oslb + c2;
-            if (!termEquals( sh,  localsSeg,  locals, slices[ cslb+SL_OFF], slices[ cslb+SL_LEN],
-                            osh, oLocalsSeg, oLocals,    osl[ocslb+SL_OFF],    osl[ocslb+SL_LEN]))
+            if (!termEquals( sh,  locals, slices[ cslb+SL_OFF], slices[ cslb+SL_LEN],
+                            osh, oLocals,    osl[ocslb+SL_OFF],    osl[ocslb+SL_LEN]))
                 return false;
         }
         return true;
@@ -382,7 +381,6 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         if (cols != other.cols) return false;
         if (cols == 0) return true;
         MemorySegment localsSeg = this.localsSeg, oLocalsSeg = other.localsSeg;
-        byte[] locals = this.locals, oLocals = other.locals;
         SegmentRope[] shared = this.shared, oshared = other.shared;
         short[] sl = this.slices, osl = other.slices;
         int slw = cols<<1, slb = row*slw, oslb = oRow*slw;
@@ -391,8 +389,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             SegmentRope sh = shared[shBase+c], osh = oshared[oShBase+c];
             cslb = slb + (c2 = c << 1);
             ocslb = oslb + c2;
-            if (!safeTermEquals( sh,  localsSeg,  locals,  sl[ cslb+SL_OFF],  sl[ cslb+SL_LEN],
-                                osh, oLocalsSeg, oLocals, osl[ocslb+SL_OFF], osl[ocslb+SL_LEN]))
+            if (!safeTermEquals( sh,  localsSeg,   sl[ cslb+SL_OFF],  sl[ cslb+SL_LEN],
+                                osh, oLocalsSeg,  osl[ocslb+SL_OFF], osl[ocslb+SL_LEN]))
                 return false;
         }
         return true;
@@ -713,8 +711,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         else if (other == null)
             return true;
         SegmentRope ol = other.local();
-        return termEquals(sh, localsSeg, locals, this.slices[slb+SL_OFF], len,
-                          other.shared(), ol.segment, ol.utf8, ol.offset,
+        return termEquals(sh, locals, this.slices[slb+SL_OFF], len,
+                          other.shared(), ol.utf8, ol.offset,
                           ol.len|(other.sharedSuffixed() ? SH_SUFF_MASK : 0));
     }
 
@@ -728,15 +726,13 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         else if (other == null)
             return true;
         SegmentRope ol = other.local();
-        return safeTermEquals(sh, localsSeg, locals, this.slices[slb+SL_OFF], len,
-                other.shared(), ol.segment, ol.utf8, ol.offset,
+        return safeTermEquals(sh, localsSeg,  this.slices[slb+SL_OFF], len,
+                other.shared(), ol.segment, ol.offset,
                 ol.len|(other.sharedSuffixed() ? SH_SUFF_MASK : 0));
     }
 
-    public boolean termEquals(@Nullable SegmentRope lSh, MemorySegment lSeg, byte[] lU8,
-                              long lOff, int lLen,
-                              @Nullable SegmentRope rSh, MemorySegment rSeg, byte[] rU8,
-                              long rOff, int rLen) {
+    public boolean termEquals(@Nullable SegmentRope lSh, byte[] lU8, long lOff, int lLen,
+                              @Nullable SegmentRope rSh, byte[] rU8, long rOff, int rLen) {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
             return false;
@@ -744,24 +740,17 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         rLen&=LEN_MASK;
         if (lSh == null) lSh = EMPTY;
         if (rSh == null) rSh = EMPTY;
-        if (numeric) {
-            Term lTerm = Term.pooledMutable(), rTerm = Term.pooledMutable();
-            lTerm.set(lSh, lSeg, lU8, lOff, lLen, true);
-            rTerm.set(rSh, rSeg, rU8, rOff, rLen, true);
-            boolean eq = lTerm.compareNumeric(rTerm) == 0;
-            lTerm.recycle();
-            rTerm.recycle();
-            return eq;
-        }
+        if (numeric)
+            return compareNumbers(lU8, lOff, lLen-1, rU8, rOff, rLen-1) == 0;
         return compare2_2(lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
                           lU8, lOff, lLen,
                           rSh.utf8, rSh.segment.address()+rSh.offset, rSh.len,
                           rU8, rOff, rLen) == 0;
     }
 
-    public boolean safeTermEquals(@Nullable SegmentRope lSh, MemorySegment lSeg, byte[] lU8,
+    public boolean safeTermEquals(@Nullable SegmentRope lSh, MemorySegment lSeg,
                                   long lOff, int lLen,
-                                  @Nullable SegmentRope rSh, MemorySegment rSeg, byte[] rU8,
+                                  @Nullable SegmentRope rSh, MemorySegment rSeg,
                                   long rOff, int rLen) {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
@@ -770,15 +759,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         rLen&=LEN_MASK;
         if (lSh == null) lSh = EMPTY;
         if (rSh == null) rSh = EMPTY;
-        if (numeric) {
-            Term lTerm = Term.pooledMutable(), rTerm = Term.pooledMutable();
-            lTerm.set(lSh, lSeg, lU8, lOff, lLen, true);
-            rTerm.set(rSh, rSeg, rU8, rOff, rLen, true);
-            boolean eq = lTerm.compareNumeric(rTerm) == 0;
-            lTerm.recycle();
-            rTerm.recycle();
-            return eq;
-        }
+        if (numeric)
+            return compareNumbers(lSeg, lOff, lLen-1, rSeg, rOff, rLen-1) == 0;
         return compare2_2(lSh.segment, lSh.offset, lSh.len, lSeg, lOff, lLen,
                           rSh.segment, rSh.offset, rSh.len, rSeg, rOff, rLen) == 0;
     }
@@ -789,14 +771,14 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         short slb = slBase(row, col), oslb = other.slBase(oRow, oCol);
         short[] sl = this.slices, osl = other.slices;
         if (HAS_UNSAFE) {
-            return termEquals(shared[row*cols+col], localsSeg, locals,
+            return termEquals(shared[row*cols+col], locals,
                               sl[slb+SL_OFF], sl[slb+SL_LEN],
-                              other.shared[oRow*other.cols+oCol], other.localsSeg, other.locals,
+                              other.shared[oRow*other.cols+oCol], other.locals,
                               osl[oslb+SL_OFF], osl[oslb+SL_LEN]);
         } else {
-            return safeTermEquals(shared[row*cols+col], localsSeg, locals,
+            return safeTermEquals(shared[row*cols+col], localsSeg,
                                   sl[slb+SL_OFF], sl[slb+SL_LEN],
-                                  other.shared[oRow*other.cols+oCol], other.localsSeg, other.locals,
+                                  other.shared[oRow*other.cols+oCol], other.localsSeg,
                                   osl[oslb+SL_OFF], osl[oslb+SL_LEN]);
         }
     }
