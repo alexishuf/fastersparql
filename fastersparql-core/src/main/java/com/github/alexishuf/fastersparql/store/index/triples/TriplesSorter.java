@@ -42,7 +42,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
     public TriplesSorter(Path tempDir, int blockTriplesCapacity) {
         super(tempDir, "triples", ".block");
         this.blockTriplesCapacity = blockTriplesCapacity;
-        this.arena = Arena.openShared();
+        this.arena = Arena.ofShared();
     }
 
     @Override public void close() {
@@ -69,7 +69,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
             if (filling.add(s, p, o)) return;
             scheduleBlockJob(filling);
         }
-        filling = new TriplesBlock(createTempFile(), arena.scope(), blockTriplesCapacity);
+        filling = new TriplesBlock(createTempFile(), arena, blockTriplesCapacity);
         if (!filling.add(s, p, o))
             throw new IOException("triple unexpectedly rejected");
     }
@@ -98,7 +98,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
                 sorted.add(filling);
             filling = null;
             if (sorted.isEmpty())
-                sorted.add(new TriplesBlock(createTempFile(), arena.scope(), 0));
+                sorted.add(new TriplesBlock(createTempFile(), arena, 0));
             long triples = 0;
             for (TriplesBlock b : sorted) triples += b.triples;
             log.debug("{}: {} blocks with {} KiB capacity summing {} entries longIds={}",
@@ -281,7 +281,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
 
     private void shuffleAndSort(Consumer<TriplesBlock> shuffler) {
         if (sorted.size() == 1) {
-            var b = sorted.get(0);
+            var b = sorted.getFirst();
             shuffler.accept(b);
             b.sort(0, b.triples);
         } else {

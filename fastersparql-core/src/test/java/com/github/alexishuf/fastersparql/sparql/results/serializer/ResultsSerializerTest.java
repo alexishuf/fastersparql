@@ -132,7 +132,7 @@ class ResultsSerializerTest {
         ));
         List<Arguments> args = new ArrayList<>();
         for (BatchType<? extends Batch<? extends Batch<?>>> type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
-            for (D(var r,  var f, var e) : data) args.add(arguments(type, r, f, e));
+            for (var d : data) args.add(arguments(type, d.results, d.fmt, d.ex));
         }
         return args.stream();
     }

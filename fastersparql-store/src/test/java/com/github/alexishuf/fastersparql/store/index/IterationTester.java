@@ -51,8 +51,8 @@ public class IterationTester implements AutoCloseable {
         this.allTriples = allTriples;
         this.triples = triples;
         BitSet is = new BitSet();
-        for (TestTriple(long s, long p, long o) : triples) {
-            is.set((int) s);  is.set((int) p);  is.set((int) o);
+        for (var t : triples) {
+            is.set((int)t.s());  is.set((int)t.p());  is.set((int)t.o());
         }
         terms = new int[is.cardinality()];
         int out = 0;
@@ -324,10 +324,10 @@ public class IterationTester implements AutoCloseable {
     }
 
     private void testContains() {
-        for (TestTriple(long s, long p, long o): triples) {
-            assertTrue(spo.contains(s, p, o));
-            assertTrue(pso.contains(p, s, o));
-            assertTrue(ops.contains(o, p, s));
+        for (var t : triples) {
+            assertTrue(spo.contains(t.s(), t.p(), t.o()));
+            assertTrue(pso.contains(t.p(), t.s(), t.o()));
+            assertTrue(ops.contains(t.o(), t.p(), t.s()));
         }
     }
 }

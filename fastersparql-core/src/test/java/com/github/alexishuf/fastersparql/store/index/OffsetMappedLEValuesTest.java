@@ -29,7 +29,7 @@ class OffsetMappedLEValuesTest {
 
     @BeforeAll static void beforeAll() throws IOException {
         file = Files.createTempFile("fastersparql", "");
-        arena = Arena.openShared();
+        arena = Arena.ofShared();
         try (var ch = FileChannel.open(file, WRITE, TRUNCATE_EXISTING, CREATE)) {
             var bb = ByteBuffer.wrap(toBytes(new int[] {
                     // - 2 4BLE offsets into 8BLE values
@@ -57,7 +57,7 @@ class OffsetMappedLEValuesTest {
     private static final class Helper extends OffsetMappedLEValues {
         private static int OFF_W = 8, VALUE_W = 8;
         public Helper() throws IOException {
-            super(file, Arena.openShared());
+            super(file, Arena.ofShared());
         }
 
         @Override protected void fillMetadata(MemorySegment seg, Metadata md) {

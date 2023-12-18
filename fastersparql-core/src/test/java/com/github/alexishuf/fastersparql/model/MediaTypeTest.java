@@ -376,9 +376,9 @@ class MediaTypeTest {
                 new D("0.923", 923)
         ));
         List<Arguments> args = new ArrayList<>();
-        for (D(var in,  var ex) : list) {
-            args.add(arguments(in, ex));
-            args.add(arguments('"'+in+'"', ex));
+        for (var d : list) {
+            args.add(arguments(d.in, d.ex));
+            args.add(arguments('"'+d.in+'"', d.ex));
         }
         return args.stream();
     }

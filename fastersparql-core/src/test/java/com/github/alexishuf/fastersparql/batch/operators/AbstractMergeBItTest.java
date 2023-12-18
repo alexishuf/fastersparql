@@ -65,7 +65,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
 
         // long chain of operators using all generators
         for (Integer step : List.of(0, 1, 2, 3, 7)) {
-            for (BatchSizes(int min, int max) : batchSizes()) {
+            for (var bs : batchSizes()) {
                 for (BItDrainer drainer : BItDrainer.ALL) {
                     for (var error : Arrays.asList(null, new RuntimeException("test"))) {
                         int nOperands = 3 * BItGenerator.GENERATORS.size();
@@ -76,7 +76,7 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
                             var gen = BItGenerator.GENERATORS.get(i % BItGenerator.GENERATORS.size());
                             operands.add(gen.asBIt(opError, ints(start, step)));
                         }
-                        var base = new Scenario(step, min, max, drainer, error);
+                        var base = new Scenario(step, bs.min(), bs.max(), drainer, error);
                         scenarios.add(new MergeScenario(base, operands, expected));
                     }
                 }
@@ -85,11 +85,11 @@ public abstract class AbstractMergeBItTest extends AbstractBItTest {
 
         //test change in sizes of operators
         for (BItDrainer drainer : BItDrainer.ALL) {
-            for (BatchSizes(int min, int max) : batchSizes()) {
+            for (var bs : batchSizes()) {
                 List<BIt<TermBatch>> ops = new ArrayList<>();
                 ops.add(BItGenerator.CB_GEN.asBIt(ints(0, 4))); // [0,1,2,3]
                 ops.add(BItGenerator.IT_GEN.asBIt(ints(5, 2))); // [5,6]
-                var base = new Scenario(4, min, max, drainer, null);
+                var base = new Scenario(4, bs.min(), bs.max(), drainer, null);
                 scenarios.add(new MergeScenario(base, ops, INTS_012356));
             }
         }

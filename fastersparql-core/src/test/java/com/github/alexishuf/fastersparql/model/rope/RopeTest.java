@@ -311,9 +311,9 @@ class RopeTest {
             assertTrue(rope.equals(rope));
         }
         for (Rope rope : ropes) {
-            assertTrue(rope.equals(ropes.get(0)));
-            assertTrue(ropes.get(0).equals(rope));
-            assertEquals(ropes.get(0).hashCode(), rope.hashCode());
+            assertTrue(rope.equals(ropes.getFirst()));
+            assertTrue(ropes.getFirst().equals(rope));
+            assertEquals(ropes.getFirst().hashCode(), rope.hashCode());
         }
     }
 
@@ -548,18 +548,18 @@ class RopeTest {
                 new D("908706543021", 908706543021L),
                 new D("-908706543021", -908706543021L)
         );
-        for (D(var in, var ex) : data) {
-            var errCls = in.isEmpty() ? IndexOutOfBoundsException.class
+        for (var d : data) {
+            var errCls = d.in.isEmpty() ? IndexOutOfBoundsException.class
                                         : NumberFormatException.class;
-            for (Rope rope : fac.create(in)) {
-                if (ex != null)
-                    assertEquals(rope.parseLong(0), ex);
+            for (Rope rope : fac.create(d.in)) {
+                if (d.ex != null)
+                    assertEquals(rope.parseLong(0), d.ex);
                 else
                     assertThrows(errCls, () -> rope.parseLong(0));
             }
-            for (Rope rope : fac.create(" "+in)) {
-                if (ex != null)
-                    assertEquals(rope.parseLong(1), ex);
+            for (Rope rope : fac.create(" "+d.in)) {
+                if (d.ex != null)
+                    assertEquals(rope.parseLong(1), d.ex);
                 else
                     assertThrows(errCls, () -> rope.parseLong(1));
             }

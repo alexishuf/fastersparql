@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.Runtime.getRuntime;
+import static java.lang.Thread.MIN_PRIORITY;
 import static java.lang.Thread.onSpinWait;
 
 /**
@@ -456,6 +457,7 @@ public class EmitterService {
         sharedScheduler = Thread.ofPlatform().unstarted(this::sharedScheduler);
         sharedQueue = new ArrayDeque<>(nWorkers*QUEUE_CAP);
         sharedScheduler.setName("EmitterService-"+id+"-Scheduler");
+        sharedScheduler.setPriority(MIN_PRIORITY);
         sharedScheduler.setDaemon(true);
         sharedScheduler.start();
 //        new StarvedDetector(grp);

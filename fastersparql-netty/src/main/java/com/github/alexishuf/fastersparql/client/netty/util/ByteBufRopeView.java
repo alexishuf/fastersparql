@@ -69,7 +69,8 @@ public final class ByteBufRopeView {
             offset += bb.arrayOffset();
         } else {
             u8 = null;
-            segment = MemorySegment.ofAddress(bb.memoryAddress(), offset+len);
+//            segment = MemorySegment.ofBuffer(bb.nioBuffer(offset, len));
+            segment = MemorySegment.ofAddress(bb.memoryAddress()).reinterpret(offset+len);
         }
         sr.wrapSegment(segment, u8, offset, len);
         return sr;

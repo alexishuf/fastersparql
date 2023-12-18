@@ -88,8 +88,8 @@ class WsSerializerTest {
 
         List<Arguments> args = new ArrayList<>();
         for (BatchType<?> bt : List.of(TermBatchType.TERM, TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
-            for (D(var rs, var ex) : list)
-                args.add(arguments(rs, ex, bt));
+            for (var d : list)
+                args.add(arguments(d.results, d.expected, bt));
         }
         return args.stream();
     }
@@ -106,7 +106,7 @@ class WsSerializerTest {
 
         //feed single batch with first row
         if (!rows.isEmpty()) {
-            b.putRow(rows.get(0));
+            b.putRow(rows.getFirst());
             serializer.serializeAll(batchType.convert(b), buffer);
         }
         // feed a batch with rows [1,rows.size()-1)
@@ -119,7 +119,7 @@ class WsSerializerTest {
         // feed a batch with the last row if it is not also the first
         if (rows.size() > 1) {
             b.clear();
-            b.putRow(rows.get(rows.size()-1));
+            b.putRow(rows.getLast());
             serializer.serializeAll(batchType.convert(b), buffer);
         }
         // feeding a terminal batch has no effect

@@ -2,8 +2,8 @@ package com.github.alexishuf.fastersparql.utils;
 
 import org.openjdk.jmh.annotations.*;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
@@ -34,7 +34,8 @@ public class MemorySegmentBench {
         array = new byte[SIZE];
         nativeBuffer = ByteBuffer.allocateDirect(SIZE);
         heapBuffer = ByteBuffer.allocate(SIZE);
-        nativeSegment = MemorySegment.allocateNative(SIZE, SegmentScope.global());
+        //noinspection resource
+        nativeSegment = Arena.global().allocate(SIZE);
         heapSegment = MemorySegment.ofArray(new byte[SIZE]);
         byte v = (byte) base;
         for (int i = 0; i < SIZE; i++) {

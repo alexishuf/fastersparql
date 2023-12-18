@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.store.index;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sun.misc.Unsafe;
@@ -8,7 +7,6 @@ import sun.misc.Unsafe;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -39,7 +37,7 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
 
     protected final FileChannel ch;
     protected final MemorySegment seg;
-    protected final @Nullable Arena arena;
+    protected final Arena arena;
     public final Path path;
     protected final long offBase, valBase;
     protected final long offsCount, valEnd;
@@ -48,19 +46,13 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
     protected String stringValue;
     private final IllegalStateException unreachable;
 
-    public OffsetMappedLEValues(Path path, @Nullable Arena arena) throws IOException {
-        this(path, arena, arena == null ? SegmentScope.auto() : arena.scope());
-    }
-    public OffsetMappedLEValues(Path path, @Nullable SegmentScope scope) throws IOException {
-        this(path, null, scope);
-    }
-    private OffsetMappedLEValues(Path path, @Nullable Arena arena,
-                                 @Nullable SegmentScope scope) throws IOException {
+    protected OffsetMappedLEValues(Path path, Arena arena) throws IOException {
+        if (path  == null) throw new NullPointerException("path");
+        if (arena == null) throw new NullPointerException("arena");
         this.path = path;
         this.arena = arena;
         this.ch = FileChannel.open(path, StandardOpenOption.READ);
-        this.seg = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size(),
-                          scope == null ? SegmentScope.auto() : scope);
+        this.seg = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size(), arena);
 
         var md = new Metadata();
         fillMetadata(seg, md);

@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
@@ -1363,7 +1362,7 @@ public abstract class Batch<B extends Batch<B>> {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
         var localRope = new ByteRope(localLen);
-        localRope.append(local, (byte[]) local.array().orElse(null), localOff, localLen);
+        localRope.append(local, (byte[]) local.heapBase().orElse(null), localOff, localLen);
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }

@@ -9,6 +9,7 @@ import java.lang.invoke.VarHandle;
 import java.util.*;
 import java.util.concurrent.locks.LockSupport;
 
+import static java.lang.Thread.MIN_PRIORITY;
 import static java.lang.Thread.onSpinWait;
 
 public class PoolCleaner {
@@ -32,6 +33,7 @@ public class PoolCleaner {
 
     private PoolCleaner() {
         thread = new Thread(this::run, "PoolCleaner");
+        thread.setPriority(MIN_PRIORITY);
         thread.setDaemon(true);
         thread.start();
     }

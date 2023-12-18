@@ -47,7 +47,7 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
     @Override public @This OutputStreamSink append(MemorySegment segment, byte[] base,
                                                    long offset, int len) {
         if (base == null && !segment.isNative())
-            base = (byte[]) segment.array().orElse(null);
+            base = (byte[]) segment.heapBase().orElse(null);
         int u8Off;
         if (base == null) {
             base = new byte[len];

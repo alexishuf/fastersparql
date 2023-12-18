@@ -75,7 +75,7 @@ public class NettyRopeUtils {
     }
 
     private static ByteBuf writeSafe(ByteBuf bb, MemorySegment segment, long off, int len) {
-        byte[] array = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
+        byte[] array = segment.isNative() ? null : (byte[])segment.heapBase().orElse(null);
         if (array == null) {
             int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
             MemorySegment.copy(segment, off,

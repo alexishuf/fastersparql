@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
@@ -51,7 +50,7 @@ class DictLocalityOptimizer {
     }
 
     private static final class Reader extends OffsetMappedLEValues {
-        public Reader(Path path, SegmentScope scope) throws IOException {
+        public Reader(Path path, Arena scope) throws IOException {
             super(path, scope);
         }
 
@@ -75,7 +74,6 @@ class DictLocalityOptimizer {
 
     private static class Converter implements AutoCloseable {
         private boolean closed = false;
-        private final Arena arena = Arena.openShared();
         private final Reader reader;
         private final MemorySegment out;
         private final boolean embedSharedId;
@@ -86,7 +84,8 @@ class DictLocalityOptimizer {
         public Converter(Path destPath, Path srcPath, long srcStringsAndFlags) throws IOException {
             if (srcPath.normalize().equals(destPath.normalize()))
                 throw new IOException("src and dest paths are the same: "+srcPath);
-            reader = new Reader(srcPath, arena.scope());
+            Arena arena = Arena.ofShared();
+            reader = new Reader(srcPath, arena);
             embedSharedId = reader.seg().byteSize() < LocalityCompositeDict.OFF_MASK
                          && (srcStringsAndFlags & SHARED_MASK) != 0;
             offWidth = embedSharedId || (srcStringsAndFlags & OFF_W_MASK) == 0 ? 8 : 4;
@@ -100,7 +99,7 @@ class DictLocalityOptimizer {
                 if (embedSharedId)
                     u8Bytes -= 5*(reader.offsCount()-1);
                 long outSize = OFFS_OFF + (reader.offsCount()*offWidth) + u8Bytes;
-                out = ch.map(READ_WRITE, 0, outSize, arena.scope());
+                out = ch.map(READ_WRITE, 0, outSize, arena);
             }
             out.set(LE_LONG, 0, srcStringsAndFlags
                     | LOCALITY_MASK | (embedSharedId ? OFF_W_MASK : 0));
@@ -111,8 +110,7 @@ class DictLocalityOptimizer {
             if (closed) return;
             out.force();
             closed = true;
-            reader.close();
-            arena.close();
+            reader.close(); // also closes arena
         }
 
         public void convert() {

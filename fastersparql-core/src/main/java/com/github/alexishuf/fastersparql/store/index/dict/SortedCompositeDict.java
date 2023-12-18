@@ -93,7 +93,7 @@ public final class SortedCompositeDict extends Dict {
         private final TwoSegmentRope out = new TwoSegmentRope();
         private final TwoSegmentRope termTmp = new TwoSegmentRope();
         private final Splitter split = new Splitter(splitMode);
-        private final byte[] b64Base = (byte[]) split.b64(MIN_ID).segment.array().orElse(null);
+        private final byte[] b64Base = (byte[]) split.b64(MIN_ID).segment.heapBase().orElse(null);
         private final long b64Off = split.b64(MIN_ID).segment.address();
 
         @Override public SortedCompositeDict dict() { return SortedCompositeDict.this; }

@@ -77,7 +77,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
                 try (DictBlock empty = new DictBlock(0)) { sorted.add(empty.run()); }
             }
             if (sorted.size() == 1) {
-                Files.move(sorted.get(0), dest, REPLACE_EXISTING);
+                Files.move(sorted.getFirst(), dest, REPLACE_EXISTING);
                 var bb = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN).limit(8);
                 try (var ch = FileChannel.open(dest, WRITE, READ)) {
                     if (ch.read(bb) != 8)
@@ -372,7 +372,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
         public DictBlock(int bytesCapacity) { this(bytesCapacity, Math.max(2, bytesCapacity>>>10)); }
         public DictBlock(int bytesCapacity, int ropesCapacity) {
             // native memory here will avoid one copy when rope[i] is written to a FileChannel
-            arena = Arena.openShared();
+            arena = Arena.ofShared();
             bytes = arena.allocate(bytesCapacity, 8);
             ropes = new SegmentRope[ropesCapacity];
         }

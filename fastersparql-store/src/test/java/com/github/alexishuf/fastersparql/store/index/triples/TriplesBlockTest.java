@@ -30,7 +30,7 @@ class TriplesBlockTest {
 
     @BeforeAll static void beforeAll() throws IOException {
         tempDir = Files.createTempDirectory("fastersparql");
-        arena = Arena.openShared();
+        arena = Arena.ofShared();
     }
 
     @AfterAll
@@ -44,13 +44,13 @@ class TriplesBlockTest {
 
     private static TriplesBlock mkBlock(int capacity) throws IOException {
         Path file = Files.createTempFile("test", ".block");
-        return new TriplesBlock(file, arena.scope(), capacity);
+        return new TriplesBlock(file, arena, capacity);
     }
 
     private static TriplesBlock mkOrdered(List<TestTriple> triples) throws IOException {
         TriplesBlock b = mkBlock(triples.size());
-        for (TestTriple(long s, long p, long o) : triples)
-                b.add(s, p, o);
+        for (var t : triples)
+                b.add(t.s(), t.p(), t.o());
         return b;
     }
 
@@ -67,8 +67,8 @@ class TriplesBlockTest {
         TriplesBlock b = mkBlock(triples.size());
         ArrayList<TestTriple> shuffled = new ArrayList<>(triples);
         Collections.shuffle(shuffled, new Random(seed));
-        for (TestTriple(long s, long p, long o) : shuffled)
-                b.add(s, p, o);
+        for (var t : shuffled)
+                b.add(t.s(), t.p(), t.o());
         return b;
     }
 

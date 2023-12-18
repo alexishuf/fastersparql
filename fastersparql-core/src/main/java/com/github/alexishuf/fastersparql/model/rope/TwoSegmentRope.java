@@ -49,8 +49,8 @@ public class TwoSegmentRope extends PlainRope {
         super(fstLen+sndLen);
         this.fst = fst;
         this.snd = snd;
-        this.fstU8 = (byte[])fst.array().orElse(null);
-        this.sndU8 = (byte[])snd.array().orElse(null);
+        this.fstU8 = (byte[])fst.heapBase().orElse(null);
+        this.sndU8 = (byte[])snd.heapBase().orElse(null);
         this.fstOff = fstOff;
         this.sndOff = sndOff;
         this.fstLen = fstLen;

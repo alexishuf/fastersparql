@@ -8,8 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SegmentScope;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,10 +30,10 @@ public class TriplesBlock implements Sorter.BlockJob<TriplesBlock> {
     private final FileChannel ch;
     int triples;
 
-    public TriplesBlock(Path file, SegmentScope scope, int triplesCapacity) throws IOException {
+    public TriplesBlock(Path file, Arena arena, int triplesCapacity) throws IOException {
         path = file;
         ch = FileChannel.open(path, CREATE, READ, WRITE, TRUNCATE_EXISTING);
-        seg = ch.map(READ_WRITE, 0, triplesCapacity * 24L, scope);
+        seg = ch.map(READ_WRITE, 0, triplesCapacity * 24L, arena);
     }
 
     @Override public void close() {

@@ -371,8 +371,8 @@ public class SparqlParser {
             if (exprs != null)
                 left = FS.filter(left, exprs);
             if (exists != null) {
-                for (Expr.Exists(var filter, var negate) : exists)
-                        left = FS.exists(left, negate, filter);
+                for (var e : exists)
+                        left = FS.exists(left, e.negate(), e.filter());
             }
             return left;
         }

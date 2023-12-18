@@ -53,7 +53,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
      *                                  {@code file}.
      */
     protected Dict(Path file) throws IOException {
-        super(file, Arena.openShared());
+        super(file, Arena.ofShared());
         long stringsAndFlags = seg.get(LE_LONG, 0);
         this.flags = (byte) (stringsAndFlags >>> FLAGS_BIT);
         this.nStrings = stringsAndFlags & STRINGS_MASK;

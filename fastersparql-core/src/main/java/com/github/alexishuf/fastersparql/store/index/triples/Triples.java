@@ -33,7 +33,7 @@ public class Triples extends OffsetMappedLEValues implements AutoCloseable {
     private final SubKeyIt noSubKeyIt;
 
     public Triples(Path path) throws IOException {
-        super(path, Arena.openShared());
+        super(path, Arena.ofShared());
         firstKey = seg.get(JAVA_LONG, FIRST_KEY_OFF);
         noValueIt = new ValueIt(0, 0, 0);
         noPairIt = new PairIt(0, 0);

@@ -117,7 +117,9 @@ class NettyEmitSparqlServerTest {
         // generate variations on results (format, method, batch type)
         List<Scenario> list = new ArrayList<>();
         var methods = List.of(GET, POST, FORM, WS);
-        for (Proto(var r, var ic)  : data) {
+        for (var proto  : data) {
+            var r = proto.results;
+            var ic = proto.innerClient;
             for (var bType : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
                 for (SparqlMethod meth : methods) {
                     if (meth == WS) continue;
@@ -192,8 +194,8 @@ class NettyEmitSparqlServerTest {
         int nIterations = 16;
         Map<Results, Map<ResultsSparqlClient, List<Scenario>>> groups = new IdentityHashMap<>();
         for (Scenario s : scenarios()) {
-            groups.computeIfAbsent(s.results, k -> new IdentityHashMap<>())
-                    .computeIfAbsent(s.innerClient, k -> new ArrayList<>())
+            groups.computeIfAbsent(s.results, _ -> new IdentityHashMap<>())
+                    .computeIfAbsent(s.innerClient, _ -> new ArrayList<>())
                     .add(s);
         }
         //noinspection MismatchedQueryAndUpdateOfCollection

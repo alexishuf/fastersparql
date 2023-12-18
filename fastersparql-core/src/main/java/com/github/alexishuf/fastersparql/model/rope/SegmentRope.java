@@ -64,7 +64,7 @@ public class SegmentRope extends PlainRope {
             throw new IndexOutOfBoundsException("offset+len > segment.byteSize");
         this.offset = offset;
         if (utf8 == null)
-            this.utf8 = segment.isNative() ? null : (byte[]) segment.array().orElse(null);
+            this.utf8 = segment.isNative() ? null : (byte[]) segment.heapBase().orElse(null);
         else
             this.utf8 = utf8;
         this.segment = segment;
@@ -431,8 +431,8 @@ public class SegmentRope extends PlainRope {
             for (; begin < end && left.get(JAVA_BYTE, pos) == right.get(JAVA_BYTE, begin); ++begin)
                 ++pos;
         } else {
-            Object lBase =  left.isNative() ? null :  left.array().orElse(null);
-            Object rBase = right.isNative() ? null : right.array().orElse(null);
+            Object lBase =  left.isNative() ? null :  left.heapBase().orElse(null);
+            Object rBase = right.isNative() ? null : right.heapBase().orElse(null);
             pos += left.address() + (lBase == null ? 0 : U8_BASE);
             begin += right.address() + (rBase == null ? 0 : U8_BASE);
             end = begin + rLen;
