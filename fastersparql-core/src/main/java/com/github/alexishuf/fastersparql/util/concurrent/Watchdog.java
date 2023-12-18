@@ -9,9 +9,10 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.VarHandle;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.Semaphore;
 
 import static java.lang.invoke.MethodHandles.lookup;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class Watchdog implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(Watchdog.class);
@@ -28,12 +29,13 @@ public class Watchdog implements AutoCloseable {
     @SuppressWarnings("unused") // access through DEADLINE
     private long deadline;
     private volatile boolean triggered, shutdown;
+    private final Semaphore semaphore = new Semaphore(0);
     private @MonotonicNonNull ConcurrentLinkedQueue<Runnable> lateActions = null;
     private final Thread thread;
 
     public Watchdog(Runnable action) {
         this.thread = Thread.startVirtualThread(() -> {
-            LockSupport.park(); // wait until first start() call
+            semaphore.acquireUninterruptibly(); // wait until first start() call
             while (!shutdown) {
                 long now = Timestamp.nanoTime(), deadline = (long)DEADLINE.getAcquire(this);
                 if (now >= deadline) {
@@ -48,10 +50,13 @@ public class Watchdog implements AutoCloseable {
                         }
                     }
                     if (!shutdown)
-                        LockSupport.park(); //wake on start() or close()
+                        semaphore.acquireUninterruptibly(); //wake on start() or close()
                 } else {
                     long delta = deadline - now;
-                    LockSupport.parkNanos(delta); // wake at deadline/start()/close()
+                    try {
+                        //noinspection ResultOfMethodCallIgnored
+                        semaphore.tryAcquire(delta, NANOSECONDS); // wake at deadline/start()/close()
+                    } catch (InterruptedException ignored) {}
                 }
             }
         });
@@ -81,7 +86,7 @@ public class Watchdog implements AutoCloseable {
         if (shutdown) throw new IllegalStateException("close()ed");
         triggered = false;
         DEADLINE.setRelease(this, Timestamp.nanoTime()+nanos);
-        LockSupport.unpark(thread);
+        semaphore.release();
         return this;
     }
 
@@ -106,7 +111,7 @@ public class Watchdog implements AutoCloseable {
     @Override public void close() {
         shutdown = true;
         DEADLINE.setRelease(this, Long.MAX_VALUE);
-        LockSupport.unpark(thread);
+        semaphore.release();
         try {
             if (!thread.join(Duration.ofSeconds(5))) {
                 StringBuilder sb = new StringBuilder();
