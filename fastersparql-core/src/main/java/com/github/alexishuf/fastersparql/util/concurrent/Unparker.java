@@ -13,7 +13,7 @@ public class Unparker {
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static final long PERIOD_NS = 10_000L;
+    private static final long PERIOD_NS = 50_000L;
     private static final int CAPACITY = 256/4;
     private static final int UNPARK_AT_CAPACITY = Math.max(CAPACITY/4, 8);
     private static final int CAPACITY_MASK = CAPACITY-1;
