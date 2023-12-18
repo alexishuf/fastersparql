@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.VarHandle;
@@ -113,7 +114,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 if (i == source) break;
                 Thread waiter = feedWaiters[i];
                 if (waiter != null) {
-                    LockSupport.unpark(waiter);
+                    Unparker.unpark(waiter);
                     break;
                 }
             }

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql;
 
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.I_Result;
 
@@ -29,7 +30,7 @@ public class PoorManSemaphore {
     @Actor public void producer() {
         for (int i = 0; i < 4; i++) {
             if ((int)TOKENS.getAndAddRelease(this, 1) == 0)
-                LockSupport.unpark((Thread)CONSUMER.getOpaque(this));
+                Unparker.unpark((Thread)CONSUMER.getOpaque(this));
         }
     }
     @Actor public void consumer(I_Result r) {

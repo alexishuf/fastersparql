@@ -22,7 +22,7 @@ public class Async {
             result = value;
             error = cause;
             completed = true;
-            LockSupport.unpark(waiter);
+            Unparker.unpark(waiter);
         }
     }
 

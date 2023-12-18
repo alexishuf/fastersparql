@@ -55,7 +55,7 @@ public class PoolCleaner {
         try {
             scanWaiters.add(me);
         } finally { LOCK.setRelease(this, 0); }
-        LockSupport.unpark(thread);
+        Unparker.unpark(thread);
         while (true) {
             LockSupport.park(this);
             while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
@@ -90,7 +90,7 @@ public class PoolCleaner {
                     for (Thread t; (t = scanWaiters.poll()) != null; ) unparkQueue.add(t);
                 } finally { LOCK.setRelease(this, 0); }
                 for (Thread t; (t = unparkQueue.poll()) != null; )
-                    LockSupport.unpark(t);
+                    Unparker.unpark(t);
 
                 waitCleanIntervalOrSyncRequests();
             } catch (Exception e) {

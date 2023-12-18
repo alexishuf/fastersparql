@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.utils;
 
 
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.openjdk.jmh.annotations.*;
 
 import java.lang.invoke.VarHandle;
@@ -19,17 +20,17 @@ public class CurrentThreadBench {
     private static final VarHandle COUNTER;
     static {
         try {
-            COUNTER = lookup().findVarHandle(CurrentThreadBench.class, "counter", int.class);
+            COUNTER = lookup().findVarHandle(CurrentThreadBench.class, "plainCounter", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
-    private int counter;
+    @SuppressWarnings("unused") private int plainCounter;
     private boolean stop;
     private Thread thread, nil;
 
     @Setup public void setup() {
-        counter = 0;
+        COUNTER.setRelease(this, 0);
         nil = Thread.startVirtualThread(() -> COUNTER.getAndAdd((CurrentThreadBench.this), 1));
         thread = Thread.startVirtualThread(() -> {
             LockSupport.park();
@@ -50,13 +51,13 @@ public class CurrentThreadBench {
 
     @Benchmark public Thread unparkNotParked() {
         Thread t = thread;
-        LockSupport.unpark(t);
+        Unparker.unpark(t);
         return t;
     }
 
     @Benchmark public Thread unparkNull() {
         Thread t = nil;
-        LockSupport.unpark(t);
+        Unparker.unpark(t);
         return t;
     }
 }

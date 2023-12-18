@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -50,14 +51,14 @@ class MergeBItTest extends AbstractMergeBItTest {
     @ParameterizedTest @ValueSource(ints = {3, 3*2, 3*4, 3*8, 3*16, 3*100})
     void testCloseBlockedDrainers(int n) throws Exception {
         for (int repetition = 0; repetition < 16; repetition++) {
-            var sources = range(0, n).mapToObj(i -> new SPSCBIt<>(TERM, X, queueMaxRows())).toList();
+            var sources = range(0, n).mapToObj(_ -> new SPSCBIt<>(TERM, X, queueMaxRows())).toList();
             var active = new AtomicBoolean(true);
             Thread feeder = null;
             try (var it = new MergeBIt<>(sources, TERM, X)) {
                 it.minBatch(2).minWait(10, MILLISECONDS);
                 if (n <= 3) {
                     it.maxWait(20, MILLISECONDS);
-                    offerAndInvalidate(sources.get(0), 1);
+                    offerAndInvalidate(sources.getFirst(), 1);
                 } else {
                     feeder = ofVirtual().name("feeder").start(() -> range(0, n - 3).forEach(i -> {
                         if (active.get())
@@ -283,7 +284,7 @@ class MergeBItTest extends AbstractMergeBItTest {
 
         @Override public void close() {
             stop = true;
-            LockSupport.unpark(thread);
+            Unparker.unpark(thread);
         }
 
         public void reset() {
@@ -310,7 +311,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             assertNull(this.cb, "still feeding");
             this.cb = cb;
             //journal.write("feed", cb, ": unpark()ing");
-            LockSupport.unpark(thread);
+            Unparker.unpark(thread);
         }
 
         public boolean await(long nanos) {

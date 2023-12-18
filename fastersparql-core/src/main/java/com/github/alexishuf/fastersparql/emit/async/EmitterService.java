@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
@@ -341,7 +342,7 @@ public class EmitterService {
             // unpark at most one worker, staring from most likely stealer
             while ((i=(short)((i-1)&mask)) != id) {
                 if (md[(i<<MD_BITS)+MD_PARKED] == 1) {
-                    LockSupport.unpark(workers[i]);
+                    Unparker.unpark(workers[i]);
                     break;
                 }
             }
@@ -396,7 +397,7 @@ public class EmitterService {
 //                return; // no scheduled tasks to be stolen
 //            int stealerId = (id-1)&threadsMask;
 //            if (md[(stealerId<<MD_BITS)+MD_PARKED] == 1)
-//                LockSupport.unpark(workers[stealerId]);
+//                Unparker.unpark(workers[stealerId]);
 //        }
     }
 
@@ -671,7 +672,7 @@ public class EmitterService {
             MD.setRelease(md, lockIdx, 0);
         }
         if (unpark)
-            LockSupport.unpark(workers[mdb >> MD_BITS]);
+            Unparker.unpark(workers[mdb >> MD_BITS]);
         return true;
     }
 
@@ -713,7 +714,7 @@ public class EmitterService {
         try {
             var task = sharedQueue.poll();
             if (!sharedQueue.isEmpty() && runnerMd[RMD_SHR_PARKED] != 0)
-                LockSupport.unpark(sharedScheduler);
+                Unparker.unpark(sharedScheduler);
             return task;
         } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
     }
@@ -724,7 +725,7 @@ public class EmitterService {
             boolean unpark = sharedQueue.isEmpty();
             sharedQueue.add(task);
             if (unpark)
-                LockSupport.unpark(sharedScheduler);
+                Unparker.unpark(sharedScheduler);
         } finally {
             MD.setRelease(runnerMd, RMD_SHR_LOCK, 0);
         }

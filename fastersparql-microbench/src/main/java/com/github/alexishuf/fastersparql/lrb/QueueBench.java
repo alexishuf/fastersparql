@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 
@@ -51,7 +52,7 @@ public class QueueBench {
         System.out.println("trialSetup(): loading first invocation batches...");
         seedInputs = uniformCols(Workloads.<Batch>fromName(bt, sizeName), bt);
         System.out.printf("trialSetup(): loaded first invocation batches in %.3fms\n", (nanoTime()-setupStart)/1_000_000.0);
-        int cols = seedInputs.get(0).cols;
+        int cols = seedInputs.getFirst().cols;
         vars = new Vars.Mutable(cols);
         for (int i = 0; i < cols; i++)
             vars.add(Rope.of("x", i));
@@ -63,7 +64,7 @@ public class QueueBench {
 
     @TearDown(Level.Trial) public void trialTearDown() throws InterruptedException {
         stopFeeder = true;
-        LockSupport.unpark(feederThread);
+        Unparker.unpark(feederThread);
         feederThread.join(1_000);
         System.out.printf("Max invocations/iteration: %d\n", maxInvocations);
     }
@@ -114,7 +115,7 @@ public class QueueBench {
         it.maxReadyItems(maxItems);
         while (this.it != null) Thread.onSpinWait();
         this.it = it;
-        LockSupport.unpark(this.feederThread);
+        Unparker.unpark(this.feederThread);
         int count = 0;
         for (B b = null; (b = it.nextBatch(b)) != null; ) {
             for (var n = b; n != null; n = n.next) {

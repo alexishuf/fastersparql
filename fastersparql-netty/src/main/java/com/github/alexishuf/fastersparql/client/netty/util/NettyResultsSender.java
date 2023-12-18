@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpContent;
@@ -269,7 +270,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             onError(t);
         } finally {
             if ((touchState & TOUCH_PARKED) != 0)
-                LockSupport.unpark(owner);
+                Unparker.unpark(owner);
         }
     }
 
@@ -299,7 +300,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 } finally {
                     unlock();
                     if (actionsSize == actions.length - 1)
-                        LockSupport.unpark(owner);
+                        Unparker.unpark(owner);
                 }
                 // speculative touch
                 if (touchState != TOUCH_DISABLED && sink.needsTouch())

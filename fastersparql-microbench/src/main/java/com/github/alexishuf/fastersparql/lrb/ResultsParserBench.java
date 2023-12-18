@@ -19,6 +19,7 @@ import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -91,18 +92,18 @@ public class ResultsParserBench {
                 System.gc();
         }
         sink.release();
-        Integer listBytes = fragmentsLists.get(0).stream().map(Rope::len).reduce(Integer::sum).orElse(0);
+        Integer listBytes = fragmentsLists.getFirst().stream().map(Rope::len).reduce(Integer::sum).orElse(0);
         System.out.printf("Serialized fragments in %.3fms. Built %d lists with %d fragments each, " +
                           "totaling %.3f KiB per list. Will gc() and cooldown sleep(500)\n",
                           (Timestamp.nanoTime()-start)/1_000_000.0, fragmentsLists.size(),
-                          fragmentsLists.get(0).size(), listBytes/1024.0);
+                          fragmentsLists.getFirst().size(), listBytes/1024.0);
         drainer = Thread.ofPlatform().name("drainer").start(this::drain);
         Workloads.cooldown(500);
     }
 
     @TearDown(Level.Trial) public void trialTearDown() throws InterruptedException {
         stopDrainer = true;
-        LockSupport.unpark(drainer);
+        Unparker.unpark(drainer);
         ropeTypeHolder.close();
         drainer.join();
     }
@@ -155,7 +156,7 @@ public class ResultsParserBench {
     private int parse(ResultsParser parser, BIt it) {
         this.drainedRows = -1;
         this.it = it;
-        LockSupport.unpark(drainer);
+        Unparker.unpark(drainer);
         List<SegmentRope> fragments = fragmentsLists.get(nextFragmentList);
         nextFragmentList = (nextFragmentList+1) % fragmentsLists.size();
         try {

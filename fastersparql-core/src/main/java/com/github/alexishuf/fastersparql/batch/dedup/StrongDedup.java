@@ -120,7 +120,7 @@ public final class StrongDedup<B extends Batch<B>> extends Dedup<B> {
 
     private void asyncRecycleInternals(Bucket<B>[] buckets) {
         BUCKET_ARRAY_RECYCLER_QEUUE.addLast(new BucketArrayGarbage<>(buckets, bucketPool));
-        LockSupport.unpark(BUCKET_ARRAY_RECYCLER);
+        Unparker.unpark(BUCKET_ARRAY_RECYCLER);
     }
 
     @Override public int capacity() {

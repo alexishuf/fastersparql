@@ -299,12 +299,12 @@ public class QueryBench {
 //        ResultJournal.clear();
 //        dbgExecution = execution;
 //        watchdogPlan = plan;
-//        LockSupport.unpark(watchdog);
+//        Unparker.unpark(watchdog);
 //    }
 //    private void disarmWatchdog() {
 //        dbgExecution = null;
 //        watchdogPlan = null;
-//        LockSupport.unpark(watchdog);
+//        Unparker.unpark(watchdog);
 //    }
 //
 //    @SuppressWarnings("CallToPrintStackTrace") private void watchdog() {

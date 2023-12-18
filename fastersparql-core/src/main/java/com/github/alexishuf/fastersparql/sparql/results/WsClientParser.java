@@ -20,6 +20,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -202,7 +203,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         if (hasBindings) {
             // unblock sender and publish state changes from this thread, making it exit
             B_REQUESTED.getAndAddRelease(this, 1);
-            LockSupport.unpark(bindingsSender);
+            Unparker.unpark(bindingsSender);
             if (serverSentTermination && cause == null && bindQuery != null) {
                 // got a friendly !end, iterate over all remaining sent bindings and notify
                 // they had zero results
@@ -236,7 +237,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
             int add = (int) Math.min(MAX_VALUE-(long)plainBindingsRequested, n);
             if ((int)B_REQUESTED.getAndAddRelease(this, add) <= 0)
-                LockSupport.unpark(bindingsSender);
+                Unparker.unpark(bindingsSender);
         }
     }
 
