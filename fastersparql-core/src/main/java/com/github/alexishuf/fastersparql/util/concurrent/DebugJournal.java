@@ -264,7 +264,7 @@ public class DebugJournal {
                     case Term t          -> t.toSparql().toString();
                     case CharSequence cs -> cs.toString();
                     case StreamNode n    -> n.label(StreamNodeDOT.Label.MINIMAL);
-                    default              -> o.getClass().getSimpleName()+'@'+identityHashCode(o);
+                    default              -> o.getClass().getSimpleName()+'@'+Integer.toHexString(identityHashCode(o));
                 };
                 if (maxWidth > 12 && str.length() > maxWidth) {
                     int side = maxWidth - 12 /* ...@12345678 */;
