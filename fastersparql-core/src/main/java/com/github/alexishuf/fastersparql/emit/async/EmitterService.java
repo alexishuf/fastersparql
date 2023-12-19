@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.Runtime.getRuntime;
 import static java.lang.Thread.MIN_PRIORITY;
 import static java.lang.Thread.onSpinWait;
@@ -287,8 +288,13 @@ public class EmitterService {
             while (true) {
                 Task task = parent.pollOrSteal(id);
                 if (task == null) {
+                    if (id < 32) {
+                        parkedBitset |= 1<<id;
+                        if (stealer == id) stealer = -1;
+                    }
                     LockSupport.park(parent);
                     md[mdParkedIdx] = 0;
+                    if (id < 32) parkedBitset &= ~(1<<id);
                 } else {
                     try {
                         task.run(threadId);
@@ -401,7 +407,7 @@ public class EmitterService {
 //        }
     }
 
-    private static final int MD_BITS       = Integer.numberOfTrailingZeros(128/4);
+    private static final int MD_BITS       = numberOfTrailingZeros(128/4);
     private static final int MD_LOCK       = 0;
     private static final int MD_SIZE       = 1;
     private static final int MD_QUEUE_BASE = 2;
@@ -433,6 +439,8 @@ public class EmitterService {
 
     private final int[] md;
     private final short threadsMask, threadMaskBits;
+    private int parkedBitset;
+    private int stealer;
     private final int[] runnerMd;
     private final Worker[] workers;
     private final ArrayDeque<Task> sharedQueue;
@@ -550,6 +558,14 @@ public class EmitterService {
             w.endSpin();
     }
 
+    public void requireStealer() {
+        if (stealer == -1 && parkedBitset != 0) {
+            int w = findStealer();
+            if (w >= 0)
+                Unparker.unpark(workers[w]);
+        }
+    }
+
     @SuppressWarnings("unused") public static short currentWorker() {
         if (Thread.currentThread() instanceof Worker w)
             return w.id;
@@ -637,8 +653,9 @@ public class EmitterService {
      *         queue was full or if there was too much contention on the spinlock.
      */
     private boolean tryAdd(Task task) {
-        int mdb = task.preferredWorker <<MD_BITS, lockIdx = mdb+MD_LOCK;
-        boolean got = false, unpark;
+        int mdb = task.preferredWorker <<MD_BITS, lockIdx = mdb+MD_LOCK, size;
+        boolean got = false;
+        byte unpark = -1;
         for (int i = 0; i < 16; i++) {
             got = (int) MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
             if (got || i == 7 && md[(((task.preferredWorker +1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
@@ -648,7 +665,7 @@ public class EmitterService {
         if (!got)
             return false; // congested spinlock
         try {
-            int size = md[mdb+MD_SIZE];
+            size = md[mdb+MD_SIZE];
             if (size >= QUEUE_CAP)
                 return false; // full queue
             md[mdb+MD_SIZE] = size+1;
@@ -663,17 +680,31 @@ public class EmitterService {
                 md[mdb+MD_PUT] = (putIdx+1) & QUEUE_MASK;
             }
             queues[md[mdb+MD_QUEUE_BASE]+putIdx] = task;
-            unpark = md[mdb+MD_PARKED] == 1;
-            // since this thread will unpark(), subsequent tryAdd() calls will not need to
-            // (unless the queue gets drained by the worker thread or a neighbour).
-            if (unpark)
+            if (md[mdb+MD_PARKED] == 1) {
+                unpark = (byte)(mdb>>>MD_BITS);
+                // since this thread will unpark(), subsequent tryAdd() calls will not need to
+                // (unless the queue gets drained by the worker thread or a neighbour).
                 md[mdb+MD_PARKED] = 0;
+            }
         } finally {
             MD.setRelease(md, lockIdx, 0);
         }
-        if (unpark)
-            Unparker.unpark(workers[mdb >> MD_BITS]);
+        if (unpark >= 0) {
+            if (size == 0 && stealer == unpark)
+                stealer = -1;
+            Unparker.unpark(workers[unpark]); // unpark target worker or stealer
+        }
         return true;
+    }
+
+    private int findStealer() {
+        int w = numberOfTrailingZeros(parkedBitset);
+        if (w < 32 && stealer == -1) {
+            stealer = w;
+            md[(w<<MD_BITS) + MD_PARKED] = 0;
+            return w;
+        }
+        return -1;
     }
 
 

@@ -102,7 +102,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     }
 
     protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query, Vars rebindHint) {
-        return new BindingStage.ForSparql<>(query, rebindHint, this);
+        return new BindingStage<>(query, rebindHint, this);
     }
 
     /* --- --- --- interface implementations --- --- --- */

@@ -18,7 +18,7 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.emit.async.ScatterStage;
-import com.github.alexishuf.fastersparql.emit.stages.BindingStage.ForPlan;
+import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -241,8 +241,8 @@ public class NativeBind {
                 left = multiBindEmit(left, type, projection, rUnion, rebindHint,
                                      weakDedup, null);
             } else {
-                left = new ForPlan<>(new EmitBindQuery<>(r, left, type), rebindHint,
-                                     weakDedup, projection);
+                left = new BindingStage<>(new EmitBindQuery<>(r, left, type), rebindHint,
+                                          weakDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)

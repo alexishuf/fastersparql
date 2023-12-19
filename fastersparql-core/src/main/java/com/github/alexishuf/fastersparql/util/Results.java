@@ -618,6 +618,7 @@ public final class Results {
                     try {
                         ThreadJournal.dumpAndReset(System.err, 80);
                         ResultJournal.dump(System.err);
+                        renderDOT(new File("/tmp/test.svg"), WITH_STATE_AND_STATS);
                     } catch (Throwable e) {
                         throw new AssertionError(e.toString(), assertionError);
                     }

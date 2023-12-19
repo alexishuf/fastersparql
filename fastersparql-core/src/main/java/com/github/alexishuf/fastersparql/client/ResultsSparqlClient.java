@@ -425,7 +425,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 if (!boundExpected.vars().equals(unboundVars))
                     throw error("Bound query results vars do not match ");
             }
-            return new BindingStage.ForSparql<>(bq, Vars.EMPTY, this);
+            return new BindingStage<>(bq, Vars.EMPTY, this);
         }
     }
 
