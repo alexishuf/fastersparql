@@ -135,6 +135,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     protected abstract int produceAndDeliver(int state);
 
+    protected boolean mustAwake() { return (long)REQ.getOpaque(this) > 0; }
+
     @Override protected void task(int threadId) {
         this.threadId = (short)threadId;
         int st = state(), termState;
@@ -155,7 +157,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
         if ((termState&IS_TERM) != 0)
             deliverTermination(st, termState);
-        else if ((long)REQ.getOpaque(this) > 0)
+        else if (mustAwake())
             awake();
     }
 

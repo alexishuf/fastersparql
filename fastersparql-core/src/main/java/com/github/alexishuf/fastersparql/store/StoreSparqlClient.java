@@ -17,6 +17,7 @@ import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Stage;
+import com.github.alexishuf.fastersparql.emit.async.AsyncStage;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
@@ -99,6 +100,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
     private final SegmentRope[] prefixes;
+    private final boolean hugeDict;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -145,6 +147,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.pso = pso;
         this.ops = ops;
         this.federator = new StoreSingletonFederator(this);
+        this.hugeDict = dict.strings() > 40_000_000;
         log.debug("Loaded{} {}...", validate ? "/validated" : "", dir);
     }
 
@@ -302,8 +305,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override
         protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {
-            //noinspection unchecked
-            return new FromStoreConverter<>(dest, (Emitter<StoreBatch>)in);
+            return converterFromStore(dest, in);
         }
 
         @Override protected Plan bind2client(Plan plan, QueryMode mode) {
@@ -495,8 +497,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         };
     }
 
-    @SuppressWarnings("unchecked") @Override
-    public <B extends Batch<B>> Emitter<B>
+    @Override public <B extends Batch<B>> Emitter<B>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         Plan plan = SparqlParser.parse(sparql);
         var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
@@ -507,7 +508,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             Vars tpVars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
             em = new TPEmitter(tp, tpVars);
             if (convertBefore)
-                em = new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em);
+                em = converterFromStore(bt, em);
             if (m != null) // apply any modification required (projection may be done already)
                 em = m.processed(em);
         } else {
@@ -515,10 +516,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 plan = plan.left();
             em = federator.emit(maybeNative(bt), plan, rebindHint);
             if (convertBefore)
-                em =  m.processed(new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em));
+                em =  m.processed(converterFromStore(bt, em));
         }
-        return bt.equals(em.batchType()) ? (Emitter<B>)em
-                                         : new FromStoreConverter<>(bt, (Emitter<StoreBatch>)em);
+        //noinspection unchecked
+        return bt.equals(em.batchType()) ? (Emitter<B>)em : converterFromStore(bt, em);
     }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
@@ -1224,6 +1225,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
     }
 
+    public static boolean ALT = true;
+
+    private <B extends Batch<B>> Emitter<B>
+    converterFromStore(BatchType<B> bt, Emitter<?> upstream) {
+        //noinspection unchecked
+        var conv =  new FromStoreConverter<>(bt, (Emitter<StoreBatch>)upstream);
+        if (ALT && hugeDict && conv.cols() > 0)
+            return new AsyncStage<>(conv);
+        return conv;
+    }
+
     private final class FromStoreConverter<B extends Batch<B>> extends ConverterStage<StoreBatch, B> {
         private final LocalityCompositeDict.Lookup lookup;
         private int avgRowLocalLen;
@@ -1248,6 +1260,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             batchType.recycleForThread(threadId, downstream.onBatch(dst));
             return batch;
         }
+
+        private short cols() { return cols; }
 
         private SegmentRope shared(TwoSegmentRope t, byte fst) {
             return switch (fst) {
