@@ -268,9 +268,7 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        // B2: dedup too slow
-        // B5: slow
-        // B6: slow -- 5m with modified plan
+        // B5 takes 20m
         String regex = "B[1234678]";
         if (sourceKind.isHdt())
             regex = "B[123478]";
