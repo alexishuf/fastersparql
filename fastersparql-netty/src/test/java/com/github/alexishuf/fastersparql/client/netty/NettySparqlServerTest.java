@@ -194,8 +194,9 @@ class NettySparqlServerTest {
         int nIterations = 16;
         Map<Results, Map<ResultsSparqlClient, List<Scenario>>> groups = new IdentityHashMap<>();
         for (Scenario s : scenarios()) {
-            groups.computeIfAbsent(s.results, _ -> new IdentityHashMap<>())
-                    .computeIfAbsent(s.innerClient, _ -> new ArrayList<>())
+            //noinspection unused
+            groups.computeIfAbsent(s.results, k -> new IdentityHashMap<>())
+                    .computeIfAbsent(s.innerClient, k -> new ArrayList<>())
                     .add(s);
         }
         //noinspection MismatchedQueryAndUpdateOfCollection
@@ -218,4 +219,7 @@ class NettySparqlServerTest {
         }
     }
 
+    public static void main(String[] args) {
+        System.out.println("Hi");
+    }
 }
