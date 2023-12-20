@@ -29,7 +29,7 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     private int retries;
 
     public NettyCallbackEmitter(BatchType<B> batchType, Vars vars, SparqlClient client) {
-        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
         this.client = client;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
