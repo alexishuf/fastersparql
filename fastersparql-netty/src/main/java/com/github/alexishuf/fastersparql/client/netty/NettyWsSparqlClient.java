@@ -152,6 +152,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             super(batchType, vars, FSProperties.queueMaxRows(), NettyWsSparqlClient.this);
             this.handler = new WsHandler<>(requestMsg, this, bindQuery);
             acquireRef();
+            request();
         }
 
         @Override protected void cleanup(@Nullable Throwable e) { releaseRef(); }
