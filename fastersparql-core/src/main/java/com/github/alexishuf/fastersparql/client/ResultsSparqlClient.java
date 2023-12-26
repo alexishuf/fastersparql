@@ -82,7 +82,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         this.errors = errors;
     }
 
-    @Override public Guard retain() { return NoOpGuard.INSTANCE; }
+    @Override public Guard retain() { return new RefGuard(); }
 
     @Override protected void doClose() {
         assertNoErrors();

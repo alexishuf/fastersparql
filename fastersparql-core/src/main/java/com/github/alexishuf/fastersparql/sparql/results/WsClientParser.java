@@ -47,7 +47,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             throw new ExceptionInInitializerError(e);
         }
         DUMMY_SENT_BINDINGS = new SPSCBIt<>(TermBatchType.TERM, Vars.EMPTY, DEF_MAX_BATCH);
-        DUMMY_SENT_BINDINGS.complete(new Exception("DUMMY_SENT_BINDINGS should never be used"));
     }
 
     /* --- --- --- instance fields --- --- --- */

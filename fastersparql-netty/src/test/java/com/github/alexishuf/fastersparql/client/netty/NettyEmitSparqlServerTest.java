@@ -16,6 +16,8 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -56,7 +58,16 @@ class NettyEmitSparqlServerTest {
     record Scenario(Results results, ResultsSparqlClient innerClient, SparqlResultFormat fmt,
                     SparqlMethod meth, BatchType<?> bType) { }
 
-    @SuppressWarnings("resource") static List<Scenario> scenarios() {
+    private static ResultsSparqlClient rsClient(boolean nativeBind) {
+        var client = new ResultsSparqlClient(nativeBind);
+        GUARDS.add(client.retain());
+        return client;
+    }
+
+    private static final List<SparqlClient.Guard> GUARDS = new ArrayList<>();
+    private static final List<Scenario> SCENARIOS = new ArrayList<>();
+
+    @BeforeAll @SuppressWarnings("resource") static void beforeAll() {
         var askFalse = Results.negativeResult()
                 .query("ASK { exns:Bob foaf:name \"bob\"}");
         var askTrue = Results.positiveResult()
@@ -75,13 +86,13 @@ class NettyEmitSparqlServerTest {
             // no vars empty bindings -> no results
             Results withNegative = results(r.vars()).query(r.query()).bindings(List.of());
             data.add(new Proto(withNegative,
-                               new ResultsSparqlClient(true)
+                               rsClient(true)
                                     .answerWith(r.query(), withNegative.noBindings())
                                     .forBindings(r.query(), Vars.EMPTY, r.vars()).end()));
             // positive ask bindings -> same results
             Results withPositive = r.bindings(List.of(List.of()));
             data.add(new Proto(withPositive,
-                               new ResultsSparqlClient(true)
+                               rsClient(true)
                                     .answerWith(r.query(), withPositive.noBindings())
                                     .forBindings(r.query(), Vars.EMPTY, r.vars())
                                        .answer().with(withPositive.expected()).end()));
@@ -89,7 +100,7 @@ class NettyEmitSparqlServerTest {
 
         //test JOIN bind
         data.add(new Proto(wide.bindings("?x", ":Alice", "exns:Bob", ":Charlie"),
-                           new ResultsSparqlClient(true)
+                           rsClient(true)
                                    .answerWith(wide.query(), wide)
                                    .forBindings(wide.query(), Vars.of("x"), Vars.of("y", "z"))
                                         .answer(":Alice").with()
@@ -106,7 +117,7 @@ class NettyEmitSparqlServerTest {
                                        .bindings("?x", ":Alice", "exns:Bob", ":Charlie")
                                        .bindType(BindType.LEFT_JOIN);
         data.add(new Proto(wideLeft,
-                            new ResultsSparqlClient(true)
+                            rsClient(true)
                                     .answerWith(wideLeft.query(), wideLeft)
                                     .forBindings(wideLeft.query(), Vars.of("x"), Vars.of("y", "z"))
                                         .answer(":Alice").with(null, null)
@@ -115,7 +126,6 @@ class NettyEmitSparqlServerTest {
                                         .end()));
 
         // generate variations on results (format, method, batch type)
-        List<Scenario> list = new ArrayList<>();
         var methods = List.of(GET, POST, FORM, WS);
         for (var proto  : data) {
             var r = proto.results;
@@ -124,23 +134,29 @@ class NettyEmitSparqlServerTest {
                 for (SparqlMethod meth : methods) {
                     if (meth == WS) continue;
                     for (var fmt : List.of(TSV, JSON))
-                        list.add(new Scenario(r, ic, fmt, meth, bType));
+                        SCENARIOS.add(new Scenario(r, ic, fmt, meth, bType));
                 }
                 if (ic == null) {
-                    ic = new ResultsSparqlClient(false)
+                    ic = rsClient(false)
                             .forBindings(r.query(), Vars.EMPTY, r.query().publicVars())
                                 .answer()
                                     .with(r.expected())
                                 .end();
                 }
-                list.add(new Scenario(r, ic.asEmulatingWs(), SparqlResultFormat.WS, WS, bType));
+                SCENARIOS.add(new Scenario(r, ic.asEmulatingWs(), SparqlResultFormat.WS, WS, bType));
             }
         }
-        return list;
+    }
+
+    @AfterAll
+    static void afterAll() {
+        GUARDS.forEach(SparqlClient.Guard::close);
+        GUARDS.clear();
+        SCENARIOS.clear();
     }
 
     static Stream<Arguments> test() {
-        return scenarios().stream().map(s -> arguments(s.results, s.innerClient,
+        return SCENARIOS.stream().map(s -> arguments(s.results, s.innerClient,
                                                        s.fmt, s.meth, s.bType));
     }
 
@@ -193,7 +209,7 @@ class NettyEmitSparqlServerTest {
     @Test void parallelTest() throws Exception {
         int nIterations = 16;
         Map<Results, Map<ResultsSparqlClient, List<Scenario>>> groups = new IdentityHashMap<>();
-        for (Scenario s : scenarios()) {
+        for (Scenario s : SCENARIOS) {
             //noinspection unused
             groups.computeIfAbsent(s.results, k -> new IdentityHashMap<>())
                     .computeIfAbsent(s.innerClient, k -> new ArrayList<>())

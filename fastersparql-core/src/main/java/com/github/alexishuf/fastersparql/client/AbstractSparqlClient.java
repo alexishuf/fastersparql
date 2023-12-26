@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,10 +72,14 @@ public abstract class AbstractSparqlClient implements SparqlClient {
 
     protected final void releaseRef() {
         int old = (int) REFS.getAndAddRelease(this, -1);
-        if (old == 1)
+        if (old == 1) {
+            if (ThreadJournal.ENABLED)
+                ThreadJournal.journal("closing client=", this);
+            log.debug("Closing {}", this);
             doClose();
-        else if (old <= 0)
+        } else if (old <= 0) {
             badReleaseRef();
+        }
     }
 
     private void badReleaseRef() {

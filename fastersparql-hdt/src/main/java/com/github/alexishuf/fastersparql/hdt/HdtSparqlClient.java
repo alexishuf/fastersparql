@@ -93,7 +93,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     @Override protected void doClose() {
         if (ThreadJournal.ENABLED)
             ThreadJournal.journal("Closing dictId=", dictId, "ep=", endpoint);
-        log.debug("Closing {}", this);
         try {
             Async.waitStage(estimator.ready());
         } catch (Throwable t) {

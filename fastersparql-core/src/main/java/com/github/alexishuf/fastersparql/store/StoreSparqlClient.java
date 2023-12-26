@@ -172,7 +172,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
     @Override protected void doClose() {
         if (ThreadJournal.ENABLED)
             journal("Closing dictId=", dictId, "endpoint=", endpoint);
-        log.debug("Closing {}", this);
         IdTranslator.deregister(dictId, dict);
         dict.close();
         spo.close();
