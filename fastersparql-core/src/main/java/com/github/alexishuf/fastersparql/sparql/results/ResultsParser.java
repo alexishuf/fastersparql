@@ -174,23 +174,6 @@ public abstract class ResultsParser<B extends Batch<B>> {
         }
     }
 
-    /**
-     * Checks if the destination to where this parser sends batches and its own completion events
-     * is already terminated ({@link CompletableBatchQueue#isTerminated()}.
-     *
-     * <p>{@link CompletableBatchQueue#complete(Throwable)} should only be called by this parser.
-     * However, {@link CompletableBatchQueue#cancel()} might be called by downstream consumers
-     * of that queue and sometimes the upstream of the parser might want to check if the parser's
-     * destination was not cancelled before starting some long expensive action, such as sending
-     * a network request.</p>
-     *
-     * @return the result of {@link CompletableBatchQueue#isTerminated()} on this parser's
-     *         destination.
-     */
-    public boolean isDestinationTerminated() {
-        return dst.isTerminated();
-    }
-
     /*  --- --- --- abstract methods --- --- --- */
 
     /**

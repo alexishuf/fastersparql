@@ -212,19 +212,17 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final ByteRope requestMsg;
         private boolean gotFrames;
         private @Nullable ByteBufRopeView bbRopeView;
-        private final WsClientParser<B> parser;
+        private @MonotonicNonNull WsClientParser<B> parser;
         private @MonotonicNonNull ChannelHandlerContext ctx;
         private @MonotonicNonNull ChannelRecycler recycler;
+        private final CompletableBatchQueue<B> destination;
+        private final @Nullable BindQuery<B> bindQry;
 
         public WsHandler(ByteRope requestMsg, CompletableBatchQueue<B> destination,
                          @Nullable BindQuery<B> bq) {
             this.requestMsg = requestMsg;
-            if (bq == null) {
-                this.parser = new WsClientParser<>(this, destination);
-            } else {
-                var useful = bq.bindingsVars().intersection(bq.query.publicVars());
-                this.parser = new WsClientParser<>(this, destination, bq, useful);
-            }
+            this.bindQry = bq;
+            this.destination = destination;
         }
 
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
@@ -232,9 +230,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert this.ctx == null : "previous attach()";
             this.recycler = recycler;
-            if (parser.isDestinationTerminated()) { // cancel()ed before WebSocket established
+            if (destination.isTerminated()) { // cancel()ed before WebSocket established
                 recycler.recycle(ctx.channel());
             } else {
+                this.ctx = ctx;
+                if (bindQry == null) {
+                    parser = new WsClientParser<>(this, destination);
+                } else {
+                    var useful = bindQry.bindingsVars().intersection(bindQry.query.publicVars());
+                    parser = new WsClientParser<>(this, destination, bindQry, useful);
+                }
                 this.ctx = ctx;
                 this.bbRopeView = ByteBufRopeView.create();
                 var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
