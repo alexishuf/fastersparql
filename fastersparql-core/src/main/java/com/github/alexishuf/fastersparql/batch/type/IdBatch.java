@@ -295,6 +295,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
     public final void putConverting(Batch<?> other) {
+        if (other.type() == type()) {//noinspection unchecked
+            copy((B)other);
+            return;
+        }
         short cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
         Term t = Term.pooledMutable();

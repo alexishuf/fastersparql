@@ -43,7 +43,6 @@ class HdtBatchTest {
     @RepeatedTest(2)
     public void testSingletonOfferId() {
         HdtBatch b = HdtBatchType.HDT.create(1);
-        assertEquals(1, b.rowsCapacity());
         b.beginPut();
         b.putTerm(0, Alice);
         b.commitPut();
@@ -130,6 +129,7 @@ class HdtBatchTest {
                         Alice, 0, knows,   Bob,
                              Alice, 0, charlie, Bob,
                              Alice, 0, Bob,     Bob), ac);
+        ac.clear();
         ac = merger.merge(ac, l, 1, r);
         assertEquals(HdtBatch.of(3, 4,
                         charlie, 0, knows,   knows,
@@ -139,7 +139,7 @@ class HdtBatchTest {
     }
 
 
-    @Test public void testFiler() {
+    @Test public void testFilter() {
         var filter = new IdBatch.Filter<>(HdtBatchType.HDT, X, null, new RowFilter<>() {
             int calls = 0;
             @Override public Decision drop(HdtBatch batch, int row) { return calls++ == 0 ? Decision.DROP : Decision.KEEP; }

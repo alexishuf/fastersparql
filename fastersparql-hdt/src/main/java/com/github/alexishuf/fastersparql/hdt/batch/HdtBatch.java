@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -59,23 +57,6 @@ public class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     /* --- --- --- term-level accessors --- --- --- */
-
-    @Override public int hash(int row, int col) {
-        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
-        int idx = row*cols + col, hash = hashes[idx];
-        if (hash == 0) {
-            CharSequence cs = IdAccess.toString(arr[idx]);
-            int len = cs == null ? 0 : cs.length();
-            byte[] u8 = IdAccess.peekU8(cs);
-            if (u8 == null) { // manual hashing as HDT strings use FNV hashes
-                for (int i = 0; i < len; i++) hash = 31 * hash + cs.charAt(i);
-            } else {
-                hash = SegmentRope.hashCode(Rope.FNV_BASIS, u8, 0, len);
-            }
-            hashes[idx] = hash;
-        }
-        return hash;
-    }
 
     @Override
     public boolean equals(@NonNegative int row, @NonNegative int col, HdtBatch other,
