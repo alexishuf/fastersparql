@@ -17,26 +17,35 @@ import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTE
 
 public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B> {
     private static final int NO_AUTO_READ = 0x40000000;
-    private static final int STARTED      = 0x20000000;
-    private static final Stateful.Flags FLAGS = Flags.DEFAULT.toBuilder()
-            .flag(NO_AUTO_READ, "NO_AUTO_READ")
-            .flag(STARTED, "STARTED")
+    protected static final int STARTED    = 0x20000000;
+    protected static final int RETRIES_MASK = 0x1f000000;
+    protected static final int RETRIES_ONE  = 0x01000000;
+    private static final Stateful.Flags FLAGS = TASK_FLAGS.toBuilder()
+            .flag(NO_AUTO_READ,    "NO_AUTO_READ")
+            .flag(STARTED,         "STARTED")
+            .counter(RETRIES_MASK, "retries")
             .build();
 
     protected @MonotonicNonNull Channel channel;
     private final Runnable autoReadSetter = this::setAutoRead0;
     protected final SparqlClient client;
-    private int retries;
 
     public NettyCallbackEmitter(BatchType<B> batchType, Vars vars, SparqlClient client) {
-        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
         this.client = client;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
 
+    @Override protected void appendToSimpleLabel(StringBuilder out) {
+        String u = client.endpoint().uri();
+        if (u.startsWith("file:///"))
+            u = u.replaceFirst("^.*/", "");
+        out.append('\n').append(u);
+    }
+
     @Override public final String toString() {
-        return "NettyCallbackProducer["+client.endpoint()+"]"+channel;
+        return "NettyCallbackEmitter["+client.endpoint()+"]"+channel;
     }
 
     private void setAutoRead0() {
@@ -73,8 +82,12 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     @Override protected int complete2state(int current, @Nullable Throwable cause) {
         cause = cause == CancelledException.INSTANCE ? cause
                 : FSException.wrap(client.endpoint(), cause);
-        if ((state()&IS_LIVE) != 0 && retry(++retries, cause, this::request))
-            return 0; // do not complete
+        int state = state();
+        if ((state&IS_LIVE) != 0) {
+            int retries = addToCounterRelease(state, RETRIES_MASK, RETRIES_ONE);
+            if (retry(retries, cause, this::request))
+                return 0; // do not complete
+        }
         return super.complete2state(current, cause);
     }
 

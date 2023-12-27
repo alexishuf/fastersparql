@@ -29,7 +29,7 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static final int IS_ASYNC = 0x80000000;
+    private static final int IS_ASYNC = 0x40000000;
     private static final Flags ASYNC_FLAGS = TASK_FLAGS.toBuilder()
             .flag(IS_ASYNC, "ASYNC").build();
 

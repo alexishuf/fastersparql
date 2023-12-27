@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.LongRenderer.HEX;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.*;
@@ -235,6 +236,22 @@ public abstract class Stateful {
                 log.error("Ignoring doRelease() failure for {}", this, t);
             }
         }
+    }
+
+    /* --- --- --- counters --- --- --- --- */
+
+    protected int addToCounterRelease(int state, int mask, int shiftedAdd) {
+        int ex, next;
+        do {
+            next = ((ex=state)&mask) + shiftedAdd;
+            if ((next&mask) != next) {
+                if (ENABLED)
+                    journal("overflow/underflow for mask=", mask, HEX, "state=", ex, flags, "this=", this);
+                return ex;
+            }
+            next = (ex&~mask) | next;
+        } while ((state=(int)S.compareAndExchangeRelease(this, ex, next)) != ex);
+        return next;
     }
 
     /* --- --- --- setters for state and flags --- --- --- */
@@ -520,6 +537,8 @@ public abstract class Stateful {
             }
 
             public @This Builder counter(int mask, String name) {
+                if (mask < 0)
+                    throw new IllegalArgumentException("counter mask cannot include MSB");
                 counterNames [counters] = name;
                 counterBegins[counters] = numberOfTrailingZeros(mask);
                 counterWidths[counters] = bitCount(mask);

@@ -68,6 +68,6 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     @Override public String toString() {
-        return "NettySPSC["+client.endpoint()+"]@"+id()+channel;
+        return "NettySPSC["+client.endpoint()+"]@"+id()+(channel == null ? "" : channel);
     }
 }

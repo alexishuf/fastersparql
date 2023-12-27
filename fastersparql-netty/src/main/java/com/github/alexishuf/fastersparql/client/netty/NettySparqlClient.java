@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
@@ -145,6 +146,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private final SparqlQuery originalQuery;
         private SparqlQuery boundQuery;
         private @Nullable FullHttpRequest boundRequest;
+        private @Nullable B lb;
+        private @Nullable BatchMerger<B> merger;
+        private @Nullable Vars mergerFreeVars;
+
 
         public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), NettySparqlClient.this);
@@ -175,10 +180,29 @@ public class NettySparqlClient extends AbstractSparqlClient {
             handler.setup(this);
         }
 
+        @Override protected @Nullable B deliver(B b) {
+            if (merger == null)
+                b = super.deliver(b);
+            else
+                bt.recycle(super.deliver(merger.merge(null, lb, 0, b)));
+            return b;
+        }
+
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(0, LOCKED_MASK);
+            int st = resetForRebind(STARTED|RETRIES_MASK, LOCKED_MASK);
             try {
                 boundQuery = originalQuery.bound(binding);
+                var freeVars = boundQuery.publicVars();
+                if (freeVars.size() == originalQuery.publicVars().size()) {
+                    lb = bt.recycle(lb);
+                    merger = null;
+                } else {
+                    if (!freeVars.equals(mergerFreeVars)) {
+                        mergerFreeVars = freeVars;
+                        merger          = bt.merger(vars, binding.vars, vars);
+                    }
+                    binding.putRow(lb = bt.empty(lb, binding.vars.size()));
+                }
                 var boundRequest = this.boundRequest;
                 if (boundRequest != null) {
                     boundRequest.release();

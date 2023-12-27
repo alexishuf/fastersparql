@@ -46,7 +46,7 @@ public class EmitterService {
             }
         }
         protected static final short RR_WORKER = Short.MIN_VALUE;
-        private static final int IS_RUNNING  = 0x40000000;
+        private static final int IS_RUNNING  = 0x80000000;
         protected static final Stateful.Flags TASK_FLAGS = Stateful.Flags.DEFAULT.toBuilder()
                 .flag(IS_RUNNING, "RUNNING").build();
 

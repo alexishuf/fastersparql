@@ -117,9 +117,8 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         if (rows <= 0)
             return;
         // on first request(), transition from CREATED to LIVE
-        if ((statePlain()&IS_INIT) != 0) {
+        if ((statePlain()&IS_INIT) != 0)
             onFirstRequest();
-        }
         if (Async.maxRelease(REQ, this, rows))
             resume();
     }

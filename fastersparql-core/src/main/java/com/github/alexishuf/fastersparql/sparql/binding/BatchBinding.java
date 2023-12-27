@@ -84,16 +84,30 @@ public class BatchBinding extends Binding {
         throw new IndexOutOfBoundsException("var not found");
     }
 
+    public final <B extends Batch<B>> void putRow(B dstBatch) {
+        int varsCount = vars.size();
+        if (varsCount != dstBatch.cols)
+            throw new IllegalArgumentException("dstBatch.cols != vars.size()");
+        if (cols == varsCount) {
+            dstBatch.putRowConverting(batch, row);
+        } else {
+            dstBatch.beginPut();
+            for (int c = 0; c < varsCount; c++)
+                putTerm(c, dstBatch, c);
+            dstBatch.commitPut();
+        }
+    }
+
     public final <B extends Batch<B>> void putTerm(int dstCol, B dstBatch, int srcCol) {
         if (srcCol >= cols) {
             putTermFromRemainder(dstCol, dstBatch, srcCol);
         } else {
             Batch<?> srcBatch = this.batch;
             if (srcBatch != null) {
-                if (!srcBatch.type().equals(dstBatch.type()))
-                    throw new IllegalArgumentException("Incompatible dstBatch type");
-                //noinspection unchecked
-                dstBatch.putTerm(dstCol, (B)srcBatch, row, srcCol);
+                if (srcBatch.type().equals(dstBatch.type())) //noinspection unchecked
+                    dstBatch.putTerm(dstCol, (B) srcBatch, row, srcCol);
+                else
+                    dstBatch.putTerm(dstCol, srcBatch.get(row, srcCol));
             }
         }
     }
@@ -108,10 +122,10 @@ public class BatchBinding extends Binding {
         if (b != null && c >= 0) {
             var batch = b.batch;
             if (batch == null) return;
-            if (!batch.type().equals(dstBatch.type()))
-                throw new IllegalArgumentException("Incompatible dstBatch type");
-            //noinspection unchecked
-            dstBatch.putTerm(dstCol, (B)batch, b.row, srcCol);
+            if (batch.type().equals(dstBatch.type()))//noinspection unchecked
+                dstBatch.putTerm(dstCol, (B)batch, b.row, srcCol);
+            else
+                dstBatch.putTerm(dstCol, batch.get(b.row, srcCol));
         }
         throw new IndexOutOfBoundsException("var not found");
     }
