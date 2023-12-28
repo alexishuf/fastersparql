@@ -202,6 +202,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     protected void touch() {
+        if (executor.inEventLoop()) {
+            sink.touch();
+            return;
+        }
         boolean spawn;
         lock();
         try {
