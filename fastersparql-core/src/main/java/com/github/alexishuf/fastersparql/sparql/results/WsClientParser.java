@@ -191,7 +191,8 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             if (serverSentTermination && error == null && sentBindings != null) {
                 // got a friendly !end, iterate over all remaining sent bindings and notify
                 // they had zero results
-                long until = bindingSeq+(sentBindings.totalRows()-Math.max(0, sentBindingsRow));
+                long until = bindingSeq == -1 ? sentBindings.totalRows()-1
+                           : bindingSeq + sentBindings.totalRows()-1-sentBindingsRow;
                 handleBindEmptyUntil(until);
             }
         }
