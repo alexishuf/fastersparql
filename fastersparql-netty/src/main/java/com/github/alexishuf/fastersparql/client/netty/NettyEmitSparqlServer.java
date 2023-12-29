@@ -129,7 +129,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         return "NettyEmitSparqlServer"+server+"("+sparqlClient.endpoint()+")";
     }
 
-    @Override public void close()  {
+    @SuppressWarnings("unused") @Override public void close()  {
         sparqlClient.close();
         CountDownLatch latch = new CountDownLatch(3);
         server.close().addListener(f -> {
@@ -765,10 +765,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             this.sender = sender;
 
             // only send binding seq number and right unbound vars
-            Vars emVars = bindingsQueue.vars();
-            var serializeVars = new Vars.Mutable(emVars.size()+1);
+            Vars all = results.vars();
+            var serializeVars = new Vars.Mutable(all.size()+1);
             serializeVars.add(WsBindingSeq.VAR);
-            for (var v : emVars)
+            for (var v : all)
                 if (!bindingsVars.contains(v)) serializeVars.add(v);
             sender.serializeVars = serializeVars;
 
