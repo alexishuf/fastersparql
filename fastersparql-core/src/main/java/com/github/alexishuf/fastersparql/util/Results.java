@@ -526,8 +526,8 @@ public final class Results {
                     .append(query.toString().replace("\n", "\n  "));
         }
         if (!errors.isEmpty()) {
-            if (context != null)
-                throw new AssertionError("Context: "+context+"\n"+ errors);
+            if (context != null && !context.isEmpty())
+                throw new AssertionError("Context: "+context+"\n"+errors);
             else
                 throw new AssertionError(errors.toString());
         }
