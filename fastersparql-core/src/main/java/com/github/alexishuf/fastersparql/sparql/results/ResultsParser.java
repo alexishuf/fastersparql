@@ -154,6 +154,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
         if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
             Throwable error = doFeedEnd();
             emitLastBatch();
+            beforeComplete(error);
             dst.complete(error);
             cleanup(null);
         }
@@ -205,6 +206,15 @@ public abstract class ResultsParser<B extends Batch<B>> {
      *         {@link InvalidSparqlResultsException} describing the error.
      */
     protected abstract @Nullable Throwable doFeedEnd();
+
+    /**
+     * This is called after the last batch has been delivered and before
+     * {@link CompletableBatchQueue#complete(Throwable)} is called.
+     *
+     * @param error the same (possibly null) error that will be delivered to
+     *              {@link CompletableBatchQueue#complete(Throwable)}
+     */
+    protected void beforeComplete(@Nullable Throwable error) {}
 
     /*  --- --- --- helpers --- --- --- */
 

@@ -3,11 +3,8 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
-import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
@@ -31,22 +28,21 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.BIt.DEF_MAX_BATCH;
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private static final Logger log = LoggerFactory.getLogger(WsClientParser.class);
     private static final int[] EMPTY_COLS = new int[0];
-    private static final SPSCBIt<?> DUMMY_SENT_BINDINGS;
+    private static final VarHandle SB_LOCK;
     private static final VarHandle B_REQUESTED;
     static {
         try {
+            SB_LOCK     = lookup().findVarHandle(WsClientParser.class, "plainSentBindingsLock",  int.class);
             B_REQUESTED = lookup().findVarHandle(WsClientParser.class, "plainBindingsRequested", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
-        DUMMY_SENT_BINDINGS = new SPSCBIt<>(TermBatchType.TERM, Vars.EMPTY, DEF_MAX_BATCH);
     }
 
     /* --- --- --- instance fields --- --- --- */
@@ -55,13 +51,13 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private final @Nullable BindingsReceiver bindingsReceiver;
     private final @Nullable JoinMetrics metrics;
     private final Vars usefulBindingsVars;
-    private final SPSCBIt<B> sentBindings;
+    private @Nullable B sentBindings;
     private final int[] bindingCol2OutCol;
-    private @Nullable B sentBatch;
-    private int sentBatchRow;
+    private int sentBindingsRow = -1;
     private long bindingSeq = -1;
     private boolean bindingNotified = true;
     private @MonotonicNonNull Thread bindingsSender;
+    @SuppressWarnings("unused") private int plainSentBindingsLock;
     @SuppressWarnings("unused") private int plainBindingsRequested;
 
     /* --- --- --- constructors --- --- --- */
@@ -77,8 +73,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     public WsClientParser(WsFrameSender<?,?> frameSender, CompletableBatchQueue<B> destination) {
         super(frameSender, destination);
         usefulBindingsVars = Vars.EMPTY;
-        //noinspection unchecked
-        sentBindings = (SPSCBIt<B>) DUMMY_SENT_BINDINGS;
         bindingCol2OutCol = EMPTY_COLS;
         bindingsReceiver = null;
         bindQuery = null;
@@ -109,7 +103,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         super(frameSender, destination);
         this.bindQuery = bindQuery;
         Vars bindingsVars = bindQuery.bindingsVars();
-        this.sentBindings = new SPSCBIt<>(bindQuery.batchType(), bindingsVars, DEF_MAX_BATCH);
         this.usefulBindingsVars = usefulBindingVars == null ? bindingsVars : usefulBindingVars;
         assert bindingsVars.containsAll(this.usefulBindingsVars);
         this.bindingCol2OutCol = bindingCol2OutCol(vars(), bindingsVars);
@@ -167,7 +160,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         if (seq < bindingSeq)
             throw new InvalidSparqlResultsException("Server sent binding seq in the past");
         skipUntilBindingSeq(seq);
-        if (sentBatch == null || sentBatchRow >= sentBatch.rows)
+        if (sentBindings == null || sentBindingsRow >= sentBindings.rows)
             throw new IllegalArgumentException("No sent binding, server sent binding seq in the future");
         if (!bindingNotified) {
             bindQuery.nonEmptyBinding(seq);
@@ -178,19 +171,11 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         for (int col = 0; col < bindingCol2OutCol.length; col++) {
             int outCol = bindingCol2OutCol[col];
             if (outCol >= 0)
-                batch.putTerm(outCol, sentBatch, sentBatchRow, col);
+                batch.putTerm(outCol, sentBindings, sentBindingsRow, col);
         }
     }
 
-    @Override protected void cleanup(@Nullable Throwable cause) {
-        super.cleanup(cause);
-        if (!serverSentTermination && !(cause instanceof FSServerException)) {
-            try { //noinspection unchecked
-                frameSender.sendFrame(frameSender.createSink().touch().append(CANCEL_LF).take());
-            } catch (Throwable t) {
-                log.info("Failed to send !cancel", t);
-            }
-        }
+    @Override protected void beforeComplete(@Nullable Throwable error) {
         boolean hasBindings = false;
         if (bindingsReceiver != null) {
             hasBindings = true;
@@ -203,24 +188,23 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             // unblock sender and publish state changes from this thread, making it exit
             B_REQUESTED.getAndAddRelease(this, 1);
             Unparker.unpark(bindingsSender);
-            if (serverSentTermination && cause == null && bindQuery != null) {
+            if (serverSentTermination && error == null && sentBindings != null) {
                 // got a friendly !end, iterate over all remaining sent bindings and notify
                 // they had zero results
-                while (true) {
-                    if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
-                        sentBatchRow = 0;
-                        boolean got = false;
-                        if (sentBatch != null && sentBatch.next != null) {
-                            sentBatch = sentBatch.dropHead();
-                            got = sentBatch != null;
-                        }
-                        if (!got && (sentBatch = sentBindings.nextBatch(sentBatch)) == null)
-                            break; // no more sent bindings
-                    }
-                    handleBindEmptyUntil(bindingSeq+(sentBatch.rows-sentBatchRow));
-                }
+                long until = bindingSeq+(sentBindings.totalRows()-Math.max(0, sentBindingsRow));
+                handleBindEmptyUntil(until);
             }
-            batchType().recycle(sentBatch);
+        }
+    }
+
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        if (!serverSentTermination && !(cause instanceof FSServerException)) {
+            try { //noinspection unchecked
+                frameSender.sendFrame(frameSender.createSink().touch().append(CANCEL_LF).take());
+            } catch (Throwable t) {
+                log.info("Failed to send !cancel", t);
+            }
         }
     }
 
@@ -249,20 +233,45 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     }
 
     private void skipUntilBindingSeq(long seq) {
-        if (bindQuery == null)
-            throw new IllegalStateException("Not sending bindings");
+        if (sentBindings == null || bindQuery == null) {
+            if (bindingSeq >= seq) return;
+            else throw new IllegalStateException("seq >= last sent binding");
+        }
         while (bindingSeq < seq) {
             if (metrics instanceof JoinMetrics m) m.beginBinding();
-            if (sentBatch == null || ++sentBatchRow >= sentBatch.rows) {
-                sentBatchRow = 0;
-                boolean got = sentBatch != null && sentBatch.next != null
-                           && (sentBatch = sentBatch.dropHead()) != null;
-                if (!got) sentBatch = sentBindings.nextBatch(sentBatch);
-            }
+            if (sentBindings != null && ++sentBindingsRow >= sentBindings.rows)
+                advanceSentBindings();
             long prev = bindingSeq++;
             if (!bindingNotified)
                 bindQuery.emptyBinding(prev);
             bindingNotified = false;
+        }
+    }
+    private void appendSentBindings(B b) {
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.onSpinWait();
+        try {
+            B copy = b.dup();
+            if (sentBindings == null) sentBindings = copy;
+            else                      sentBindings.quickAppend(copy);
+        } finally {
+            SB_LOCK.setRelease(this, 0);
+        }
+
+    }
+    private void advanceSentBindings() {
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.onSpinWait();
+        try {
+            B sb = sentBindings;
+            if (sb != null) {
+                if (++sentBindingsRow >= sb.rows) {
+                    sentBindings = sb.dropHead();
+                    sentBindingsRow = 0;
+                }
+            }
+        } finally {
+            SB_LOCK.setRelease(this, 0);
         }
     }
 
@@ -291,7 +300,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
             sender.sendInit(bindings.vars(), usefulBindingsVars, false);
             while ((batch = bindings.nextBatch(batch)) != null) {
-                sentBindings.copy(batch);
+                appendSentBindings(batch);
                 for (var b = batch; b != null; b = b.next) {
                     for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
                         while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
@@ -304,7 +313,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                     }
                 }
             }
-        } catch (TerminatedException|CancelledException|BItReadClosedException e) {
+        } catch (CancelledException|BItReadClosedException e) {
             if (!serverSentTermination && sender != null)
                 sender.sendCancel();
             sendEnd = false;
@@ -315,7 +324,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             dst.cancel();
             sendEnd = false;
         } finally {
-            sentBindings.complete(null);
             if (sender != null) {
                 if (sendEnd && !serverSentTermination)
                     sender.sendTrailer();
@@ -326,7 +334,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     private final class BindingsReceiver implements Receiver<B> {
         private final Emitter<B> upstream;
-        private final SPSCBIt<B> sentBindings;
         private final ResultsSender<?, ?> sender;
         private boolean first = true;
 
@@ -334,7 +341,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             this.upstream = upstream;
             this.sender = frameSender.createSender();
             this.sender.preTouch();
-            this.sentBindings = WsClientParser.this.sentBindings;
             upstream.subscribe(this);
         }
 
@@ -351,28 +357,21 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
 
         @Override public @Nullable B onBatch(B batch) {
-            try {
-                sentBindings.copy(batch);
-            } catch (TerminatedException | CancelledException e) {
-                upstream.cancel();
-            }
+            appendSentBindings(batch);
             sender.sendSerializedAll(batch);
             return batch;
         }
 
         @Override public void onComplete() {
-            sentBindings.complete(null);
             sender.sendTrailer();
         }
 
         @Override public void onCancelled() {
-            sentBindings.cancel();
             if (!serverSentTermination)
                 sender.sendCancel();
         }
 
         @Override public void onError(Throwable cause) {
-            sentBindings.cancel();
             if (!serverSentTermination)
                 sender.sendError(cause);
             log.warn("bindings emitter {} failed for {}", upstream, this, cause);
