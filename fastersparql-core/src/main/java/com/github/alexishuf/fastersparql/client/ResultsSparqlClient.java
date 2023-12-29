@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -29,6 +30,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.*;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
@@ -385,8 +388,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             var bindingsChecker = exBindings.checker(bq.bindings);
             var bt = bq.bindings.batchType();
             AbstractStage<TermBatch, TermBatch> intercepted = new AbstractStage<>(TermBatchType.TERM, expected.vars()) {
-                private volatile boolean started = false;
-                private volatile boolean failed = false;
+                private final ReentrantLock lock = new ReentrantLock();
+                private boolean started, bindingsTerminated, resultsTerminated;
+                private boolean bindingsCancelled, resultsCancelled;
+                private @Nullable Throwable bindingsError, resultsError;
 
                 @Override public @Nullable TermBatch onBatch(TermBatch batch) {
                     return downstream.onBatch(batch);
@@ -394,22 +399,70 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
                 @Override public String toString() { return "CheckBindings<-"+upstream; }
 
-                @Override public void request(long rows) {
-                    if (!started) {
-                        started = true;
-                        try {
-                            bindingsChecker.assertNoError();
-                        } catch (Throwable t) {
-                            failed = true;
-                            upstream.cancel();
-                            downstream.onError(t);
-                        }
+                private void tryTerminate() {
+                    assert lock.isHeldByCurrentThread();
+                    if (bindingsTerminated && resultsTerminated) {
+                        if (bindingsError != null)
+                            downstream.onError(bindingsError);
+                        else if (resultsError != null)
+                            downstream.onError(resultsError);
+                        else if (bindingsCancelled || resultsCancelled)
+                            downstream.onCancelled();
+                        else
+                            downstream.onComplete();
                     }
+                }
+
+                @Override public void request(long rows) {
+                    lock.lock();
+                    try {
+                        if (!started) {
+                            started = true;
+                            bq.bindings.request(Long.MAX_VALUE);
+                            bindingsChecker.whenComplete((bindingsErr, unusedErr) -> {
+                                lock.lock();
+                                try {
+                                    if (bindingsErr != null) {
+                                        bindingsError = bindingsErr;
+                                        if (bindingsErr instanceof FSCancelledException
+                                                || bindingsErr instanceof CancellationException) {
+                                            bindingsCancelled = true;
+                                        }
+                                    } else {
+                                        bindingsError = unusedErr;
+                                    }
+                                    bindingsTerminated = true;
+                                    tryTerminate();
+                                } finally { lock.unlock(); }
+                            });
+                        }
+                    } finally { lock.unlock(); }
                     super.request(rows);
                 }
-                @Override public void onComplete()         { if (!failed) super.onComplete(); }
-                @Override public void onCancelled()        { if (!failed) super.onCancelled(); }
-                @Override public void onError(Throwable e) { if (!failed) super.onError(e); }
+
+                @Override public void onComplete() {
+                    lock.lock();
+                    try {
+                        resultsTerminated = true;
+                        tryTerminate();
+                    } finally { lock.unlock(); }
+                }
+                @Override public void onCancelled() {
+                    lock.lock();
+                    try {
+                        resultsCancelled = true;
+                        resultsTerminated = true;
+                        tryTerminate();
+                    } finally { lock.unlock(); }
+                }
+                @Override public void onError(Throwable e) {
+                    lock.lock();
+                    try {
+                        resultsTerminated = true;
+                        resultsError = e;
+                        tryTerminate();
+                    } finally { lock.unlock(); }
+                }
             };
             intercepted.subscribeTo(expected.asEmitter());
             return bt.convert(intercepted);
