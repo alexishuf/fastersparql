@@ -166,6 +166,34 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             upstream.subscribe(this);
         }
 
+        private static final CompleteAction<?> COMPLETE_ACTION = new CompleteAction<>();
+        private static final class CompleteAction<M> extends Action {
+            public CompleteAction() {super("COMPLETE");}
+            @Override public void run(NettyResultsSender<?> sender) {
+                @SuppressWarnings("unchecked") var mSender = (Sender<M>) sender;
+                mSender.handler.endQuery(mSender, OK, false, null);
+            }
+        }
+        private static final CancelAction<?> CANCEL_ACTION = new CancelAction<>();
+        private static final class CancelAction<M> extends Action {
+            public CancelAction() {super("CANCEL");}
+            @Override public void run(NettyResultsSender<?> sender) {
+                @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
+                mSender.handler.endQuery(mSender, PARTIAL_CONTENT, true, null);
+            }
+        }
+        private static final class ErrorAction<M> extends Action {
+            private final Throwable error;
+            private ErrorAction(Throwable error) {
+                super("ERROR");
+                this.error = error;
+            }
+            @Override public void run(NettyResultsSender<?> sender) {
+                @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
+                mSender.handler.endQuery(mSender, INTERNAL_SERVER_ERROR, false, error);
+            }
+        }
+
         /* --- --- ---  methods --- --- --- */
 
         public void start() {
@@ -185,39 +213,20 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         /* --- --- --- Receiver methods --- --- --- */
 
-        @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return Stream.of(upstream);
-        }
-
+        @Override public Stream<? extends StreamNode> upstreamNodes() {return Stream.of(upstream);}
         @Override public final @Nullable CompressedBatch onBatch(CompressedBatch batch) {
             sendSerializedAll(batch);
             return batch;
         }
-
         @Override public void onComplete() {
             sendTrailer();
-            terminate(false, null);
+            execute(COMPLETE_ACTION);
         }
-
-        private void terminate(boolean cancelled, @Nullable Throwable error) {
-            close();
-            var ctx = handler.ctx;
-            if (ctx != null) {
-                ctx.executor().execute(() -> {
-                    var status = error != null ? INTERNAL_SERVER_ERROR
-                                               : (cancelled ? PARTIAL_CONTENT : OK);
-                    handler.endQuery(this, status, cancelled, error);
-                });
-            }
+        @Override public final void onCancelled()        {
+            execute(abortCause==null ? CANCEL_ACTION : new ErrorAction<>(abortCause));
         }
-
-        @Override public final void onCancelled() {
-            var cause = this.abortCause;
-            terminate(cause == null, cause);
-        }
-
-        @Override public final void onError(Throwable cause) {
-            terminate(cause == null, cause);
+        @Override public final void onError(Throwable e) {
+            execute(new ErrorAction<>(e));
         }
     }
 
@@ -398,9 +407,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             try {
                 if (cancelled && error == null)
                     error = new FSCancelledException();
-                if (error == null) {
-                    ctx.writeAndFlush(new DefaultLastHttpContent());
-                } else {
+                if (error != null) {
                     var msg = new ByteRope(512);
                     msg.append("Could not process query due to ")
                             .append(error.getClass().getSimpleName());
