@@ -11,7 +11,7 @@ import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         implements CompletableBatchQueue<B> {
-    private @Nullable B b0, b1;
+    private @Nullable B queue;
     private int avgRows;
 
     public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner, int worker,
@@ -69,11 +69,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 throw CancelledException.INSTANCE;
             } else if ((st&IS_TERM) != 0) {
                 throw TerminatedException.INSTANCE;
-            } else if (b0 == null || b1 == null) {
-                if (b0 == null) b0 = b;
-                else            b1 = b;
+            } else if (queue == null) {
+                queue = b;
             } else {
-                b1.quickAppend(b);
+                queue.quickAppend(b);
             }
         } finally {
             unlock(st);
@@ -90,13 +89,9 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             } else if ((st&IS_TERM) != 0) {
                 throw TerminatedException.INSTANCE;
             } else {
-                B dst;
-                if (b1 != null){
-                    dst = b1;
-                } else if (b0 != null) {
-                    dst = b0;
-                } else {
-                    dst = b0 = bt.createForThread(threadId, batch.cols);
+                B dst = queue;
+                if (dst == null) {
+                    queue = dst = bt.createForThread(threadId, batch.cols);
                     dst.reserveAddLocals(avgRows*(batch.localBytesUsed()/batch.rows));
                 }
                 dst.putRow(batch, row);
@@ -114,12 +109,11 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
             long deadline = Timestamp.nextTick(1);
-            while (b0 != null) {
-                B b = b0;
-                b0 = b1;
-                b1 = null;
+            while (queue != null) {
+                B b = queue;
+                queue = null;
                 st = unlock(st);
-                avgRows = ((avgRows << 4) - avgRows + b.rows) >> 4;
+                avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
                 if (b.rows > 0 && (b = deliver(b)) != null)
                     b.recycle();
                 if (Timestamp.nanoTime() > deadline) {
@@ -128,7 +122,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 }
                 st = lock(st);
             }
-            if (b0 == null) {
+            if (queue == null) {
                 int termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
                 if (termState != 0) {
