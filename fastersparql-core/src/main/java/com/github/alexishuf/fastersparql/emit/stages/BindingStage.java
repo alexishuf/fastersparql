@@ -145,7 +145,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         } else {
             merger = null;
         }
-        this.rightRecv = new RightReceiver(merger, passthrough, type, rightUpstream, listener);
+        this.rightRecv = new RightReceiver(merger, passthrough, outVars.size(), type, rightUpstream, listener);
         this.leftUpstream = bindings;
         int safeCols = Math.max(1, bindings.vars().size());
         int b = Math.max(2, FSProperties.emitReqChunkBatches()/4);
@@ -193,7 +193,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         rightRecv.rebindRelease();
         lb                   = batchType.recycle(lb);
         fillingLB            = batchType.recycle(fillingLB);
-        rightRecv.lSingleton = batchType.recycle(rightRecv.lSingleton);
+        rightRecv.singleton = batchType.recycle(rightRecv.singleton);
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
@@ -646,16 +646,19 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         private final @Nullable BindListener bindingListener;
         private final byte passThrough;
         private boolean upstreamEmpty, listenerNotified, rebindReleased;
-        private @Nullable B lSingleton;
+        private @Nullable B singleton;
+        private final int outCols;
         private final BatchType<B> bt;
         private long bindingSeq = -1;
 
-        public RightReceiver(@Nullable BatchMerger<B> merger, byte passThrough,
-                             BindType type, Emitter<B> rightUpstream, @Nullable BindListener bindingListener) {
+        public RightReceiver(@Nullable BatchMerger<B> merger, byte passThrough, int outCols,
+                             BindType type, Emitter<B> rightUpstream,
+                             @Nullable BindListener bindingListener) {
             this.bt = rightUpstream.batchType();
             this.upstream = rightUpstream;
             this.merger = merger;
             this.passThrough = passThrough;
+            this.outCols = outCols;
             this.type = type;
             this.bindingListener = bindingListener;
         }
@@ -694,16 +697,21 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         private @Nullable B merge(@Nullable B rb) {
             assert lb != null;
             B b;
-            boolean rightPassThrough = merger == null && passThrough == PASSTHROUGH_RIGHT;
-            if (rightPassThrough) {
-                b = rb;
-                assert rb != null;
-            } else if (merger == null) {
-                b = bt.empty(lSingleton, lb.cols);
-                lSingleton = null;
-                b.putRow(lb, lr);
-            } else {
+            boolean recycleToSingleton = false;
+            if (merger != null) {
                 b = merger.merge(null, lb, lr, rb);
+            } else if (passThrough == PASSTHROUGH_RIGHT && rb != null) {
+                b = rb;
+            } else {
+                recycleToSingleton = true;
+                b = bt.empty(singleton, outCols);
+                singleton = null;
+                if (passThrough == PASSTHROUGH_RIGHT) {
+                    b.beginPut();
+                    b.commitPut();
+                } else {
+                    b.putRow(lb, lr);
+                }
             }
 
             try {
@@ -714,27 +722,26 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                 }
 
                 // update stats and requested
-                if (EmitterStats.ENABLED && stats != null) {
-                    if (b == null) stats.onRowDelivered();
-                    else           stats.onBatchDelivered(b);
-                }
+                if (EmitterStats.ENABLED && stats != null)
+                    stats.onBatchDelivered(b);
                 int state = lock(statePlain());
-                requested -= b == null ? 1 : b.totalRows();
+                requested -= b == null ? 0 : b.totalRows();
                 unlock(state);
 
                 // deliver batch/row
                 if (ResultJournal.ENABLED)
                     ResultJournal.logBatch(BindingStage.this, b);
                 b = downstream.onBatch(b);
-                if (!rightPassThrough) {
-                    if (merger == null) lSingleton = b;
-                    else                bt.recycle(b);
+                if (recycleToSingleton) {
+                    singleton = b;
                     b = null;
+                } else if (merger != null) {
+                    b = bt.recycle(b);
                 }
             } catch (Throwable t) {
                 handleEmitError(downstream, BindingStage.this, false, t);
             }
-            return rightPassThrough ? b : rb;
+            return b;
         }
 
         private int cancelFutureBindings(int st) {

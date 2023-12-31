@@ -29,18 +29,6 @@ public class EmitterStats {
         }
     }
 
-    public void onRowDelivered() {
-        ++deliveredBatches;
-        ++deliveredSingleRowBatches;
-        ++deliveredRows;
-    }
-
-    public void onRowReceived() {
-        ++receivedBatches;
-        ++receivedSingleRowBatches;
-        ++receivedRows;
-    }
-
     public void onBatchReceived(@Nullable Batch<?> b) {
         ++receivedBatches;
         if (b == null) {
@@ -54,11 +42,6 @@ public class EmitterStats {
     public void onBatchPassThrough(@Nullable Batch<?> b) {
         onBatchReceived(b);
         onBatchDelivered(b);
-    }
-
-    public void onRowPassThrough() {
-        onRowReceived();
-        onRowDelivered();
     }
 
     public void onRebind(BatchBinding binding) {
