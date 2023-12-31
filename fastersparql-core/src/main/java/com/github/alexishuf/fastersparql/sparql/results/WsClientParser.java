@@ -188,6 +188,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             // unblock sender and publish state changes from this thread, making it exit
             B_REQUESTED.getAndAddRelease(this, 1);
             Unparker.unpark(bindingsSender);
+            B sentBindings = sentBindings();
             if (serverSentTermination && error == null && sentBindings != null) {
                 // got a friendly !end, iterate over all remaining sent bindings and notify
                 // they had zero results
@@ -234,6 +235,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     }
 
     private void skipUntilBindingSeq(long seq) {
+        B sentBindings = sentBindings();
         if (sentBindings == null || bindQuery == null) {
             if (bindingSeq >= seq) return;
             else throw new IllegalStateException("seq >= last sent binding");
@@ -241,7 +243,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         while (bindingSeq < seq) {
             if (metrics instanceof JoinMetrics m) m.beginBinding();
             if (sentBindings != null && ++sentBindingsRow >= sentBindings.rows)
-                advanceSentBindings();
+                sentBindings = advanceSentBindings();
             long prev = bindingSeq++;
             if (!bindingNotified)
                 bindQuery.emptyBinding(prev);
@@ -249,8 +251,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
     }
     private void appendSentBindings(B b) {
-        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-            Thread.onSpinWait();
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
         try {
             B copy = b.dup();
             if (sentBindings == null) sentBindings = copy;
@@ -258,19 +259,24 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         } finally {
             SB_LOCK.setRelease(this, 0);
         }
-
     }
-    private void advanceSentBindings() {
-        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-            Thread.onSpinWait();
+    private @Nullable B sentBindings() {
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+        B sb = sentBindings;
+        SB_LOCK.setRelease(this, 0);
+        return sb;
+    }
+    private @Nullable B advanceSentBindings() {
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
         try {
             B sb = sentBindings;
             if (sb != null) {
                 if (++sentBindingsRow >= sb.rows) {
-                    sentBindings = sb.dropHead();
+                    sentBindings = sb = sb.dropHead();
                     sentBindingsRow = 0;
                 }
             }
+            return sb;
         } finally {
             SB_LOCK.setRelease(this, 0);
         }
