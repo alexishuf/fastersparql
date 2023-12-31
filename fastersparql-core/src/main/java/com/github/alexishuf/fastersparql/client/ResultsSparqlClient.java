@@ -14,7 +14,6 @@ import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
-import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
@@ -26,11 +25,12 @@ import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.util.Results;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.*;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
@@ -367,6 +367,60 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
     }
 
+    private static final class BarrierEmitter<B extends Batch<B>> extends AbstractStage<B, B> {
+        private boolean open;
+        private final ReentrantLock lock = new ReentrantLock();
+        private @MonotonicNonNull Throwable injectError;
+        private @Nullable Emitter<?> unstartedBindings;
+        private long suppressedRequest;
+
+        public BarrierEmitter(Emitter<B> upstream, @NonNull Emitter<?> bindings,
+                              Results expectedBindings) {
+            super(upstream.batchType(), upstream.vars());
+            this.unstartedBindings = bindings;
+            subscribeTo(upstream);
+            expectedBindings.checker(bindings).whenComplete((t0, t1) -> {
+                lock.lock();
+                try {
+                    this.open = true;
+                    this.injectError = t0 == null ? t1 : t0;
+                    long suppressed = suppressedRequest;
+                    request(suppressed);
+                    suppressedRequest = 0;
+                } finally { lock.unlock(); }
+            });
+        }
+
+        @Override public void request(long rows) {
+            lock.lock();
+            try {
+                if (open) {
+                    super.request(rows);
+                } else {
+                    if (unstartedBindings != null) {
+                        unstartedBindings.request(Long.MAX_VALUE);
+                        unstartedBindings = null;
+                    }
+                    suppressedRequest = Math.max(suppressedRequest, rows);
+                }
+            } finally { lock.unlock(); }
+        }
+
+        @Override public @Nullable B onBatch(B batch) {
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchPassThrough(batch);
+            return downstream.onBatch(batch);
+        }
+        @Override public void onComplete() {
+            if (injectError == null) super.onComplete();
+            else                     downstream.onError(injectError);
+        }
+        @Override public void onCancelled() {
+            if (injectError == null) super.onCancelled();
+            else                     downstream.onError(injectError);
+        }
+    }
+
     @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
                                                                Vars rebindHint) {
         var sparql = bq.parsedQuery();
@@ -385,87 +439,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var bindingsChecker = exBindings.checker(bq.bindings);
-            var bt = bq.bindings.batchType();
-            AbstractStage<TermBatch, TermBatch> intercepted = new AbstractStage<>(TermBatchType.TERM, expected.vars()) {
-                private final ReentrantLock lock = new ReentrantLock();
-                private boolean started, bindingsTerminated, resultsTerminated;
-                private boolean bindingsCancelled, resultsCancelled;
-                private @Nullable Throwable bindingsError, resultsError;
-
-                @Override public @Nullable TermBatch onBatch(TermBatch batch) {
-                    return downstream.onBatch(batch);
-                }
-
-                @Override public String toString() { return "CheckBindings<-"+upstream; }
-
-                private void tryTerminate() {
-                    assert lock.isHeldByCurrentThread();
-                    if (bindingsTerminated && resultsTerminated) {
-                        if (bindingsError != null)
-                            downstream.onError(bindingsError);
-                        else if (resultsError != null)
-                            downstream.onError(resultsError);
-                        else if (bindingsCancelled || resultsCancelled)
-                            downstream.onCancelled();
-                        else
-                            downstream.onComplete();
-                    }
-                }
-
-                @Override public void request(long rows) {
-                    lock.lock();
-                    try {
-                        if (!started) {
-                            started = true;
-                            bq.bindings.request(Long.MAX_VALUE);
-                            bindingsChecker.whenComplete((bindingsErr, unusedErr) -> {
-                                lock.lock();
-                                try {
-                                    if (bindingsErr != null) {
-                                        bindingsError = bindingsErr;
-                                        if (bindingsErr instanceof FSCancelledException
-                                                || bindingsErr instanceof CancellationException) {
-                                            bindingsCancelled = true;
-                                        }
-                                    } else {
-                                        bindingsError = unusedErr;
-                                    }
-                                    bindingsTerminated = true;
-                                    tryTerminate();
-                                } finally { lock.unlock(); }
-                            });
-                        }
-                    } finally { lock.unlock(); }
-                    super.request(rows);
-                }
-
-                @Override public void onComplete() {
-                    lock.lock();
-                    try {
-                        resultsTerminated = true;
-                        tryTerminate();
-                    } finally { lock.unlock(); }
-                }
-                @Override public void onCancelled() {
-                    lock.lock();
-                    try {
-                        resultsCancelled = true;
-                        resultsTerminated = true;
-                        tryTerminate();
-                    } finally { lock.unlock(); }
-                }
-                @Override public void onError(Throwable e) {
-                    lock.lock();
-                    try {
-                        resultsTerminated = true;
-                        resultsError = e;
-                        tryTerminate();
-                    } finally { lock.unlock(); }
-                }
-            };
-            intercepted.subscribeTo(expected.asEmitter());
-            return bt.convert(intercepted);
+            var barrier = new BarrierEmitter<>(expected.asEmitter(), bq.bindings, exBindings);
+            return bq.bindings.batchType().convert(barrier);
         } else {
             Vars unboundVars = expected.vars().minus(bq.bindings.vars());
             for (List<Term> bindingRow : exBindings.expected()) {
