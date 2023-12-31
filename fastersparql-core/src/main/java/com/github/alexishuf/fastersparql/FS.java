@@ -23,7 +23,6 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.UnboundSparqlClient.UNBOUND_CLIENT;
 import static com.github.alexishuf.fastersparql.client.model.SparqlConfiguration.EMPTY;
 
@@ -148,14 +147,15 @@ public class FS {
         if (rowsSize == 0) {
             b = null;
         } else {
-            b = TERM.create(cols);
+            b = new TermBatch(new Term[rowsSize*cols], 0, cols, true);
+            b.markUntracked();
             for (Object row : rows) {
-                b = switch (row) {
+                switch (row) {
                     case Term[] a -> b.putRow(a);
                     case Collection<?> c -> b.putRow(c);
                     case null -> throw new IllegalArgumentException("Unexpected null in rows");
                     default -> throw new UnsupportedOperationException("Unexpected row type");
-                };
+                }
             }
         }
         return new Values(vars, b);

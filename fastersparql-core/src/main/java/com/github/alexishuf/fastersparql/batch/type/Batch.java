@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
@@ -27,9 +28,10 @@ import static java.lang.invoke.MethodHandles.lookup;
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public abstract class Batch<B extends Batch<B>> {
     protected static final VarHandle P;
-    protected static final byte P_UNPOOLED = 0;
-    protected static final byte P_POOLED   = 1;
-    protected static final byte P_GARBAGE  = 2;
+    protected static final byte P_UNPOOLED  =  0;
+    protected static final byte P_POOLED    =  1;
+    protected static final byte P_GARBAGE   =  2;
+    protected static final byte P_UNTRACKED = -1;
 
     static {
         try {
@@ -125,6 +127,14 @@ public abstract class Batch<B extends Batch<B>> {
 
     abstract void markGarbage();
 
+    public void markUntracked() {
+        if (!MARK_POOLED) return;
+        if ((byte) P.compareAndExchangeRelease(this, P_UNPOOLED, P_UNTRACKED) != P_UNPOOLED) {
+            throw new IllegalStateException("un-tracking batch that is not unpooled",
+                    poolTraces == null ? null : poolTraces[0]);
+        }
+    }
+
     /**
      * Marks the batch as not pooled.
      * @return {@code this}
@@ -167,7 +177,7 @@ public abstract class Batch<B extends Batch<B>> {
     public void requireUnpooled() {
         if (MARK_POOLED) {
             for (var b = this; b != null; b = b.next) {
-                if ((byte)P.getOpaque(b) != P_UNPOOLED) {
+                if ((byte)P.getOpaque(b) > P_UNPOOLED) {
                     Throwable cause = poolTraces == null ? null : poolTraces[0];
                     throw new IllegalStateException("batch is pooled", cause);
                 }
@@ -268,7 +278,7 @@ public abstract class Batch<B extends Batch<B>> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        if ((byte)P.getOpaque(this) != P_UNPOOLED)
+        if ((byte)P.getOpaque(this) > P_UNPOOLED)
             return false; //pooled or garbage is not valid
         if (tail == this && next != null)
             return false; // tail has successors

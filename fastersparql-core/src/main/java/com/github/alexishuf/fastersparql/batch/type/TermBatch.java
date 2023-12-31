@@ -112,7 +112,7 @@ public final class TermBatch extends Batch<TermBatch> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        return (byte) P.getOpaque(this) == P_UNPOOLED; //pooled or garbage is not valid
+        return (byte)P.getOpaque(this) <= P_UNPOOLED; //pooled or garbage is not valid
     }
 
     /* --- --- --- batch accessors --- --- --- */
