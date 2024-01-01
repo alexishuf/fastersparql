@@ -162,7 +162,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
     @Override public BatchType<B> batchType() { return batchType; }
 
     @Override public String toString() {
-        return label(StreamNodeDOT.Label.WITH_STATE_AND_STATS).replace("\n", " ");
+        return label(MINIMAL).replace("\n", " ");
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
@@ -193,7 +193,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         rightRecv.rebindRelease();
         lb                   = batchType.recycle(lb);
         fillingLB            = batchType.recycle(fillingLB);
-        rightRecv.singleton = batchType.recycle(rightRecv.singleton);
+        rightRecv.singleton  = batchType.recycle(rightRecv.singleton);
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
@@ -732,16 +732,13 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                 if (ResultJournal.ENABLED)
                     ResultJournal.logBatch(BindingStage.this, b);
                 b = downstream.onBatch(b);
-                if (recycleToSingleton) {
-                    singleton = b;
-                    b = null;
-                } else if (merger != null) {
-                    b = bt.recycle(b);
-                }
+                if      (recycleToSingleton)  singleton = b;
+                else if (merger != null)      bt.recycle(b);
+                else                          rb = b;
             } catch (Throwable t) {
                 handleEmitError(downstream, BindingStage.this, false, t);
             }
-            return b;
+            return rb;
         }
 
         private int cancelFutureBindings(int st) {
