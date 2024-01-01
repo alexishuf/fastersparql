@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static java.lang.Integer.MAX_VALUE;
+import static java.lang.Integer.toHexString;
 import static java.lang.Math.min;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
@@ -250,22 +251,62 @@ public class DebugJournal {
         void render(int maxWidth, StringBuilder dest, Object o1,          Object o2,          Object o3, Object o4);
     }
 
+    public static abstract class ObjRenderer {
+        private final Class<?> cls;
+        protected ObjRenderer(Class<?> cls) {this.cls = cls;}
+        boolean accepts(Object o) { return cls.isInstance(o); }
+        protected abstract String render(Object o);
+    }
+
+    private static final ObjRenderer ID_OBJ_RENDERER = new ObjRenderer(Object.class) {
+        @Override public String render(Object o) {
+            return o.getClass().getSimpleName()+'@'+toHexString(identityHashCode(o));
+        }
+    };
+    private static final ObjRenderer THROWABLE_OBJ_RENDERER = new ObjRenderer(Throwable.class) {
+        @Override public String render(Object o) {
+            return o.getClass().getSimpleName();
+        }
+    };
+    private static final ObjRenderer TERM_OBJ_RENDERER = new ObjRenderer(Term.class) {
+        @Override public String render(Object o) {
+            return ((Term)o).toSparql().toString();
+        }
+    };
+    private static final ObjRenderer STREAM_NODE_OBJ_RENDERER = new ObjRenderer(StreamNode.class) {
+        @Override public String render(Object o) {
+            return ((StreamNode)o).label(StreamNodeDOT.Label.MINIMAL);
+        }
+    };
+
+
     public static class DefaultRenderer implements Renderer {
         public static final DefaultRenderer INSTANCE = new DefaultRenderer();
+        private final List<ObjRenderer> objRenderers = new ArrayList<>();
 
-        private static StringBuilder writeObj(StringBuilder sb, Object o, int maxWidth) {
+        public DefaultRenderer() {
+            objRenderers.add(ID_OBJ_RENDERER);
+            objRenderers.add(THROWABLE_OBJ_RENDERER);
+            objRenderers.add(TERM_OBJ_RENDERER);
+            objRenderers.add(STREAM_NODE_OBJ_RENDERER);
+        }
+
+        public void addObjRenderer(ObjRenderer renderer) { objRenderers.add(renderer); }
+
+        private StringBuilder writeObj(StringBuilder sb, Object o, int maxWidth) {
             if (o == null)
                 return sb;
             if (o instanceof String) {
                 sb.append(o);
             } else {
-                String str = switch (o) {
-                    case Throwable t     -> t.getClass().getSimpleName();
-                    case Term t          -> t.toSparql().toString();
-                    case CharSequence cs -> cs.toString();
-                    case StreamNode n    -> n.label(StreamNodeDOT.Label.MINIMAL);
-                    default              -> o.getClass().getSimpleName()+'@'+Integer.toHexString(identityHashCode(o));
-                };
+                String str = "NO_OBJ_RENDERER";
+                for (int i = objRenderers.size()-1; i >= 0; --i) {
+                    var r = objRenderers.get(i);
+                    if (r.accepts(o)) {
+                        str = r.render(o);
+                        break;
+                    }
+                }
                 if (maxWidth > 12 && str.length() > maxWidth) {
                     int side = maxWidth - 12 /* ...@12345678 */;
                     sb.append(str, 0, side).append("...");

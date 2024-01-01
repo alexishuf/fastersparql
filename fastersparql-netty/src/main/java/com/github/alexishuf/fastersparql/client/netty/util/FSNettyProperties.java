@@ -2,6 +2,9 @@ package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlClient;
+import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.EventLoopGroup;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -9,6 +12,23 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.io.File;
 
 public class FSNettyProperties extends FSProperties {
+    private static final DebugJournal.ObjRenderer CHANNEL_RENDERER
+            = new DebugJournal.ObjRenderer(Channel.class) {
+        @Override protected String render(Object o) {
+            return ((Channel)o).id().asShortText();
+        }
+    };
+    private static final DebugJournal.ObjRenderer CHANNEL_CTX_RENDERER
+            = new DebugJournal.ObjRenderer(ChannelHandlerContext.class) {
+        @Override protected String render(Object o) {
+            return ((ChannelHandlerContext)o).channel().id().asShortText();
+        }
+    };
+    static {
+        DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_RENDERER);
+        DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_CTX_RENDERER);
+    }
+
     /* --- --- --- property names --- --- --- */
 
     public static final String TRUST_CERT_COLLECTION_FILE = "fastersparql.netty.ssl.trusted";
