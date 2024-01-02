@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
@@ -17,11 +18,13 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.VarHandle;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpResponseStatus.SERVICE_UNAVAILABLE;
 import static io.netty.handler.codec.http.HttpStatusClass.SUCCESS;
 import static java.lang.invoke.MethodHandles.lookup;
 
-public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpObject> {
+public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpObject>
+        implements ChannelBound {
     /**
      * Whether {@link #error(Throwable)} or {@link #content(HttpContent)}
      * (with {@link LastHttpContent}) have been called since last {@link #expectResponse()} call
@@ -43,16 +46,30 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     @SuppressWarnings("unused") // accessed through TERMINATED
     private boolean plainTerminated;
 
+    @Override public @Nullable Channel channel() {
+        var ctx = this.ctx;
+        return ctx == null ? null : ctx.channel();
+    }
+
+    @Override public String toString() {
+        var ctx = this.ctx;
+        return String.format("{ch=%s, %s}@%x", ctx == null ? null : ctx.channel(),
+                plainTerminated ? "term" : "!term", System.identityHashCode(this));
+    }
+
+    protected boolean isTerminated() { return (boolean)TERMINATED.getAcquire(this); }
+
     public void recycler(ChannelRecycler recycler) {
         this.recycler = recycler;
     }
 
     /**
-     * Enables notofication of events through {@link #successResponse(HttpResponse)},
+     * Enables notification of events through {@link #successResponse(HttpResponse)},
      * {@link #error(Throwable)}.
      */
     public void expectResponse() {
         ChannelHandlerContext ctx = this.ctx;
+        journal("expectResponse on", this, plainTerminated ? "term" : "!term");
         if (ctx != null)
             ctx.channel().config().setAutoRead(true);
         if ((boolean)TERMINATED.compareAndExchangeRelease(this, true, false)) {
@@ -98,6 +115,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     protected abstract void content(HttpContent content);
 
     private boolean fail(@Nullable Throwable cause) {
+        journal("fail", this, cause, plainTerminated ? "term" : "!term");
         if ((boolean)TERMINATED.getAcquire(this)) return false;
         assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
         if (cause == null) {
@@ -132,11 +150,13 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
 
 
     @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+        journal("channelRegistered", this, "ctx=", ctx);
         this.ctx = ctx;
         super.channelRegistered(ctx);
     }
 
     @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        journal("channelInactive", this, plainTerminated ? "term" : "!term");
         if (!(boolean)TERMINATED.getAcquire(this)) {
             String msg = "Connection closed before server "
                     + (httpResponse == null ? "started a response" : "completed the response");
@@ -154,6 +174,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
         if ((boolean)TERMINATED.getAcquire(this)) {
+            journal("post-term msg on", this);
             log.error("Ignoring post-terminated message {}", msg);
             return;
         }
@@ -162,8 +183,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             if (response != null)
                 throw new IllegalStateException("Unexpected response, already handling one");
             httpResponse = response = r;
-            if (r.status().codeClass() == SUCCESS)
+            if (r.status().codeClass() == SUCCESS) {
+                journal("successResponse() on", this);
                 successResponse(r);
+            }
         }
         HttpContent httpContent = msg instanceof HttpContent c ? c : null;
         if (httpContent != null) {
@@ -173,10 +196,11 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             if (response.status().codeClass() == SUCCESS) {
                 content(httpContent);
                 if (isLast) {
+                    journal("terminating due to lastHttpContent on", this,
+                            plainTerminated ? "(ALREADY TERMINATED)" : "");
                     TERMINATED.setRelease(this, true);
                     httpResponse = null;
-                    Channel ch = ctx.channel();
-                    recycler.recycle(ch);
+                    recycler.recycle(ctx.channel());
                 }
             } else {
                 if (failureBody == ByteRope.EMPTY)

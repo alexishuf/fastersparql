@@ -12,7 +12,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 
-public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
+public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> implements ChannelBound {
     private int retries;
     protected final SparqlClient client;
     protected @MonotonicNonNull Channel channel;
@@ -26,6 +26,8 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     protected abstract void request();
     protected void afterNormalComplete() {}
+
+    @Override public @Nullable Channel channel() { return channel; }
 
     @Override public void complete(@Nullable Throwable error) {
         final Channel ch = channel;

@@ -33,6 +33,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
@@ -207,7 +208,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     private final class WsHandler<B extends Batch<B>>
-            implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf> {
+            implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
         private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
         private final ByteRope requestMsg;
         private boolean gotFrames;
@@ -225,6 +226,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.destination = destination;
         }
 
+        @Override public @Nullable Channel channel() {
+            return this.ctx == null ? null : this.ctx.channel();
+        }
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {

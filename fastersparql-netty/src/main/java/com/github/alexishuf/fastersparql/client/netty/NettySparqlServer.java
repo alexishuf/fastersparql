@@ -9,10 +9,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
+import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -161,7 +158,8 @@ public class NettySparqlServer implements AutoCloseable {
         @Override public void nonEmptyBinding(long sequence) { nonEmptySeq = sequence; }
     }
 
-    private abstract class QueryHandler<T> extends SimpleChannelInboundHandler<T> {
+    private abstract class QueryHandler<T> extends SimpleChannelInboundHandler<T>
+            implements ChannelBound {
         protected @MonotonicNonNull ChannelHandlerContext ctx;
         protected @Nullable Plan query;
         protected final SparqlParser sparqlParser = new SparqlParser();
@@ -171,6 +169,10 @@ public class NettySparqlServer implements AutoCloseable {
         protected Vars serializeVars = Vars.EMPTY;
         @MonotonicNonNull protected ResultsSerializer serializer;
         protected int round = -1;
+
+        @Override public @Nullable Channel channel() {
+            return ctx == null ? null : ctx.channel();
+        }
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
             if (this.ctx == ctx) return;

@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
@@ -294,7 +295,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         @Override public void nonEmptyBinding(long sequence) { nonEmptySeq = sequence; }
     }
 
-    private abstract class QueryHandler<I, O> extends SimpleChannelInboundHandler<I> {
+    private abstract class QueryHandler<I, O> extends SimpleChannelInboundHandler<I>
+                                              implements ChannelBound {
         private final SparqlParser sparqlParser = new SparqlParser();
         protected @MonotonicNonNull ChannelHandlerContext ctx;
         protected final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
@@ -310,6 +312,9 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             return parent+ctx.channel().toString();
         }
 
+        @Override public @Nullable Channel channel() {
+            return ctx == null ? null : ctx.channel();
+        }
         /* --- --- --- channel events that do not depend on SPARQL protocol variant--- --- --- */
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {

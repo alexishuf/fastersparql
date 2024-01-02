@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
@@ -24,7 +25,7 @@ import java.util.concurrent.locks.LockSupport;
  * A {@link ResultsSender} that executes all its actions inside a netty event loop.
  */
 public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, ByteBuf>
-                                            implements Runnable {
+                                            implements ChannelBound, Runnable {
     private static final Logger log = LoggerFactory.getLogger(NettyResultsSender.class);
     private static final byte TOUCH_DISABLED = 0x00;
     private static final byte TOUCH_AUTO     = 0x01;
@@ -77,6 +78,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         this.executor = (this.ctx = ctx).executor();
         this.touchState = TOUCH_AUTO;
         this.owner = Thread.currentThread();
+    }
+
+    @Override public @Nullable Channel channel() {
+        return ctx == null ? null : ctx.channel();
     }
 
     @Override public void close() {

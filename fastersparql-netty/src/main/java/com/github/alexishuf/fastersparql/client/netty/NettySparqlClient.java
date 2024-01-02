@@ -44,7 +44,9 @@ import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.fromMediaType;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -168,6 +170,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void request() {
+            journal("sending HTTP request for", this);
             var request = this.boundRequest;
             if (request == null)
                 this.boundRequest = request = createRequest(boundQuery);
@@ -225,16 +228,19 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private int resBytes = 0;
 
         @Override public String toString() {
-            return NettySparqlClient.this+(ctx == null ? "[UNREGISTERED]"
-                                                       : ctx.channel().toString());
+            return String.format("{ch=%s, %s, resBytes=%d}@%x",
+                    ctx == null ? null : ctx.channel(), isTerminated() ? "term" : "!term",
+                    resBytes, identityHashCode(this));
         }
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+            journal("channelUnregistered on", this);
             bbRopeView.recycle();
             super.channelUnregistered(ctx);
         }
 
         public void setup(CompletableBatchQueue<?> downstream) {
+            journal("setup nettyHandler=", this, ", down=", downstream);
             resBytes = 0;
             this.downstream = downstream;
             expectResponse();
@@ -252,20 +258,13 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void error(Throwable cause) {
+            journal("error on", this, ": ", cause);
             FSException ex = FSException.wrap(endpoint, cause);
             if (parser != null)
                 parser.feedError(ex);
             if (downstream == null)
                 log.error("{}: error({}) before setup", this, cause, cause);
             downstream.complete(ex);
-        }
-
-        private void end() {
-            if (parser != null)
-                parser.feedEnd();
-            if (downstream == null)
-                log.error("{}: end() before setup()", this);
-            downstream.complete(null);
         }
 
         @Override protected void content(HttpContent content) {
@@ -279,10 +278,19 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
                                                    : new ByteRope(bb.toString(decodeCS)));
                 if (content instanceof LastHttpContent) {
-                    if (resBytes == 0) error(new InvalidSparqlResultsException("Zero-byte results"));
-                    else               end();
+                    journal("LastHttpContent on", this);
+                    if (resBytes == 0) {
+                        error(new InvalidSparqlResultsException("Zero-byte results"));
+                    } else {
+                        if (parser != null)
+                            parser.feedEnd();
+                        if (downstream == null)
+                            log.error("{}: end() before setup()", this);
+                        downstream.complete(null);
+                    }
                 }
             } catch (TerminatedException|CancelledException e) {
+                journal("abort content() on ", this, "due to down term|cancel");
                 ctx.close();
             }
         }

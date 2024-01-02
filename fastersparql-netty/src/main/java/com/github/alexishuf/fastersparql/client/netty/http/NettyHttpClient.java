@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -72,7 +73,7 @@ public final class NettyHttpClient implements AutoCloseable {
                         setupPipeline(ch, sslContext, handlerFactory).recycler(recycler);
                     }
                 }, ChannelHealthChecker.ACTIVE, true, !poolFIFO);
-                this.recycler = this.pool::release;
+                this.recycler = new PoolRecycler(this.pool);
                 this.connectionHeaderValue = "keep-alive";
             } else {
                 this.pool = null;
@@ -91,6 +92,13 @@ public final class NettyHttpClient implements AutoCloseable {
         } catch (Throwable t) {
             groupHolder.release();
             throw t;
+        }
+    }
+
+    private record PoolRecycler(SimpleChannelPool pool) implements ChannelRecycler {
+        @Override public void recycle(Channel channel) {
+            ThreadJournal.journal("recycle ", channel, "to pool");
+            pool.release(channel);
         }
     }
 

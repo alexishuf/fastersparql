@@ -15,7 +15,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import static com.github.alexishuf.fastersparql.client.util.ClientRetry.retry;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
-public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B> {
+public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B>
+        implements ChannelBound{
     private static final int NO_AUTO_READ = 0x40000000;
     protected static final int STARTED    = 0x20000000;
     protected static final int RETRIES_MASK = 0x1f000000;
@@ -36,6 +37,8 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
+
+    @Override public @Nullable Channel channel() { return channel; }
 
     @Override protected void appendToSimpleLabel(StringBuilder out) {
         String u = client.endpoint().uri();
