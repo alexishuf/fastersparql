@@ -183,7 +183,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     }
 
     protected void deliverTermination(int current, int termState) {
-        assert (state()&IS_TERM) == 0 : "deliverTermination() while already terminated";
         if (moveStateRelease(current, termState)) {
             try {
                 switch ((termState &STATE_MASK)) {
@@ -195,6 +194,9 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
                 Emitters.handleTerminationError(downstream, this, t);
             }
             markDelivered(current, termState);
+        } else {
+            assert (statePlain()&CANCELLED) != 0
+                    : "deliverTermination() after non-cancel previous termination";
         }
     }
 

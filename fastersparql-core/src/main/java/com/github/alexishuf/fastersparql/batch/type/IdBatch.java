@@ -498,9 +498,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
         @Override public @Nullable B onBatch(B batch) {
             if (batch == null) return null;
-            int receivedRows = batch.totalRows();
-            onBatchPrologue(batch);
-            return onBatchEpilogue(projectInPlace(batch), receivedRows);
+            int rcvRows = batch.totalRows();
+            return beforeOnBatch(batch) ? afterOnBatch(projectInPlace(batch), rcvRows) : batch;
         }
 
         @Override public final B projectRow(@Nullable B dst, B in, int row) {
@@ -574,9 +573,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
         @Override public @Nullable B onBatch(B batch) {
             if (batch == null) return null;
-            int receivedRows = batch.totalRows();
-            onBatchPrologue(batch);
-            return onBatchEpilogue(filterInPlace(batch), receivedRows);
+            int rcvRows = batch.totalRows();
+            return beforeOnBatch(batch) ? afterOnBatch(filterInPlace(batch), rcvRows) : batch;
         }
 
         @Override public B filterInPlace(B in) {

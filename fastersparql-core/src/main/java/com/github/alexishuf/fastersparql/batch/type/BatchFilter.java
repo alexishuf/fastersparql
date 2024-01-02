@@ -121,7 +121,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- Receiver methods --- --- --- */
 
-    @Override protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
+    @Override protected @Nullable B afterOnBatch(@Nullable B batch, long receivedRows) {
         boolean request = false;
         if (batch != null) {
             long survivors = batch.totalRows();
@@ -131,7 +131,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
             else if (survivors < receivedRows)
                 request = true;
         }
-        B offer = super.onBatchEpilogue(batch, receivedRows);
+        B offer = super.afterOnBatch(batch, receivedRows);
         if (request)
             upstream.request((long)DOWN_REQ.getOpaque(this));
         return offer;

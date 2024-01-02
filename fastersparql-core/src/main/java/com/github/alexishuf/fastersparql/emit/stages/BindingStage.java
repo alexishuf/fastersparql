@@ -510,6 +510,9 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                 Emitters.handleTerminationError(downstream, this, t);
             }
             markDelivered(state, termState);
+        } else {
+            assert (statePlain()&CANCELLED) != 0
+                    : "attempt to terminate after non-cancel previous termination";
         }
         return (state&FLAGS_MASK)|termState;
     }

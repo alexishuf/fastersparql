@@ -172,12 +172,30 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     }
     /* --- --- --- Receiver --- --- --- */
 
-    protected final void onBatchPrologue(B batch) {
+    /**
+     * Must be called at entry of every {@link #onBatch(Batch)} implementation.
+     * @param batch see {@link Receiver#onBatch(Batch)}
+     * @return Whether the batch should be processed/delivered downstream.
+     */
+    protected final boolean beforeOnBatch(B batch) {
+        if ((stateAcquire()&IS_TERM) != 0) {
+            assert (statePlain()&CANCELLED) != 0 : "onBatch() after non-cancel termination";
+            return false; // already terminated, do not process batch
+        }
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(batch);
+        return true;
     }
 
-    protected @Nullable B onBatchEpilogue(@Nullable B batch, long receivedRows) {
+    /**
+     * Must be called by every {@link #onBatch(Batch)} implementation after
+     * the batch has been processed and only if {@link #beforeOnBatch(Batch)} returned true.
+     * This method will deliver the processed batch downstream.
+     * @param batch see {@link Receiver#onBatch(Batch)}
+     * @param receivedRows {@link Batch#totalRows()} before the batch was processed.
+     * @return The reference that the {@link #onBatch(Batch)} method must return.
+     */
+    protected @Nullable B afterOnBatch(@Nullable B batch, long receivedRows) {
         if (downstream == null) {
             throw new NoDownstreamException(this);
         } else if (upstream == null) {

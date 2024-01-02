@@ -62,7 +62,7 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
     @Override public void rebind(BatchBinding b) {
         resetForRebind(0, 0);
         //noinspection unchecked
-        QUEUE.setRelease(this, bt.recycle((B)QUEUE.getAndSetAcquire(this, (B)null)));
+        bt.recycle((B)QUEUE.getAndSetAcquire(this, (B)null));
         TERMINATION.setRelease(this, 0);
         up.rebind(b);
     }
@@ -85,19 +85,24 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
     @Override public @Nullable B onBatch(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(batch);
-        if ((statePlain()&IS_ASYNC) == 0) {
+        int state = statePlain();
+        if ((state&IS_ASYNC) == 0) {
             long deadline = Timestamp.nextTick(2);
             batch = deliver(batch);
             if (Timestamp.nanoTime() > deadline)
-                setFlagsRelease(statePlain(),IS_ASYNC);
+                setFlagsRelease(state, IS_ASYNC);
             return batch;
         } else {
-            //noinspection unchecked
-            B queue = (B) QUEUE.getAndSetAcquire(this, null);
-            if (queue == null) queue = batch;
-            else               queue.append(batch);
-            QUEUE.setRelease(this, queue);
-            awake();
+            if ((state&IS_TERM) == 0) {
+                //noinspection unchecked
+                B queue = (B) QUEUE.getAndSetAcquire(this, null);
+                if (queue == null) queue = batch;
+                else queue.append(batch);
+                QUEUE.setRelease(this, queue);
+                awake();
+            } else {
+                bt.recycle(batch);
+            }
             return null;
         }
     }
@@ -134,6 +139,12 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
     }
 
     /* --- --- --- TaskEmitter --- --- --- */
+
+    @Override protected void doRelease() {
+        //noinspection unchecked
+        bt.recycle((B)QUEUE.getAndSetAcquire(this, (B)null));
+        super.doRelease();
+    }
 
     @Override protected void resume() { up.request(requested()); }
 

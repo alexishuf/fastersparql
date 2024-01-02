@@ -117,7 +117,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
         if (recycled)
-            throw new InvalidSparqlException("Recycled");
+            throw new IllegalStateException("Recycled");
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
         int bucket = (hash&Integer.MAX_VALUE)%capacity, wordIdx = (hash&HASH_MASK)>>6;

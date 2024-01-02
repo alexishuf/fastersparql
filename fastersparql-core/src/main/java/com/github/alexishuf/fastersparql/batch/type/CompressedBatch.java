@@ -1422,9 +1422,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
         @Override public @Nullable CompressedBatch onBatch(CompressedBatch batch) {
             if (batch == null) return null;
-            int receivedRows = batch.totalRows();
-            onBatchPrologue(batch);
-            return onBatchEpilogue(projectInPlace(batch), receivedRows);
+            int rcvRows = batch.totalRows();
+            return beforeOnBatch(batch) ? afterOnBatch(projectInPlace(batch), rcvRows) : batch;
         }
 
         @Override
@@ -1541,9 +1540,8 @@ public class CompressedBatch extends Batch<CompressedBatch> {
         }
         @Override public @Nullable CompressedBatch onBatch(CompressedBatch batch) {
             if (batch == null) return null;
-            int receivedRows = batch.totalRows();
-            onBatchPrologue(batch);
-            return onBatchEpilogue(filterInPlace(batch), receivedRows);
+            int rcvRows = batch.totalRows();
+            return beforeOnBatch(batch) ? afterOnBatch(filterInPlace(batch), rcvRows) : batch;
         }
 
         @Override public CompressedBatch filterInPlace(CompressedBatch in) {
