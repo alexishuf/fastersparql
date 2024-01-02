@@ -47,8 +47,11 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private boolean plainTerminated;
 
     @Override public @Nullable Channel channel() {
-        var ctx = this.ctx;
-        return ctx == null ? null : ctx.channel();
+        return this.ctx == null ? null : this.ctx.channel();
+    }
+
+    @Override public String journalName() {
+        return "C.NHH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
     }
 
     @Override public String toString() {

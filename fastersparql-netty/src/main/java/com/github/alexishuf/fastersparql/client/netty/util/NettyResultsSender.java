@@ -84,6 +84,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         return ctx == null ? null : ctx.channel();
     }
 
+    @Override public String journalName() {
+        return "NRS:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+    }
+
     @Override public void close() {
         touchState = TOUCH_DISABLED;
         execute(Action.RELEASE);

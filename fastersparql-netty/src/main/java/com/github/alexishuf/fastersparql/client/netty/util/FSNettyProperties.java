@@ -14,9 +14,7 @@ import java.io.File;
 public class FSNettyProperties extends FSProperties {
     private static final DebugJournal.ObjRenderer CHANNEL_RENDERER
             = new DebugJournal.ObjRenderer(Channel.class) {
-        @Override protected String render(Object o) {
-            return ((Channel)o).id().asShortText();
-        }
+        @Override protected String render(Object o) {return ((Channel)o).id().asShortText();}
     };
     private static final DebugJournal.ObjRenderer CHANNEL_CTX_RENDERER
             = new DebugJournal.ObjRenderer(ChannelHandlerContext.class) {
@@ -26,11 +24,7 @@ public class FSNettyProperties extends FSProperties {
     };
     private static final DebugJournal.ObjRenderer CHANNEL_BOUND_RENDERER
             = new DebugJournal.ObjRenderer(ChannelBound.class) {
-        @Override protected String render(Object o) {
-            Channel ch = ((ChannelBound) o).channel();
-            return String.format("%s@%x", ch == null ? null : ch.id().asShortText(),
-                                 System.identityHashCode(o));
-        }
+        @Override protected String render(Object o) {return ((ChannelBound)o).journalName();}
     };
     static {
         DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_RENDERER);

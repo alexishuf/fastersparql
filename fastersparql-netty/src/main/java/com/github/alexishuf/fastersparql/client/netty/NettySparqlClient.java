@@ -128,6 +128,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
             request();
         }
 
+        @Override public String journalName() {
+            return "C.QB:" + (channel == null ? "null" : channel.id().asShortText());
+        }
+
         @Override protected void request() {
             request.retain(); // retain for retries, Nett will release() on write()
             netty.request(request, this::connected, this::complete);
@@ -158,6 +162,12 @@ public class NettySparqlClient extends AbstractSparqlClient {
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();
+        }
+
+        @Override public String journalName() {
+            return String.format("C.QE:%s@%x",
+                    channel == null ? "null" : channel.id().asShortText(),
+                    System.identityHashCode(this));
         }
 
         @Override protected void doRelease() {
@@ -240,7 +250,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         public void setup(CompletableBatchQueue<?> downstream) {
-            journal("setup nettyHandler=", this, ", down=", downstream);
+            journal("setup nettyHandler=", this, "down=", downstream);
             resBytes = 0;
             this.downstream = downstream;
             expectResponse();

@@ -293,7 +293,7 @@ public abstract class Stateful {
      *         and transitioned to a {@link #IS_TERM_DELIVERED} state.
      */
     protected boolean markDelivered(int termState) {
-        if ((termState & IS_TERM) == 0) {
+        if ((termState&IS_TERM) == 0) {
             assert false : "termState is not a TERM state";
             return false;
         }
@@ -341,9 +341,15 @@ public abstract class Stateful {
             while ((ac=(int)S.compareAndExchangeRelease(this, ex, st=(ex&clMask)|setFlags)) != ex)
                 ex = ac;
             if (ENABLED) {
-                var op = (setFlags & LOCKED_MASK) == 0 ? "resetForRebind+unlock, cl="
-                                                       : "resetForRebind+lock, cl=";
-                journal(op, clearFlags, flags, "set=", setFlags, flags, "on", this);
+                if (clearFlags == STATE_MASK && setFlags == (CREATED|LOCKED_MASK)) {
+                    journal("resetForRebind+lock", this);
+                } else if (clearFlags == STATE_MASK && setFlags == CREATED) {
+                    journal("resetForRebind", this);
+                } else {
+                    String op = (setFlags&LOCKED_MASK) == 0 ? "resetForRebind, cl="
+                              : "resetForRebind+lock, cl=";
+                    journal(op, clearFlags, flags, "set=", setFlags, flags, "on", this);
+                }
             }
         }
         return st;

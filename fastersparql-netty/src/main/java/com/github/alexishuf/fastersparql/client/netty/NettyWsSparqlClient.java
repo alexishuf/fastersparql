@@ -156,6 +156,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             request();
         }
 
+        @Override public String journalName() {
+            return "C.WB:" + (channel == null ? "null" : channel.id().asShortText());
+        }
+
         @Override protected void cleanup(@Nullable Throwable e) { releaseRef(); }
         @Override protected void request()                      { netty.open(handler); }
     }
@@ -172,6 +176,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
            this.query = query;
            this.bindQuery = bindQuery;
            acquireRef();
+        }
+
+        @Override public String journalName() {
+            return String.format("C.EQ:%s@%x",
+                    channel == null ? "null" : channel.id().asShortText(),
+                    System.identityHashCode(this));
         }
 
         private WsHandler<B> makeHandler() {
@@ -228,6 +238,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public @Nullable Channel channel() {
             return this.ctx == null ? null : this.ctx.channel();
+        }
+
+        @Override public String journalName() {
+            return "C.WH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
         }
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
 

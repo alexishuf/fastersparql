@@ -7,10 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
-import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
+import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
@@ -36,6 +33,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -67,6 +65,7 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.C
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FORM_URLENCODED;
 import static io.netty.handler.codec.http.HttpHeaderValues.CHUNKED;
@@ -220,13 +219,16 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             return batch;
         }
         @Override public void onComplete() {
+            journal("onComplete, sender=", this);
             sendTrailer();
             execute(COMPLETE_ACTION);
         }
         @Override public final void onCancelled()        {
+            journal("onCancelled, abortCause=", abortCause, "sender=", this);
             execute(abortCause==null ? CANCEL_ACTION : new ErrorAction<>(abortCause));
         }
         @Override public final void onError(Throwable e) {
+            journal("onError", e, "sender=", this);
             execute(new ErrorAction<>(e));
         }
     }
@@ -315,6 +317,11 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         @Override public @Nullable Channel channel() {
             return ctx == null ? null : ctx.channel();
         }
+
+        @Override public String journalName() {
+            return "S.QH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+        }
+
         /* --- --- --- channel events that do not depend on SPARQL protocol variant--- --- --- */
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
@@ -323,6 +330,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            journal("channelInactive, handler=", this);
             var sender = this.sender;
             if (sender != null)
                 sender.abort(new FSException("channel closed"));
@@ -331,6 +339,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+            log.error("Exception for handler={}", this, cause);
+            journal("exceptionCaught, handler=", this, "cause=", cause);
             var sender = this.sender;
             if (sender != null)
                 sender.abort(cause);
@@ -405,6 +415,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         @Override protected void endQuery(@Nullable Sender<HttpContent> sender,
                                           HttpResponseStatus status,
                                           boolean cancelled, @Nullable Throwable error) {
+            if (ThreadJournal.ENABLED) {
+                journal("endQuery handler=", this, "error=", error);
+                journal("endQuery cancelled=", cancelled ? 1 : 0);
+            }
             if (this.sender != sender) {
                 log.warn("Received endQuery() from {}, current sender is {}", sender, this.sender);
                 return;
@@ -447,6 +461,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
             if (handleUpgrade(req))
                 return;
+            journal("server channelRead0, handler=", this, "prev sender=", sender);
             responseStarted = false;
             sender = null;
             HttpMethod method = req.method();
@@ -519,8 +534,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         private void handleQuery(SegmentRope sparqlRope) {
-            if ((parseQuery(sparqlRope)) == null)
+            Plan query;
+            if ((query = parseQuery(sparqlRope)) == null)
                 return;
+            journal("parsed query, handler=", this, "cType=", resultsSerializer.contentType());
             var results = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
             sender = new HttpSender(resultsSerializer, this, results);
             var res = new DefaultHttpResponse(HTTP_1_1, OK);
