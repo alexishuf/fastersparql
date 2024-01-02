@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
@@ -264,13 +265,14 @@ public class DebugJournal {
         }
     };
     private static final ObjRenderer THROWABLE_OBJ_RENDERER = new ObjRenderer(Throwable.class) {
-        @Override public String render(Object o) {
-            return o.getClass().getSimpleName();
-        }
+        @Override public String render(Object o) { return o.getClass().getSimpleName(); }
     };
     private static final ObjRenderer TERM_OBJ_RENDERER = new ObjRenderer(Term.class) {
+        @Override public String render(Object o) { return ((Term)o).toSparql().toString(); }
+    };
+    private static final ObjRenderer TP_OBJ_RENDERER = new ObjRenderer(TriplePattern.class) {
         @Override public String render(Object o) {
-            return ((Term)o).toSparql().toString();
+            return o.toString();
         }
     };
     private static final ObjRenderer STREAM_NODE_OBJ_RENDERER = new ObjRenderer(StreamNode.class) {
@@ -288,6 +290,7 @@ public class DebugJournal {
             objRenderers.add(ID_OBJ_RENDERER);
             objRenderers.add(THROWABLE_OBJ_RENDERER);
             objRenderers.add(TERM_OBJ_RENDERER);
+            objRenderers.add(TP_OBJ_RENDERER);
             objRenderers.add(STREAM_NODE_OBJ_RENDERER);
         }
 
@@ -310,7 +313,7 @@ public class DebugJournal {
                 if (maxWidth > 12 && str.length() > maxWidth) {
                     int side = maxWidth - 12 /* ...@12345678 */;
                     sb.append(str, 0, side).append("...");
-                    sb.append(str, str.length()-9-side, str.length());
+                    sb.append(str, str.length()-9, str.length());
                 } else {
                     sb.append(str);
                 }
