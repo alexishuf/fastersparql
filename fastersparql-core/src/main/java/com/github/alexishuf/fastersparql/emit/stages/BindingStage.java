@@ -35,7 +35,6 @@ import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequest
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
-import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 
 public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<B, B> {
@@ -162,25 +161,28 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
     @Override public BatchType<B> batchType() { return batchType; }
 
     @Override public String toString() {
-        return label(MINIMAL).replace("\n", " ");
+        return label(MINIMAL);
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(64), this);
         if (type != MINIMAL)
             sb.append('[').append(rightRecv.type.name()).append("] vars=").append(outVars);
-        if (type.showState()) {
-            appendRequested(sb.append("\nrequested=" ), requested);
-            appendRequested(sb.append(" leftPending="), leftPending);
-            B lb = this.lb, fillingLB = this.fillingLB;
-            int lQueued = (lb        == null ? 0 :        lb.totalRows() - lr)
-                        + (fillingLB == null ? 0 : fillingLB.totalRows());
-            appendRequested(sb.append(" leftQueued="), lQueued);
-            sb.append(" state=").append(flags.render(state()));
-        }
+        if (type.showState())
+            appendState(sb);
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
         return sb.toString();
+    }
+
+    private void appendState(StringBuilder sb) {
+        appendRequested(sb.append("\nrequested=" ), requested);
+        appendRequested(sb.append(" leftPending="), leftPending);
+        B lb = this.lb, fillingLB = this.fillingLB;
+        int lQueued = (lb        == null ? 0 :        lb.totalRows() - lr)
+                    + (fillingLB == null ? 0 : fillingLB.totalRows());
+        appendRequested(sb.append(" leftQueued="), lQueued);
+        sb.append(" state=").append(flags.render(state()));
     }
 
     @Override public Stream<? extends StreamNode> upstreamNodes() {
@@ -671,7 +673,17 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         }
 
         @Override public String toString() {
-            return format("%s.RightReceiver@%08x", BindingStage.this, identityHashCode(this));
+            return label(MINIMAL);
+        }
+
+        @Override public String label(StreamNodeDOT.Label type) {
+            var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), BindingStage.this);
+            sb.append(".right@").append(Integer.toHexString(identityHashCode(this)));
+            if (type.showState())
+                appendState(sb);
+            if (type.showStats() && stats != null)
+                stats.appendToLabel(sb);
+            return sb.toString();
         }
 
         public void rebindRelease() {
