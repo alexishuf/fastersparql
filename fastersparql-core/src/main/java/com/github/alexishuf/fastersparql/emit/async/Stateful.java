@@ -251,6 +251,12 @@ public abstract class Stateful {
             }
             next = (ex&~mask) | next;
         } while ((state=(int)S.compareAndExchangeRelease(this, ex, next)) != ex);
+        if (ENABLED) {
+            int begin = numberOfTrailingZeros(mask);
+            journal("added", shiftedAdd>>>begin, "now=",
+                    (next&mask)>>>begin, "to counter=", flags.counterName(mask));
+            journal("on", this);
+        }
         return next;
     }
 
@@ -621,6 +627,16 @@ public abstract class Stateful {
             if (name == null)
                 name = String.format("0x%02x", state);
             return name;
+        }
+
+        public String counterName(int mask) {
+            int begin = Integer.numberOfTrailingZeros(mask);
+            for (int i = 0; i < counterBegins.length; i++) {
+                if (counterBegins[i] == begin) {
+                    return counterNames[i];
+                }
+            }
+            return "UNKNOWN_COUNTER";
         }
 
         @Override public String render(long state) { return render((int)state); }

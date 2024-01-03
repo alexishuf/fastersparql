@@ -29,6 +29,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -165,9 +166,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return String.format("C.QE:%s@%x",
-                    channel == null ? "null" : channel.id().asShortText(),
-                    System.identityHashCode(this));
+            return String.format("C.QE@%x", System.identityHashCode(this));
         }
 
         @Override protected void doRelease() {
@@ -189,6 +188,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         private void connected(Channel ch, NettyHandler handler) {
+            if (ThreadJournal.ENABLED)
+                journal("connected em=", this, "ch=", ch.toString());
             setChannel(ch);
             handler.setup(this);
         }
@@ -243,6 +244,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     resBytes, identityHashCode(this));
         }
 
+        @Override public String journalName() {
+            return "C.NH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
+        }
+
         @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
             journal("channelUnregistered on", this);
             bbRopeView.recycle();
@@ -278,26 +283,23 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void content(HttpContent content) {
-            if (downstream == null) {
-                log.error("{}: content({}) before setup()", this, content);
+            var parser = this.parser;
+            if (parser == null) {
+                log.error("{}: content({}) before setup()/successResponse()", this, content);
                 return;
             }
             ByteBuf bb = content.content();
             resBytes += bb.readableBytes();
             try {
-                parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
+               parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
                                                    : new ByteRope(bb.toString(decodeCS)));
                 if (content instanceof LastHttpContent) {
-                    journal("LastHttpContent on", this);
-                    if (resBytes == 0) {
+                    if (ThreadJournal.ENABLED)
+                        journal("LastHttpContent on", this, "ch=", channel());
+                    if (resBytes == 0)
                         error(new InvalidSparqlResultsException("Zero-byte results"));
-                    } else {
-                        if (parser != null)
-                            parser.feedEnd();
-                        if (downstream == null)
-                            log.error("{}: end() before setup()", this);
-                        downstream.complete(null);
-                    }
+                    else
+                        parser.feedEnd();
                 }
             } catch (TerminatedException|CancelledException e) {
                 journal("abort content() on ", this, "due to down term|cancel");

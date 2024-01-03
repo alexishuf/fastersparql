@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         implements CompletableBatchQueue<B> {
@@ -55,8 +56,12 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
 
     @Override public void complete(@Nullable Throwable cause) {
         int st = state(), tgt = complete2state(st, cause);
-        if (tgt != 0 && moveStateRelease(st, tgt))
+        if (tgt == 0)
+            journal("ignoring (for retry?) complete", cause, "on", this);
+        else if (moveStateRelease(st, tgt))
             awake();
+        else
+            journal("move to ", tgt, flags, "from", statePlain(), flags, "rejected for", this);
     }
 
     public @Nullable B offer(B b) throws TerminatedException, CancelledException {

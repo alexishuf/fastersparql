@@ -318,10 +318,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             return ctx == null ? null : ctx.channel();
         }
 
-        @Override public String journalName() {
-            return "S.QH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
-        }
-
         /* --- --- --- channel events that do not depend on SPARQL protocol variant--- --- --- */
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
@@ -411,6 +407,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private ResultsSerializer resultsSerializer;
 
         /* --- --- --- implement QueryHandler --- --- --- */
+
+        @Override public String journalName() {
+            return "S.SH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+        }
 
         @Override protected void endQuery(@Nullable Sender<HttpContent> sender,
                                           HttpResponseStatus status,
@@ -537,8 +537,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             Plan query;
             if ((query = parseQuery(sparqlRope)) == null)
                 return;
-            journal("parsed query, handler=", this, "cType=", resultsSerializer.contentType());
             var results = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
+            journal("parsed query, handler=", this, "emitter=", results);
+            if (ThreadJournal.ENABLED)
+                journal("channel=", ctx.channel().toString());
             sender = new HttpSender(resultsSerializer, this, results);
             var res = new DefaultHttpResponse(HTTP_1_1, OK);
             res.headers().set(CONTENT_TYPE, resultsSerializer.contentType())
@@ -603,6 +605,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         /* --- --- --- implement QueryHandler --- --- --- */
+
+        @Override public String journalName() {
+            return "S.WH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+        }
 
         @Override protected void endQuery(@Nullable Sender<TextWebSocketFrame> sender,
                                           HttpResponseStatus status, boolean cancelled,

@@ -73,10 +73,9 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     protected void setChannel(Channel channel) {
         if (this.channel == channel)
             return;
-        if (this.channel != null)
-            this.channel.close();
         this.channel = channel;
-        if ((state()&IS_CANCEL_REQ) != 0)
+        int st = state();
+        if ((st&IS_CANCEL_REQ) != 0 || isCancelled(st))
             channel.close();
     }
 

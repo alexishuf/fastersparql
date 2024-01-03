@@ -43,15 +43,15 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     protected @MonotonicNonNull ChannelHandlerContext ctx;
     private @Nullable HttpResponse httpResponse;
     private ByteRope failureBody = ByteRope.EMPTY;
-    @SuppressWarnings("unused") // accessed through TERMINATED
-    private boolean plainTerminated;
+    @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through TERMINATED
+    private boolean plainTerminated = true;
 
     @Override public @Nullable Channel channel() {
         return this.ctx == null ? null : this.ctx.channel();
     }
 
     @Override public String journalName() {
-        return "C.NHH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
+        return "NHH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
     }
 
     @Override public String toString() {
@@ -72,13 +72,17 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
      */
     public void expectResponse() {
         ChannelHandlerContext ctx = this.ctx;
-        journal("expectResponse on", this, plainTerminated ? "term" : "!term");
         if (ctx != null)
             ctx.channel().config().setAutoRead(true);
         if ((boolean)TERMINATED.compareAndExchangeRelease(this, true, false)) {
+            journal("expectResponse() on ", this);
             httpResponse = null;
             if (failureBody != ByteRope.EMPTY)
                 failureBody.clear();
+        } else {
+            journal("expectResponse on non-terminated ", this);
+            log.error("expectResponse() on non-terminated {}", this);
+            assert false : "expectResponse() on non-terminated NettyHttpHandler";
         }
     }
 
@@ -116,6 +120,21 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
      * @param content a chunk of the response body.
      */
     protected abstract void content(HttpContent content);
+
+    /**
+     * This method must be eventually called during or after a {@link #content(HttpContent)}
+     * invocation with a {@link LastHttpContent} message, that is known to be the last
+     * (no new request) was/will be issued.
+     */
+    private void releaseChannel() {
+        if (!((boolean)TERMINATED.compareAndExchangeRelease(this, false, true))) {
+            journal("releasing channel", this);
+            httpResponse = null;
+            recycler.recycle(ctx.channel());
+        } else {
+            journal("ignoring releaseChannel() due to previous fail/release");
+        }
+    }
 
     private boolean fail(@Nullable Throwable cause) {
         journal("fail", this, cause, plainTerminated ? "term" : "!term");
@@ -198,13 +217,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             boolean isLast = httpContent instanceof LastHttpContent;
             if (response.status().codeClass() == SUCCESS) {
                 content(httpContent);
-                if (isLast) {
-                    journal("terminating due to lastHttpContent on", this,
-                            plainTerminated ? "(ALREADY TERMINATED)" : "");
-                    TERMINATED.setRelease(this, true);
-                    httpResponse = null;
-                    recycler.recycle(ctx.channel());
-                }
+                if (isLast)
+                    releaseChannel();
             } else {
                 if (failureBody == ByteRope.EMPTY)
                     failureBody = new ByteRope();
