@@ -85,9 +85,11 @@ public class NettySparqlServer implements AutoCloseable {
                                                               .collect(Collectors.joining(", "));
     private final FSCancelledException wsCancelledEx;
     private int serializeSizeHint = WsSerializer.DEF_BUFFER_HINT;
+    private final SparqlClient.@Nullable Guard sparqlClientGuard;
 
-    public NettySparqlServer(SparqlClient sparqlClient, String host, int port) {
+    public NettySparqlServer(SparqlClient sparqlClient, boolean sharedSparqlClient, String host, int port) {
         this.sparqlClient = sparqlClient;
+        this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
         wsCancelledEx = new FSCancelledException(sparqlClient.endpoint(), "!cancel frame received");
         acceptGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
@@ -125,7 +127,6 @@ public class NettySparqlServer implements AutoCloseable {
     }
 
     @Override public void close()  {
-        sparqlClient.close();
         CountDownLatch latch = new CountDownLatch(3);
         server.close().addListener(f -> {
             latch.countDown();
@@ -142,6 +143,9 @@ public class NettySparqlServer implements AutoCloseable {
         } catch (InterruptedException e) {
             log.warn("Interrupted while closing {}, leaking.", this);
             Thread.currentThread().interrupt();
+        } finally {
+            if (sparqlClientGuard == null) sparqlClient.close();
+            else                           sparqlClientGuard.close();
         }
     }
 

@@ -248,7 +248,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         @Override protected void doRelease() {
             super.doRelease();
             batch = TERM.recycle(batch);
-            if (expected.hasBindings()) {
+            if (expected != null && expected.hasBindings()) {
                 List<List<Term>> exBindingRows = expected.bindingsList();
                 if (exBindingRows == null)
                     exBindingRows = List.of();

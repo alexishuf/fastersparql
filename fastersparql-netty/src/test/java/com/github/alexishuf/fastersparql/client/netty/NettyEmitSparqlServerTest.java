@@ -27,6 +27,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
@@ -43,11 +44,12 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class NettyEmitSparqlServerTest {
     private NettyEmitSparqlServer createServer(Results results,
                                            @Nullable ResultsSparqlClient innerClient) {
+        boolean shared = innerClient != null;
         if (innerClient == null) {//noinspection resource
             innerClient = new ResultsSparqlClient(false);
             innerClient.answerWith(results.query(), results);
         }
-        return new NettyEmitSparqlServer(innerClient, "0.0.0.0", 0);
+        return new NettyEmitSparqlServer(innerClient, shared, "0.0.0.0", 0);
     }
 
     private SparqlClient createClient(NettyEmitSparqlServer server, SparqlResultFormat fmt,
@@ -62,11 +64,13 @@ class NettyEmitSparqlServerTest {
                     SparqlMethod meth, BatchType<?> bType) { }
 
     private static ResultsSparqlClient rsClient(boolean nativeBind) {
-        var client = new ResultsSparqlClient(nativeBind);
+        String ep = "http://"+nextRSClientId.getAndAdd(1)+".example.org/sparql";
+        var client = new ResultsSparqlClient(nativeBind, ep);
         GUARDS.add(client.retain());
         return client;
     }
 
+    private static final AtomicInteger nextRSClientId = new AtomicInteger(1);
     private static final List<SparqlClient.Guard> GUARDS = new ArrayList<>();
     private static final List<Scenario> SCENARIOS = new ArrayList<>();
 

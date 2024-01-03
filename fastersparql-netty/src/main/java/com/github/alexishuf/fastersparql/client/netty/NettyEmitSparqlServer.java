@@ -91,9 +91,12 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     private final SparqlClient sparqlClient;
     private final ContentNegotiator negotiator = ResultsSerializer.contentNegotiator();
     private int serverWsSizeHint = WsSerializer.DEF_BUFFER_HINT;
+    private final SparqlClient.@Nullable Guard sparqlClientGuard;
 
-    public NettyEmitSparqlServer(SparqlClient sparqlClient, String host, int port) {
+    public NettyEmitSparqlServer(SparqlClient sparqlClient, boolean sharedSparqlClient,
+                                 String host, int port) {
         this.sparqlClient = sparqlClient;
+        this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
         acceptGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
 //        String debuggerName = sparqlClient.endpoint().toString();
@@ -130,7 +133,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     }
 
     @SuppressWarnings("unused") @Override public void close()  {
-        sparqlClient.close();
         CountDownLatch latch = new CountDownLatch(3);
         server.close().addListener(f -> {
             latch.countDown();
@@ -147,6 +149,9 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         } catch (InterruptedException e) {
             log.warn("Interrupted while closing {}, leaking.", this);
             Thread.currentThread().interrupt();
+        } finally {
+            if (sparqlClientGuard == null) sparqlClient.close();
+            else                           sparqlClientGuard.close();
         }
     }
 
@@ -614,6 +619,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                                           HttpResponseStatus status, boolean cancelled,
                                           @Nullable Throwable error) {
             if (this.sender != sender) {
+                journal("Ignoring endQuery from sender=", sender, "instead of ", this.sender);
                 log.warn("Received endQuery() from {}, current sender is {}", sender, this.sender);
                 return;
             }

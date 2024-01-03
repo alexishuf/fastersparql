@@ -84,12 +84,12 @@ public enum SourceKind {
         };
         if (isNettyItSparqlServer()) {
             var inner = FS.clientFor(parse(handle.specUrl));
-            var server = new NettySparqlServer(inner, "0.0.0.0", 0);
+            var server = new NettySparqlServer(inner, false, "0.0.0.0", 0);
             String url = augScheme()+"127.0.0.1:"+server.port()+"/sparql";
             return new SourceHandle(url, source, this, AutoCloseableSet.of(server));
         } else if (isNettyEmitSparqlServer()) {
             var inner = FS.clientFor(parse(handle.specUrl));
-            var server = new NettyEmitSparqlServer(inner, "0.0.0.0", 0);
+            var server = new NettyEmitSparqlServer(inner, false, "0.0.0.0", 0);
             String url = augScheme()+"127.0.0.1:"+server.port()+"/sparql";
             return new SourceHandle(url, source, this, AutoCloseableSet.of(server));
         }
