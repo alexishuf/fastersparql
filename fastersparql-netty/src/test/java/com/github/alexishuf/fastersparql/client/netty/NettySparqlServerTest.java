@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -15,6 +16,8 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -23,17 +26,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.JSON;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static java.util.stream.Collectors.toCollection;
+import static java.util.stream.IntStream.range;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -160,6 +163,13 @@ class NettySparqlServerTest {
                                                        s.fmt, s.meth, s.bType));
     }
 
+    private void resetJournalAndCheck(Results results, SparqlClient client,
+                                      BatchType<?> batchType) {
+        NettyChannelDebugger.flushActive();
+        ThreadJournal.resetJournals();
+        results.check(client, batchType);
+    }
+
     @ParameterizedTest @MethodSource
     void test(Results results, @Nullable ResultsSparqlClient innerClient,
               SparqlResultFormat fmt, SparqlMethod meth, BatchType<?> batchType) {
@@ -167,10 +177,29 @@ class NettySparqlServerTest {
             return;
         if (innerClient == null)
             assertFalse(results.hasBindings());
+        int concurrent = Runtime.getRuntime().availableProcessors();
+        long minNs = 400_000_000L;
         try (var server = createServer(results, innerClient);
              var client = createClient(server, fmt, meth)) {
-            results.check(client, batchType);
-            results.check(client, batchType);  // re-test on same server/client
+            resetJournalAndCheck(results, client, batchType);
+            long startNs = nanoTime(); // repeat same test serially
+            for (int i = 0; i < 200 || nanoTime()-startNs < minNs; i++)
+                resetJournalAndCheck(results, client, batchType);
+            startNs = nanoTime(); // saturate CPUs with same test
+            for (int i = 0; i < 10 || nanoTime()-startNs < minNs; i++) {
+                NettyChannelDebugger.flushActive();
+                ThreadJournal.resetJournals();
+                assertEquals(List.of(), range(0, concurrent).parallel().mapToObj(ignored -> {
+                    try {
+                        results.check(client, batchType);
+                        return null;
+                    } catch (Throwable t) {
+                        Async.uninterruptibleSleep(100);
+                        NettyChannelDebugger.dumpAndFlushActive(System.out);
+                        return t;
+                    }
+                }).filter(Objects::nonNull).toList());
+            }
         }
     }
 
