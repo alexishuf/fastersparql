@@ -478,6 +478,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                 this.error = error;
             }
             if ((state&RIGHT_TERM) == 0) {
+                dropLeftQueued();
                 state = setFlagsRelease(state, flag);
                 if ((state&LEFT_TERM) == 0) leftUpstream.cancel(); // if right failed, cancel
                 else                        state = terminateStage(state);
