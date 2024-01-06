@@ -163,15 +163,19 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
 
     @Override public void onCancelled() {
         int st = beginTerminationDelivery(CANCELLED);
-        for (int i = 0, n = connectorsCount; i < n; i++)
-            connectors[i].downstream.onCancelled();
+        for (int i = 0, n = connectorsCount; i < n; i++) {
+            var d = connectors[i].downstream;
+            if (d != null) d.onCancelled();
+        }
         markDelivered(st);
     }
 
     @Override public void onError(Throwable cause) {
         int st = beginTerminationDelivery(FAILED);
-        for (int i = 0, n = connectorsCount; i < n; i++)
-            connectors[i].downstream.onError(cause);
+        for (int i = 0, n = connectorsCount; i < n; i++) {
+            var d = connectors[i].downstream;
+            if (d != null) d.onError(cause);
+        }
         markDelivered(st);
     }
 
