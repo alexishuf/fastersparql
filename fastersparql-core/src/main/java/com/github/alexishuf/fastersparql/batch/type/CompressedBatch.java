@@ -1210,8 +1210,12 @@ public class CompressedBatch extends Batch<CompressedBatch> {
 
         public Merger(BatchType<CompressedBatch> batchType, Vars outVars, short[] sources) {
             super(batchType, outVars, sources);
-            this.leftShared = segmentRopesAtLeast(sources.length);
-            this.leftSlices = shortsAtLeast(sources.length<<1);
+            int leftSize = 0;
+            for (short s : sources) {
+                if (s > leftSize) leftSize = s;
+            }
+            this.leftShared = segmentRopesAtLeast(leftSize);
+            this.leftSlices = shortsAtLeast(leftSize<<1);
             this.outColumns = (short)sources.length;
         }
 
