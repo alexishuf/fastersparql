@@ -109,7 +109,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
 
     @Override protected void task(int threadId) {
         this.threadId = (short)threadId;
-        int st = lock(state());
+        int st = lock(state()), termState = 0;
         try {
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
@@ -128,7 +128,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 st = lock(st);
             }
             if (queue == null) {
-                int termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
+                termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
                 if (termState != 0) {
                     if ((st&LOCKED_MASK) != 0)
@@ -136,6 +136,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                     deliverTermination(st, termState);
                 }
             }
+        } catch (Throwable t) {
+            if (termState != 0 || (st&IS_TERM) != 0)
+                throw t;
+            if ((st&LOCKED_MASK) != 0)
+                st = unlock(st);
+            if (error == UNSET_ERROR)
+                error = t;
+            deliverTermination(st, FAILED);
         } finally {
             if ((st&LOCKED_MASK) != 0)
                 unlock(st);
