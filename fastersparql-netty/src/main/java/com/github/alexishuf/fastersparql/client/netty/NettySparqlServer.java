@@ -825,7 +825,8 @@ public class NettySparqlServer implements AutoCloseable {
                 bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
             }
             var bindings = new SPSCBIt<>(COMPRESSED, bindingsVars, Integer.MAX_VALUE);
-            bindingsParser = new WsServerParser<>(this, bindings);
+            bindingsParser = new WsServerParser<>(bindings);
+            bindingsParser.setFrameSender(this);
             // do not block if client starts flooding
             int round = waitingVarsRound;
             waitingVarsRound = 0;

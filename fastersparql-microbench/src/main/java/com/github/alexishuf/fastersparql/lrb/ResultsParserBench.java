@@ -168,8 +168,10 @@ public class ResultsParserBench {
     }
 
     private ResultsParser createParser(CallbackBIt delegate) {
-        return format != SparqlResultFormat.WS ? createFor(format, delegate)
-                : new WsClientParser(wsFrameSender, delegate);
+        if (format != SparqlResultFormat.WS) return createFor(format, delegate);
+        WsClientParser parser = new WsClientParser(delegate);
+        parser.setFrameSender(wsFrameSender);
+        return parser;
     }
 
     @Benchmark public int parse(Blackhole blackhole) {

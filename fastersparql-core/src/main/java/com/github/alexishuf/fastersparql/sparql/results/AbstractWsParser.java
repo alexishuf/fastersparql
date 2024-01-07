@@ -4,17 +4,21 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
-    @SuppressWarnings("rawtypes") protected final WsFrameSender frameSender;
+    protected final CompletableFuture<WsFrameSender<?,?>> frameSenderFuture = new CompletableFuture<>();
     protected boolean serverSentTermination = false;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
@@ -34,9 +38,15 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     /* --- --- --- constructors --- --- --- */
 
-    public AbstractWsParser(WsFrameSender<?, ?> frameSender, CompletableBatchQueue<B> dst) {
+    public AbstractWsParser(CompletableBatchQueue<B> dst) {
         super(dst);
-        this.frameSender = frameSender;
+    }
+
+    public void setFrameSender(WsFrameSender<?,?> frameSender) {
+        if (frameSenderFuture.complete(frameSender))
+            return;
+        if (frameSenderFuture.getNow(null) != frameSender)
+            throw new IllegalStateException("WsFrameSender already set");
     }
 
     /* --- --- --- abstract methods --- --- --- */
@@ -45,8 +55,9 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     protected void onPingAck() { /* pass */ }
 
     protected void onPing() {
+        var sender = frameSender();
         //noinspection unchecked
-        frameSender.sendFrame(frameSender.createSink().append(PING_ACK_FRAME));
+        sender.sendFrame(sender.createSink().append(PING_ACK_FRAME));
     }
 
     /** The remote peer wants the processing to stop. It will not send any more input and
@@ -89,6 +100,31 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     /* --- --- --- helper methods --- --- --- */
+
+    @SuppressWarnings("rawtypes") protected WsFrameSender frameSender() {
+        var sender = frameSenderFuture.getNow(null);
+        if (sender == null)
+            throw new IllegalStateException("No WsFrameSender set");
+        return sender;
+    }
+
+    @SuppressWarnings("rawtypes") protected WsFrameSender waitForFrameSender() {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return frameSenderFuture.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    throw new RuntimeExecutionException(e);
+                }
+            }
+        } finally {
+            if (interrupted)
+                Thread.currentThread().interrupt();
+        }
+    }
 
     private void handlePrefix(SegmentRope r, int begin, int eol) {
         int nameBegin = begin+PREFIX.length, colon = r.skipUntil(nameBegin, eol, ':');

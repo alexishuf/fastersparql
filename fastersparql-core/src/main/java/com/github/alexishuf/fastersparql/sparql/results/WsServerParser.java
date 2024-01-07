@@ -10,8 +10,8 @@ public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private final int bindingSeqCol;
     private final WsBindingSeq seqWriter;
 
-    public WsServerParser(WsFrameSender<?, ?> frameSender, CompletableBatchQueue<B> dest) {
-        super(frameSender, dest);
+    public WsServerParser(CompletableBatchQueue<B> dest) {
+        super(dest);
         bindingSeqCol = dest.vars().indexOf(WsBindingSeq.VAR);
         seqWriter = bindingSeqCol < 0 ? null : new WsBindingSeq();
     }

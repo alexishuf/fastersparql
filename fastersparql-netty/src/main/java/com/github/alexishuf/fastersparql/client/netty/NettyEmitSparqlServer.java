@@ -799,7 +799,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             // create bindings -> BindingStage -> sender pipeline
 
             var bindingsQueue = new BindingsQueue(bindingsVars);
-            bindingsParser = new WsServerParser<>(this, bindingsQueue);
+            bindingsParser = new WsServerParser<>(bindingsQueue);
+            bindingsParser.setFrameSender(this);
             bindQuery = new VolatileBindQuery(query, bindingsQueue, bType);
             var results = sparqlClient.emit(bindQuery, Vars.EMPTY);
             var sender = new WsSender(WsSerializer.create(sizeHint), this, results);

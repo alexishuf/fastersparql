@@ -162,7 +162,8 @@ class QueryNameTest {
     private <B extends Batch<B>, S extends ByteSink<S, T>, T> ResultsParser<B>
     createParser(SparqlResultFormat format, CompletableBatchQueue<B> dest) {
         if (format == WS) {
-            WsFrameSender<?, ?> frameSender = new WsFrameSender<S, T>() {
+            var parser = new WsClientParser<>( dest);
+            parser.setFrameSender(new WsFrameSender<S, T>() {
                 @Override public void sendFrame(T content) {}
                 @Override public S createSink() {return null;}
                 @Override public ResultsSender<S, T> createSender() {
@@ -184,8 +185,8 @@ class QueryNameTest {
                         @Override public void sendCancel() {}
                     };
                 }
-            };
-            return new WsClientParser<>(frameSender, dest);
+            });
+            return parser;
         } else {
             return ResultsParser.createFor(format, dest);
         }

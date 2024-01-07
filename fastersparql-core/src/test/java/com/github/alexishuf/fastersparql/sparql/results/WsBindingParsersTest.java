@@ -225,8 +225,10 @@ public class WsBindingParsersTest {
         try (var clientCb = new SPSCBIt<>(TERM, ex.vars(), queueMaxRows());
              var serverCb = new SPSCBIt<>(TERM, Vars.of(WsBindingSeq.VAR).union(ex.bindingsVars()),
                                           queueMaxRows())) {
-            var clientParser = new WsClientParser<>(serverMB, clientCb, ex.asBindQuery(), null);
-            var serverParser = new WsServerParser<>(clientMB, serverCb);
+            var clientParser = new WsClientParser<>(clientCb, ex.asBindQuery(), null);
+            var serverParser = new WsServerParser<>(serverCb);
+            clientParser.setFrameSender(serverMB);
+            serverParser.setFrameSender(clientMB);
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));
             clientFeeder = startThread("client-feeder", () -> feed(clientParser, clientMB));
             server = startThread("server", () -> server(ex, bRow2Res, serverCb, clientMB));

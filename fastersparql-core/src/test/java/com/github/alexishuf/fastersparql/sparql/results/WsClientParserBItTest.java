@@ -116,14 +116,18 @@ class WsClientParserBItTest extends ResultsParserTest {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
                 @Override
                 public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
-                    return new WsClientParser<>(frameSender, d, expected.asBindQuery(d.batchType()), null);
+                    var parser = new WsClientParser<>(d, expected.asBindQuery(d.batchType()), null);
+                    parser.setFrameSender(frameSender);
+                    return parser;
                 }
             };
         } else {
             fac = new ResultsParser.Factory() {
                 @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
                 @Override public <B extends Batch<B>> ResultsParser<B> create(CompletableBatchQueue<B> d) {
-                    return new WsClientParser<>(frameSender, d);
+                    var parser = new WsClientParser<B>(d);
+                    parser.setFrameSender(frameSender);
+                    return parser;
                 }
             };
         }

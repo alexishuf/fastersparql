@@ -17,6 +17,7 @@ import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -30,6 +31,7 @@ import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
@@ -47,6 +49,7 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -178,6 +181,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
            acquireRef();
         }
 
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
+        }
+
         @Override public String journalName() {
             return String.format("C.EQ:%s@%x",
                     channel == null ? "null" : channel.id().asShortText(),
@@ -223,17 +230,21 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final ByteRope requestMsg;
         private boolean gotFrames;
         private @Nullable ByteBufRopeView bbRopeView;
-        private @MonotonicNonNull WsClientParser<B> parser;
+        private final WsClientParser<B> parser;
         private @MonotonicNonNull ChannelHandlerContext ctx;
         private @MonotonicNonNull ChannelRecycler recycler;
         private final CompletableBatchQueue<B> destination;
-        private final @Nullable BindQuery<B> bindQry;
 
         public WsHandler(ByteRope requestMsg, CompletableBatchQueue<B> destination,
                          @Nullable BindQuery<B> bq) {
             this.requestMsg = requestMsg;
-            this.bindQry = bq;
             this.destination = destination;
+            if (bq == null) {
+                parser = new WsClientParser<>(destination);
+            } else {
+                var useful = bq.bindingsVars().intersection(bq.query.publicVars());
+                parser = new WsClientParser<>(destination, bq, useful);
+            }
         }
 
         @Override public @Nullable Channel channel() {
@@ -247,19 +258,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert this.ctx == null : "previous attach()";
-            this.recycler = recycler;
+            this.recycler   = recycler;
+            this.ctx        = ctx;
+            this.bbRopeView = ByteBufRopeView.create();
+            this.parser.setFrameSender(this);
             if (destination.isTerminated()) { // cancel()ed before WebSocket established
                 recycler.recycle(ctx.channel());
             } else {
-                this.ctx = ctx;
-                if (bindQry == null) {
-                    parser = new WsClientParser<>(this, destination);
-                } else {
-                    var useful = bindQry.bindingsVars().intersection(bindQry.query.publicVars());
-                    parser = new WsClientParser<>(this, destination, bindQry, useful);
-                }
-                this.ctx = ctx;
-                this.bbRopeView = ByteBufRopeView.create();
                 var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
                                                 requestMsg.backingArrayOffset(), requestMsg.len);
                 ctx.writeAndFlush(new TextWebSocketFrame(bb));
@@ -287,14 +292,31 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         /* --- --- --- private helpers --- --- --- */
 
-        private void complete(@Nullable Throwable error) {
-            if (error instanceof FSServerException serverError && gotFrames)
-                serverError.shouldRetry(false);
-            if (error == null && !gotFrames)
-                error = new InvalidSparqlResultsException("Empty response").shouldRetry(true);
-            if (error == null) parser.feedEnd();
-            else               parser.feedError(FSException.wrap(endpoint, error));
+        private void completeWithError(@Nullable Throwable error) {
+            if (destination.isTerminated()) {
+                String now = error == null ? "complete(null)"
+                           : error.getClass().getSimpleName();
+                String previous = destination.error() != null
+                        ? ("failed with "+destination.error())
+                        : (destination.isCancelled() ? "cancelled" : "completed");
+                log.warn("Ignoring {} since {} was already {}",
+                         now, destination, previous, error);
+                return;
+            }
+            if (error instanceof FSServerException se && gotFrames) {
+                se.shouldRetry(false);
+            } else if (error == null) {
+                if (!gotFrames)
+                    error = new InvalidSparqlResultsException("Empty response").shouldRetry(true);
+                else
+                    error = new FSIllegalStateException("coldComplete unsatisfied preconditions");
+            }
+            parser.feedError(FSException.wrap(endpoint, error));
+        }
 
+        private void complete(@Nullable Throwable error) {
+            if (gotFrames && error == null) parser.feedEnd();
+            else                            completeWithError(error); // (should be) cold
             if (bbRopeView != null) {
                 bbRopeView.recycle();
                 bbRopeView = null;
