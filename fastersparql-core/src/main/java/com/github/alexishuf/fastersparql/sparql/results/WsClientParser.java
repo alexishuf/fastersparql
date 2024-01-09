@@ -9,7 +9,9 @@ import com.github.alexishuf.fastersparql.client.BindQuery;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
@@ -19,6 +21,8 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.UnsetError;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -26,12 +30,14 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.MAX_VALUE;
+import static java.lang.Integer.bitCount;
+import static java.lang.Thread.onSpinWait;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
@@ -124,6 +130,27 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     /* --- --- --- specialize SVParserBIt.Tsv methods --- --- --- */
 
+    @Override public void reset() {
+        while ((int) SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+        try {
+            if (sentBindings != null)
+                sentBindings = batchType().recycle(sentBindings);
+            sentBindingsRow = -1;
+            bindingSeq = -1;
+            bindingNotified = true;
+            plainBindingsRequested = 0;
+        } finally { SB_LOCK.setRelease(this, 0); }
+
+        if (bindingsReceiver != null) {
+            bindingsReceiver.reset();
+        } else if (bindingsSender != null) {
+            if (bindingsSender.isAlive())
+                throw new UnsupportedOperationException("Cannot reset thread consuming BIt-based bindings");
+            bindingsSender = null;
+        }
+        super.reset();
+    }
+
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {
         byte hint = begin + 6 /*!bind-*/ < eol ? rope.get(begin+6) : 0;
         byte[] cmd = hint == 'r' && rope.has(begin, BIND_REQUEST) ? BIND_REQUEST
@@ -179,7 +206,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         boolean hasBindings = false;
         if (bindingsReceiver != null) {
             hasBindings = true;
-            bindingsReceiver.upstream.cancel();
+            bindingsReceiver.cancel();
         } else if (bindQuery instanceof ItBindQuery<B> bq) {
             hasBindings = true;
             bq.bindings.close();
@@ -253,9 +280,9 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
     }
     private void appendSentBindings(B b) {
-        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+        B copy = b.dup();
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
-            B copy = b.dup();
             if (sentBindings == null) sentBindings = copy;
             else                      sentBindings.quickAppend(copy);
         } finally {
@@ -263,13 +290,13 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
     }
     private @Nullable B sentBindings() {
-        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         B sb = sentBindings;
         SB_LOCK.setRelease(this, 0);
         return sb;
     }
     private @Nullable B advanceSentBindings() {
-        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
             B sb = sentBindings;
             if (sb != null) {
@@ -341,43 +368,42 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
     }
 
-    private static final class BindingsReceiver<B extends Batch<B>> implements Receiver<B> {
-        private static final VarHandle REQ_BEFORE_SENDER;
-        private static final VarHandle SENDER;
+    /**
+     * Get the {@link Receiver} of bindings, if this parser was instantiated with an
+     * {@link EmitBindQuery}.
+     */
+    public @Nullable Receiver<B> bindingsReceiver() { return bindingsReceiver; }
+
+    private static final class BindingsReceiver<B extends Batch<B>>
+            extends Stateful implements Receiver<B> {
+        private static final int HAS_SENDER    = 0x20000000;
+        private static final int SENDING_INIT  = 0x40000000;
+        private static final int INIT_SENT     = 0x80000000;
+        private static final int UP_CANCEL     = 0x10000000;
+        private static final int BR_FLAGS_MASK = 0xf0000000;
         static {
-            try {
-                REQ_BEFORE_SENDER = MethodHandles.lookup().findVarHandle(BindingsReceiver.class, "plainReqBeforeSender", long.class);
-                SENDER            = MethodHandles.lookup().findVarHandle(BindingsReceiver.class, "sender",                ResultsSender.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
+            assert bitCount((HAS_SENDER|SENDING_INIT|INIT_SENT|UP_CANCEL)&~FLAGS_MASK) == 0;
         }
+        private static final Flags BR_FLAGS = Flags.DEFAULT.toBuilder()
+                .flag(INIT_SENT,    "INIT_SENT")
+                .flag(HAS_SENDER,   "HAS_SENDER")
+                .flag(SENDING_INIT, "SENDING_INIT")
+                .flag(UP_CANCEL,    "UP_CANCEL")
+                .build();
+
         private final WsClientParser<B> parent;
         private final Emitter<B> upstream;
-        @SuppressWarnings("unused") private @MonotonicNonNull ResultsSender<?, ?> sender;
-        @SuppressWarnings("unused") private long plainReqBeforeSender;
+        private @MonotonicNonNull ResultsSender<?, ?> sender;
+        private long reqBfrInit;
+        private @Nullable B batchesBfrInit;
+        private Throwable errorBfrInit = UnsetError.UNSET_ERROR;
+        private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
         public BindingsReceiver(WsClientParser<B> parent, Emitter<B> upstream) {
+            super(CREATED, BR_FLAGS);
             this.parent = parent;
             this.upstream = upstream;
-            parent.frameSenderFuture.whenComplete((frameSender, err) -> {
-                try {
-                    if (err != null || frameSender == null) {
-                        if (err == null)
-                            err = new FSIllegalStateException("WsClientParser received a null WsFrameSender");
-                        parent.feedError(FSException.wrap(null, err));
-                        upstream.cancel();
-                    } else {
-                        var sender = frameSender.createSender();
-                        sender.preTouch();
-                        SENDER.setRelease(this, sender);
-                        trySendInit();
-                    }
-                } catch (Throwable t) {
-                    log.error("Error handling setFrameSender() on {} at BindingsReceiver {}",
-                               parent, this, t);
-                }
-            });
+            parent.frameSenderFuture.whenComplete(this::onFrameSender);
             upstream.subscribe(this);
         }
 
@@ -385,53 +411,208 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             return Stream.of(upstream);
         }
 
-        public void requestBindings(long n) {
-            for (long e = plainReqBeforeSender, a; e != -1L; e = a) {
-                long max = Math.max(e, n);
-                if ((a=(long)REQ_BEFORE_SENDER.compareAndExchange(this, e, max)) == e) {
-                    if (parent.frameSenderFuture.isDone())
-                        trySendInit();
-                    return; // trySendInit() and request() to be done when frameSender arrives
-                }
+        @Override public String label(StreamNodeDOT.Label type) {
+            var sb = new StringBuilder().append("WsCParser.B@");
+            sb.append(Integer.toHexString(System.identityHashCode(this)));
+            if (type.showState()) {
+                int st = state();
+                sb.append("\nst=").append(flags.render(st));
+                B batchesBfrInit = this.batchesBfrInit;
+                if ((st&INIT_SENT) == 0 && batchesBfrInit != null)
+                    sb.append(" earlyRows=").append(batchesBfrInit.totalRows());
             }
-            upstream.request(n);
+            if (type.showStats() && stats != null)
+                stats.appendToLabel(sb);
+            return sb.toString();
         }
 
-        private void trySendInit() {
-            var sender = (ResultsSender<?,?>)SENDER.getAcquire(this);
-            if (sender == null)
-                return; // sender not yet arrived
-            long e = plainReqBeforeSender, a;
-            while (e != -1 && (a=(long)REQ_BEFORE_SENDER.compareAndExchange(this, e, -1L)) != e)
-                e = a;
-            if (e != -1L) {
-                sender.sendInit(upstream.vars(), parent.usefulBindingsVars, false);
-                upstream.request(e);
-            } // else: already done
+        void reset() {
+            int st = lock(statePlain()), stClear = STATE_MASK|BR_FLAGS_MASK, stSet = CREATED;
+            journal("reset on", this);
+            try {
+                if ((st&SENDING_INIT) != 0) {
+                    stClear = STATE_MASK; stSet = st;
+                    throw new IllegalStateException("reset() during trySendInit()");
+                }
+                if (batchesBfrInit != null)
+                    batchesBfrInit = parent.batchType().recycle(batchesBfrInit);
+                reqBfrInit   = 0;
+                errorBfrInit = UnsetError.UNSET_ERROR;
+                if (sender != null) {
+                    sender.close();
+                    sender = null;
+                }
+            } finally { unlock(st, stClear, stSet); }
+        }
+
+        private void onFrameSender(WsFrameSender<?, ?> frameSender, Throwable err) {
+            journal("onFrameSender", frameSender, "on", this);
+            try {
+                if (err != null || frameSender == null) {
+                    doSendInitNoSender(err);
+                } else {
+                    sender = frameSender.createSender();
+                    sender.preTouch();
+                    setFlagsRelease(statePlain(), HAS_SENDER);
+                    trySendInit(0);
+                }
+            } catch (Throwable t) {
+                log.error("Error handling setFrameSender() on {} at BindingsReceiver {}",
+                          parent, this, t);
+            }
+        }
+
+        private void trySendInit(long bindingsRequest) {
+            int st = lock(statePlain()), stClear = 0, stSet = 0, stWhenSent = 0;
+            try {
+                if ((st&INIT_SENT) == 0 && bindingsRequest > reqBfrInit)
+                    reqBfrInit = bindingsRequest;
+                if ((st&BR_FLAGS_MASK) == HAS_SENDER && reqBfrInit > 0)
+                    stSet = SENDING_INIT;
+            } finally { st = unlock(st, 0, stSet); }
+
+            if (stSet == 0) { // this thread will not send init
+                if ((st&INIT_SENT) != 0 && bindingsRequest > 0) // another thread already sent init
+                    upstream.request(bindingsRequest);
+                return;
+            } // else: must send init, early batches and early termination
+
+            journal("sending init for", this, "parent=", parent);
+            sender.sendInit(upstream.vars(), parent.usefulBindingsVars, false);
+            long rows = 0;
+            while ((st&INIT_SENT) == 0) { // deliver early batches
+                B batchesBfrInit;
+                st = lock(st);
+                try {
+                    if ((batchesBfrInit = this.batchesBfrInit) == null) {
+                        stClear = SENDING_INIT;  stSet = INIT_SENT; stWhenSent = st;
+                    } else {
+                        this.batchesBfrInit = null;
+                    }
+                } finally { st = unlock(st, stClear, stSet); }
+                if (batchesBfrInit != null)
+                    rows += sendEarlyBatches(batchesBfrInit);
+            }
+
+            switch (stWhenSent&STATE_MASK) { // send early termination
+                case COMPLETED -> doOnComplete();
+                case CANCELLED -> doOnCancelled(st);
+                case FAILED    -> doOnError(errorBfrInit);
+                default -> { // not terminated before INIT_SENT
+                    if ((state()&IS_TERM) == 0 && (rows = reqBfrInit-rows) > 0)
+                        upstream.request(rows);
+                }
+            }
+        }
+
+        private void doSendInitNoSender(Throwable err) {
+            if (err == null)
+                err = new FSIllegalStateException("WsClientParser received a null WsFrameSender");
+            int st = statePlain();
+            if (moveStateRelease(statePlain(), FAILED))
+                st = (st&FLAGS_MASK) | FAILED;
+            st = lock(st);
+            try {
+                parent.feedError(FSException.wrap(null, err));
+                upstream.cancel();
+            } finally {
+                batchesBfrInit = parent.batchType().recycle(batchesBfrInit);
+                unlock(st, SENDING_INIT, INIT_SENT);
+            }
+        }
+
+        public void cancel() {
+            setFlagsRelease(statePlain(), UP_CANCEL);
+            upstream.cancel();
+        }
+
+        public void requestBindings(long n) {
+            journal("requestBindings", n, "on", this);
+            if (n <= 0) return;
+            int st = statePlain();
+            if (moveStateRelease(st, ACTIVE) || (st&IS_TERM) != 0)
+                trySendInit(n);
+            else
+                upstream.request(n);
         }
 
         @Override public @Nullable B onBatch(B batch) {
+            int st = lock(statePlain());
+            try {
+                if ((st&INIT_SENT) == 0) {
+                    if (batchesBfrInit == null) batchesBfrInit = batch;
+                    else                        batchesBfrInit.quickAppend(batch);
+                    return null;
+                }
+            } finally { unlock(st); }
+
             parent.appendSentBindings(batch);
             sender.sendSerializedAll(batch);
             return batch;
         }
 
+        private long sendEarlyBatches(B queue) {
+            long rows = 0;
+            // this loop has the purpose of minimizing batch allocs given a long queue
+            for (B b = queue, n; b != null; b = n) {
+                rows += b.rows;
+                n = b.detachHead(); // b is now a singleton list
+                parent.appendSentBindings(b);
+                sender.sendSerialized(b, 0, b.rows);
+                parent.batchType().recycle(b);
+            }
+            return rows;
+        }
+
         @Override public void onComplete() {
-            sender.sendTrailer();
+            int st = statePlain();
+            if (moveStateRelease(st, COMPLETED) && (st&INIT_SENT) != 0)
+                doOnComplete();
         }
-
         @Override public void onCancelled() {
-            if (!parent.serverSentTermination && sender != null)
-                sender.sendCancel();
+            int st = statePlain();
+            if (moveStateRelease(st, CANCELLED) && (st&INIT_SENT) != 0)
+                doOnCancelled(st);
+        }
+        @Override public void onError(Throwable cause) {
+            int st = statePlain();
+            if (moveStateRelease(st, FAILED) && (st&INIT_SENT) != 0)
+                doOnError(cause);
         }
 
-        @Override public void onError(Throwable cause) {
+        private void doOnComplete() {
+            journal("delivering onComplete from", this);
+            if (sender != null) {
+                sender.sendTrailer();
+                sender.close();
+            }
+        }
+
+        private void doOnCancelled(int st) {
+            journal("delivering onCancelled from", this);
             try {
-                if (!parent.serverSentTermination && sender != null)
-                    sender.sendError(cause);
+                if (sender != null) {
+                    if (!parent.serverSentTermination) sender.sendCancel();
+                    sender.close();
+                }
+                if ((st&UP_CANCEL) == 0)
+                    log.info("bindings unexpectedly cancelled");
+            } finally {
+                if ((st&UP_CANCEL) == 0)
+                    parent.feedError(new FSException("Unexpected bindings Emitter cancellation"));
+            }
+        }
+
+        private void doOnError(Throwable cause) {
+            journal("delivering onError", cause, "from", this);
+            try {
+                if (sender != null) {
+                    if (!parent.serverSentTermination) sender.sendError(cause);
+                    sender.close();
+                }
                 log.info("bindings emitter {} failed for {}", upstream, this, cause);
             } finally {
-                parent.dst.complete(cause);
+                parent.feedError(FSException.wrap(null, cause));
             }
         }
     }

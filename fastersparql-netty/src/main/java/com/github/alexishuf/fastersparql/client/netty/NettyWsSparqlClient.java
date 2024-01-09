@@ -190,7 +190,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
+            var rcv = handler.parser.bindingsReceiver();
+            return Stream.ofNullable(rcv);
         }
 
         @Override public String journalName() {

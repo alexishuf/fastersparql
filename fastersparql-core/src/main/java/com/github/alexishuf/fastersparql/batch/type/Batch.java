@@ -1218,11 +1218,22 @@ public abstract class Batch<B extends Batch<B>> {
         return next;
     }
 
-    @SuppressWarnings("unchecked") public final void dropNext() {
-        if (next != null) {
-            next = next.recycle();
-            tail = (B)this;
+    /**
+     * Detach {@code this} batch, which must be the root of a {@link #next()} linked-list,
+     * from the remainder of the list. Unlike {@link #dropHead()}, {@code this} will not
+     * be recycled.
+     *
+     * @return the new head of the remainder of the list, a.k.a. {@link #next()}.
+     */
+    public final @Nullable B detachHead() {
+        B root = next;
+        if (root != null) {
+            root.tail = this.tail;
+            //noinspection unchecked
+            this.tail = (B)this;
+            this.next = null;
         }
+        return root;
     }
 
     @SuppressWarnings("unchecked") protected @Nullable B dropEmptyHeads() {

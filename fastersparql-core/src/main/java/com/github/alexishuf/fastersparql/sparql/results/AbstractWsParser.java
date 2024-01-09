@@ -18,7 +18,7 @@ import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
-    protected final CompletableFuture<WsFrameSender<?,?>> frameSenderFuture = new CompletableFuture<>();
+    protected CompletableFuture<WsFrameSender<?,?>> frameSenderFuture = new CompletableFuture<>();
     protected boolean serverSentTermination = false;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
