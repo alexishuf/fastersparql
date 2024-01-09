@@ -145,7 +145,8 @@ class ResultsSerializerTest {
         var serializer = serializers.get(fmt);
 
         ByteRope out = new ByteRope();
-        serializer.init(results.vars(), results.vars(), results.isAsk(), out);
+        serializer.init(results.vars(), results.vars(), results.isAsk());
+        serializer.serializeHeader(out);
         serializer.serializeAll(b, out);
         serializer.serializeTrailer(out);
 
@@ -164,7 +165,8 @@ class ResultsSerializerTest {
             b.commitPut();
         }
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
-                        results.isAsk(), out.clear());
+                        results.isAsk());
+        serializer.serializeHeader(out.clear());
         serializer.serialize(b, 1, b.rows-1, out);
         if (b.next != null)
             serializer.serializeAll(b.next, out);
@@ -172,7 +174,8 @@ class ResultsSerializerTest {
         assertEquals(expected, out.toString());
 
         // serialize a sequence of singleton batches
-        serializer.init(results.vars(), results.vars(), results.isAsk(), out.clear());
+        serializer.init(results.vars(), results.vars(), results.isAsk());
+        serializer.serializeHeader(out.clear());
         for (List<Term> row : results.expected()) {
             (b = b.clear(row.size())).putRow(row);
             serializer.serializeAll(b, out);
@@ -182,7 +185,8 @@ class ResultsSerializerTest {
 
         // serialize a sequence of two-row batches, always skipping first row and column
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
-                        results.isAsk(), out.clear());
+                        results.isAsk());
+        serializer.serializeHeader(out.clear());
         for (List<Term> row : results.expected()) {
             b = b.clear(row.size()+1);
             b.beginPut();

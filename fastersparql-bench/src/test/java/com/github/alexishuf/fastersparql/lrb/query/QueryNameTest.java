@@ -116,7 +116,8 @@ class QueryNameTest {
         // serialize
         var serializer = ResultsSerializer.create(format);
         ByteRope sink = new ByteRope();
-        serializer.init(vars, vars, false, sink);
+        serializer.init(vars, vars, false);
+        serializer.serializeHeader(sink);
         serializer.serializeAll(expected, sink);
         serializer.serializeTrailer(sink);
 
@@ -170,7 +171,8 @@ class QueryNameTest {
                     return new ResultsSender<>(WsSerializer.create(), createSink()) {
                         @Override public void preTouch() {}
                         @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-                            serializer.init(vars, subset, isAsk, new ByteRope());
+                            serializer.init(vars, subset, isAsk);
+                            serializer.serializeHeader(new ByteRope());
                         }
                         @Override public void sendSerializedAll(Batch<?> batch) {
                             serializer.serializeAll(batch, new ByteRope());

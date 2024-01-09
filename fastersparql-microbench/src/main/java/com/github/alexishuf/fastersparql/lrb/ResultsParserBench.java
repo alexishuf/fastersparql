@@ -75,7 +75,8 @@ public class ResultsParserBench {
         var serializer = ResultsSerializer.create(format);
         for (int i = 0; i < FRAGMENTS_LISTS; i++) {
             List<SegmentRope> fragments = new ArrayList<>();
-            serializer.init(vars, vars, false, sink.touch());
+            serializer.init(vars, vars, false);
+            serializer.serializeHeader(sink.touch());
             fragments.add(ropeTypeHolder.takeRope(sink));
             for (Batch b : batches) {
                 serializer.serializeAll(b, sink.touch());

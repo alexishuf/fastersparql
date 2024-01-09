@@ -54,8 +54,11 @@ public class WsSerializer extends ResultsSerializer {
             rowsBuffer.recycleUtf8(); // at least try to recycle our byte[] buffer
     }
 
-    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
+    @Override protected void onInit() {
         prefixAssigner.reset();
+    }
+
+    @Override public void serializeHeader(ByteSink<?, ?> dest) {
         for (int i = 0, n = subset.size(); i < n; i++) {
             if (i != 0) dest.append('\t');
             dest.append('?').append(subset.get(i));

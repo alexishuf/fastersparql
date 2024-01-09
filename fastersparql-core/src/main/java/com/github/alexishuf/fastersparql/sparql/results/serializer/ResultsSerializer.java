@@ -16,7 +16,7 @@ public abstract class ResultsSerializer {
     protected int[] columns = null;
     protected final String contentType;
     protected boolean ask = false, empty = true;
-    protected Vars vars = Vars.EMPTY;
+    protected Vars vars = Vars.EMPTY, subset = Vars.EMPTY;
 
     public interface Factory extends NamedService<SparqlResultFormat> {
         ResultsSerializer create(Map<String, String> params);
@@ -79,7 +79,7 @@ public abstract class ResultsSerializer {
         this.contentType = contentType;
     }
 
-    protected abstract void init(Vars subset, ByteSink<?, ?> dest);
+    protected void onInit() {}
 
     public final String contentType() { return contentType; }
 
@@ -90,9 +90,8 @@ public abstract class ResultsSerializer {
      *             {@link #serialize(Batch, int, int, ByteSink)}
      * @param subset subset of {@code vars} that names the columns that shall be serialized
      * @param ask whether to serialize an results for an ASK query
-     * @param dest where the results header will be appended to
      */
-    public final void init(Vars vars, Vars subset, boolean ask, ByteSink<?, ?> dest) {
+    public final void init(Vars vars, Vars subset, boolean ask) {
         int[] columns = this.columns;
         if (columns == null || columns.length != subset.size())
             this.columns = columns = new int[subset.size()];
@@ -107,8 +106,16 @@ public abstract class ResultsSerializer {
         this.ask = ask;
         this.empty = true;
         this.vars = vars;
-        init(subset, dest);
+        this.subset = subset;
+        onInit();
     }
+
+    /**
+     * Writes a results header to {@code dest} using the vars previously set via {@link #init(Vars, Vars, boolean)}.
+     *
+     * @param dest destination of the header serialization
+     */
+    public abstract void serializeHeader(ByteSink<?, ?> dest);
 
     /**
      * {@link #serialize(Batch, int, int, ByteSink)} {@code batch} and all its successor nodes

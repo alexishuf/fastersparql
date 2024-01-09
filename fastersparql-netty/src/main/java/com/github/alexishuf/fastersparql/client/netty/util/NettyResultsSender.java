@@ -92,22 +92,15 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         if (!sink.needsTouch() || touchState == TOUCH_DISABLED)
             return;
         lock();
-        boolean spawn = !active;
-        if (spawn) active = true;
-        unlock();
-        if (spawn) {
-            try {
-                executor.execute(this);
-            } catch (RejectedExecutionException e) {
-                onRejectedExecution();
-            }
-        }
+        unlockAndSpawn();
     }
 
     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-        if (sink.needsTouch()) touch();
+        preTouch();
         try {
-            serializer.init(vars, subset, isAsk, sink);
+            serializer.init(vars, subset, isAsk);
+            touch();
+            serializer.serializeHeader(sink);
             execute(wrap(sink.take()));
         } catch (Throwable t) {
             execute(t);
@@ -156,18 +149,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void unlock() {
         LOCK.setRelease(this, 0);
     }
-
-    protected void execute(Object action) {
-        boolean spawn;
-        lock();
-        try {
-            if (actionsSize >= actions.length) waitCapacity();
-            actions[(byte) (((int) actionsHead + actionsSize) % actions.length)] = action;
-            actionsSize++;
-            spawn = !active;
-            if (spawn)
-                active = true;
-        } finally { unlock(); }
+    private void unlockAndSpawn() {
+        boolean spawn = !active;
+        if (spawn) active = true;
+        unlock();
         if (spawn) {
             try {
                 executor.execute(this);
@@ -175,6 +160,15 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 onRejectedExecution();
             }
         }
+    }
+
+    protected void execute(Object action) {
+        lock();
+        try {
+            if (actionsSize >= actions.length) waitCapacity();
+            actions[(byte) (((int) actionsHead + actionsSize) % actions.length)] = action;
+            actionsSize++;
+        } finally { unlockAndSpawn(); }
     }
 
     private void onRejectedExecution() {
@@ -210,23 +204,12 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             sink.touch();
             return;
         }
-        boolean spawn;
         lock();
         try {
             if (!sink.needsTouch()) return;
             touchState |= TOUCH_PARKED;
             error = null;
-            spawn = !active;
-            if (spawn)
-                active = true;
-        } finally { unlock(); }
-        if (spawn) {
-            try {
-                executor.execute(this);
-            } catch (RejectedExecutionException e) {
-                onRejectedExecution();
-            }
-        }
+        } finally { unlockAndSpawn(); }
 
         Throwable error;
         while (true) {

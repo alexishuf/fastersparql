@@ -42,7 +42,8 @@ public class ResultJournal {
             log = new ByteRope(256);
             log.append("\n[[").append(label.replace("\n", "\n ")).append("]]\n");
             serializer = new TsvSerializer();
-            serializer.init(vars, vars, vars.isEmpty(), log);
+            serializer.init(vars, vars, vars.isEmpty());
+            serializer.serializeHeader(log);
         }
 
         void clear() {
@@ -52,18 +53,6 @@ public class ResultJournal {
             } finally {
                 LOCK.setRelease(this, 0);
             }
-        }
-
-        void add(Batch<?> b, int fromRow, int nRows) {
-            int tick = DebugJournal.SHARED.tick();
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-            try {
-                serializer.serialize(b, fromRow, nRows, log);
-                log.append("tick=").append(tick)
-                        .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
-                        .append(", fromRow=").append(fromRow)
-                        .append(", nRows=").append(nRows).append('\n');
-            } finally { LOCK.setRelease(this, 0); }
         }
 
         void add(BatchBinding rebind) {
@@ -89,15 +78,19 @@ public class ResultJournal {
     public static void logBatch(Object emitter, Batch<?> b) {
         EmitterJournal j;
         if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null) {
-            for (var n = b; n != null; n = n.next)
-                j.add(b, 0, b.rows);
+            for (var n = b; n != null; n = n.next) {
+                int tick = DebugJournal.SHARED.tick();
+                while ((int) EmitterJournal.LOCK.compareAndExchangeAcquire(j, 0, 1) != 0)
+                    onSpinWait();
+                try {
+                    j.serializer.serialize(b, 0, b.rows, j.log);
+                    j.log.append("tick=").append(tick)
+                            .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
+                            .append(", fromRow=").append(0)
+                            .append(", nRows=").append((int) b.rows).append('\n');
+                } finally { EmitterJournal.LOCK.setRelease(j, 0); }
+            }
         }
-    }
-
-    public static void logRow(Object emitter, Batch<?> b, int row) {
-        EmitterJournal j;
-        if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null)
-            j.add(b, row, 1);
     }
 
     public static void dump(Appendable dst) throws IOException {

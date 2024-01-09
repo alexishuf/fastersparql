@@ -352,7 +352,8 @@ public class Measure implements Callable<Void>{
                         File file = taskFile(".missing.tsv");
                         try (var os = new FileOutputStream(file)) {
                             sink.os = os;
-                            ser.init(vars, vars, false, sink);
+                            ser.init(vars, vars, false);
+                            ser.serializeHeader(sink);
                             forEachMissing((b, r) -> {
                                 ser.serialize(b, r, 1, sink);
                                 return true;
@@ -365,7 +366,8 @@ public class Measure implements Callable<Void>{
                             file = taskFile(".unexpected.tsv");
                             try (var os = new FileOutputStream(file)) {
                                 sink.os = os;
-                                ser.init(vars, vars, false, sink);
+                                ser.init(vars, vars, false);
+                                ser.serializeHeader(sink);
                                 ser.serializeAll(unexpected, sink);
                                 ser.serializeTrailer(sink);
                             } catch (Throwable t) {

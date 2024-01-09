@@ -99,7 +99,8 @@ class WsSerializerTest {
                                             BatchType<B> batchType) {
         var serializer = WsSerializer.create();
         var buffer = new ByteRope();
-        serializer.init(in.vars(), in.vars(), false, buffer);
+        serializer.init(in.vars(), in.vars(), false);
+        serializer.serializeHeader(buffer);
         var b = TermBatchType.TERM.create(in.vars().size());
         var rows = in.expected();
 

@@ -203,7 +203,8 @@ public final class QueryRunner {
         }
 
         @Override public void start(Vars vars) {
-            serializer.init(vars, vars, vars.isEmpty(), sink);
+            serializer.init(vars, vars, vars.isEmpty());
+            serializer.serializeHeader(sink);
         }
         @Override public void accept(Batch<?> b) { serializer.serializeAll(b, sink); }
         @Override public void finish(@Nullable Throwable error) {

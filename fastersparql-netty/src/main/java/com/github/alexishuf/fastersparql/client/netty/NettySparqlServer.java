@@ -588,7 +588,8 @@ public class NettySparqlServer implements AutoCloseable {
             }
             var sink = new ByteBufSink(ctx.alloc()).touch();
             try {
-                serializer.init(it.vars(), it.vars(), query.isAsk(), sink);
+                serializer.init(it.vars(), it.vars(), query.isAsk());
+                serializer.serializeHeader(sink);
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
                     if (this.round != round) return;
                     serializer.serializeAll(b, sink);

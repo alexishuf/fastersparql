@@ -120,7 +120,8 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     @SuppressWarnings("unused") private void serialize(File dest, Object rows) {
         var sink = new ByteRope();
         var serializer = new TsvSerializer();
-        serializer.init(vars, vars, false, sink);
+        serializer.init(vars, vars, false);
+        serializer.serializeHeader(sink);
         if (rows instanceof Dedup<?> d)
             d.forEach(b -> serializer.serializeAll(b, sink));
         else if (rows instanceof Batch<?> b)

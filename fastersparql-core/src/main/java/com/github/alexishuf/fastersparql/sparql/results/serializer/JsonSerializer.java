@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.results.serializer;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
@@ -29,8 +28,11 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] HDR_ASK = "]},\n \"boolean\":".getBytes(UTF_8);
     private static final byte[] HDR_SEL = "]},\n\"results\":{\"bindings\":[".getBytes(UTF_8);
 
-    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
+    @Override protected void onInit() {
         firstRow = true;
+    }
+
+    @Override public void serializeHeader(ByteSink<?, ?> dest) {
         dest.append(HDR_BFR);
         for (int i = 0, n = subset.size(); i < n; i++) {
             if (i != 0) dest.append(',');

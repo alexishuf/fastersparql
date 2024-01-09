@@ -208,7 +208,8 @@ class MeasureTest {
             }
             var serializer = ResultsSerializer.create(TSV);
             var tsv = new ByteRope();
-            serializer.init(em.vars(), em.vars(), false, tsv);
+            serializer.init(em.vars(), em.vars(), false);
+            serializer.serializeHeader(tsv);
             serializer.serializeAll(acc, tsv);
             serializer.serializeTrailer(tsv);
             System.out.println(tsv);

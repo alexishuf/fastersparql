@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.results.serializer;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 
 import java.util.Map;
@@ -24,7 +23,7 @@ public class TsvSerializer extends ResultsSerializer {
         super(TSV.contentType());
     }
 
-    @Override protected void init(Vars subset, ByteSink<?, ?> dest) {
+    @Override public void serializeHeader(ByteSink<?, ?> dest) {
         for (int i = 0, n = subset.size(); i < n; ++i) {
             if (i > 0) dest.append('\t');
             dest.append('?').append(subset.get(i));
