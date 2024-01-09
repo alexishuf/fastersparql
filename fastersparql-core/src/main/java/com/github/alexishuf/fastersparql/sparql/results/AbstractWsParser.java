@@ -73,6 +73,12 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     /* --- --- --- implementations --- --- --- */
 
+    @Override public void reset() {
+        frameSenderFuture = new CompletableFuture<>();
+        serverSentTermination = false;
+        super.reset();
+    }
+
     @Override protected final int handleControl(SegmentRope rope, int begin) {
         for (int end = rope.len(), eol; begin < end && rope.get(begin) == '!'; begin = eol+1) {
             if ((eol = rope.skipUntil(begin, end, '\n')) == end)

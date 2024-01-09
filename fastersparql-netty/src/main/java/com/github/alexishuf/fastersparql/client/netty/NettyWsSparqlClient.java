@@ -169,17 +169,21 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     private final class WsEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
         private final SparqlQuery query;
+        private final WsHandler<B> handler;
+        private ByteRope request;
         private final @Nullable EmitBindQuery<B> bindQuery;
-        private @Nullable ByteRope request;
-        private @Nullable WsHandler<B> handler;
         private @Nullable BatchBinding binding;
 
-        public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query, @Nullable EmitBindQuery<B> bindQuery) {
+        public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
+                         @Nullable EmitBindQuery<B> bindQuery) {
            super(batchType, outVars, NettyWsSparqlClient.this);
            this.query = query;
            this.bindQuery = bindQuery;
+           this.handler = new WsHandler<>(makeRequest(), this, bindQuery);
            acquireRef();
         }
+
+        @Override public void setChannel(Channel channel) { super.setChannel(channel); }
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             out.append(" ch=").append(channel);
@@ -195,31 +199,25 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     System.identityHashCode(this));
         }
 
-        private WsHandler<B> makeHandler() {
+        private ByteRope makeRequest() {
             var query    = binding   == null ? this.query : this.query.bound(binding);
             var verb     = bindQuery == null ? QUERY_VERB : BIND_VERB[bindQuery.type.ordinal()];
-            this.request = createRequest(verb, query.sparql(), this.request);
-            return new WsHandler<>(request, this, bindQuery);
+            var req      = createRequest(verb, query.sparql(), this.request);
+            this.request = req;
+            return req;
         }
 
-        @Override protected void doRelease() {
-            releaseRef();
-        }
-        @Override protected void request()   {
-            if (handler == null)
-                handler = makeHandler();
-            netty.open(handler);
-        }
+        @Override protected void doRelease() { releaseRef(); }
+        @Override protected void   request() { netty.open(handler); }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 assert binding.batch != null && binding.row < binding.batch.rows;
                 this.binding = binding;
-                WsHandler<B> h = handler;
-                if (h != null)
-                    h.parser.feedEnd();
-                handler = null;
+                if (bindQuery != null)
+                    bindQuery.bindings.rebind(binding);
+                handler.reset(makeRequest());
             } finally {
                 unlock(st);
             }
@@ -231,7 +229,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     private final class WsHandler<B extends Batch<B>>
             implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
         private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
-        private final ByteRope requestMsg;
+        private ByteRope requestMsg;
         private boolean gotFrames;
         private @Nullable ByteBufRopeView bbRopeView;
         private final WsClientParser<B> parser;
@@ -251,6 +249,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
+        public void reset(ByteRope requestMsg) {
+            this.requestMsg = requestMsg;
+            this.gotFrames  = false;
+            this.ctx        = null;
+            parser.reset();
+        }
+
+        /* --- --- --- ChannelBound methods --- --- --- */
+
         @Override public @Nullable Channel channel() {
             return this.ctx == null ? null : this.ctx.channel();
         }
@@ -263,10 +270,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert this.ctx == null : "previous attach()";
-            this.recycler   = recycler;
-            this.ctx        = ctx;
-            this.bbRopeView = ByteBufRopeView.create();
-            this.parser.setFrameSender(this);
+            this.recycler = recycler;
+            this.ctx      = ctx;
+            if (destination instanceof WsEmitter<B> e)
+                e.setChannel(ctx.channel());
+            if (bbRopeView == null)
+                bbRopeView = ByteBufRopeView.create();
+            parser.setFrameSender(this);
             if (destination.isTerminated()) { // cancel()ed before WebSocket established
                 recycler.recycle(ctx.channel());
             } else {

@@ -175,6 +175,22 @@ public abstract class ResultsParser<B extends Batch<B>> {
         }
     }
 
+    /**
+     * Reset the parser state, as if it had been just instantiated and received no
+     * {@link #feedShared(SegmentRope)}/{@link #feedEnd()}/{@link #feedError(FSException)} call.
+     *
+     * <p>This should only be called if the destination is ready to receive another
+     * {@link CompletableBatchQueue#complete(Throwable)} call.</p>
+     */
+    public void reset() {
+        if (batch != null)
+            batch = dst.batchType().recycle(batch);
+        incompleteRow   = false;
+        eager           = false;
+        plainTerminated = false;
+        rowsParsed      = 0;
+    }
+
     /*  --- --- --- abstract methods --- --- --- */
 
     /**

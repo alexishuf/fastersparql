@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,15 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         super(destination);
         this.nVars = destination.vars().size();
         this.eol = eol;
+    }
+
+    @Override public void reset() {
+        inputColumns = -1;
+        column = 0;
+        line = 0;
+        if (partialLine    != null) partialLine   .clear();
+        if (fedPartialLine != null) fedPartialLine.clear();
+        super.reset();
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
@@ -360,7 +370,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
                 throw new InvalidSparqlResultsException("Invalid var name: "+varName);
             offer.add(varName);
         }
-        inVar2outVar = new int[this.inputColumns = offer.size()];
+        inputColumns = offer.size();
+        inVar2outVar = ArrayPool.intsAtLeast(inputColumns, inVar2outVar);
         if (nVars == 0 && offer.size() > (offer.contains(WsBindingSeq.VAR) ? 1 : 0))
             checkAskVars(offer);
         Vars vars = vars();

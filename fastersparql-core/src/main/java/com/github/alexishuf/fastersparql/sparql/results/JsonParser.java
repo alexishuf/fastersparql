@@ -47,6 +47,20 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     /* --- --- --- implement/override ResultsParserBIt methods --- --- --- */
 
+    @Override public void reset() {
+        super.reset();
+        if (partial      != null)      partial.clear();
+        if (allocPartial != null) allocPartial.clear();
+        jsonStack  .clear();
+        sparqlStack.clear();
+        value      .clear();
+        lang       .clear();
+        dtSuffix   .clear();
+        hadSparqlProperties = false;
+        column              = 0;
+        type                = null;
+    }
+
     @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
         if (partial != null) {
             rope = partial.append(rope);
