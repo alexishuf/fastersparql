@@ -41,6 +41,7 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     @Override public @Nullable Channel channel() { return channel; }
 
     @Override protected void appendToSimpleLabel(StringBuilder out) {
+        out.append(" ch=").append(channel);
         String u = client.endpoint().uri();
         if (u.startsWith("file:///"))
             u = u.replaceFirst("^.*/", "");

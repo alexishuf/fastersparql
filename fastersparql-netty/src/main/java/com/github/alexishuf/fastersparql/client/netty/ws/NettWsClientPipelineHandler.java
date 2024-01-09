@@ -1,13 +1,19 @@
 package com.github.alexishuf.fastersparql.client.netty.ws;
 
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.websocketx.*;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -17,20 +23,24 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.util.Objects;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory.newHandshaker;
 import static io.netty.handler.codec.http.websocketx.WebSocketVersion.V13;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 /**
  * Netty {@link ChannelInboundHandler} that handles handshake and feeds a {@link NettyWsClientHandler}.
  */
-public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Object> implements ChannelRecycler {
+public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Object>
+        implements ChannelRecycler, ChannelBound {
     private static final Logger log = LoggerFactory.getLogger(NettWsClientPipelineHandler.class);
     private final WebSocketClientHandshaker hs;
     private final ChannelRecycler recycler;
     private @Nullable NettyWsClientHandler delegate;
     private @MonotonicNonNull ChannelHandlerContext ctx;
     private boolean handshakeStarted, handshakeComplete, attached, detached;
+    private byte @Nullable [] previewU8;
     private Throwable earlyFailure;
 
 
@@ -58,6 +68,7 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     private void tryHandshake() {
         check(delegate != null);
         if (!handshakeStarted) {
+            journal("starting handshake on", this);
             handshakeStarted = true;
             hs.handshake(ctx.channel());
         } else if (handshakeComplete) {
@@ -73,12 +84,14 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     }
 
     private void attach() {
+        journal("attach on ", this, "delegate=", delegate);
         check(delegate != null && ctx != null && !attached && handshakeComplete);
         attached = true;
         delegate.attach(ctx, this);
     }
 
     private void detach(Throwable cause) {
+        journal("detach on", this, "cause=", cause);
         if (delegate != null) {
             check(true);
             if (attached || cause != null)
@@ -91,19 +104,59 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
         }
     }
 
+    /* --- --- --- implement ChannelBound --- --- --- */
+
+    @Override public @Nullable Channel channel() { return ctx == null ? null : ctx.channel(); }
+
+    @Override public String journalName() {
+        return "WPH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+    }
+
+    /* --- --- --- implement ChannelRecycler --- --- --- */
+
     @Override public void recycle(Channel channel) {
+        journal("recycle ch=", channel, "this=", this);
         if (ctx == null || ctx.channel() != channel)
             throw new IllegalStateException(this+".recycle("+channel+"): bogus channel");
         detach(null);
         recycler.recycle(channel);
     }
 
+    /* --- --- --- implement SimpleChannelInboundHandler --- --- --- */
+
     @Override public void    handlerAdded(ChannelHandlerContext ctx) { this.ctx = ctx; }
-    @Override public void   channelActive(ChannelHandlerContext ctx) { if (delegate != null) tryHandshake(); }
-    @Override public void channelInactive(ChannelHandlerContext ctx) { detach(null); }
+    @Override public void   channelActive(ChannelHandlerContext ctx) {
+        if (delegate != null) tryHandshake();
+    }
+    @Override public void channelInactive(ChannelHandlerContext ctx) {
+        detach(null);
+        if (previewU8 != null)
+            previewU8 = ArrayPool.BYTE.offer(previewU8, previewU8.length);
+    }
+
+    private void logMessage(Object msg) {
+        if (msg instanceof HttpResponse r) {
+            journal("Received HTTP ", r.status().code(), "on", this);
+        } else if (msg instanceof CloseWebSocketFrame) {
+            journal("Received close WS frame on", this);
+        } else if (msg instanceof TextWebSocketFrame f) {
+            ByteBuf bb = f.content();
+            byte[] previewU8 = this.previewU8;
+            if (previewU8 == null)
+                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(16);
+            int frameLen = bb.readableBytes(), previewLen = Math.min(frameLen, 16);
+            bb.getBytes(bb.readerIndex(), this.previewU8, 0, previewLen);
+            while (previewLen > 0 && previewU8[previewLen-1] <= ' ')
+                --previewLen;
+            journal("Received WS frame with ", frameLen, "bytes on", this);
+            journal("preview=", new String(previewU8, 0, previewLen, UTF_8));
+        }
+    }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, @Nullable Object msg) {
+        if (ThreadJournal.ENABLED)
+            logMessage(msg);
         Channel channel = ctx.channel();
         assert this.ctx.channel() == ctx.channel();
         if (!hs.isHandshakeComplete()) {
@@ -114,17 +167,18 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
             } catch (WebSocketHandshakeException e) {
                 exceptionCaught(ctx, new FSServerException(e.getMessage() + " uri="+hs.uri()));
             }
-        } else if (msg instanceof WebSocketFrame) {
+        } else if (msg instanceof WebSocketFrame frame) {
             if (delegate == null) {
-                if (msg instanceof TextWebSocketFrame) {
-                    log.warn("{} Received TextWebSocketFrame on without delegate: {}",
-                             this, ((TextWebSocketFrame) msg).text());
+                journal("frame without delegate on", this);
+                if (msg instanceof TextWebSocketFrame tFrame) {
+                    log.warn("Received TextWebSocketFrame without delegate on {}: {}",
+                             this, tFrame.text());
                 } else if (!(msg instanceof CloseWebSocketFrame)) {
-                    log.warn("{}, without delegate, received {}", this, msg);
+                    log.warn("Received message without delegate on {}: {}", this, msg);
                 }
             } else {
                 check(attached);
-                delegate.frame((WebSocketFrame) msg);
+                delegate.frame(frame);
             }
             if (msg instanceof CloseWebSocketFrame) {
                 if (channel.isOpen())
@@ -139,6 +193,11 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        if (ThreadJournal.ENABLED) {
+            String state = "delegate="+DebugJournal.DefaultRenderer.INSTANCE.renderObj(delegate)
+                         + (detached ? " detached" : (attached ? " attached" : " before attach"));
+            journal(cause.getClass().getSimpleName(), "on", this, state);
+        }
         if      (delegate != null)     detach(cause);
         else if (detached)             log.debug("{}: ignoring {} after detach()", this, Objects.toString(cause));
         else if (earlyFailure == null) earlyFailure = cause;

@@ -80,13 +80,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         this.owner = Thread.currentThread();
     }
 
-    @Override public @Nullable Channel channel() {
-        return ctx == null ? null : ctx.channel();
-    }
-
-    @Override public String journalName() {
-        return "NRS:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
-    }
+    @Override public @Nullable Channel channel() { return ctx.channel(); }
+    @Override public String        journalName() { return "NRS:"+ctx.channel().id().asShortText(); }
 
     @Override public void close() {
         touchState = TOUCH_DISABLED;
@@ -343,7 +338,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 }
             }
         } finally {
-            // release the rare speculative ByteBuf thatashould not have been allocated
+            // release the rare speculative ByteBuf that should not have been allocated
             lock(); // required to acquire the writes to touchState by the owner thread
             boolean disabled = touchState == TOUCH_DISABLED;
             unlock();

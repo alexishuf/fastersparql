@@ -181,12 +181,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
            acquireRef();
         }
 
+        @Override protected void appendToSimpleLabel(StringBuilder out) {
+            out.append(" ch=").append(channel);
+        }
+
         @Override public Stream<? extends StreamNode> upstreamNodes() {
             return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
         }
 
         @Override public String journalName() {
-            return String.format("C.EQ:%s@%x",
+            return String.format("C.WE:%s@%x",
                     channel == null ? "null" : channel.id().asShortText(),
                     System.identityHashCode(this));
         }
@@ -254,6 +258,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public String journalName() {
             return "C.WH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
         }
+
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {

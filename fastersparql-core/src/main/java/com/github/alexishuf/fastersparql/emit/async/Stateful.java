@@ -479,14 +479,14 @@ public abstract class Stateful {
      * @param set Bitset whose set bits will be set in {@code holder}'s {@code int} field
      */
     public int unlock(int current, int clear, int set) {
-        if (IS_DEBUG && (state() & LOCKED_MASK) == 0)
+        if (IS_DEBUG && (state()&LOCKED_MASK) == 0)
             throw new IllegalStateException("not locked");
+        if (ENABLED && (clear|set) != 0)
+            journal("unlck, clear=", clear, flags, "set=", set, flags, "on", this);
         int e = current|LOCKED_MASK;
         int mask = ~(clear|LOCKED_MASK), next;
         while ((current=(int)S.compareAndExchangeRelease(this, e, next=(e&mask)|set)) != e)
             e = current;
-        if (ENABLED)
-            journal("unlckd, clear=", clear, flags, "set=", set, flags, "on", this);
         return next;
     }
 
