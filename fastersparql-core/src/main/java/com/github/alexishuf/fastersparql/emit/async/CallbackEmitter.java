@@ -70,15 +70,12 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         b.requireUnpooled();
         int st = lock(statePlain());
         try {
-            if ((st&STATE_MASK) == CANCEL_REQUESTED) {
+            if ((st&STATE_MASK) == CANCEL_REQUESTED)
                 throw CancelledException.INSTANCE;
-            } else if ((st&IS_TERM) != 0) {
+            else if ((st&IS_TERM) != 0)
                 throw TerminatedException.INSTANCE;
-            } else if (queue == null) {
-                queue = b;
-            } else {
-                queue.quickAppend(b);
-            }
+            else
+                queue = Batch.quickAppend(queue, b);
         } finally {
             unlock(st);
         }

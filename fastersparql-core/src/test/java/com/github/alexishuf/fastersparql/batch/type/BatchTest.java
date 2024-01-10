@@ -668,15 +668,15 @@ class BatchTest {
                     checkPooledOrAppended(concurrent, b, t2);
                 }
                 {
-                    B b  = type.create(size.cols), t1 = origFstHalf.dup(), t2 = origSndHalf.dup();
+                    B b = null, t1 = origFstHalf.dup(), t2 = origSndHalf.dup();
                     assertNotSame(t1, origFstHalf);
                     assertNotSame(t2, origSndHalf);
                     assertBatchesEquals(origFstHalf, t1, ctx);
                     assertBatchesEquals(origSndHalf, t2, ctx);
-                    batches.add(b);
-                    b.quickAppend(t1);
+                    b = Batch.quickAppend(b, t1);
                     checkPooledOrAppended(concurrent, b, t1);
-                    b.quickAppend(t2);
+                    b = Batch.quickAppend(b, t2);
+                    batches.add(b);
                     checkPooledOrAppended(concurrent, b, t2);
                 }
                 {
@@ -690,11 +690,11 @@ class BatchTest {
                 }
                 {
                     B b = type.create(size.cols), tmp = origSndHalf.dup();
-                    batches.add(b);
                     for (int r = 0; r < halfRows; r++) b.linkedPutRow(origFull, r);
                     assertBatchesEquals(origFstHalf, b,   ctx);
                     assertBatchesEquals(origSndHalf, tmp, ctx);
-                    b.quickAppend(tmp);
+                    b = Batch.quickAppend(b, tmp);
+                    batches.add(b);
                     checkPooledOrAppended(concurrent, b, tmp);
                 }
                 {
@@ -708,11 +708,12 @@ class BatchTest {
                     }
                 }
                 {
-                    B b = type.create(size.cols);
-                    batches.add(b);
+                    B b = null;
                     for (int r = 0; r < size.rows; r++) {
                         B tmp = origFull.linkedDupRow(r);
-                        b.quickAppend(tmp);
+                        b = Batch.quickAppend(b, tmp);
+                        if (r == 0)
+                            batches.add(b);
                         checkPooledOrAppended(concurrent, b, tmp);
                         if (r > 0)
                             assertSame(tmp, b.tail());

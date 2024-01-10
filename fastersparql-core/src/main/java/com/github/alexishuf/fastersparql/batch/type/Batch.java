@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
@@ -359,22 +358,32 @@ public abstract class Batch<B extends Batch<B>> {
 
 
     /**
-     * Appends {@code other}, BY REFERENCE, to the linked list that starts at {@code this}.
+     * Appends {@code b}, BY REFERENCE, to the linked list that starts at {@code a}.
      *
-     * @param other a batch to be added as an (indirect) sucessor to {@code this}. The caller
-     *              looses ownership when this method is called.
+     * @param a a batch that will have {@code b} to its linked list.
+     *          If {@code null}, this method will return {@code b}.
+     * @param b a batch to be added as an (indirect) successor to {@code a}. The caller
+     *          looses ownership when this method is called.
+     * @return {@code a} if not null, else {@code b}.
      */
-    public final void quickAppend(B other) {
-        if (other.cols != cols)
+    public static <B extends Batch<B>> B quickAppend(@Nullable B a, B b) {
+        if (a == null) return b;
+        if (a.cols != b.cols)
             throw new IllegalArgumentException("other.cols != cols");
         if (MARK_POOLED) {
-            this .requireUnpooled();
-            other.requireUnpooled();
+            a.requireUnpooled();
+            b.requireUnpooled();
         }
-        if (rows == 0 && (other = copyFirstNodeToEmpty(other)) == null)
-            return;
-        appendRemainder(other, null, other);
-        assert validate() : "corrupted";
+        if (a.rows == 0) {
+            a.recycle();
+            return b;
+        } else if (b.rows == 0) {
+            b.recycle();
+        } else {
+            a.appendRemainder(b, null, b);
+            assert a.validate() : "corrupted";
+        }
+        return a;
     }
 
     /**

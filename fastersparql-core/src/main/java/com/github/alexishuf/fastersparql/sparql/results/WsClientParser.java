@@ -283,8 +283,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         B copy = b.dup();
         while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
-            if (sentBindings == null) sentBindings = copy;
-            else                      sentBindings.quickAppend(copy);
+            sentBindings = Batch.quickAppend(sentBindings, copy);
         } finally {
             SB_LOCK.setRelease(this, 0);
         }
@@ -540,8 +539,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             int st = lock(statePlain());
             try {
                 if ((st&INIT_SENT) == 0) {
-                    if (batchesBfrInit == null) batchesBfrInit = batch;
-                    else                        batchesBfrInit.quickAppend(batch);
+                    batchesBfrInit = Batch.quickAppend(batchesBfrInit, batch);
                     return null;
                 }
             } finally { unlock(st); }

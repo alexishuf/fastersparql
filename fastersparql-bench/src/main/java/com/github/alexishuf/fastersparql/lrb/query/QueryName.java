@@ -150,7 +150,7 @@ public enum QueryName {
         B fixed = amputateNumbersInNode(type, b, b.rows);
         for (B n = b.next; n != null; n = n.next) {
             B a = amputateNumbersInNode(type, n, n.rows);
-            fixed.quickAppend(a == n ? n.dup() : a);
+            fixed = Batch.quickAppend(fixed, a == n ? n.dup() : a);
         }
         return fixed;
     }
