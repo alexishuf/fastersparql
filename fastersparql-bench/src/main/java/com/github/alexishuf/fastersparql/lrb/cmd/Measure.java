@@ -25,6 +25,9 @@ import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordingFile;
 import org.apache.commons.io.output.CloseShieldOutputStream;
 import org.apache.commons.io.output.TeeOutputStream;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -35,6 +38,8 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -44,6 +49,7 @@ import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.System.nanoTime;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.util.Objects.requireNonNull;
 
 @Command(name = "measure", description = "Mediate queries and measure wall-clock time")
@@ -88,10 +94,56 @@ public class Measure implements Callable<Void>{
             }
             fed.addFedListener(fedListener);
             fed.addPlanListener(planListener);
-            warmup(tasks, fed);
-            measure(tasks, fed);
+            Path jfrDest = null;
+            if (msrOp.jfr != null && !msrOp.jfr.isEmpty()) {
+                jfrDest = Path.of(msrOp.jfr);
+                var dir = jfrDest.getParent().toFile();
+                if (!dir.isDirectory() && !dir.mkdirs())
+                    throw new IOException("Could not mkdir dir for JFR dump "+jfrDest);
+                if (Files.isDirectory(jfrDest))
+                    throw new IOException("JFR dump already exists as dir: "+jfrDest);
+                jfr = new Recording(Configuration.getConfiguration(msrOp.jfrConfigName));
+                jfr.setDumpOnExit(true);
+                jfr.setDestination(Path.of(msrOp.jfr));
+                log.info("Will dump a JFR recording to {} at exit{}", jfrDest,
+                         msrOp.jfrExcludeWarmup ? "excluding warmup" : "");
+                if (!msrOp.jfrExcludeWarmup) jfr.start();
+            }
+            try {
+                warmup(tasks, fed);
+                if (jfr != null && msrOp.jfrExcludeWarmup)
+                    jfr.start();
+                measure(tasks, fed);
+            } finally {
+                if (jfr != null)  {
+                    jfr.close();
+                    postProcessJFR(jfrDest);
+                }
+
+            }
         }
         return null;
+    }
+
+    private static final String EXEC_SAMPLE = "jdk.ExecutionSample";
+    private static final String NATIVE_SAMPLE = "jdk.NativeMethodSample";
+    private static final String INTELLIJ = "com.intellij.rt";
+
+    private void postProcessJFR(Path dest) {
+        try (var f = new RecordingFile(dest)) {
+            var filtered = dest.resolveSibling(dest.getFileName()+".tmp");
+            f.write(filtered, e -> {
+                var t = e.getEventType().getName();
+                if (!t.equals(EXEC_SAMPLE) && !t.equals(NATIVE_SAMPLE))
+                    return true;
+                var trace = e.getStackTrace().getFrames();
+                return trace.isEmpty() ||
+                        !trace.getLast().getMethod().getType().getName().startsWith(INTELLIJ);
+            });
+            Files.copy(filtered, dest, REPLACE_EXISTING);
+        } catch (Throwable t) {
+            log.error("Failed to post-process {}", dest);
+        }
     }
 
     @SuppressWarnings("unused") private static String resolveUris(Federation fed, String string) {
@@ -237,6 +289,7 @@ public class Measure implements Callable<Void>{
     private @Nullable FedMetrics fedMetrics;
     private @Nullable Metrics planMetrics;
     private @MonotonicNonNull BatchConsumer consumer;
+    private @MonotonicNonNull Recording jfr;
     private final Map<QueryName, Checker<?>> checkerConsumers = new HashMap<>();
     private final FedMetricsListener fedListener = new FedMetricsListener() {
         @Override public void accept(FedMetrics metrics) {

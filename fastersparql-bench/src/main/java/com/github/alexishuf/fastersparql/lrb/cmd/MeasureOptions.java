@@ -61,6 +61,21 @@ public class MeasureOptions {
         batchType = kind.asType();
     }
 
+    @Option(names = "--jfr", description = "record the execution of the queries using " +
+            "JDK Flight Recorder. The JFR dump will be saved to the given file path. If this " +
+            "argument is not given, not only the dump will not be written but JFR will also not " +
+            "be started. Federation/sources setup will not be recorded.")
+    public String jfr = null;
+
+    @Option(names = "--jfr-config", description = "If --jfr is set, the value of this option " +
+            "will be passed to jdk.jfr.Configuration.getConfiguration to obtain the JFR config " +
+            "for the recording. The JDK ships with \"default\" and \"profile\" configs")
+    public String jfrConfigName = "default";
+
+    @Option(names = "--jfr-exclude-warmup", description = "If this and --jfr-dump are set, " +
+            "the warmup query executions will be excluded from the recording.")
+    public boolean jfrExcludeWarmup = false;
+
     @Option(names = "--builtin-plans-json", description = "Same effect as --plans-json, but uses " +
             "a built-in JSON file")
     public boolean builtinPlansJson = false;
