@@ -148,9 +148,9 @@ public class SegmentRope extends PlainRope {
 
     public void wrapEmptyBuffer() {
         segment = EMPTY_SEGMENT;
-        utf8 = EMPTY_UTF8;
-        offset = 0;
-        len = 0;
+        utf8    = EMPTY_UTF8;
+        offset  = 0;
+        len     = 0;
     }
 
     @Override public byte get(int i) {

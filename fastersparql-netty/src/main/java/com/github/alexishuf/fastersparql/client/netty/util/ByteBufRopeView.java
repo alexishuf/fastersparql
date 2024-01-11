@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
@@ -8,11 +9,17 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.foreign.MemorySegment;
 
+import static java.util.Objects.requireNonNull;
+
 public final class ByteBufRopeView {
     private static final int POOL_COLUMN = GlobalAffinityShallowPool.reserveColumn();
+    private static final MemorySegment   EMPTY_SEGMENT = ByteRope.EMPTY.segment;
+    private static final byte @NonNull[] EMPTY_U8      = requireNonNull(ByteRope.EMPTY.utf8);
 
     private final SegmentRope sr = new SegmentRope();
     private @MonotonicNonNull TwoSegmentRope tsr;
@@ -61,45 +68,77 @@ public final class ByteBufRopeView {
 
     private SegmentRope wrapSingle(ByteBuf bb) {
         MemorySegment segment;
-        byte[] u8;
+        byte[] u8 = null;
         int offset = bb.readerIndex();
         int len = bb.readableBytes();
-        if (bb.hasArray()) {
+        if (len == 0) {
+            segment = EMPTY_SEGMENT;
+            u8      = EMPTY_U8;
+            offset  = 0;
+        } else if (bb.hasArray()) {
             segment = MemorySegment.ofArray(u8 = bb.array());
             offset += bb.arrayOffset();
-        } else {
-            u8 = null;
-//            segment = MemorySegment.ofBuffer(bb.nioBuffer(offset, len));
+        } else if (bb.hasMemoryAddress()) {
             segment = MemorySegment.ofAddress(bb.memoryAddress()).reinterpret(offset+len);
+        } else if (bb.isDirect() && bb.nioBufferCount() == 1) {
+            segment = MemorySegment.ofBuffer(bb.nioBuffer());
+            offset = 0;
+        } else {
+            return copy(bb);
         }
         sr.wrapSegment(segment, u8, offset, len);
         return sr;
     }
 
-    private PlainRope wrapComposite(CompositeByteBuf c) {
-        return switch (c.numComponents()) {
-            case 0 -> {
-                sr.wrapEmptyBuffer();
-                yield sr;
-            }
-            case 1 -> wrap(c.component(0));
-            case 2 -> {
-                TwoSegmentRope tsr = this.tsr;
-                if (tsr == null) this.tsr = tsr = new TwoSegmentRope();
-                tsr.wrapFirst(wrapAsSingle(c.component(0)));
-                tsr.wrapSecond(wrapAsSingle(c.component(1)));
-                yield tsr;
-            }
-            default -> copy(c);
-        };
+    private @Nullable SegmentRope wrapComponent(ByteBuf bb) {
+        MemorySegment seg;
+        byte[] u8 = null;
+        int off = bb.readerIndex(), len = bb.readableBytes();
+        if (bb.hasArray()) {
+            seg = MemorySegment.ofArray(u8 = bb.array());
+            off += bb.arrayOffset();
+        } else if (bb.hasMemoryAddress()) {
+            seg = MemorySegment.ofAddress(bb.memoryAddress()).reinterpret(off+len);
+        } else if (bb.nioBufferCount() == 1 && bb.isDirect()) {
+            seg = MemorySegment.ofBuffer(bb.nioBuffer());
+            off = 0;
+        } else {
+            return null;
+        }
+        sr.wrapSegment(seg, u8, off, len);
+        return sr;
     }
 
-    private SegmentRope copy(CompositeByteBuf c) {
-        int size = c.readableBytes();
+    private PlainRope wrapComposite(CompositeByteBuf c) {
+        int n = c.numComponents();
+        if (n == 0) {
+            sr.wrapEmptyBuffer();
+            return sr;
+        } else if (n == 1) {
+            return wrap(c.component(0));
+        } else if (n == 2) {
+            var tsr = this.tsr;
+            if (tsr == null)
+                this.tsr = tsr = new TwoSegmentRope();
+            var sr = wrapComponent(c.component(0));
+            if (sr != null) {
+                tsr.wrapFirst(sr);
+                sr = wrapComponent(c.component(1));
+                if (sr != null) {
+                    tsr.wrapSecond(sr);
+                    return tsr;
+                }
+            }
+        }
+        return copy(c);
+    }
+
+    private SegmentRope copy(ByteBuf bb) {
+        int size = bb.readableBytes();
         byte[] copy = this.copy;
         if (copy == null || copy.length < size)
             this.copy = copy = new byte[size];
-        c.readBytes(this.copy);
+        bb.readBytes(this.copy);
         sr.wrapSegment(MemorySegment.ofArray(copy), copy, 0, size);
         return sr;
     }

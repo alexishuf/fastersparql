@@ -70,34 +70,34 @@ public class TwoSegmentRope extends PlainRope {
     }
 
     public void wrapFirst(MemorySegment segment, byte[] utf8, long off, int len) {
-        fst = segment;
-        fstU8 = utf8;
-        fstOff = off;
-        fstLen = len;
+        fst      = segment;
+        fstU8    = utf8;
+        fstOff   = off;
+        fstLen   = len;
         this.len = len+sndLen;
     }
 
     public void wrapSecond(MemorySegment segment, byte[] utf8, long off, int len) {
-        snd = segment;
-        sndU8 = utf8;
-        sndOff = off;
-        sndLen = len;
+        snd      = segment;
+        sndU8    = utf8;
+        sndOff   = off;
+        sndLen   = len;
         this.len = fstLen+len;
     }
 
     public void wrapFirst(SegmentRope rope) {
-        fst = rope.segment;
-        fstU8 = rope.utf8;
-        fstOff = rope.offset;
-        fstLen = rope.len;
+        fst      = rope.segment;
+        fstU8    = rope.utf8;
+        fstOff   = rope.offset;
+        fstLen   = rope.len;
         this.len = fstLen+sndLen;
     }
 
     public void wrapSecond(SegmentRope rope) {
-        snd = rope.segment;
-        sndU8 = rope.utf8;
-        sndOff = rope.offset;
-        sndLen = rope.len;
+        snd      = rope.segment;
+        sndU8    = rope.utf8;
+        sndOff   = rope.offset;
+        sndLen   = rope.len;
         this.len = fstLen+sndLen;
     }
 
