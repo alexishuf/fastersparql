@@ -389,11 +389,25 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
             @Override public void sendError(Throwable t) {
                 var escaped = t.toString().replace("\n", "\\n");
-                execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8));
+                execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8),
+                        Action.RELEASE);
+            }
+
+            private static final class CancelAction extends Action {
+                private final WsHandler<?> handler;
+                public CancelAction(WsHandler<?> handler) {
+                    super("CANCEL");
+                    this.handler = handler;
+                }
+                @Override public void run(NettyResultsSender<?> sender) { handler.sendCancel(); }
+            }
+
+
+            @Override public void  sendCancel() {
+                execute(new CancelAction(WsHandler.this), Action.RELEASE);
             }
 
             @Override protected void               onError(Throwable t) { complete(t); }
-            @Override public    void               sendCancel()         { WsHandler.this.sendCancel(); }
             @Override protected TextWebSocketFrame wrap(ByteBuf bb)     { return new TextWebSocketFrame(bb); }
         }
     }

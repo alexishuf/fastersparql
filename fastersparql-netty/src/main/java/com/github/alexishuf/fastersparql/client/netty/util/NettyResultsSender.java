@@ -68,9 +68,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     private static class ReleaseAction extends Action {
         public ReleaseAction() {super("RELEASE");}
-        @Override public void run(NettyResultsSender<?> sender) {
-            sender.onRelease();
-        }
+        @Override public void run(NettyResultsSender<?> sender) { sender.onRelease(); }
     }
 
     public NettyResultsSender(ResultsSerializer serializer, ChannelHandlerContext ctx) {
@@ -84,8 +82,16 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override public String        journalName() { return "NRS:"+ctx.channel().id().asShortText(); }
 
     @Override public void close() {
-        touchState = TOUCH_DISABLED;
-        execute(Action.RELEASE);
+        disableAutoTouch();
+        if (shouldScheduleRelease())
+            execute(Action.RELEASE);
+    }
+
+    protected void disableAutoTouch() {
+        lock();
+        try {
+            touchState &= ~TOUCH_AUTO;
+        } finally { unlock(); }
     }
 
     @Override public void preTouch() {
@@ -132,15 +138,16 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         try {
             serializer.serializeTrailer(sink);
             M msg = wrapLast(sink.take());
-            touchState = TOUCH_DISABLED;
-            execute(msg);
+            disableAutoTouch();
+            execute(msg, Action.RELEASE);
         } catch (Throwable t) {
             execute(t);
         }
     }
 
     @Override public void sendError(Throwable t) {
-        execute(t);
+        disableAutoTouch();
+        execute(t, Action.RELEASE);
     }
 
     protected void lock() {
@@ -165,9 +172,17 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void execute(Object action) {
         lock();
         try {
-            if (actionsSize >= actions.length) waitCapacity();
-            actions[(byte) (((int) actionsHead + actionsSize) % actions.length)] = action;
-            actionsSize++;
+            if (actionsSize >= actions.length) waitCapacity(1);
+            actions[(byte) ((actionsHead + actionsSize++) % actions.length)] = action;
+        } finally { unlockAndSpawn(); }
+    }
+
+    protected void execute(Object action0, Object action1) {
+        lock();
+        try {
+            if (actionsSize+2 > actions.length) waitCapacity(2);
+            actions[(byte) ((actionsHead+actionsSize++) % actions.length)] = action0;
+            actions[(byte) ((actionsHead+actionsSize++) % actions.length)] = action1;
         } finally { unlockAndSpawn(); }
     }
 
@@ -191,8 +206,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                  executor, this, nActions, nReleases);
     }
 
-    private void waitCapacity() {
-        while (actionsSize == actions.length) {
+    private void waitCapacity(int n) {
+        while (actionsSize+n > actions.length) {
             unlock();
             LockSupport.park(this);
             lock();
@@ -249,8 +264,12 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         log.error("{}.run(): failed to run action", this, t);
     }
     protected void onRelease() {
-        touchState = TOUCH_DISABLED;
+        disableAutoTouch();
         sink.release();
+    }
+
+    protected boolean shouldScheduleRelease() {
+        return active || !sink.needsTouch();
     }
 
     private void doTouch() {

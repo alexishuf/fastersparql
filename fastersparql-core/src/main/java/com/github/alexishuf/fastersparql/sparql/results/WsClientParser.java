@@ -580,10 +580,8 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
         private void doOnComplete() {
             journal("delivering onComplete from", this);
-            if (sender != null) {
+            if (sender != null)
                 sender.sendTrailer();
-                sender.close();
-            }
         }
 
         private void doOnCancelled(int st) {
