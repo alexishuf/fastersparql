@@ -154,7 +154,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         public WsBIt(ByteRope requestMsg, BatchType<B> batchType, Vars vars,
                      @Nullable BindQuery<B> bindQuery) {
             super(batchType, vars, FSProperties.queueMaxRows(), NettyWsSparqlClient.this);
-            this.handler = new WsHandler<>(requestMsg, this, bindQuery);
+            this.handler = new WsHandler<>(requestMsg, this, true, bindQuery);
             acquireRef();
             request();
         }
@@ -179,7 +179,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
            super(batchType, outVars, NettyWsSparqlClient.this);
            this.query = query;
            this.bindQuery = bindQuery;
-           this.handler = new WsHandler<>(makeRequest(), this, bindQuery);
+           this.handler = new WsHandler<>(makeRequest(), this, false, bindQuery);
            acquireRef();
         }
 
@@ -208,7 +208,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return req;
         }
 
-        @Override protected void doRelease() { releaseRef(); }
+        @Override protected void doRelease() {
+            try {
+                releaseRef();
+                handler.reset(null);
+            } finally { super.doRelease(); }
+        }
         @Override protected void   request() { netty.open(handler); }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -232,16 +237,19 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
         private ByteRope requestMsg;
         private boolean gotFrames;
+        private final boolean selfRecycle;
         private @Nullable ByteBufRopeView bbRopeView;
         private final WsClientParser<B> parser;
-        private @MonotonicNonNull ChannelHandlerContext ctx;
+        private @Nullable ChannelHandlerContext ctx;
         private @MonotonicNonNull ChannelRecycler recycler;
         private final CompletableBatchQueue<B> destination;
+        private @MonotonicNonNull Channel lastCh;
 
         public WsHandler(ByteRope requestMsg, CompletableBatchQueue<B> destination,
-                         @Nullable BindQuery<B> bq) {
+                         boolean selfRecycle, @Nullable BindQuery<B> bq) {
             this.requestMsg = requestMsg;
             this.destination = destination;
+            this.selfRecycle = selfRecycle;
             if (bq == null) {
                 parser = new WsClientParser<>(destination);
             } else {
@@ -250,21 +258,46 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        public void reset(ByteRope requestMsg) {
-            this.requestMsg = requestMsg;
-            this.gotFrames  = false;
-            this.ctx        = null;
-            parser.reset();
+        void reset(@Nullable ByteRope requestMsg) {
+            var ctx = this.ctx;
+            if (ctx != null) {
+                var ch = ctx.channel();
+                var exec = ctx.executor();
+                if (exec.inEventLoop()) doReset(requestMsg, ch);
+                else                    exec.execute(() -> doReset(requestMsg, ch));
+            } else if (requestMsg != null) {
+                this.requestMsg = requestMsg;
+            }
+        }
+
+        private void doReset(@Nullable ByteRope requestMsg, @Nullable Channel ch) {
+            assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
+            if (requestMsg != null) {
+                this.requestMsg = requestMsg;
+                gotFrames       = false;
+                parser.reset();
+            }  else {
+                var bbRopeView = this.bbRopeView;
+                if (bbRopeView != null) {
+                    bbRopeView.recycle();
+                    this.bbRopeView = null;
+                }
+            }
+            if (ctx != null && ctx.channel() == ch) {
+                this.ctx = null;
+                recycler.recycle(ch);
+            }
+
+
         }
 
         /* --- --- --- ChannelBound methods --- --- --- */
 
-        @Override public @Nullable Channel channel() {
-            return this.ctx == null ? null : this.ctx.channel();
-        }
+        @Override public @Nullable Channel channel() { return lastCh; }
 
         @Override public String journalName() {
-            return "C.WH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
+            var id = lastCh == null ? "null" : lastCh.id().asShortText();
+            return "C.WH:"+id+'@'+Integer.toHexString(System.identityHashCode(this));
         }
 
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
@@ -273,6 +306,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             assert this.ctx == null : "previous attach()";
             this.recycler = recycler;
             this.ctx      = ctx;
+            this.lastCh   = ctx.channel();
             if (destination instanceof WsEmitter<B> e)
                 e.setChannel(ctx.channel());
             if (bbRopeView == null)
@@ -287,7 +321,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        @Override public void detach(@Nullable Throwable error) { complete(error); }
+        @Override public void detach(@Nullable Throwable error) {
+            if (ctx == null)
+                return; // indirectly called from recycle()
+            complete(error);
+        }
 
         @Override public void frame(WebSocketFrame frame) {
             if (frame instanceof TextWebSocketFrame f) {
@@ -296,6 +334,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 gotFrames = true;
                 try {
                     parser.feedShared(bbRopeView.wrapAsSingle(f.content()));
+                    if (selfRecycle && destination.isTerminated())
+                        reset(null);
                 } catch (TerminatedException|CancelledException e) {
                     sendCancel();
                 }
@@ -331,13 +371,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         private void complete(@Nullable Throwable error) {
-            if (gotFrames && error == null) parser.feedEnd();
-            else                            completeWithError(error); // (should be) cold
-            if (bbRopeView != null) {
-                bbRopeView.recycle();
-                bbRopeView = null;
-                recycler.recycle(ctx.channel());
+            if (!destination.isTerminated()) {
+                if (gotFrames && error == null) parser.feedEnd();
+                else                            completeWithError(error); // (should be) cold
             }
+            if (selfRecycle)
+                reset(null);
         }
 
         private void sendCancel() {
