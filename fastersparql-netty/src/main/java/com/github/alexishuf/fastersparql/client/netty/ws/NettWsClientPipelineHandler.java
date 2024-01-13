@@ -143,11 +143,16 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
             ByteBuf bb = f.content();
             byte[] previewU8 = this.previewU8;
             if (previewU8 == null)
-                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(16);
+                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(19);
             int frameLen = bb.readableBytes(), previewLen = Math.min(frameLen, 16);
             bb.getBytes(bb.readerIndex(), this.previewU8, 0, previewLen);
             while (previewLen > 0 && previewU8[previewLen-1] <= ' ')
                 --previewLen;
+            if (frameLen > 16) {
+                previewU8[previewLen++] = '.';
+                previewU8[previewLen++] = '.';
+                previewU8[previewLen++] = '.';
+            }
             journal("Received WS frame with ", frameLen, "bytes on", this);
             journal("preview=", new String(previewU8, 0, previewLen, UTF_8));
         }
