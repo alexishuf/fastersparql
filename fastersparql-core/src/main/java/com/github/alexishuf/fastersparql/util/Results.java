@@ -26,11 +26,10 @@ import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintWriter;
+import java.io.*;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
@@ -45,6 +44,7 @@ import static java.util.stream.IntStream.range;
 
 @SuppressWarnings("unused")
 public final class Results {
+    private static final Logger log = LoggerFactory.getLogger(Results.class);
     public static final PrefixMap PREFIX_MAP;
     static {
         PrefixMap pm = new PrefixMap().resetToBuiltin();
@@ -824,13 +824,40 @@ public final class Results {
         return ok;
     }
 
+    private static void print(Writer w, int indent, Throwable t) throws IOException {
+        for (int i = 0; i < indent; i++)
+            w.append(' ');
+        w.append(t.toString()).append('\n');
+        var trace = t.getStackTrace();
+        if (trace != null) {
+            indent += 2;
+            for (var e : trace) {
+                for (int i = 0; i < indent; i++) w.append(' ');
+                w.append(" at ").append(e.toString()).append('\n');
+            }
+            indent -= 2;
+        }
+        Throwable cause = t.getCause();
+        if (cause != null) {
+            for (int i = 0; i < indent; i++) w.append(' ');
+            w.append("Caused by\n");
+            print(w, indent+2, cause);
+        }
+    }
+
     private boolean checkException(Throwable thrown, StringBuilder sb) {
-        String trace = null;
-        if (thrown != null) {
+        String trace;
+        if (thrown == null) {
+            trace = null;
+        } else {
             if (thrown instanceof BItReadFailedException f && f.getCause() != null)
                 thrown = f.getCause();
             var bo = new ByteArrayOutputStream();
-            thrown.printStackTrace(new PrintWriter(bo, true, UTF_8));
+            try (var w = new PrintWriter(bo)) {
+                print(w, 0, thrown);
+            } catch (IOException e) {
+                log.error("Unexpected IOException writing traces", e);
+            }
             trace = bo.toString(UTF_8);
         }
         boolean ok = true;
