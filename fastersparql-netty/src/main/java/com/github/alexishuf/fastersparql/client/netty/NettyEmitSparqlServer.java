@@ -164,7 +164,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private final QueryHandler<?, M> handler;
 
         private Sender(ResultsSerializer serializer, QueryHandler<?, M> handler,
-                      Emitter<CompressedBatch> upstream) {
+                       Emitter<CompressedBatch> upstream) {
             super(serializer, handler.ctx);
             this.handler = handler;
             this.upstream = upstream;

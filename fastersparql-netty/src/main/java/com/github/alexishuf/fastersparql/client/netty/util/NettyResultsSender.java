@@ -57,7 +57,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     public abstract static class Action {
         private final String name;
-        public static final Action RELEASE = new ReleaseAction();
+        public static final Action RELEASE_SINK = new ReleaseSinkAction();
 
         public Action(String name) { this.name = name; }
 
@@ -66,9 +66,12 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         @Override public String toString() { return name; }
     }
 
-    private static class ReleaseAction extends Action {
-        public ReleaseAction() {super("RELEASE");}
-        @Override public void run(NettyResultsSender<?> sender) { sender.onRelease(); }
+    private static class ReleaseSinkAction extends Action {
+        public ReleaseSinkAction() {super("RELEASE");}
+        @Override public void run(NettyResultsSender<?> sender) {
+            sender.disableAutoTouch();
+            sender.sink.release();
+        }
     }
 
     public NettyResultsSender(ResultsSerializer serializer, ChannelHandlerContext ctx) {
@@ -84,7 +87,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override public void close() {
         disableAutoTouch();
         if (shouldScheduleRelease())
-            execute(Action.RELEASE);
+            execute(Action.RELEASE_SINK);
     }
 
     protected void disableAutoTouch() {
@@ -109,6 +112,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             serializer.serializeHeader(sink);
             execute(wrap(sink.take()));
         } catch (Throwable t) {
+            log.error("Failed to init results sender", t);
             execute(t);
         }
     }
@@ -119,6 +123,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             serializer.serializeAll(batch, sink);
             execute(wrap(sink.take()));
         } catch (Throwable t) {
+            log.error("Failed to serialize batch", t);
             execute(t);
         }
     }
@@ -129,6 +134,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             serializer.serialize(batch, from, nRows, sink);
             execute(wrap(sink.take()));
         } catch (Throwable t) {
+            log.error("Failed to serialize batch", t);
             execute(t);
         }
     }
@@ -139,15 +145,16 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             serializer.serializeTrailer(sink);
             M msg = wrapLast(sink.take());
             disableAutoTouch();
-            execute(msg, Action.RELEASE);
+            execute(msg, Action.RELEASE_SINK);
         } catch (Throwable t) {
+            log.error("Failed to serialize trailer", t);
             execute(t);
         }
     }
 
     @Override public void sendError(Throwable t) {
         disableAutoTouch();
-        execute(t, Action.RELEASE);
+        execute(t, Action.RELEASE_SINK);
     }
 
     protected void lock() {
@@ -262,10 +269,6 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void beforeSend() { }
     protected void onError(Throwable t) {
         log.error("{}.run(): failed to run action", this, t);
-    }
-    protected void onRelease() {
-        disableAutoTouch();
-        sink.release();
     }
 
     protected boolean shouldScheduleRelease() {

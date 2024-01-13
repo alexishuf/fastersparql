@@ -52,6 +52,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
@@ -258,6 +259,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
+        NettyWsSparqlClient sparqlClient() { return NettyWsSparqlClient.this; }
+
         void reset(@Nullable ByteRope requestMsg) {
             var ctx = this.ctx;
             if (ctx != null) {
@@ -272,10 +275,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         private void doReset(@Nullable ByteRope requestMsg, @Nullable Channel ch) {
             assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
+            parser.reset();
             if (requestMsg != null) {
                 this.requestMsg = requestMsg;
                 gotFrames       = false;
-                parser.reset();
             }  else {
                 var bbRopeView = this.bbRopeView;
                 if (bbRopeView != null) {
@@ -407,29 +410,63 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
             if (ctx == null)
                 throw new IllegalStateException("createSender() before attach()");
-            return new BindingsSender(ctx);
+            return new BindingsSender<>(this, ctx);
         }
 
-        private final class BindingsSender extends NettyResultsSender<TextWebSocketFrame> {
-            public BindingsSender(ChannelHandlerContext ctx) {
-                super(WsSerializer.create(bindingsSizeHint), ctx);
-                sink.sizeHint(bindingsSizeHint);
+        private static final class BindingsSender<B extends Batch<B>> extends NettyResultsSender<TextWebSocketFrame> {
+            private final WsHandler<B> wsHandler;
+            boolean recycledSerializer;
+
+            private static final class RecycleAction extends Action {
+                public static final RecycleAction INSTANCE = new RecycleAction();
+                public RecycleAction() {super("RECYCLE");}
+
+                @Override public void run(NettyResultsSender<?> sender) {
+                    var bs = (BindingsSender<?>) sender;
+                    if (!bs.recycledSerializer) {
+                        bs.recycledSerializer = true;
+                        ((WsSerializer)bs.serializer).recycle();
+                    }
+                }
             }
 
-            @Override protected void onRelease() {
-                super.onRelease();
-                ((WsSerializer)serializer).recycle();
+            public BindingsSender(WsHandler<B> wsHandler, ChannelHandlerContext ctx) {
+                super(WsSerializer.create(wsHandler.sparqlClient().bindingsSizeHint), ctx);
+                this.wsHandler = wsHandler;
+                sink.sizeHint(wsHandler.sparqlClient().bindingsSizeHint);
+            }
+
+            @Override public void close() {
+                super.close();
+                if (!recycledSerializer)
+                    execute(RecycleAction.INSTANCE);
+            }
+
+            @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
+                if (recycledSerializer) throw new IllegalStateException("recycled");
+                super.sendInit(vars, subset, isAsk);
+            }
+
+            @Override public void sendSerializedAll(Batch<?> batch) {
+                if (recycledSerializer) throw new IllegalStateException("recycled");
+                super.sendSerializedAll(batch);
+            }
+
+            @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
+                if (recycledSerializer) throw new IllegalStateException("recycled");
+                super.sendSerialized(batch, from, nRows);
             }
 
             @Override public void sendTrailer() {
-                adjustBindingsSizeHint(sink.sizeHint());
+                wsHandler.sparqlClient().adjustBindingsSizeHint(sink.sizeHint());
                 super.sendTrailer();
             }
 
             @Override public void sendError(Throwable t) {
+                journal("sendError", t, "sender=", this);
                 var escaped = t.toString().replace("\n", "\\n");
                 execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8),
-                        Action.RELEASE);
+                        Action.RELEASE_SINK);
             }
 
             private static final class CancelAction extends Action {
@@ -441,13 +478,19 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 @Override public void run(NettyResultsSender<?> sender) { handler.sendCancel(); }
             }
 
-
             @Override public void  sendCancel() {
-                execute(new CancelAction(WsHandler.this), Action.RELEASE);
+                journal("sendCancel, sender=", this);
+                execute(new CancelAction(wsHandler), Action.RELEASE_SINK);
             }
 
-            @Override protected void               onError(Throwable t) { complete(t); }
-            @Override protected TextWebSocketFrame wrap(ByteBuf bb)     { return new TextWebSocketFrame(bb); }
+            @Override protected void onError(Throwable t) {
+                journal("onError", t, "sender=", this);
+                wsHandler.complete(t);
+            }
+
+            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
+                return new TextWebSocketFrame(bb);
+            }
         }
     }
 }

@@ -23,6 +23,7 @@ public class WsSerializer extends ResultsSerializer {
 
     private final ByteRope rowsBuffer;
     private final WsPrefixAssigner prefixAssigner;
+    private boolean pooled;
 
     public static class WsFactory implements Factory {
         @Override public ResultsSerializer create(Map<String, String> params) {
@@ -35,7 +36,11 @@ public class WsSerializer extends ResultsSerializer {
 
     public static WsSerializer create(int bufferHint) {
         var s = (WsSerializer) GlobalAffinityShallowPool.get(POOL_COL);
-        return s == null ? new WsSerializer(bufferHint) : s;
+        if (s == null) return new WsSerializer(bufferHint);
+        if (!s.pooled)
+            throw new IllegalStateException("Pooled WsSerializer not marked as pooled");
+        s.pooled = false;
+        return s;
     }
 
     protected WsSerializer(int bufferHint) {
@@ -45,6 +50,9 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     public void recycle() {
+        if (pooled)
+            throw new IllegalStateException("recycle() on pooled WsSerializer");
+        pooled = true;
         columns = null;
         vars = Vars.EMPTY;
         ask = false;
@@ -55,10 +63,12 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     @Override protected void onInit() {
+        if (pooled) throw new IllegalStateException("use of recycle()d serializer");
         prefixAssigner.reset();
     }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {
+        if (pooled) throw new IllegalStateException("use of recycle()d serializer");
         for (int i = 0, n = subset.size(); i < n; i++) {
             if (i != 0) dest.append('\t');
             dest.append('?').append(subset.get(i));
@@ -91,6 +101,7 @@ public class WsSerializer extends ResultsSerializer {
 
     private static final byte[] END = "!end\n".getBytes(UTF_8);
     @Override public void serializeTrailer(ByteSink<?, ?> dest) {
+        if (pooled) throw new IllegalStateException("Use of recycle()d serializer");
         dest.append(END);
     }
 
