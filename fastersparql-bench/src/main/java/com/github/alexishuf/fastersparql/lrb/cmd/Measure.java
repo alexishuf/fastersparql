@@ -3,7 +3,9 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.fed.FedMetrics;
 import com.github.alexishuf.fastersparql.fed.FedMetricsListener;
 import com.github.alexishuf.fastersparql.fed.Federation;
@@ -200,17 +202,16 @@ public class Measure implements Callable<Void>{
         msrOp.updateWeakenDistinct(task.query());
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
-//        Stateful.INSTANCES.clear();
-//        Plan debugPlan = null;
-//        ResultJournal.clear();
-//        ThreadJournal.resetJournals();
-//        try {
-//            Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
-//        } catch (IOException ignored) { }
-        Object results;
+        Plan plan = null;
+        ResultJournal.clear();
+        ThreadJournal.resetJournals();
+        try {
+            Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
+        } catch (IOException ignored) { }
+        Object results = null;
         try {
             if (plans != null) {
-                Plan plan = requireNonNull(plans.createPlan(task.query()));
+                plan = requireNonNull(plans.createPlan(task.query()));
                 currentPlan = plan;
                 fedMetrics = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
@@ -227,13 +228,12 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-//            try (var watchdog = watchdog(25, task, debugPlan, results)) {
-//                dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
-//                watchdog.stop();
-//            }
-            switch (msrOp.flowModel) {
-                case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
-                case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
+            try (var watchdog = watchdog(30, task, plan, results)) {
+                switch (msrOp.flowModel) {
+                    case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
+                    case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
+                }
+                watchdog.stop();
             }
 //            try (var out = new PrintStream("/tmp/dump")) {
 //                NettyChannelDebugger.dumpAndFlushActive(out);
@@ -242,10 +242,10 @@ public class Measure implements Callable<Void>{
             consumer.finish(t);
             log.error("Error during rep {} of task={}:", rep, task, t);
         }
-//        if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-//            dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
-//        if (consumer instanceof Checker<?> c && !c.isValid())
-//            dump(task.query(), task.query().name(), debugPlan, (StreamNode)results);
+        if (results instanceof Stateful s && s.stateName().contains("FAILED"))
+            dump(task.query(), task.query().name(), plan, (StreamNode)results);
+        if (consumer instanceof Checker<?> c && !c.isValid())
+            dump(task.query(), task.query().name(), plan, (StreamNode)results);
         return (int)((nanoTime()-start)/1_000_000L);
     }
 
@@ -266,17 +266,19 @@ public class Measure implements Callable<Void>{
         File dotFile = new File("/tmp/"+name+".dot");
         File journalFile = new File("/tmp/"+name+".journal");
         File resultsFile = new File("/tmp/"+name+".results");
+        File nettyFile = new File("/tmp/"+name+".netty");
         File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
         try (var dot     = new FileWriter(dotFile,     UTF_8);
              var journal = new OutputStreamWriter(
                      new TeeOutputStream(new CloseShieldOutputStream(System.out),
                                          new FileOutputStream(journalFile, false)));
+             var netty = new PrintStream(nettyFile);
              var results = new FileWriter(resultsFile, UTF_8)) {
-//            ThreadJournal.dumpAndReset(journal, 100);
+            ThreadJournal.dumpAndReset(journal, 100);
             ResultJournal.dump(results);
             dot.append(sn.toDOT(WITH_STATE_AND_STATS));
             sn.renderDOT(svg, WITH_STATE_AND_STATS);
-            ThreadJournal.dumpAndReset(journal, 100);
+            NettyChannelDebugger.dumpAndFlushActive(netty);
             System.out.println("Wrote "+svg);
         } catch (IOException ignored) {}
     }
