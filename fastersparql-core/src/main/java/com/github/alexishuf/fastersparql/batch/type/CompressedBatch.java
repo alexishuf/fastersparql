@@ -1065,7 +1065,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             dst.doAppend(src, src.rows, src.localsLen);
         }
         if (src != null)
-            other = appendRemainder(other, prev, src);
+            other = quickAppendRemainder(other, prev, src);
         COMPRESSED.recycle(other);
         assert validate() : "corrupted";
     }

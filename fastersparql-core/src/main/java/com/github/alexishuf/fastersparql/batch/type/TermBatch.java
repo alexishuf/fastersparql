@@ -261,7 +261,7 @@ public final class TermBatch extends Batch<TermBatch> {
             dst.doAppend(src.arr, 0, srcRows, cols);
         }
         if (src != null)
-            other = appendRemainder(other, prev, src);
+            other = quickAppendRemainder(other, prev, src);
         TERM.recycle(other); // append() caller always gives ownership away
         assert validate() : "corrupted";
     }

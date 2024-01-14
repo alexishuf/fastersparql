@@ -380,8 +380,7 @@ public abstract class Batch<B extends Batch<B>> {
         } else if (b.rows == 0) {
             b.recycle();
         } else {
-            a.appendRemainder(b, null, b);
-            assert a.validate() : "corrupted";
+            a.quickAppendRemainder(b, null, b);
         }
         return a;
     }
@@ -425,7 +424,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param node the first node to be appended to {@code this}
      * @return {@code other} if {@code nodePredecessor == null}, else {@code null}
      */
-    protected @Nullable B appendRemainder(B other, B nodePredecessor, B node) {
+    protected @Nullable B quickAppendRemainder(B other, B nodePredecessor, B node) {
         B tail = tailUnchecked(), newTail = other.tailUnchecked();
         tail.next = node;     // connect to [node, ...]
         tail.tail = null;     // our old tail is now an intermediary

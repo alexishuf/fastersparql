@@ -222,7 +222,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             dst.doPut(src, 0, dstPos, srcRows, cols); // copy contents
         }
         if (src != null)
-            other = appendRemainder(other, prev, src);
+            other = quickAppendRemainder(other, prev, src);
         idType().recycle(other); // append() caller always looses ownership of other
         assert validate();
     }
