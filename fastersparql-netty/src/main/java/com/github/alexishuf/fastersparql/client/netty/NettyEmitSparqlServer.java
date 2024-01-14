@@ -289,13 +289,23 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         @Override public void sendSerializedAll(Batch<?> batch) {
             super.sendSerializedAll(batch);
-            if (handler.bindQuery == null || batch.rows == 0)
-                return;
+            if (handler.bindQuery != null && batch.rows > 0)
+                updateLastSentSeq(batch);
+        }
+
+        private void updateLastSentSeq(Batch<?> batch) {
             var tmpView = handler.tmpView;
             Batch<?> tail = batch.tail();
             if (!tail.localView(tail.rows-1, 0, tmpView))
                 throw new IllegalStateException("Missing binding sequence");
             lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+        }
+
+        @Override
+        public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
+            super.sendSerializedAll(batch, nodeConsumer);
+            if (handler.bindQuery != null && batch.rows > 0)
+                updateLastSentSeq(batch);
         }
 
         @Override public void sendTrailer() {

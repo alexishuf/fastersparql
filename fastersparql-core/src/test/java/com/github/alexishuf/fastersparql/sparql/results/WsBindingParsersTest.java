@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -70,6 +71,13 @@ public class WsBindingParsersTest {
 
                 @Override public void sendSerializedAll(Batch<?> batch) {
                     serializer.serializeAll(batch, sink.touch());
+                    sendFrame(sink.take());
+                }
+
+                @Override
+                public <B extends Batch<B>>
+                void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
+                    serializer.serializeAll(batch, sink.touch(), nodeConsumer);
                     sendFrame(sink.take());
                 }
 

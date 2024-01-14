@@ -20,6 +20,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.UnsetError;
@@ -298,11 +299,11 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             bindingNotified = false;
         }
     }
-    private void appendSentBindings(B b) {
-        B copy = b.dup();
+    private void appendSentBindings(B b) { appendSentBindingsByRef(b.dup()); }
+    private void appendSentBindingsByRef(B b) {
         while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
-            sentBindings = Batch.quickAppend(sentBindings, copy);
+            sentBindings = Batch.quickAppend(sentBindings, b);
         } finally {
             SB_LOCK.setRelease(this, 0);
         }
@@ -393,7 +394,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     public @Nullable Receiver<B> bindingsReceiver() { return bindingsReceiver; }
 
     private static final class BindingsReceiver<B extends Batch<B>>
-            extends Stateful implements Receiver<B> {
+            extends Stateful implements Receiver<B>, ResultsSerializer.SerializedNodeConsumer<B> {
         private static final int HAS_SENDER    = 0x20000000;
         private static final int SENDING_INIT  = 0x40000000;
         private static final int INIT_SENT     = 0x80000000;
@@ -569,17 +570,12 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
 
         private long sendEarlyBatches(B queue) {
-            long rows = 0;
-            // this loop has the purpose of minimizing batch allocs given a long queue
-            for (B b = queue, n; b != null; b = n) {
-                rows += b.rows;
-                n = b.detachHead(); // b is now a singleton list
-                parent.appendSentBindings(b);
-                sender.sendSerialized(b, 0, b.rows);
-                parent.batchType().recycle(b);
-            }
+            long rows = queue.totalRows();
+            sender.sendSerializedAll(queue, this);
             return rows;
         }
+
+        @Override public void onSerializedNode(B node) { parent.appendSentBindingsByRef(node); }
 
         @Override public void onComplete() {
             int st = statePlain();

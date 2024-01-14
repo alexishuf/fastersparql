@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -103,6 +104,7 @@ class WsClientParserBItTest extends ResultsParserTest {
                     @Override public void preTouch() {}
                     @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                     @Override public void sendSerializedAll(Batch<?> batch) {}
+                    @Override public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {}
                     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
                     @Override public void sendTrailer() {}
                     @Override public void sendCancel() {}

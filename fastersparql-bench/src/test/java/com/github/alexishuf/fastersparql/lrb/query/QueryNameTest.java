@@ -177,6 +177,11 @@ class QueryNameTest {
                         @Override public void sendSerializedAll(Batch<?> batch) {
                             serializer.serializeAll(batch, new ByteRope());
                         }
+                        @Override
+                        public <N extends Batch<N>>
+                        void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
+                            serializer.serializeAll(batch, new ByteRope(), nodeConsumer);
+                        }
                         @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
                             serializer.serialize(batch, from, nRows, new ByteRope());
                         }

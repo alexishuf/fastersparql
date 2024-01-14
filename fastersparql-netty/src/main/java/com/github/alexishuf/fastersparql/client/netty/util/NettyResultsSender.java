@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -19,7 +20,6 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * A {@link ResultsSender} that executes all its actions inside a netty event loop.
@@ -43,7 +43,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected final ChannelHandlerContext ctx;
     protected Thread owner;
     protected @Nullable Throwable error;
-    private final Object[] actions = new Object[(128-16)>>2];
+    private Object[] actions = ArrayPool.objectsAtLeast(16);
     private byte actionsHead = 0, actionsSize = 0;
     private byte touchState;
     protected boolean active;
@@ -133,6 +133,18 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         }
     }
 
+    @Override
+    public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
+        if (sink.needsTouch()) sink.touch();
+        try {
+            serializer.serializeAll(batch, sink, nodeConsumer);
+            execute(wrap(sink.take()));
+        } catch (Throwable t) {
+            log.error("Failed to serialize batch", t);
+            execute(t);
+        }
+    }
+
     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
         if (sink.needsTouch()) touch();
         try {
@@ -184,7 +196,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void execute(Object action) {
         lock();
         try {
-            if (actionsSize >= actions.length) waitCapacity(1);
+            if (actionsSize >= actions.length) growCapacity();
             actions[(byte) ((actionsHead + actionsSize++) % actions.length)] = action;
         } finally { unlockAndSpawn(); }
     }
@@ -192,7 +204,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     protected void execute(Object action0, Object action1) {
         lock();
         try {
-            if (actionsSize+2 > actions.length) waitCapacity(2);
+            if (actionsSize+2 > actions.length) growCapacity();
             actions[(byte) ((actionsHead+actionsSize++) % actions.length)] = action0;
             actions[(byte) ((actionsHead+actionsSize++) % actions.length)] = action1;
         } finally { unlockAndSpawn(); }
@@ -218,12 +230,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                  executor, this, nActions, nReleases);
     }
 
-    private void waitCapacity(int n) {
-        while (actionsSize+n > actions.length) {
-            unlock();
-            LockSupport.park(this);
-            lock();
-        }
+    private void growCapacity() {
+        actions = ArrayPool.grow(actions, actionsSize, actions.length<<1);
     }
 
     protected void touch() {
@@ -317,8 +325,6 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                     continue;
                 } finally {
                     unlock();
-                    if (actionsSize == actions.length - 1)
-                        Unparker.unpark(owner);
                 }
                 // speculative touch
                 if (touchState != TOUCH_DISABLED && sink.needsTouch())

@@ -5,6 +5,8 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 
+import static com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer.*;
+
 public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements AutoCloseable {
     protected final ResultsSerializer serializer;
     protected final S sink;
@@ -31,6 +33,9 @@ public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements Auto
     public abstract void sendInit(Vars vars, Vars subset, boolean isAsk);
     /** Sends the result of {@link ResultsSerializer#serializeAll(Batch, ByteSink)} */
     public abstract void sendSerializedAll(Batch<?> batch);
+    /** Sends the result of {@link ResultsSerializer#serializeAll(Batch, ByteSink, SerializedNodeConsumer)} */
+    public abstract <B extends Batch<B>>
+    void sendSerializedAll(B batch, SerializedNodeConsumer<B> nodeConsumer);
     /** Sends the result of {@link ResultsSerializer#serialize(Batch, int, int, ByteSink)} */
     public abstract void sendSerialized(Batch<?> batch, int from, int nRows);
     /** Sends the result of {@link ResultsSerializer#serializeTrailer(ByteSink)} */

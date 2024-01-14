@@ -119,6 +119,7 @@ public class ResultsParserBench {
                 @Override public void preTouch() {}
                 @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
                 @Override public void sendSerializedAll(Batch<?> batch) {}
+                @Override public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {}
                 @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
                 @Override public void sendTrailer() {}
                 @Override public void sendError(Throwable cause) {}

@@ -126,6 +126,28 @@ public abstract class ResultsSerializer {
             serialize(b, 0, b.rows, dest);
     }
 
+    /**
+     * {@link #serializeAll(Batch, ByteSink)}, but executes {@code nodeConsumer.accept(b)}
+     * for every batch {@code b} in the linked list rooted at {@code batch}.
+     *
+     * @param batch the head of a linked list of batches
+     * @param dest where the serialization of {@code batch} will be written to
+     * @param nodeConsumer callback for every individual batch in the
+     *                     linked list that starts with {@code batch}
+     */
+    public <B extends Batch<B>> void serializeAll(B batch, ByteSink<?, ?> dest,
+                                                  SerializedNodeConsumer<B> nodeConsumer) {
+        for (B b = batch, n; b != null; b = n) {
+            serialize(b, 0, b.rows, dest);
+            n = b.detachHead();
+            nodeConsumer.onSerializedNode(b);
+        }
+    }
+
+    public interface SerializedNodeConsumer<B extends Batch<B>> {
+        void onSerializedNode(B node);
+    }
+
     /** Serialize rows {@code [begin,begin+nRows)} from {@code batch} to {@code dest}. */
     public abstract void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest);
 

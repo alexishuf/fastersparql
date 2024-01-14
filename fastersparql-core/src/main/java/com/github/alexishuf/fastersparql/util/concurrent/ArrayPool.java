@@ -18,15 +18,17 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
     public static final ArrayPool<short[]> SHORT          = new ArrayPool<>(      short[].class);
     public static final ArrayPool<long[]>  LONG           = new ArrayPool<>(       long[].class);
     public static final ArrayPool<SegmentRope[]> SEG_ROPE = new ArrayPool<>(SegmentRope[].class);
+    public static final ArrayPool<Object[]>      OBJECT   = new ArrayPool<>(     Object[].class);
 
     private static void prime(int firstCapacity, int lastCapacity, int n) {
         for (int capacity = firstCapacity; capacity <= lastCapacity; capacity <<= 1) {
             for (int i = 0; i < n; i++) {
-                BYTE.offer(new byte[capacity], capacity);
-                INT.offer(new int[capacity], capacity);
-                SHORT.offer(new short[capacity], capacity);
-                LONG.offer(new long[capacity], capacity);
+                BYTE    .offer(new byte       [capacity], capacity);
+                INT     .offer(new int        [capacity], capacity);
+                SHORT   .offer(new short      [capacity], capacity);
+                LONG    .offer(new long       [capacity], capacity);
                 SEG_ROPE.offer(new SegmentRope[capacity], capacity);
+                OBJECT  .offer(new Object     [capacity], capacity);
             }
         }
     }
@@ -80,6 +82,7 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
     public static final       short[] EMPTY_SHORT    = new       short[0];
     public static final        long[] EMPTY_LONG     = new        long[0];
     public static final SegmentRope[] EMPTY_SEG_ROPE = new SegmentRope[0];
+    public static final Object     [] EMPTY_OBJECT   = new      Object[0];
 
     /* --- --- --- utility static methods --- --- --- */
 
@@ -123,6 +126,16 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         arraycopy(a, 0, b, 0, a.length);
         return b;
     }
+    public static Object[] grow(Object[] a, int size, int requiredSize) {
+        Object[] b = objectsAtLeast(requiredSize);
+        arraycopy(a, 0, b, 0, size);
+        return b;
+    }
+    public static Object[] grow(Object[] a, int requiredSize) {
+        Object[] b = objectsAtLeast(requiredSize);
+        arraycopy(a, 0, b, 0, a.length);
+        return b;
+    }
 
     public static byte[] bytesAtLeast(int minSize) {
         if (minSize == 0) return EMPTY_BYTE;
@@ -153,6 +166,12 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         SegmentRope[] a = SEG_ROPE.getFromLevel(level);
         return a == null ? new SegmentRope[1<<level] : a;
+    }
+    public static Object[] objectsAtLeast(int minSize) {
+        if (minSize == 0) return EMPTY_OBJECT;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        Object[] a = OBJECT.getFromLevel(level);
+        return a == null ? new Object[1<<level] : a;
     }
 
     @SuppressWarnings("unused") public static byte[] bytesAtLeastUpcycle(int minSize) {
@@ -194,6 +213,14 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         if (a != null && a.length > 1<<level && SEG_ROPE.offer(a, a.length) == null)
             a = SEG_ROPE.getFromLevel(level);
         return a == null ? new SegmentRope[1<<level] : a;
+    }
+    @SuppressWarnings("unused") public static Object[] objectsAtLeastUpcycle(int minSize) {
+        if (minSize == 0) return EMPTY_OBJECT;
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        Object[] a = OBJECT.getFromLevel(level);
+        if (a != null && a.length > 1<<level && OBJECT.offer(a, a.length) == null)
+            a = OBJECT.getFromLevel(level);
+        return a == null ? new Object[1<<level] : a;
     }
 
     public static byte[] bytesAtLeast(int minSize, byte @Nullable [] a) {
@@ -245,6 +272,16 @@ public class ArrayPool<T> extends AffinityLevelPool<T> {
         }
         int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
         return (a = SEG_ROPE.getFromLevel(level)) == null ? new SegmentRope[1<<level] : a;
+    }
+    @SuppressWarnings("unused") public static Object[] objectsAtLeast(int minSize, Object @Nullable[] a) {
+        if (a != null) {
+            if (a.length >= minSize) return a;
+            OBJECT.offer(a, a.length);
+        } else if (minSize == 0) {
+            return EMPTY_OBJECT;
+        }
+        int level = 33 - Integer.numberOfLeadingZeros(minSize-1);
+        return (a = OBJECT.getFromLevel(level)) == null ? new Object[1<<level] : a;
     }
 
     public static byte[] copy(byte[] a) {

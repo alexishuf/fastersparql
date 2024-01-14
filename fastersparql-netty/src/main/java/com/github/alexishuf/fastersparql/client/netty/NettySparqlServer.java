@@ -367,7 +367,7 @@ public class NettySparqlServer implements AutoCloseable {
             }
 
             public SerializeTask(int round) {
-                super(QueryHandler.this.serializer, ctx);
+                super(QueryHandler.this.serializer, QueryHandler.this.ctx);
                 sink.sizeHint(serializeSizeHint);
                 this.drainerRound = round;
             }
@@ -707,12 +707,22 @@ public class NettySparqlServer implements AutoCloseable {
 
             @Override public void sendSerializedAll(Batch<?> batch) { //runs on drainerThread
                 super.sendSerializedAll(batch);
-                if (bindQuery == null || batch.rows == 0)
-                    return;
+                if (bindQuery != null && batch.rows > 0)
+                    updateLastSentSeq(batch);
+            }
+
+            private void updateLastSentSeq(Batch<?> batch) {
                 Batch<?> tail = batch.tail();
                 if (!tail.localView(tail.rows-1, 0, tmpView))
                     throw new IllegalStateException("Missing binding sequence");
                 lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+            }
+
+            @Override
+            public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
+                super.sendSerializedAll(batch, nodeConsumer);
+                if (bindQuery != null && batch.rows > 0)
+                    updateLastSentSeq(batch);
             }
 
             @Override public void sendCancel() {

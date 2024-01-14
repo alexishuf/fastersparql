@@ -30,6 +30,7 @@ import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsExce
 import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
 import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import io.netty.buffer.ByteBuf;
@@ -451,6 +452,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             @Override public void sendSerializedAll(Batch<?> batch) {
                 if (recycledSerializer) throw new IllegalStateException("recycled");
                 super.sendSerializedAll(batch);
+            }
+
+            @Override
+            public <N extends Batch<N>> void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
+                if (recycledSerializer) throw new IllegalStateException("recycled");
+                super.sendSerializedAll(batch, nodeConsumer);
             }
 
             @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
