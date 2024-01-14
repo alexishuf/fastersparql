@@ -650,21 +650,24 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 log.warn("Received endQuery() from {}, current sender is {}", sender, this.sender);
                 return;
             }
-            this.sender = null;
             TextWebSocketFrame msg = null;
-            if (cancelled && error == null && clientCancelled) {
-                if (bindingsParser != null) {
-                    var ex = new FSCancelledException(null, "server received !cancel from client");
-                    bindingsParser.feedError(ex);
+            try {
+                if (cancelled && error == null && clientCancelled) {
+                    if (bindingsParser != null) {
+                        var ex = new FSCancelledException(null, "server received !cancel from client");
+                        bindingsParser.feedError(ex);
+                    }
+                    (msg = CANCELLED).retain();
+                } else if (error != null) {
+                    String errMsg = error instanceof NoTraceException
+                            ? error.getMessage() : error.toString();
+                    msg = new TextWebSocketFrame("!error " + errMsg.replace("\n", "\\n") + "\n");
                 }
-                (msg = CANCELLED).retain();
-            } else if (error != null) {
-                String errMsg = error instanceof NoTraceException
-                        ? error.getMessage() : error.toString();
-                msg = new TextWebSocketFrame("!error "+errMsg.replace("\n", "\\n")+"\n");
+            } finally {
+                this.sender = null;
+                this.bindingsParser = null;
+                this.bindQuery = null;
             }
-            this.sender = null;
-            this.bindingsParser = null;
             if (msg != null) {
                 ctx.write(msg);
                 ctx.writeAndFlush(new CloseWebSocketFrame());
