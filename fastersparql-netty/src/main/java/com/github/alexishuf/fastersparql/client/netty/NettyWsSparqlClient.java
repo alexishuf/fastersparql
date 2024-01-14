@@ -307,16 +307,17 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
             assert this.ctx == null : "previous attach()";
+            Channel ch = ctx.channel();
             this.recycler = recycler;
             this.ctx      = ctx;
-            this.lastCh   = ctx.channel();
+            this.lastCh   = ch;
             if (destination instanceof WsEmitter<B> e)
-                e.setChannel(ctx.channel());
+                e.setChannel(ch);
             if (bbRopeView == null)
                 bbRopeView = ByteBufRopeView.create();
             parser.setFrameSender(this);
             if (destination.isTerminated()) { // cancel()ed before WebSocket established
-                recycler.recycle(ctx.channel());
+                recycler.recycle(ch);
             } else {
                 var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
                                                 requestMsg.backingArrayOffset(), requestMsg.len);
