@@ -21,7 +21,6 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.Objects;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
@@ -187,8 +186,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
             batch = dst.batchType().recycle(batch);
         incompleteRow   = false;
         eager           = false;
-        plainTerminated = false;
         rowsParsed      = 0;
+        TERMINATED.setRelease(this, false);
     }
 
     /*  --- --- --- abstract methods --- --- --- */
@@ -258,7 +257,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     private void handleFeedSharedError(Throwable t) throws TerminatedException {
         if ((boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
-            log.info("{} already terminated, ignoring {}", this, Objects.toString(t));
+            log.info("{} already terminated, ignoring {}", this, t.getClass().getSimpleName(), t);
         } else {
             emitLastBatch();
             Throwable ex = t instanceof FSException e ? e : new InvalidSparqlResultsException(t);

@@ -14,6 +14,10 @@ public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements Auto
         this.sink = sink;
     }
 
+    @Override public String toString() {
+        return getClass().getSimpleName()+'@'+Integer.toHexString(System.identityHashCode(this));
+    }
+
     @Override public void close() { sink.release(); }
 
     /**

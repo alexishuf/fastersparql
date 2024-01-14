@@ -39,8 +39,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         }
     }
 
-    private final EventExecutor executor;
-    private final ChannelHandlerContext ctx;
+    protected final EventExecutor executor;
+    protected final ChannelHandlerContext ctx;
     protected Thread owner;
     protected @Nullable Throwable error;
     private final Object[] actions = new Object[(128-16)>>2];
@@ -83,6 +83,11 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     @Override public @Nullable Channel channel() { return ctx.channel(); }
     @Override public String        journalName() { return "NRS:"+ctx.channel().id().asShortText(); }
+
+    @Override public String toString() {
+        return getClass().getSimpleName()+':'+ctx.channel().id().asShortText()
+                                         +'@'+Integer.toHexString(System.identityHashCode(this));
+    }
 
     @Override public void close() {
         disableAutoTouch();

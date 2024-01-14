@@ -171,33 +171,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             upstream.subscribe(this);
         }
 
-        private static final CompleteAction<?> COMPLETE_ACTION = new CompleteAction<>();
-        private static final class CompleteAction<M> extends Action {
-            public CompleteAction() {super("COMPLETE");}
-            @Override public void run(NettyResultsSender<?> sender) {
-                @SuppressWarnings("unchecked") var mSender = (Sender<M>) sender;
-                mSender.handler.endQuery(mSender, OK, false, null);
-            }
-        }
-        private static final CancelAction<?> CANCEL_ACTION = new CancelAction<>();
-        private static final class CancelAction<M> extends Action {
-            public CancelAction() {super("CANCEL");}
-            @Override public void run(NettyResultsSender<?> sender) {
-                @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
-                mSender.handler.endQuery(mSender, PARTIAL_CONTENT, true, null);
-            }
-        }
-        private static final class ErrorAction<M> extends Action {
-            private final Throwable error;
-            private ErrorAction(Throwable error) {
-                super("ERROR");
-                this.error = error;
-            }
-            @Override public void run(NettyResultsSender<?> sender) {
-                @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
-                mSender.handler.endQuery(mSender, INTERNAL_SERVER_ERROR, false, error);
-            }
-        }
 
         /* --- --- ---  methods --- --- --- */
 
@@ -223,18 +196,56 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             sendSerializedAll(batch);
             return batch;
         }
+
         @Override public void onComplete() {
             journal("onComplete, sender=", this);
-            sendTrailer();
             execute(COMPLETE_ACTION);
         }
+        private static final CompleteAction COMPLETE_ACTION = new CompleteAction();
+        private static final class CompleteAction extends Action {
+            public CompleteAction() {super("COMPLETE");}
+            @Override public void run(NettyResultsSender<?> sender) {
+                ((Sender<?>)sender).doOnComplete();
+            }
+        }
+        private void doOnComplete() {
+            disableAutoTouch();
+            serializer.serializeTrailer(sink.touch());
+            M msg = wrapLast(sink.take());
+            try {
+                handler.endQuery(this, OK, false, null);
+            } finally {
+                ctx.writeAndFlush(msg);
+            }
+        }
+
         @Override public final void onCancelled()        {
             journal("onCancelled, abortCause=", abortCause, "sender=", this);
             execute(abortCause==null ? CANCEL_ACTION : new ErrorAction<>(abortCause));
         }
+        private static final CancelAction<?> CANCEL_ACTION = new CancelAction<>();
+        private static final class CancelAction<M> extends Action {
+            public CancelAction() {super("CANCEL");}
+            @Override public void run(NettyResultsSender<?> sender) {
+                @SuppressWarnings("unchecked") Sender<M> mSender = (Sender<M>) sender;
+                mSender.handler.endQuery(mSender, PARTIAL_CONTENT, true, null);
+            }
+        }
+
         @Override public final void onError(Throwable e) {
             journal("onError", e, "sender=", this);
             execute(new ErrorAction<>(e));
+        }
+        private static final class ErrorAction<M> extends Action {
+            private final Throwable error;
+            private ErrorAction(Throwable error) {
+                super("ERROR");
+                this.error = error;
+            }
+            @Override public void run(NettyResultsSender<?> sender) {
+                @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
+                mSender.handler.endQuery(mSender, INTERNAL_SERVER_ERROR, false, error);
+            }
         }
     }
 
@@ -425,38 +436,54 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 journal("endQuery cancelled=", cancelled ? 1 : 0);
             }
             if (this.sender != sender) {
-                log.warn("Received endQuery() from {}, current sender is {}", sender, this.sender);
+                badEndQuerySender(sender, status, cancelled, error);
                 return;
             }
-            try {
-                if (cancelled && error == null)
-                    error = new FSCancelledException();
-                if (error != null) {
-                    var msg = new ByteRope(512);
-                    msg.append("Could not process query due to ")
-                            .append(error.getClass().getSimpleName());
-                    if (query != null) {
-                        msg.append("\nQuery:\n").append(query.toString().replace("\n", "\n  "));
-                        if (msg.charAt(msg.length() - 3) != '\n') msg.append('\n');
-                    }
-                    try (var ps = new PrintStream(msg.asOutputStream())) {
-                        error.printStackTrace(ps);
-                    }
-                    var msgBB = Unpooled.wrappedBuffer(msg.u8(), 0, msg.len);
-                    Object hc;
-                    if (responseStarted) {
-                        hc = new DefaultLastHttpContent(msgBB);
-                    } else {
-                        var r = new DefaultFullHttpResponse(HTTP_1_1, status, msgBB);
-                        r.headers().set(CONTENT_TYPE, TEXT_PLAIN_U8)
-                                   .set(CONTENT_LENGTH, msgBB.readableBytes());
-                        hc = r;
-                    }
-                    ctx.writeAndFlush(hc);
-                }
-            } finally {
-                this.query = null;
-                this.sender = null;
+            Plan query = this.query;
+            this.query = null;
+            this.sender = null;
+            if (cancelled && error == null)
+                error = new FSCancelledException();
+            else if (error == null)
+                return;
+
+            var msg = new ByteRope(512);
+            msg.append("Could not process query due to ")
+                    .append(error.getClass().getSimpleName());
+            if (query != null) {
+                msg.append("\nQuery:\n").append(query.toString().replace("\n", "\n  "));
+                if (msg.charAt(msg.length() - 3) != '\n') msg.append('\n');
+            }
+            try (var ps = new PrintStream(msg.asOutputStream())) {
+                error.printStackTrace(ps);
+            }
+            var msgBB = Unpooled.wrappedBuffer(msg.u8(), 0, msg.len);
+            Object hc;
+            if (responseStarted) {
+                hc = new DefaultLastHttpContent(msgBB);
+            } else {
+                var r = new DefaultFullHttpResponse(HTTP_1_1, status, msgBB);
+                r.headers().set(CONTENT_TYPE, TEXT_PLAIN_U8)
+                           .set(CONTENT_LENGTH, msgBB.readableBytes());
+                hc = r;
+            }
+            ctx.writeAndFlush(hc);
+        }
+
+        private void badEndQuerySender(@Nullable Sender<HttpContent> sender,
+                                       HttpResponseStatus status,
+                                       boolean cancelled, @Nullable Throwable error) {
+            journal("badEndQuerySender", sender, "this=", this);
+            journal("badEndQuerySender status=", status.code(),
+                    cancelled ? "cancelled, error=" : "!cancelled, error=", error);
+            String cancelledStr = cancelled ? "cancelled" : "!cancelled";
+            if (error == null) {
+                log.warn("Received endQuery({}, {}) for sender={}, but this={}",
+                         status.code(), cancelledStr, sender, this);
+            } else {
+                log.error("Received stale endQuery({}, {}, {}) for sender={}, but this={}",
+                        status.code(), cancelledStr, error.getClass().getSimpleName(),
+                        sender, this, error);
             }
         }
 

@@ -131,6 +131,14 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     /* --- --- --- specialize SVParserBIt.Tsv methods --- --- --- */
 
     @Override public void reset() {
+        if (bindingsReceiver != null) {
+            bindingsReceiver.reset();
+        } else if (bindingsSender != null) {
+            if (bindingsSender.isAlive())
+                stopBindingsSender();
+            bindingsSender = null;
+        }
+
         while ((int) SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
             if (sentBindings != null)
@@ -140,15 +148,26 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             bindingNotified = true;
             plainBindingsRequested = 0;
         } finally { SB_LOCK.setRelease(this, 0); }
-
-        if (bindingsReceiver != null) {
-            bindingsReceiver.reset();
-        } else if (bindingsSender != null) {
-            if (bindingsSender.isAlive())
-                throw new UnsupportedOperationException("Cannot reset thread consuming BIt-based bindings");
-            bindingsSender = null;
-        }
         super.reset();
+    }
+
+    private void stopBindingsSender() {
+        boolean interrupted = false;
+        try {
+            bindingsSender.join(50);
+        } catch (InterruptedException e) { interrupted = true; }
+        if (bindingsSender.isAlive()) {
+            if (!(bindQuery instanceof ItBindQuery<B> ibq))
+                throw new AssertionError("bad bindQuery type");
+            ibq.bindings.close();
+            try {
+                bindingsSender.join();
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted)
+            Thread.currentThread().interrupt();
     }
 
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {
