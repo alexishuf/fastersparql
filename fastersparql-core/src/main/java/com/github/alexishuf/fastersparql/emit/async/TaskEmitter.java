@@ -59,7 +59,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     }
 
     @Override protected void doRelease() {
-        if (EmitterStats.ENABLED && stats != null)
+        if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
         super.doRelease();
     }

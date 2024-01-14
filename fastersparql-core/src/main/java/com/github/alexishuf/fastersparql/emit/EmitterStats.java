@@ -8,7 +8,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
 public class EmitterStats {
-    public static final boolean ENABLED = FSProperties.emitLogStats();
+    public static final boolean ENABLED = FSProperties.emitStats();
+    public static final boolean LOG_ENABLED = FSProperties.emitStatsLog();
     public long deliveredBatches, deliveredNullBatches, deliveredRows, deliveredSingleRowBatches;
     public long receivedBatches, receivedNullBatches, receivedRows, receivedSingleRowBatches;
     public long rebinds;

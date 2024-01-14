@@ -10,10 +10,13 @@ import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReo
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
 import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import jdk.jfr.Event;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -51,7 +54,8 @@ public class FSProperties {
     public static final String FED_ASK_POS_CAP           = "fastersparql.fed.ask.pos.cap";
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
     public static final String EMIT_REQ_CHUNK_BATCHES    = "fastersparql.emit.request.chunk.batches";
-    public static final String EMIT_LOG_STATS            = "fastersparql.emit.log-stats";
+    public static final String EMIT_STATS                = "fastersparql.emit.stats";
+    public static final String EMIT_STATS_LOG            = "fastersparql.emit.stats.log";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
     public static final String STORE_PREFER_IDS          = "fastersparql.store.prefer-ids";
     public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
@@ -76,7 +80,8 @@ public class FSProperties {
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
-    public static final boolean DEF_EMIT_LOG_STATS            = false;
+    public static final boolean DEF_EMIT_STATS                = false;
+    public static final boolean DEF_EMIT_STATS_LOG            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final boolean DEF_STORE_PREFER_IDS          = true;
     public static final Boolean DEF_BATCH_POOLED_TRACE        = false;
@@ -103,7 +108,8 @@ public class FSProperties {
     private static Boolean CACHE_USE_UNSAFE             = null;
     private static Boolean CACHE_OP_CROSS_DEDUP         = null;
     private static Boolean CACHE_OP_OPPORTUNISTIC_DEDUP = null;
-    private static Boolean CACHE_EMIT_LOG_STATS         = null;
+    private static Boolean CACHE_EMIT_STATS             = null;
+    private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
     private static Boolean CACHE_STORE_PREFER_IDS       = null;
     private static Boolean CACHE_BATCH_POOLED_MARK      = null;
@@ -204,7 +210,8 @@ public class FSProperties {
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
         CACHE_OP_CROSS_DEDUP            = null;
-        CACHE_EMIT_LOG_STATS            = null;
+        CACHE_EMIT_STATS                = null;
+        CACHE_EMIT_STATS_LOG            = null;
         CACHE_BATCH_POOLED_MARK         = null;
         CACHE_BATCH_POOLED_TRACE        = null;
         CACHE_BATCH_SELF_VALIDATE       = null;
@@ -257,9 +264,13 @@ public class FSProperties {
     }
 
     /**
-     * If {@code true} {@link Emitter}s will log statistics when terminated if there is no
-     * {@link Emitter#rebindAcquire()} in effect. This is disabled by default and should only be
-     * enabled for debugging.
+     * If {@code true} {@link Emitter}s will count statistics which will then be visible
+     * in {@link StreamNode#label(StreamNodeDOT.Label)} when a type with
+     * {@link StreamNodeDOT.Label#showStats()}{@code == true}is used. The main use case is
+     * in {@link StreamNode#renderDOT(File, StreamNodeDOT.Label)}.
+     *
+     * <p>{@link #emitStatsLog()} will imply this property to be {@code true}, even
+     * if this was explicitly set to false.</p>
      *
      * <p>Note that {@link Emitter} implementations query this via a {@code static final}
      * field, so that code pertaining to this logging (including the check) is eliminated by the
@@ -268,12 +279,35 @@ public class FSProperties {
      *
      * @return {@code true} if {@link Emitter} should log statistics upon termination.
      */
-    public static boolean emitLogStats() {
-        Boolean v = CACHE_EMIT_LOG_STATS;
+    public static boolean emitStats() {
+        Boolean v = CACHE_EMIT_STATS;
         if (v == null)
-            CACHE_EMIT_LOG_STATS = v = readBoolean(EMIT_LOG_STATS, DEF_EMIT_LOG_STATS);
+            CACHE_EMIT_STATS = v = emitStatsLog() || readBoolean(EMIT_STATS, DEF_EMIT_STATS);
         return v;
     }
+
+    /**
+     * If {@code true} {@link Emitter}s will log statistics when terminated if there is no
+     * {@link Emitter#rebindAcquire()} in effect. This is disabled by default and should only be
+     * enabled for debugging.
+     *
+     * <p>Setting this to {@code true} will implicitly make {@link #emitStats()} {@code true}</p>
+     *
+     * <p>Note that {@link Emitter} implementations query this via a {@code static final}
+     * field, so that code pertaining to this logging (including the check) is eliminated by the
+     * JIT compiler. Therefore changes at runtime may be ignored and this should be set with
+     * {@code -D} on the command-line. </p>
+     *
+     * @return Whether {@link Emitter}s should print statistics when released
+     *         (termination delivered without a (future) rebind).
+     */
+    public static boolean emitStatsLog() {
+        Boolean v = CACHE_EMIT_STATS_LOG;
+        if (v == null)
+            CACHE_EMIT_STATS_LOG = v = readBoolean(EMIT_STATS_LOG, DEF_EMIT_STATS_LOG);
+        return v;
+    }
+
 
     /**
      * {@link GatheringEmitter} fragments {@link Emitter#request(long)} into fragments which

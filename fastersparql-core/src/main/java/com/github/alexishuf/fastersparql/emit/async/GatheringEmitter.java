@@ -171,7 +171,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         delayRelease = (byte)Math.max(0, delayRelease-1);
         for (int i = 0, count = connectorCount; i < count; i++)
             connectors[i].up.rebindRelease();
-        if (release && EmitterStats.ENABLED && stats != null)
+        if (release && EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
     }
 
@@ -263,7 +263,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 if (connectors[i].projector != null)
                     connectors[i].projector.release();
             }
-            if (EmitterStats.ENABLED && stats != null)
+            if (EmitterStats.LOG_ENABLED && stats != null)
                 stats.report(log, this);
         }
     }
