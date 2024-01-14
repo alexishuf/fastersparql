@@ -606,9 +606,11 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         private void doOnCancelled(int st) {
             journal("delivering onCancelled from", this);
             try {
+                ResultsSender<?, ?> sender = this.sender;
                 if (sender != null) {
                     if (!parent.serverSentTermination) sender.sendCancel();
-                    sender.close();
+                    if ((sender = this.sender) != null)
+                        sender.close();
                 }
                 if ((st&UP_CANCEL) == 0)
                     log.info("bindings unexpectedly cancelled");
