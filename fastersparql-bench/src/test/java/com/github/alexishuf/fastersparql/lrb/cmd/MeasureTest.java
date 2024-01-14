@@ -178,9 +178,9 @@ class MeasureTest {
                 assertEquals(exRows, rows, "unstable row count "+ctx);
             assertTrue(m.terminalNs() >= 0, "terminalNs="+m.terminalNs()+ctx);
             assertFalse(m.cancelled(), ctx);
-            log.debug("{}, rep {} rows={}, allRows={}us", m.task().query(), m.rep(),
+            log.debug("{}, rep {} rows={}, allRows={}ms", m.task().query(), m.rep(),
                       m.rows(),
-                      String.format("%.3f", m.allRowsNs()/1_000.0));
+                      String.format("%.3f", m.allRowsNs()/1_000_000.0));
         }
     }
 
