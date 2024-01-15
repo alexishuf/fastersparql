@@ -123,11 +123,12 @@ public class BatchBinding extends Binding {
             var batch = b.batch;
             if (batch == null) return;
             if (batch.type().equals(dstBatch.type()))//noinspection unchecked
-                dstBatch.putTerm(dstCol, (B)batch, b.row, srcCol);
+                dstBatch.putTerm(dstCol, (B)batch, b.row, c);
             else
-                dstBatch.putTerm(dstCol, batch.get(b.row, srcCol));
+                dstBatch.putTerm(dstCol, batch.get(b.row, c));
+        } else {
+            throw new IndexOutOfBoundsException("var not found");
         }
-        throw new IndexOutOfBoundsException("var not found");
     }
 
     /**
