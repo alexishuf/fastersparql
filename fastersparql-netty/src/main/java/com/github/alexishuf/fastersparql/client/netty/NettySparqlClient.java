@@ -170,10 +170,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void doRelease() {
-            var request = this.boundRequest;
-            if (request != null) {
-                request.release();
+            var boundRequest = this.boundRequest;
+            if (boundRequest != null) {
+                boundRequest.release();
                 this.boundRequest = null;
+            }
+            lb = batchType().recycle(lb);
+            if (this.merger != null) {
+                this.merger.release();
+                this.merger = null;
             }
             releaseRef();
         }
