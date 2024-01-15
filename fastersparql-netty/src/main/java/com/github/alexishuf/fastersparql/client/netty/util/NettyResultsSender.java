@@ -19,7 +19,13 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.locks.LockSupport;
+
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static java.lang.System.arraycopy;
+import static java.lang.Thread.currentThread;
 
 /**
  * A {@link ResultsSender} that executes all its actions inside a netty event loop.
@@ -27,9 +33,6 @@ import java.util.concurrent.RejectedExecutionException;
 public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, ByteBuf>
                                             implements ChannelBound, Runnable {
     private static final Logger log = LoggerFactory.getLogger(NettyResultsSender.class);
-    private static final byte TOUCH_DISABLED = 0x00;
-    private static final byte TOUCH_AUTO     = 0x01;
-    private static final byte TOUCH_PARKED   = 0x02;
     private static final VarHandle LOCK;
     static {
         try {
@@ -41,13 +44,15 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     protected final EventExecutor executor;
     protected final ChannelHandlerContext ctx;
-    protected Thread owner;
     protected @Nullable Throwable error;
-    private Object[] actions = ArrayPool.objectsAtLeast(16);
+    private Object[] actions;
     private byte actionsHead = 0, actionsSize = 0;
-    private byte touchState;
+    private boolean autoTouch;
     protected boolean active;
     @SuppressWarnings("unused") private int plainLock;
+    protected @Nullable Thread touchParked, capacityParked;
+    private final Object[] instanceActions;
+    private Object @Nullable[] sharedActions;
 
     public static class NettyExecutionException extends RuntimeException {
         public NettyExecutionException(Throwable cause) {
@@ -76,9 +81,11 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     public NettyResultsSender(ResultsSerializer serializer, ChannelHandlerContext ctx) {
         super(serializer, new ByteBufSink(ctx.alloc()));
-        this.executor = (this.ctx = ctx).executor();
-        this.touchState = TOUCH_AUTO;
-        this.owner = Thread.currentThread();
+        Object[] actions = new Object[128>>2];
+        this.actions          = actions;
+        this.instanceActions  = actions;
+        this.executor         = (this.ctx = ctx).executor();
+        this.autoTouch = true;
     }
 
     @Override public @Nullable Channel channel() { return ctx.channel(); }
@@ -92,18 +99,42 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override public void close() {
         disableAutoTouch();
         if (shouldScheduleRelease())
-            execute(Action.RELEASE_SINK);
+            execute(Action.RELEASE_SINK); // will also lead to recycleSharedActions()
+        else if (sharedActions != null)
+            recycleSharedActions();
+    }
+
+    private void copyActions(Object[] dst) {
+        int n0 = Math.min(actionsSize, actions.length-actionsHead);
+        arraycopy(actions, actionsHead, dst, 0, n0);
+        int n1 = actionsSize-n0;
+        if (n1 > 0)
+            arraycopy(actions, 0, dst, n0, n1);
+    }
+
+    private void recycleSharedActions() {
+        lock();
+        try {
+            if (sharedActions == null || actionsSize > instanceActions.length)
+                return;
+            if (actionsSize > 0)
+                copyActions(instanceActions);
+            Arrays.fill(sharedActions, null);
+            actionsHead   = 0;
+            actions       = instanceActions;
+            sharedActions = ArrayPool.OBJECT.offerToNearest(sharedActions, sharedActions.length);
+        } finally { unlock(); }
     }
 
     protected void disableAutoTouch() {
         lock();
         try {
-            touchState &= ~TOUCH_AUTO;
+            autoTouch = false;
         } finally { unlock(); }
     }
 
     @Override public void preTouch() {
-        if (!sink.needsTouch() || touchState == TOUCH_DISABLED)
+        if (!sink.needsTouch() || !autoTouch)
             return;
         lock();
         unlockAndSpawn();
@@ -174,6 +205,22 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         execute(t, Action.RELEASE_SINK);
     }
 
+    @Override public void waitCanSend() {
+        lock();
+        try {
+            assert capacityParked == null : "concurrent usage";
+            Thread thread = currentThread();
+            capacityParked = thread;
+            while (actionsSize >= actions.length) {
+                unlockAndSpawn();
+                LockSupport.park(this);
+                lock();
+            }
+            if (capacityParked == thread)
+                capacityParked = null;
+        } finally { unlock(); }
+    }
+
     protected void lock() {
         while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
     }
@@ -221,17 +268,27 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 else if (a instanceof ReferenceCounted rc) { rc.release(); ++nReleases; }
                 actionsHead = (byte)((actionsHead + 1) % actions.length);
             }
-            if (touchState == TOUCH_PARKED) {
-                doTouch();
-                touchState = TOUCH_DISABLED;
-            }
+            if (touchParked != null && sink.needsTouch() && touchParked == currentThread())
+                sink.touch();
         } finally { unlock(); }
         log.debug("{} rejected {}. Ran {} actions, released {} netty objects",
-                 executor, this, nActions, nReleases);
+                  executor, this, nActions, nReleases);
     }
 
     private void growCapacity() {
-        actions = ArrayPool.grow(actions, actionsSize, actions.length<<1);
+        journal("growing actions from", actions.length, "sender=", this);
+        int required = actions.length<<1;
+        if (required > Short.MAX_VALUE)
+            throw new IllegalStateException("actions overflow");
+        var bigger = ArrayPool.objectsAtLeast(required);
+        copyActions(bigger);
+        if (sharedActions != null) {
+            Arrays.fill(sharedActions, null);
+            ArrayPool.OBJECT.offerToNearest(sharedActions, sharedActions.length);
+        }
+        sharedActions = bigger;
+        actions       = bigger;
+        actionsHead   = 0;
     }
 
     protected void touch() {
@@ -239,23 +296,29 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             sink.touch();
             return;
         }
+        Thread thread;
         lock();
         try {
             if (!sink.needsTouch()) return;
-            touchState |= TOUCH_PARKED;
+            assert touchParked == null : "concurrent usage";
+            thread = currentThread();
+            touchParked = thread;
             error = null;
         } finally { unlockAndSpawn(); }
 
         Throwable error;
-        while (true) {
+        for (int i = 0; true; ++i) {
             lock();
             try {
                 if ((error = this.error) != null || !sink.needsTouch()) {
                     this.error = null;
-                    touchState &= ~TOUCH_PARKED;
+                    if (touchParked == thread)
+                        touchParked = null;
                     break;
                 }
             } finally { unlock(); }
+            if      ((i&7) ==  7) Thread.yield();
+            else if (i     > 255) LockSupport.park(this);
         }
         if (error != null)
             throw new NettyExecutionException(error);
@@ -281,6 +344,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     protected void beforeSend() { }
     protected void onError(Throwable t) {
+        journal("onError", t, "sender=", this);
         log.error("{}.run(): failed to run action", this, t);
     }
 
@@ -295,8 +359,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             error = t;
             onError(t);
         } finally {
-            if ((touchState & TOUCH_PARKED) != 0)
-                Unparker.unpark(owner);
+            if (touchParked != null)
+                Unparker.unpark(touchParked);
         }
     }
 
@@ -306,7 +370,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             Object action;
             for (int i = 0; i < 8 || executor.isShuttingDown(); i++) {
                 // speculative touch
-                if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                if (touchParked != null || (autoTouch && sink.needsTouch()))
                     doTouch();
                 // take next action
                 lock();
@@ -318,7 +382,9 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                     }
                     --actionsSize;
                     action = actions[actionsHead];
-                    actionsHead = (byte) ((actionsHead + 1) % actions.length);
+                    actionsHead = (byte) ((actionsHead+1) % actions.length);
+                    if (capacityParked != null)
+                        Unparker.unpark(capacityParked);
                 } catch (Throwable t) {
                     error = t;
                     onError(t);
@@ -327,7 +393,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                     unlock();
                 }
                 // speculative touch
-                if (touchState != TOUCH_DISABLED && sink.needsTouch())
+                if (touchParked != null || (autoTouch && sink.needsTouch()))
                     doTouch();
                 // execute action
                 try {
@@ -346,7 +412,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             }
             if (flush)
                 ctx.flush(); // send messages over the wire
-            if (!exhausted) { // run other task in the executor before continuing
+            if (!exhausted) {
                 try {
                     executor.execute(this);
                 } catch (RejectedExecutionException e) {
@@ -355,11 +421,12 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             }
         } finally {
             // release the rare speculative ByteBuf that should not have been allocated
-            lock(); // required to acquire the writes to touchState by the owner thread
-            boolean disabled = touchState == TOUCH_DISABLED;
-            unlock();
-            if (disabled)
+            lock();
+            if (!autoTouch && touchParked == null)
                 sink.release();
+            unlock();
+            if (exhausted)
+                recycleSharedActions();
         }
     }
 }

@@ -414,6 +414,7 @@ public class NettySparqlServer implements AutoCloseable {
                 }
                 task.sendInit(it.vars(), serializeVars, query.isAsk());
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
+                    task.waitCanSend();
                     task.sendSerializedAll(b);
                 }
                 task.sendTrailer();

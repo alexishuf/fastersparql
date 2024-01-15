@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
@@ -49,4 +51,17 @@ public abstract class ResultsSender<S extends ByteSink<S, T>, T> implements Auto
      * an error. In any case no more messages should be sent after this.
      */
     public abstract void sendCancel();
+
+    /**
+     * If the calling {@code send*()} would require acquiring more internal resources or
+     * would cause blocking, this method will block the caller thread until such condition
+     * is no longer true.
+     *
+     * <p>This is intended to be used by iterator-backed producers that do not have their own
+     * methods for flow control. If the {@code send*} methods are being called from the methods
+     * of a {@link Receiver}, then this method SHOULD NOT be called, since
+     * {@link Emitter#request(long)} already provides adequate flow-control. </p>
+     *
+     */
+    public void waitCanSend() {}
 }
