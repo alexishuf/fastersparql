@@ -52,26 +52,29 @@ public class NettyRopeUtils {
     /** {@code bb.writeBytes(source.copy())}, but faster */
     public static ByteBuf write(ByteBuf bb, MemorySegment segment, byte @Nullable[] array,
                                 long off, int len) {
-        if (len <= 0) return bb;
-        bb.ensureWritable(len);
-        if (U == null)
-            return writeSafe(bb, segment, off, len);
+        if (len <= 0)
+            return bb;
         if (off+len > segment.byteSize())
             throw new IndexOutOfBoundsException("[offset, offset+len) not in [0, segment.byteSize())");
-        byte[] destBase;
-        int wIdx = bb.writerIndex();
-        long destOff = wIdx;
-        if (bb.hasArray()) {
-            destBase = bb.array();
-            destOff += U8_BASE;
-        } else {
-            destBase = null;
-            destOff += bb.memoryAddress();
+        bb.ensureWritable(len);
+        if (U != null) {
+            byte[] destBase = null;
+            int wIdx = bb.writerIndex();
+            long destOff = -1;
+            if (bb.hasArray()) {
+                destBase = bb.array();
+                destOff = wIdx+bb.arrayOffset()+U8_BASE;
+            } else if (bb.hasMemoryAddress()) {
+                destOff = wIdx+bb.memoryAddress();
+            }
+            if (destOff != -1) {
+                U.copyMemory(array, segment.address()+(array == null ? 0 : U8_BASE)+off,
+                             destBase, destOff, len);
+                bb.writerIndex(wIdx+len);
+                return bb;
+            }
         }
-        U.copyMemory(array, segment.address()+(array == null ? 0 : U8_BASE)+off,
-                     destBase, destOff, len);
-        bb.writerIndex(wIdx+len);
-        return bb;
+        return writeSafe(bb, segment, off, len);
     }
 
     private static ByteBuf writeSafe(ByteBuf bb, MemorySegment segment, long off, int len) {
@@ -79,7 +82,7 @@ public class NettyRopeUtils {
         if (array == null) {
             int wIdx = bb.writerIndex(), free = bb.capacity() - wIdx;
             MemorySegment.copy(segment, off,
-                    ofBuffer(bb.internalNioBuffer(wIdx, free)), 0, len);
+                               ofBuffer(bb.internalNioBuffer(wIdx, free)), 0, len);
             bb.writerIndex(wIdx+len);
         } else {
             bb.writeBytes(array, (int)(segment.address()+off), len);
