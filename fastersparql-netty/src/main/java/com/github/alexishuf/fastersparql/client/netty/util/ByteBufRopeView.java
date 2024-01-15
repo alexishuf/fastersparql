@@ -81,7 +81,7 @@ public final class ByteBufRopeView {
         } else if (bb.hasMemoryAddress()) {
             segment = MemorySegment.ofAddress(bb.memoryAddress()).reinterpret(offset+len);
         } else if (bb.isDirect() && bb.nioBufferCount() == 1) {
-            segment = MemorySegment.ofBuffer(bb.nioBuffer());
+            segment = MemorySegment.ofBuffer(bb.internalNioBuffer(offset, len));
             offset = 0;
         } else {
             return copy(bb);
