@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
+import com.github.alexishuf.fastersparql.emit.RebindableReceiver;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -20,6 +21,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
@@ -391,10 +393,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
      * Get the {@link Receiver} of bindings, if this parser was instantiated with an
      * {@link EmitBindQuery}.
      */
-    public @Nullable Receiver<B> bindingsReceiver() { return bindingsReceiver; }
+    public @Nullable RebindableReceiver<B> bindingsReceiver() { return bindingsReceiver; }
 
     private static final class BindingsReceiver<B extends Batch<B>>
-            extends Stateful implements Receiver<B>, ResultsSerializer.SerializedNodeConsumer<B> {
+            extends Stateful implements RebindableReceiver<B>, ResultsSerializer.SerializedNodeConsumer<B> {
         private static final int HAS_SENDER    = 0x20000000;
         private static final int SENDING_INIT  = 0x40000000;
         private static final int INIT_SENT     = 0x80000000;
@@ -463,6 +465,21 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 }
             } finally { unlock(st, stClear, stSet); }
         }
+
+        @Override public void rebindAcquire() {
+            delayRelease();
+            upstream.rebindAcquire();
+        }
+
+        @Override public void rebindRelease() {
+            allowRelease();
+            upstream.rebindRelease();
+        }
+
+        @Override public void rebind(BatchBinding b)         { upstream.rebind(b);  }
+        @Override public void rebindPrefetch(BatchBinding b) { upstream.rebindPrefetch(b); }
+        @Override public void rebindPrefetchEnd()            { upstream.rebindPrefetchEnd(); }
+        @Override public Vars bindableVars()                 { return upstream.bindableVars(); }
 
         private void onFrameSender(WsFrameSender<?, ?> frameSender, Throwable err) {
             journal("onFrameSender", frameSender, "on", this);

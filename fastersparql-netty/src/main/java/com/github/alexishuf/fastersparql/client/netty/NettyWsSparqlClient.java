@@ -178,11 +178,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
                          @Nullable EmitBindQuery<B> bindQuery) {
-           super(batchType, outVars, NettyWsSparqlClient.this);
-           this.query = query;
-           this.bindQuery = bindQuery;
-           this.handler = new WsHandler<>(makeRequest(), this, false, bindQuery);
-           acquireRef();
+            super(batchType, outVars, NettyWsSparqlClient.this);
+            this.query = query;
+            this.bindQuery = bindQuery;
+            this.handler = new WsHandler<>(makeRequest(), this, false, bindQuery);
+            var bReceiver = handler.parser.bindingsReceiver();
+            if (bReceiver != null)
+                bReceiver.rebindAcquire();
+            acquireRef();
         }
 
         @Override public void setChannel(Channel channel) { super.setChannel(channel); }
@@ -212,19 +215,37 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void doRelease() {
             try {
-                releaseRef();
+                var bReceiver = handler.parser.bindingsReceiver();
+                if (bReceiver != null)
+                    bReceiver.rebindRelease();
                 handler.reset(null);
+                releaseRef();
             } finally { super.doRelease(); }
         }
         @Override protected void   request() { netty.open(handler); }
+
+        @Override public void rebindAcquire() {
+            var bReceiver = handler.parser.bindingsReceiver();
+            if (bReceiver != null)
+                bReceiver.rebindAcquire();
+            super.rebindAcquire();
+        }
+
+        @Override public void rebindRelease() {
+            var bReceiver = handler.parser.bindingsReceiver();
+            if (bReceiver != null)
+                bReceiver.rebindRelease();
+            super.rebindRelease();
+        }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             int st = resetForRebind(0, LOCKED_MASK);
             try {
                 assert binding.batch != null && binding.row < binding.batch.rows;
                 this.binding = binding;
-                if (bindQuery != null)
-                    bindQuery.bindings.rebind(binding);
+                var bReceiver = handler.parser.bindingsReceiver();
+                if (bReceiver != null)
+                    bReceiver.rebind(binding);
                 handler.reset(makeRequest());
             } finally {
                 unlock(st);
@@ -291,8 +312,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 this.ctx = null;
                 recycler.recycle(ch);
             }
-
-
         }
 
         /* --- --- --- ChannelBound methods --- --- --- */
