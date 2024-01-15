@@ -113,6 +113,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
                 while (begin != end && ((c = rope.get(begin)) == ' ' || c == '\r')) ++begin;
                 if (column == 0 && c == '!')
                     c = (byte)((begin = handleControl(rope, begin)) < end ? rope.get(begin) : 0);
+                if (begin >= end)
+                    break;
                 int pseudTermLast = switch (c) {
                     case '<' -> rope.skipUntil(begin, end, '>');
                     case '"' -> rope.skipUntilUnescaped(begin+1, end, '"');
