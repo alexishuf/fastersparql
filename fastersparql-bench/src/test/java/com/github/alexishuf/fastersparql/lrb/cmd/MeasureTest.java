@@ -235,7 +235,11 @@ class MeasureTest {
 
 
     static Stream<Arguments> test() {
-        List<SourceKind> sources = List.of(FS_STORE, HDT_FILE, HDT_JSON, HDT_WS, FS_TSV, FS_WS);
+        List<SourceKind> sources = List.of(FS_STORE, HDT_FILE,
+                HDT_JSON, HDT_WS,
+                HDT_TSV_EMIT, HDT_WS_EMIT,
+                FS_TSV, FS_WS,
+                FS_JSON_EMIT, FS_WS_EMIT);
         return Stream.of(true, false).flatMap(jsonPlans
                 -> sources.stream().map(src -> arguments(jsonPlans, src)));
     }
