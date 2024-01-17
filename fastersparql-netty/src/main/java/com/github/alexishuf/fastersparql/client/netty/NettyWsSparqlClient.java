@@ -185,9 +185,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             super(batchType, outVars, NettyWsSparqlClient.this);
             this.query = query;
             this.bindQuery = bindQuery;
-            var bReceiver = handler.parser.bindingsReceiver();
-            if (bReceiver != null)
-                bReceiver.rebindAcquire();
             this.handler = new WsHandler<>(NettyWsSparqlClient.this, makeRequest(),
                                            this, false, bindQuery);
             acquireRef();
@@ -220,9 +217,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void doRelease() {
             try {
-                var bReceiver = handler.parser.bindingsReceiver();
-                if (bReceiver != null)
-                    bReceiver.rebindRelease();
                 handler.reset(null);
                 releaseRef();
             } finally { super.doRelease(); }
