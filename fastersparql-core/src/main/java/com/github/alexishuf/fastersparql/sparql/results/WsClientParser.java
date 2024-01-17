@@ -14,7 +14,6 @@ import com.github.alexishuf.fastersparql.emit.RebindableReceiver;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -341,6 +340,14 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     /* --- --- --- bindings upload --- --- --- */
 
+    @Override public void setFrameSender(WsFrameSender<?, ?> frameSender) {
+        super.setFrameSender(frameSender);
+        if (bindingsReceiver != null)
+            bindingsReceiver.onFrameSender(frameSender);
+        else
+            Unparker.unpark(bindingsSender);
+    }
+
     private void sendBindingsThread() {
         Thread.currentThread().setName("sendBindingsThread");
         ResultsSender<?,?> sender = null;
@@ -350,7 +357,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             if (bindQuery == null)
                 throw noBindings("sendBindingsThread()");
             BIt<B> bindings = ((ItBindQuery<B>) bindQuery).bindings;
-            sender = waitForFrameSender().createSender();
+            WsFrameSender<?, ?> frameSender;
+            while ((frameSender = (WsFrameSender<?, ?>)FRAME_SENDER.getAcquire(this)) == null)
+                LockSupport.park(this);
+            sender = frameSender.createSender();
 
             bindings.preferred().tempEager();
             int allowed = 0; // bindings requested by the server
@@ -424,7 +434,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             super(CREATED, BR_FLAGS);
             this.parent = parent;
             this.upstream = upstream;
-            parent.frameSenderFuture.whenComplete(this::onFrameSender);
             upstream.subscribe(this);
         }
 
@@ -483,17 +492,13 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         @Override public void rebindPrefetchEnd()            { upstream.rebindPrefetchEnd(); }
         @Override public Vars bindableVars()                 { return upstream.bindableVars(); }
 
-        private void onFrameSender(WsFrameSender<?, ?> frameSender, Throwable err) {
+        private void onFrameSender(WsFrameSender<?, ?> frameSender) {
             journal("onFrameSender", frameSender, "on", this);
             try {
-                if (err != null || frameSender == null) {
-                    doSendInitNoSender(err);
-                } else {
-                    sender = frameSender.createSender();
-                    sender.preTouch();
-                    setFlagsRelease(statePlain(), HAS_SENDER);
-                    trySendInit(0);
-                }
+                sender = frameSender.createSender();
+                sender.preTouch();
+                setFlagsRelease(statePlain(), HAS_SENDER);
+                trySendInit(0);
             } catch (Throwable t) {
                 log.error("Error handling setFrameSender() on {} at BindingsReceiver {}",
                           parent, this, t);
@@ -540,22 +545,6 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                     if ((state()&IS_TERM) == 0 && (rows = reqBfrInit-rows) > 0)
                         upstream.request(rows);
                 }
-            }
-        }
-
-        private void doSendInitNoSender(Throwable err) {
-            if (err == null)
-                err = new FSIllegalStateException("WsClientParser received a null WsFrameSender");
-            int st = statePlain();
-            if (moveStateRelease(statePlain(), FAILED))
-                st = (st&FLAGS_MASK) | FAILED;
-            st = lock(st);
-            try {
-                parent.feedError(FSException.wrap(null, err));
-                upstream.cancel();
-            } finally {
-                batchesBfrInit = parent.batchType().recycle(batchesBfrInit);
-                unlock(st, SENDING_INIT, INIT_SENT);
             }
         }
 
