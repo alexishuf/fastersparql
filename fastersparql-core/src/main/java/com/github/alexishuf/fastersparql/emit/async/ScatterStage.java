@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -60,9 +59,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
         this.batchType = upstream.batchType();
         this.vars      = upstream.vars();
         this.upstream  = upstream;
-        int b = FSProperties.emitReqChunkBatches();
-        int safeCols = Math.max(1, vars.size());
-        this.maxDelta = Math.max(b, b*batchType.preferredTermsPerBatch()/safeCols)<<CLOG_SHIFT;
+        this.maxDelta  = upstream.preferredRequestChunk()<<CLOG_SHIFT;
         upstream.subscribe(this);
     }
 

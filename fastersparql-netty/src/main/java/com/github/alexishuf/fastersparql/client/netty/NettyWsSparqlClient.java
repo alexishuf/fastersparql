@@ -223,6 +223,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } finally { super.doRelease(); }
         }
         @Override protected void   request() { netty.open(handler); }
+        @Override public int preferredRequestChunk() { return 4*super.preferredRequestChunk(); }
 
         @Override public void rebindAcquire() {
             var bReceiver = handler.parser.bindingsReceiver();

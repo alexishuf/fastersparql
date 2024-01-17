@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
@@ -29,6 +30,17 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable {
     void subscribe(Receiver<B> receiver)
             throws RegisterAfterStartException, MultipleRegistrationUnsupportedException;
 
+    /**
+     * An adequate size to use with {@link #request(long)} by receivers that prefer to
+     * issue multiple requests instead of a single large or unbounded {@link #request(long)}.
+     *
+     * @return a value for use with repeated {@link #request(long)} calls to this emitter.
+     */
+    default int preferredRequestChunk() {
+        int cols = Math.max(1, vars().size());
+        int b = FSProperties.emitReqChunkBatches();
+        return Math.max(b, b*batchType().preferredTermsPerBatch()/cols);
+    }
 
     /**
      * Notifies that the {@link Receiver} wishes to stop receiving batches. Once the

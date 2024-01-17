@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -60,7 +59,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private Receiver<B> downstream;
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[10];
     private short connectorCount;
-    private final short requestChunk;
+    private short requestChunk;
     @SuppressWarnings("unused") private long plainReq;
     private byte state = CREATED, delayRelease;
     private short connectorTerminatedCount;
@@ -74,18 +73,19 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     public GatheringEmitter(BatchType<B> batchType, Vars vars) {
         this.vars         = vars;
         this.batchType    = batchType;
-        int cols = Math.max(1, vars.size());
-        int b = FSProperties.emitReqChunkBatches();
-        this.requestChunk = (short)Math.max(b, b*batchType.preferredTermsPerBatch()/cols);
+        this.requestChunk = (short)Math.min(Short.MAX_VALUE, preferredRequestChunk());
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
 
 
     public void subscribeTo(Emitter<B> upstream) {
+        int upChunk = upstream.preferredRequestChunk();
+        if (upChunk > requestChunk)
+            requestChunk = (short)Math.min(Short.MAX_VALUE, upChunk);
+        beginDelivery();
         if ((state&STATE_MASK) != CREATED)
             throw new RegisterAfterStartException(this);
-        beginDelivery();
         try {
             assert isNovelUpstream(upstream) : "Already subscribed to upstream";
             if (connectorCount >= connectors.length)

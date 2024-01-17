@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.stages;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -146,9 +145,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         }
         this.rightRecv = new RightReceiver(merger, passthrough, outVars.size(), type, rightUpstream, listener);
         this.leftUpstream = bindings;
-        int safeCols = Math.max(1, bindings.vars().size());
-        int b = Math.max(2, FSProperties.emitReqChunkBatches()/4);
-        this.leftChunk = (short)Math.max(8, b*batchType.preferredTermsPerBatch()/safeCols);
+        this.leftChunk = (short)Math.max(8, bindings.preferredRequestChunk()/4);
         this.intBinding     = new BatchBinding(lVars);
         this.nextIntBinding = new BatchBinding(lVars);
         bindings.subscribe(this);

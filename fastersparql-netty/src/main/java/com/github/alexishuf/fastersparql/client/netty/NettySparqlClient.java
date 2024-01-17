@@ -183,6 +183,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
             releaseRef();
         }
 
+        @Override public int preferredRequestChunk() {
+            return 8*super.preferredRequestChunk();
+        }
+
         @Override protected void request() {
             journal("sending HTTP request for", this);
             var request = this.boundRequest;
