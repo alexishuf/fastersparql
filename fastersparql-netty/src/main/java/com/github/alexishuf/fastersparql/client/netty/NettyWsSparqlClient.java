@@ -324,6 +324,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return "C.WH:"+id+'@'+Integer.toHexString(System.identityHashCode(this));
         }
 
+        @Override public String toString() {
+            return journalName();
+        }
+
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {

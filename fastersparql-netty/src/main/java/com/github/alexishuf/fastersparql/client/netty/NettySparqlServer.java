@@ -277,8 +277,11 @@ public class NettySparqlServer implements AutoCloseable {
                                          @Nullable Throwable cause) {
             assert ctx == null || ctx.executor().inEventLoop();
             int round = this.round;
-            if (round <= 0)
+            if (round <= 0) {
+                journal("duplicate endRound", round, "status=", status.code(),
+                        "handler=", this);
                 return false; // already ended
+            }
             try {
                 boolean cancelled = (cause instanceof FSCancelledException ce
                                         && ce.endpoint() == sparqlClient.endpoint())
@@ -304,9 +307,11 @@ public class NettySparqlServer implements AutoCloseable {
                 }
                 if (status != OK || cause != null || errorMsg != null)
                     onFailure(status, msg, cancelled);
-                roundCleanup();
+                else
+                    journal("OK endRound", round, "handler=", this);
                 return true; // this call ended round
             } finally {
+                roundCleanup();
                 this.round = -round;
             }
         }
@@ -336,6 +341,7 @@ public class NettySparqlServer implements AutoCloseable {
                     bindQuery = null;
                     it = sparqlClient.query(COMPRESSED, query);
                 }
+                journal("handler=", this, "it=", it);
                 serializeVars = it.vars();
                 return true;
             } catch (Throwable t) {
@@ -469,6 +475,8 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
                                            boolean cancelled) {
+            journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
+                    "handler=", this);
             HttpContent msg;
             ByteBuf bb = ctx.alloc().buffer(errorMessage.length());
             if (responseStarted) {
@@ -667,6 +675,8 @@ public class NettySparqlServer implements AutoCloseable {
         @Override
         protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
                                  boolean cancelled) {
+            journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
+                    "handler=", this);
             var sink = new ByteBufSink(ctx.alloc()).touch();
             sink.append(cancelled ? CANCELLED : ERROR).appendEscapingLF(errorMessage).append('\n');
             ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
@@ -717,6 +727,7 @@ public class NettySparqlServer implements AutoCloseable {
                 if (!tail.localView(tail.rows-1, 0, tmpView))
                     throw new IllegalStateException("Missing binding sequence");
                 lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+                journal("lastSentSeq=", lastSentSeq, "sender=", this);
             }
 
             @Override

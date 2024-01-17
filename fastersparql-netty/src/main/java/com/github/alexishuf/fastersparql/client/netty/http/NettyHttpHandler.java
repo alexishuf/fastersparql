@@ -178,10 +178,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     }
 
     @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        journal("channelInactive", this, plainTerminated ? "term" : "!term");
         if (!(boolean)TERMINATED.getAcquire(this)) {
             String msg = "Connection closed before server "
                     + (httpResponse == null ? "started a response" : "completed the response");
+            journal("channelInactive !term, response=", httpResponse == null ? 0 : httpResponse.status().code(), "handler=", this);
             fail(new FSServerException(msg));
         }
         super.channelInactive(ctx);

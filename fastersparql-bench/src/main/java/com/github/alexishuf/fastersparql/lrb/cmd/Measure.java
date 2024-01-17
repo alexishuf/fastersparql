@@ -208,7 +208,7 @@ public class Measure implements Callable<Void>{
         try {
             Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
         } catch (IOException ignored) { }
-        Object results = null;
+        StreamNode results = null;
         try {
             if (plans != null) {
                 plan = requireNonNull(plans.createPlan(task.query()));
@@ -243,9 +243,9 @@ public class Measure implements Callable<Void>{
             log.error("Error during rep {} of task={}:", rep, task, t);
         }
         if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-            dump(task.query(), task.query().name(), plan, (StreamNode)results);
+            dump(task.query(), task.query().name(), plan, results);
         if (consumer instanceof Checker<?> c && !c.isValid())
-            dump(task.query(), task.query().name(), plan, (StreamNode)results);
+            dump(task.query(), task.query().name(), plan, results);
         return (int)((nanoTime()-start)/1_000_000L);
     }
 

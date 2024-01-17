@@ -428,6 +428,8 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             upstream.subscribe(this);
         }
 
+        @Override public String toString() { return label(StreamNodeDOT.Label.SIMPLE); }
+
         @Override public Stream<? extends StreamNode> upstreamNodes() {
             return Stream.of(upstream);
         }
@@ -573,6 +575,8 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         }
 
         @Override public @Nullable B onBatch(B batch) {
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchReceived(batch);
             int st = lock(statePlain());
             try {
                 if ((st&INIT_SENT) == 0) {
@@ -581,12 +585,16 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 }
             } finally { unlock(st); }
 
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchDelivered(batch);
             parent.appendSentBindings(batch);
             sender.sendSerializedAll(batch);
             return batch;
         }
 
         private long sendEarlyBatches(B queue) {
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchDelivered(queue);
             long rows = queue.totalRows();
             sender.sendSerializedAll(queue, this);
             return rows;

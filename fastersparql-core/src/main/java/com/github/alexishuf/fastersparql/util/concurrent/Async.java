@@ -132,9 +132,7 @@ public class Async {
      * @param holder object instance that has the {@code long} field accessed via {@code handle}
      * @param offer a value that if larger than the current value, will be written to the
      *              {@code long} field in {@code holder}
-     * @return the result of {@code offer-actual}, where {@code actual} has been updated to the
-     *         current value of the field. If {@code <= 0}, it means the field was not changed,
-     *         else a value {@code > 0} indicates that the field has been set to {@code offer}
+     * @return Whether the value of the field in {@code holder} has been updated to {@code offer}.
      */
     public static boolean maxRelease(VarHandle handle, Object holder, long offer) {
         for (long ac, ex=(long)handle.getAcquire(holder); offer > ex; ex = ac) {
