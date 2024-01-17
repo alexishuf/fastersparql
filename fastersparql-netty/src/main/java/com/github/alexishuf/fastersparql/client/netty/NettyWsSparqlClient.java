@@ -239,7 +239,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(0, LOCKED_MASK);
+            int st = resetForRebind(STARTED|RETRIES_MASK, LOCKED_MASK);
             try {
                 assert binding.batch != null && binding.row < binding.batch.rows;
                 this.binding = binding;
