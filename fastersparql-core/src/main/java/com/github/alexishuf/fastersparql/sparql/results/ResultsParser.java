@@ -182,8 +182,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * {@link CompletableBatchQueue#complete(Throwable)} call.</p>
      */
     public void reset() {
-        if (batch != null)
-            batch = dst.batchType().recycle(batch);
+        if (batch == null)
+            batch = dst.createBatch();
         incompleteRow   = false;
         eager           = false;
         rowsParsed      = 0;

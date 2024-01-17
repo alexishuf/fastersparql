@@ -4,35 +4,43 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
-    protected CompletableFuture<WsFrameSender<?,?>> frameSenderFuture = new CompletableFuture<>();
+    protected static final VarHandle FRAME_SENDER;
+    static {
+        try {
+            FRAME_SENDER = MethodHandles.lookup().findVarHandle(AbstractWsParser.class, "plainFrameSender", WsFrameSender.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    @SuppressWarnings("unused") private WsFrameSender<?, ?> plainFrameSender;
     protected boolean serverSentTermination = false;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
 
-    static final byte[] BIND_REQUEST     = "!bind-request ".getBytes(UTF_8);
-    static final byte[] BIND_EMPTY_UNTIL = "!bind-empty-streak ".getBytes(UTF_8);
-    static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
-    static final byte[] PING             = "!ping".getBytes(UTF_8);
-    static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);
-    static final byte[] ERROR            = "!error".getBytes(UTF_8);
-    static final byte[] CANCEL           = "!cancel".getBytes(UTF_8);
-    static final byte[] CANCEL_LF        = "!cancel\n".getBytes(UTF_8);
-    static final byte[] CANCELLED        = "!cancelled".getBytes(UTF_8);
-    static final byte[] END              = "!end".getBytes(UTF_8);
+    public static final byte[] BIND_REQUEST     = "!bind-request ".getBytes(UTF_8);
+    public static final byte[] BIND_EMPTY_UNTIL = "!bind-empty-streak ".getBytes(UTF_8);
+    public static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
+    public static final byte[] PING             = "!ping".getBytes(UTF_8);
+    public static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);
+    public static final byte[] ERROR            = "!error".getBytes(UTF_8);
+    public static final byte[] CANCEL           = "!cancel".getBytes(UTF_8);
+    public static final byte[] CANCEL_LF        = "!cancel\n".getBytes(UTF_8);
+    public static final byte[] CANCELLED        = "!cancelled".getBytes(UTF_8);
+    public static final byte[] END              = "!end".getBytes(UTF_8);
+    public static final byte[] REQUEST          = "!request ".getBytes(UTF_8);
 
     private static final ByteRope PING_ACK_FRAME = new ByteRope("!ping-ack\n");
 
@@ -43,9 +51,8 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     public void setFrameSender(WsFrameSender<?,?> frameSender) {
-        if (frameSenderFuture.complete(frameSender))
-            return;
-        if (frameSenderFuture.getNow(null) != frameSender)
+        var old = (WsFrameSender<?, ?>)FRAME_SENDER.getAndSetRelease(this, frameSender);
+        if (old != null && old != frameSender)
             throw new IllegalStateException("WsFrameSender already set");
     }
 
@@ -74,9 +81,9 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     /* --- --- --- implementations --- --- --- */
 
     @Override public void reset() {
-        frameSenderFuture = new CompletableFuture<>();
-        serverSentTermination = false;
         super.reset();
+        serverSentTermination = false;
+        FRAME_SENDER.setRelease(this, (WsFrameSender<?,?>)null);
     }
 
     @Override protected final int handleControl(SegmentRope rope, int begin) {
@@ -108,28 +115,10 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     /* --- --- --- helper methods --- --- --- */
 
     @SuppressWarnings("rawtypes") protected WsFrameSender frameSender() {
-        var sender = frameSenderFuture.getNow(null);
+        var sender = (WsFrameSender<?, ?>)FRAME_SENDER.getAcquire(this);
         if (sender == null)
             throw new IllegalStateException("No WsFrameSender set");
         return sender;
-    }
-
-    @SuppressWarnings("rawtypes") protected WsFrameSender waitForFrameSender() {
-        boolean interrupted = false;
-        try {
-            while (true) {
-                try {
-                    return frameSenderFuture.get();
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                } catch (ExecutionException e) {
-                    throw new RuntimeExecutionException(e);
-                }
-            }
-        } finally {
-            if (interrupted)
-                Thread.currentThread().interrupt();
-        }
     }
 
     private void handlePrefix(SegmentRope r, int begin, int eol) {

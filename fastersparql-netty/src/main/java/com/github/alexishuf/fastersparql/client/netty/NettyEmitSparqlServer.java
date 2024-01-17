@@ -7,9 +7,13 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.netty.util.*;
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
+import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.Requestable;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -20,15 +24,13 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
-import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
+import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
@@ -209,7 +211,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
         }
         private void doOnComplete() {
-            disableAutoTouch();
+            autoTouch(false);
             serializer.serializeTrailer(sink.touch());
             M msg = wrapLast(sink.take());
             try {
@@ -274,7 +276,9 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         @Override public void start() {
             sendInit(upstream.vars(), serializeVars, false);
-            upstream.request(Long.MAX_VALUE);
+            long n = handler.earlyRequest > 0 ? handler.earlyRequest : handler.implicitRequest;
+            if (n > 0)
+                upstream.request(n);
         }
 
         boolean canSendEmptyStreak() { // runs on event loop
@@ -615,7 +619,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     }
 
     private final class WsHandler extends QueryHandler<WebSocketFrame, TextWebSocketFrame>
-            implements WsFrameSender<ByteBufSink, ByteBuf> {
+            implements WsFrameSender<ByteBufSink, ByteBuf>, Requestable {
         private static final byte[] CANCEL     = "!cancel"    .getBytes(UTF_8);
         private static final byte[] QUERY      = "!query"     .getBytes(UTF_8);
         private static final byte[] JOIN       = "!join"      .getBytes(UTF_8);
@@ -635,16 +639,28 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private final SegmentRope tmpView = new SegmentRope();
         private @Nullable WsServerParser<CompressedBatch> bindingsParser;
         private BindType bType = BindType.JOIN;
+        private @Nullable Emitter<CompressedBatch> emitter;
         private @Nullable VolatileBindQuery bindQuery;
         private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
         private volatile long requestBindingsAt;
         private final int maxBindings = FSProperties.wsServerBindings();
         private int sizeHint;
         private boolean clientCancelled, waitingVars;
+        private final long implicitRequest = FSProperties.wsImplicitRequest();
+        private long earlyRequest = 0;
 
         private void adjustSizeHint(int observed) {
             sizeHint = ByteBufSink.adjustSizeHint(sizeHint, observed);
             serverWsSizeHint = ByteBufSink.adjustSizeHint(serverWsSizeHint, sizeHint);
+        }
+
+        /* --- --- --- implement Requestable (used by bindingsParser) --- --- --- */
+
+        @Override public void request(long rows) throws Emitter.NoReceiverException {
+            journal("got !request", rows, "handler=", this);
+            var em = emitter;
+            if (em != null) em.request(rows);
+            else            earlyRequest = Math.max(earlyRequest, rows);
         }
 
         /* --- --- --- implement QueryHandler --- --- --- */
@@ -680,9 +696,11 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                     msg = new TextWebSocketFrame("!error " + errMsg.replace("\n", "\\n") + "\n");
                 }
             } finally {
-                this.sender = null;
+                this.sender         = null;
                 this.bindingsParser = null;
-                this.bindQuery = null;
+                this.bindQuery      = null;
+                this.emitter        = null;
+                this.earlyRequest   = 0;
             }
             if (msg != null) {
                 ctx.write(msg);
@@ -714,12 +732,25 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             if (f == 'c' && msg.has(0, CANCEL)) {
                 clientCancelled = true;
                 endQuery(sender, PARTIAL_CONTENT, true, null);
+            } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
+                readRequest(msg);
             } else if (waitingVars) {
                 readVarsFrame(msg);
             } else if (bindingsParser != null) {
                 readBindings(bindingsParser, msg);
             } else {
                 handleQueryCommand(ctx, msg, f);
+            }
+        }
+
+        private void readRequest(SegmentRope msg) {
+            try {
+                request(msg.parseLong(AbstractWsParser.REQUEST.length));
+            } catch (Throwable t) {
+                int eol = msg.skip(AbstractWsParser.REQUEST.length, msg.len, Rope.UNTIL_WS);
+                var ex = new InvalidSparqlResultsException("Invalid control message: "
+                                                           +msg.toString(0, eol));
+                endQuery(sender, PARTIAL_CONTENT, false, ex);
             }
         }
 
@@ -753,8 +784,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 ctx.writeAndFlush(new TextWebSocketFrame(
                         ctx.alloc().buffer().writeBytes(fullBindReq)));
             } else {
-                var em = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
-                sender = new WsSender(WsSerializer.create(sizeHint), this, em);
+                emitter = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
+                sender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
                 sender.start();
             }
         }
@@ -848,15 +879,16 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             // create bindings -> BindingStage -> sender pipeline
 
             var bindingsQueue = new BindingsQueue(bindingsVars);
-            bindingsParser = new WsServerParser<>(bindingsQueue);
-            bindingsParser.setFrameSender(this);
+            bindingsParser = new WsServerParser<>(bindingsQueue, this);
             bindQuery = new VolatileBindQuery(query, bindingsQueue, bType);
-            var results = sparqlClient.emit(bindQuery, Vars.EMPTY);
-            var sender = new WsSender(WsSerializer.create(sizeHint), this, results);
+            var emitter = sparqlClient.emit(bindQuery, Vars.EMPTY);
+            this.emitter = emitter;
+            bindingsParser.setFrameSender(this);
+            var sender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
             this.sender = sender;
 
             // only send binding seq number and right unbound vars
-            Vars all = results.vars();
+            Vars all = emitter.vars();
             var serializeVars = new Vars.Mutable(all.size()+1);
             serializeVars.add(WsBindingSeq.VAR);
             for (var v : all)

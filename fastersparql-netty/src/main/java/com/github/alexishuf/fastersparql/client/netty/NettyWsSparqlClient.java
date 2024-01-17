@@ -26,16 +26,16 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
-import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
-import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
+import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
+import io.netty.buffer.UnpooledHeapByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
@@ -162,6 +162,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.handler = new WsHandler<>(NettyWsSparqlClient.this, requestMsg,
                                            this, true, bindQuery);
             acquireRef();
+            handler.requestRows(Long.MAX_VALUE);
             request();
         }
 
@@ -170,7 +171,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void cleanup(@Nullable Throwable e) { releaseRef(); }
-        @Override protected void request()                      { netty.open(handler); }
+        @Override protected void request()                      { handler.open(); }
     }
 
     private final class WsEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
@@ -221,8 +222,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 releaseRef();
             } finally { super.doRelease(); }
         }
-        @Override protected void   request() { netty.open(handler); }
+        @Override protected void   request() { handler.open(); }
+
         @Override public int preferredRequestChunk() { return 4*super.preferredRequestChunk(); }
+
+        @Override public void request(long rows) throws NoReceiverException {
+            super.request(rows);
+            handler.requestRows(rows);
+        }
 
         @Override public void rebindAcquire() {
             var bReceiver = handler.parser.bindingsReceiver();
@@ -258,12 +265,26 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final class WsHandler<B extends Batch<B>>
             implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
         private static final VarHandle REC_SENDER;
+        private static final VarHandle REQ, FLAGS, RESET_CH;
+        private static final int REQ_ROWS_FRAME_CAPACITY = 32;
+        private static final byte[] REQ_ROWS_0
+                = (new String(AbstractWsParser.REQUEST, UTF_8)+"0\n").getBytes(UTF_8);
+        private static final int RESETTING    = 0x00000001;
+        private static final int OPEN_PENDING = 0x00000002;
         static {
+            assert REQ_ROWS_FRAME_CAPACITY > AbstractWsParser.REQUEST.length
+                    + 19 /* Long.MAX_VALUE */
+                    + 1  /* newline */;
+            try {
+                REQ        = lookup().findVarHandle(WsHandler.class, "plainRequest",   long.class);
                 REC_SENDER = lookup().findVarHandle(WsHandler.class, "plainRecSender", WsHandler.BindingsSender.class);
+                FLAGS      = lookup().findVarHandle(WsHandler.class, "plainFlags",     int.class);
+                RESET_CH   = lookup().findVarHandle(WsHandler.class, "plainResetCh",   Channel.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
+
         private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
         private ByteRope requestMsg;
         private boolean gotFrames;
@@ -273,7 +294,18 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private @Nullable ChannelHandlerContext ctx;
         private @MonotonicNonNull ChannelRecycler recycler;
         private final CompletableBatchQueue<B> destination;
+        @SuppressWarnings("unused") private long plainRequest;
+        private final ByteRope requestRowsMsg;
+        private final UnpooledHeapByteBuf requestRowsBB;
+        private final TextWebSocketFrame requestRowsFrame;
+        private final Runnable requestRowsTask = this::doRequestRows;
         @SuppressWarnings("unused") private BindingsSender<B> plainRecSender;
+        @SuppressWarnings("unused") private int plainFlags;
+        private final Runnable resetTask = this::doReset;
+        private final Runnable queryTask = this::doQuery;
+        private @Nullable ByteRope resetRequestMsg;
+        @SuppressWarnings("unused") private @Nullable Channel plainResetCh;
+        private final NettyWsSparqlClient sparqlClient;
         private @MonotonicNonNull Channel lastCh;
 
         public WsHandler(NettyWsSparqlClient sparqlClient, ByteRope requestMsg,
@@ -288,40 +320,133 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 var useful = bq.bindingsVars().intersection(bq.query.publicVars());
                 parser = new WsClientParser<>(destination, bq, useful);
             }
+            requestRowsMsg   = new ByteRope(REQ_ROWS_FRAME_CAPACITY).append(REQ_ROWS_0);
+            requestRowsBB    = (UnpooledHeapByteBuf)Unpooled.wrappedBuffer(requestRowsMsg.u8());
+            requestRowsFrame = new TextWebSocketFrame(requestRowsBB);
+            assert requestRowsMsg.u8().length >= REQ_ROWS_FRAME_CAPACITY;
             this.sparqlClient = sparqlClient;
-        NettyWsSparqlClient sparqlClient() { return sparqlClient; }
         }
 
-        NettyWsSparqlClient sparqlClient() { return NettyWsSparqlClient.this; }
+        NettyWsSparqlClient sparqlClient() { return sparqlClient; }
+
+        void open() {
+            int flags = getAndUpdateFlagsRelease(0, OPEN_PENDING);
+            if ((flags&RESETTING) != 0) {
+                journal("open() during reset, handler=", this);
+            } else {
+                getAndUpdateFlagsRelease(OPEN_PENDING, 0);
+                doOpen();
+            }
+        }
+
+        private void doOpen() {
+            ChannelHandlerContext ctx = this.ctx;
+            if (ctx == null) {
+                sparqlClient.netty.open(this);
+            } else {
+                var exec = ctx.executor();
+                if (exec.inEventLoop()) doQuery();
+                else                    exec.execute(queryTask);
+            }
+        }
+
+        private int getAndUpdateFlagsRelease(int clear, int set) {
+            int e = plainFlags, a;
+            while ((a=(int)FLAGS.compareAndExchangeAcquire(this, e, (e&~clear)|set)) != e)
+                e = a;
+            return e;
+        }
 
         void reset(@Nullable ByteRope requestMsg) {
+            getAndUpdateFlagsRelease(0, RESETTING);
             var ctx = this.ctx;
+            var ch = ctx != null ? ctx.channel() : null;
+            resetRequestMsg = requestMsg;
+            REQ.setRelease(this, 0L);
+            RESET_CH.setRelease(this, ch);
             if (ctx != null) {
-                var ch = ctx.channel();
                 var exec = ctx.executor();
-                if (exec.inEventLoop()) doReset(requestMsg, ch);
-                else                    exec.execute(() -> doReset(requestMsg, ch));
-            } else if (requestMsg != null) {
-                this.requestMsg = requestMsg;
+                if (!exec.inEventLoop()) {
+                    exec.execute(resetTask);
+                    return;
+                }
+            }
+            doReset();
+        }
+
+        private boolean inEventLoop() { return ctx == null || ctx.executor().inEventLoop(); }
+
+        private void doReset() {
+            var ch = (Channel)RESET_CH.getAcquire(this);
+            ByteRope requestMsg = resetRequestMsg;
+            int flags;
+            try {
+                assert inEventLoop() : "not in event loop";
+                if (requestMsg != null) {
+                    parser.reset();
+                    this.requestMsg = requestMsg;
+                    gotFrames = false;
+                } else {
+                    var bbRopeView = this.bbRopeView;
+                    if (bbRopeView != null) {
+                        bbRopeView.recycle();
+                        this.bbRopeView = null;
+                    }
+                    //noinspection unchecked
+                    var sender = (BindingsSender<B>)
+                            REC_SENDER.getAndSetRelease(this, (BindingsSender<B>)null);
+                    if (sender != null)
+                        sender.thaw(false).recycleSerializer();
+                    if (ctx != null && ctx.channel() == ch) {
+                        this.ctx = null;
+                        recycler.recycle(ch);
+                    }
+                }
+            } catch (Throwable t) {
+                complete(t);
+            } finally {
+                flags = getAndUpdateFlagsRelease(RESETTING|OPEN_PENDING, 0);
+            }
+            if ((flags&OPEN_PENDING) != 0) {
+                journal("pending open() after reset, handler=", this);
+                doOpen();
             }
         }
 
-        private void doReset(@Nullable ByteRope requestMsg, @Nullable Channel ch) {
-            assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
-            parser.reset();
-            if (requestMsg != null) {
-                this.requestMsg = requestMsg;
-                gotFrames       = false;
-            }  else {
-                var bbRopeView = this.bbRopeView;
-                if (bbRopeView != null) {
-                    bbRopeView.recycle();
-                    this.bbRopeView = null;
+        void requestRows(long n) {
+            if (Async.maxRelease(REQ, this, n)) {
+                journal("scheduling !request", n, "handler=", this);
+                var ctx = this.ctx;
+                if (ctx != null && (plainFlags&OPEN_PENDING) == 0) {
+                    var exec = ctx.executor();
+                    if (exec.inEventLoop()) doRequestRows();
+                    else                    exec.execute(requestRowsTask);
                 }
             }
-            if (ctx != null && ctx.channel() == ch) {
-                this.ctx = null;
-                recycler.recycle(ch);
+        }
+
+        private void retryRequestRows() {
+            journal("retry !request", plainRequest, "handler=", this);
+            if (ctx != null)
+                ctx.executor().execute(requestRowsTask);
+        }
+
+        private void doRequestRows() {
+            long n;
+            if (ctx == null || destination.isTerminated() || (n=(long)REQ.getAcquire(this)) <= 0)
+                return; // no work
+            if (requestRowsFrame.refCnt() > 1) {
+                retryRequestRows(); // frame in-use by netty, changing may yield big garbage number
+            } else {
+                journal("sending !request", n, "handler=", this);
+                // write the request
+                requestRowsMsg.len = AbstractWsParser.REQUEST.length;
+                requestRowsMsg.append(n).append('\n');
+                // update wrapping ByteBuf
+                assert requestRowsMsg.len <= REQ_ROWS_FRAME_CAPACITY;
+                requestRowsBB.readerIndex(0).writerIndex(requestRowsMsg.len);
+                // send !request n
+                ctx.writeAndFlush(requestRowsFrame.retain());
             }
         }
 
@@ -341,6 +466,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- NettyWsClientHandler methods --- --- --- */
 
         @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
+            if (this.ctx != null) {
+                ThreadJournal.dumpAndReset(System.out, 100);
+                System.out.println(this);
+                if (this.ctx == null)
+                    System.out.println("race");
+            }
             assert this.ctx == null : "previous attach()";
             Channel ch = ctx.channel();
             this.recycler = recycler;
@@ -350,13 +481,21 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 e.setChannel(ch);
             if (bbRopeView == null)
                 bbRopeView = ByteBufRopeView.create();
+            doQuery();
+        }
+
+        private void doQuery() {
+            var ctx = this.ctx;
             parser.setFrameSender(this);
             if (destination.isTerminated()) { // cancel()ed before WebSocket established
-                recycler.recycle(ch);
+                if (selfRecycle) reset(null);
+            } else if (ctx == null) {
+                complete(new IllegalStateException("doQuery() while detached"));
             } else {
                 var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
                                                 requestMsg.backingArrayOffset(), requestMsg.len);
                 ctx.writeAndFlush(new TextWebSocketFrame(bb));
+                doRequestRows();
             }
         }
 
@@ -372,7 +511,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     return; // ignore frame after complete
                 gotFrames = true;
                 try {
+                    long parsedBefore = parser.rowsParsed();
                     parser.feedShared(bbRopeView.wrapAsSingle(f.content()));
+                    REQ.getAndAddRelease(this, -(parser.rowsParsed()-parsedBefore));
                     if (selfRecycle && destination.isTerminated())
                         reset(null);
                 } catch (TerminatedException|CancelledException e) {

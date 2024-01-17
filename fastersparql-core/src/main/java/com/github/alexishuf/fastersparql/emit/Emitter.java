@@ -9,7 +9,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 
 
-public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable {
+public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable, Requestable {
     /** Set of vars naming the columns in batches delivered to {@link Receiver#onBatch(Batch)} */
     Vars vars();
 
@@ -53,27 +53,4 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable {
         public NoReceiverException() {
             super("No Receiver attached");}
     }
-
-    /**
-     * Notifies the {@link Receiver} expects to receive at least {@code rows} in {@link Batch}es
-     * delivered to {@link Receiver#onBatch(Batch)} after this call.
-     *
-     * <p>This method is not additive: {@code request(64)} followed by a {@code request(32)} will
-     * have the effect of a single {@code request(64)}, assuming there were no deliveries
-     * between the two requests.</p>
-     *
-     * <p>The {@link Receiver} may receive less rows than requested if this emitter
-     * completes or is cancelled before delivering all requested rows. {@link Receiver}s should
-     * be prepared to receive an unbounded number of rows in excess of what is requested.</p>
-     *
-     * <p>If called after {@link #cancel()} or after a termination event has been delivered,
-     * this call will have no effect. </p>
-     *
-     * @param rows the number of rows the receiver expects to receive after this call across
-     *             batches delivered to {@link Receiver#onBatch(Batch)} after execution
-     *             of this method <strong>started</strong>.
-     * @throws NoReceiverException if this is called before {@link #subscribe(Receiver)}.
-     */
-    void request(long rows) throws NoReceiverException;
-
 }

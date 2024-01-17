@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Requestable;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -46,6 +48,10 @@ public class WsBindingParsersTest {
     }
     private static final List<Throwable> threadErrors = synchronizedList(new ArrayList<>());
     private int byteOrBuf = 0;
+
+    private static final class NoOpRequest implements Requestable {
+        @Override public void request(long rows) throws Emitter.NoReceiverException {}
+    }
 
     private final class Mailbox implements WsFrameSender<ByteRope, ByteRope> {
         private final String name;
@@ -236,7 +242,7 @@ public class WsBindingParsersTest {
              var serverCb = new SPSCBIt<>(TERM, Vars.of(WsBindingSeq.VAR).union(ex.bindingsVars()),
                                           queueMaxRows())) {
             var clientParser = new WsClientParser<>(clientCb, ex.asBindQuery(), null);
-            var serverParser = new WsServerParser<>(serverCb);
+            var serverParser = new WsServerParser<>(serverCb, new NoOpRequest());
             clientParser.setFrameSender(serverMB);
             serverParser.setFrameSender(clientMB);
             serverFeeder = startThread("server-feeder", () -> feed(serverParser, serverMB));

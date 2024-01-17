@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
@@ -10,6 +11,8 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.netty.util.*;
+import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Requestable;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -18,16 +21,15 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
-import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
+import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -45,10 +47,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.PrintStream;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -56,11 +61,13 @@ import static com.github.alexishuf.fastersparql.FSProperties.wsServerBindings;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FORM_URLENCODED;
 import static io.netty.handler.codec.http.HttpHeaderValues.CHUNKED;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.util.AsciiString.indexOfIgnoreCaseAscii;
+import static java.lang.Thread.startVirtualThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
@@ -408,6 +415,8 @@ public class NettySparqlServer implements AutoCloseable {
 
         protected abstract SerializeTask<?> createSerializeTask(int round);
 
+        protected void waitForRequested(int batchRows) {}
+
         protected void drainerThread(int round) {
             SerializeTask<?> task = null;
             try (var it = this.it) {
@@ -422,6 +431,7 @@ public class NettySparqlServer implements AutoCloseable {
                 for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
                     task.waitCanSend();
                     task.sendSerializedAll(b);
+                    waitForRequested(b.totalRows());
                 }
                 task.sendTrailer();
             } catch (NettyResultsSender.NettyExecutionException e) {
@@ -579,13 +589,13 @@ public class NettySparqlServer implements AutoCloseable {
                                  .set(TRANSFER_ENCODING, CHUNKED);
                     responseStarted = true;
                     ctx.writeAndFlush(res);
-                    Thread.startVirtualThread(() -> drainerThread(round));
+                    startVirtualThread(() -> drainerThread(round));
                 }
             }
         }
 
         private void handleQueryHttp10(int round) {
-            Thread.startVirtualThread(() -> handleQueryHttp10Thread(round));
+            startVirtualThread(() -> handleQueryHttp10Thread(round));
         }
 
         private void handleQueryHttp10Thread(int round) {
@@ -641,8 +651,17 @@ public class NettySparqlServer implements AutoCloseable {
         }
     }
 
+    private static final VarHandle WS_REQ;
+    static {
+        try {
+            WS_REQ = MethodHandles.lookup().findVarHandle(WsSparqlHandler.class, "plainRequested", long.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private final class WsSparqlHandler extends QueryHandler<WebSocketFrame>
-            implements WsFrameSender<ByteBufSink, ByteBuf> {
+            implements WsFrameSender<ByteBufSink, ByteBuf>, Requestable {
         private static final byte[] QUERY = "!query".getBytes(UTF_8);
         private static final byte[] JOIN = "!join".getBytes(UTF_8);
         private static final byte[] LEFT_JOIN = "!left-join".getBytes(UTF_8);
@@ -665,12 +684,33 @@ public class NettySparqlServer implements AutoCloseable {
         private WsSerializeTask serializeTask;
         private final SegmentRope tmpView = new SegmentRope();
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
+        private @Nullable Thread drainerThread;
+        private final long implicitRequest = FSProperties.wsImplicitRequest();
+        @SuppressWarnings("FieldCanBeLocal") private long plainRequested;
 
-        public WsSparqlHandler() {
-            serializer = WsSerializer.create(serializeSizeHint);
+        public WsSparqlHandler() {serializer = WsSerializer.create(serializeSizeHint);}
+
+        /* --- --- --- Requestable methods (used by bindingsParser) --- --- --- */
+
+        @Override public void request(long rows) throws Emitter.NoReceiverException {
+            if (Async.maxRelease(WS_REQ, this, rows)) {
+                journal("!request", rows, "handler=", this);
+                LockSupport.unpark(drainerThread);
+            } else {
+                journal("small !request", rows, "current=",
+                        plainRequested, "handler=", this);
+            }
         }
 
         /* --- --- --- QueryHandler methods --- --- --- */
+
+        @Override protected void waitForRequested(int batchRows) {
+            if ((long)WS_REQ.getAndAddRelease(this, (long)-batchRows)-batchRows <= 0) {
+                journal("parking handler=", this, "until !request");
+                while ((long)WS_REQ.getAcquire(this) <= 0)
+                    LockSupport.park(this);
+            }
+        }
 
         @Override
         protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
@@ -684,6 +724,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override public void roundCleanup() {
             super.roundCleanup();
+            plainRequested   = 0;
             waitingVarsRound = 0;
             try {
                 var bindingsParser = this.bindingsParser;
@@ -764,12 +805,24 @@ public class NettySparqlServer implements AutoCloseable {
             byte f = msg.len < 2 ? 0 : msg.get(1);
             if (f == 'c' && msg.has(0, CANCEL)) {
                 endRound(INTERNAL_SERVER_ERROR, null, wsCancelledEx);
+            } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
+                readRequest(msg);
             } else if (waitingVarsRound > 0) {
                 readVarsFrame(msg);
             } else if (bindingsParser != null) {
                 readBindings(bindingsParser, msg);
             } else {
                 handleQueryCommand(ctx, msg, f);
+            }
+        }
+
+        private void readRequest(SegmentRope msg) {
+            try {
+                request(msg.parseLong(AbstractWsParser.REQUEST.length));
+            } catch (Throwable t) {
+                int eol = msg.skip(AbstractWsParser.REQUEST.length, msg.len, Rope.UNTIL_WS);
+                var errorMsg = "Invalid control message: "+msg.toString(0, eol);
+                endRound(PARTIAL_CONTENT, errorMsg, null);
             }
         }
 
@@ -800,7 +853,8 @@ public class NettySparqlServer implements AutoCloseable {
                                 ctx.alloc().buffer().writeBytes(fullBindReq)));
                     } else {
                         if (dispatchQuery(null, BindType.JOIN)) {
-                            Thread.startVirtualThread(() -> drainerThread(round));
+                            drainerThread = startVirtualThread(() -> drainerThread(round));
+                            request(implicitRequest);
                         }
                     }
                 }
@@ -848,7 +902,7 @@ public class NettySparqlServer implements AutoCloseable {
                 bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
             }
             var bindings = new SPSCBIt<>(COMPRESSED, bindingsVars, Integer.MAX_VALUE);
-            bindingsParser = new WsServerParser<>(bindings);
+            bindingsParser = new WsServerParser<>(bindings, this);
             bindingsParser.setFrameSender(this);
             // do not block if client starts flooding
             int round = waitingVarsRound;
@@ -862,7 +916,8 @@ public class NettySparqlServer implements AutoCloseable {
                 for (var v : itVars)
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
-                Thread.startVirtualThread(() -> drainerThread(round));
+                drainerThread = startVirtualThread(() -> drainerThread(round));
+                request(implicitRequest);
                 readBindings(bindingsParser, msg);
             }
         }

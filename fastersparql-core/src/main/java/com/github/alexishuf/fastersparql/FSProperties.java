@@ -41,6 +41,7 @@ public class FSProperties {
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
     public static final String WS_SERVER_BINDINGS        = "fastersparql.ws.server.bindings";
+    public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
@@ -69,14 +70,15 @@ public class FSProperties {
     public static final int     DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
     public static final int     DEF_BATCH_MIN_WAIT_US         = BIt.QUICK_MIN_WAIT_NS/1_000;
     public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS/1_000;
+    public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 32;
     public static final int     DEF_WS_SERVER_BINDINGS        = 256;
+    public static final int     DEF_WS_IMPLICIT_REQUEST       = DEF_EMIT_REQ_CHUNK_BATCHES/4;
     public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int     DEF_OP_REDUCED_BATCHES        = 256;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
-    public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 32;
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
@@ -103,6 +105,7 @@ public class FSProperties {
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
     private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
+    private static long CACHE_WS_IMPLICIT_REQUEST      = -1;
     private static Boolean CACHE_OP_WEAKEN_DISTINCT     = null;
     private static Boolean CACHE_USE_VECTORIZATION      = null;
     private static Boolean CACHE_USE_UNSAFE             = null;
@@ -199,6 +202,7 @@ public class FSProperties {
         CACHE_BATCH_MIN_WAIT_US         = -1;
         CACHE_BATCH_MAX_WAIT_US         = -1;
         CACHE_WS_SERVER_BINDINGS        = -1;
+        CACHE_WS_IMPLICIT_REQUEST       = -1;
         CACHE_BATCH_QUEUE_ROWS          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
         CACHE_OP_REDUCED_BATCHES        = -1;
@@ -543,6 +547,24 @@ public class FSProperties {
     public static @Positive int wsServerBindings() {
         int i = CACHE_WS_SERVER_BINDINGS;
         if (i <= 0) CACHE_WS_SERVER_BINDINGS = i = readPositiveInt(WS_SERVER_BINDINGS, DEF_WS_SERVER_BINDINGS);
+        return i;
+    }
+
+    /**
+     * When query is submitted to the WebSocket server using one of the {@code !}-commands,
+     * it will imply a {@code !request n}, where {@code n} is the value of this property.
+     * If {@code n} is zero, no such implicit {@link Emitter#request(long)} will be made before
+     * the client send a {@code !request} command.
+     *
+     * <p>The default value is {@link #DEF_WS_IMPLICIT_REQUEST} and it can be changed at runtime
+     * via the java property {@link #WS_IMPLICIT_REQUEST}. Changes to the property may not reflect
+     * on all new requests due to caching of netty channels</p>
+     *
+     * @return The size of the implicit request upon query dispatch.
+     */
+    public static @NonNegative long wsImplicitRequest() {
+        long i = CACHE_WS_IMPLICIT_REQUEST;
+        if (i <= 0) CACHE_WS_IMPLICIT_REQUEST = i = readPositiveInt(WS_IMPLICIT_REQUEST, DEF_WS_IMPLICIT_REQUEST);
         return i;
     }
 

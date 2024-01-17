@@ -4,16 +4,19 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.emit.Requestable;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 
 public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private final int bindingSeqCol;
     private final WsBindingSeq seqWriter;
+    private final Requestable requestable;
 
-    public WsServerParser(CompletableBatchQueue<B> dest) {
+    public WsServerParser(CompletableBatchQueue<B> dest, Requestable requestable) {
         super(dest);
-        bindingSeqCol = dest.vars().indexOf(WsBindingSeq.VAR);
-        seqWriter = bindingSeqCol < 0 ? null : new WsBindingSeq();
+        this.bindingSeqCol = dest.vars().indexOf(WsBindingSeq.VAR);
+        this.requestable   = requestable;
+        this.seqWriter     = bindingSeqCol < 0 ? null : new WsBindingSeq();
     }
 
    @Override protected void commitRow() throws CancelledException, BatchQueue.TerminatedException {
@@ -23,6 +26,9 @@ public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     }
 
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {
-        return false;
+        if (!rope.has(0, REQUEST))
+            return false;
+        requestable.request(rope.parseLong(begin + REQUEST.length));
+        return true;
     }
 }
