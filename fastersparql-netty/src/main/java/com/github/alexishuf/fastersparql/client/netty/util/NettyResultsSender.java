@@ -74,7 +74,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     private static class ReleaseSinkAction extends Action {
         public ReleaseSinkAction() {super("RELEASE");}
         @Override public void run(NettyResultsSender<?> sender) {
-            sender.disableAutoTouch();
+            sender.autoTouch(false);
             sender.sink.release();
         }
     }
@@ -97,7 +97,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void close() {
-        disableAutoTouch();
+        autoTouch(false);
         if (shouldScheduleRelease())
             execute(Action.RELEASE_SINK); // will also lead to recycleSharedActions()
         else if (sharedActions != null)
@@ -126,15 +126,18 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         } finally { unlock(); }
     }
 
-    protected void disableAutoTouch() {
+    protected void autoTouch(boolean value) {
         lock();
         try {
-            autoTouch = false;
-        } finally { unlock(); }
+            autoTouch = value;
+        } finally {
+            if (value) unlockAndSpawn();
+            else       unlock();
+        }
     }
 
     @Override public void preTouch() {
-        if (!sink.needsTouch() || !autoTouch)
+        if (!sink.needsTouch() || !autoTouch || active)
             return;
         lock();
         unlockAndSpawn();
@@ -192,7 +195,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         try {
             serializer.serializeTrailer(sink);
             M msg = wrapLast(sink.take());
-            disableAutoTouch();
+            autoTouch(false);
             execute(msg, Action.RELEASE_SINK);
         } catch (Throwable t) {
             log.error("Failed to serialize trailer", t);
@@ -201,7 +204,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendError(Throwable t) {
-        disableAutoTouch();
+        autoTouch(false);
         execute(t, Action.RELEASE_SINK);
     }
 

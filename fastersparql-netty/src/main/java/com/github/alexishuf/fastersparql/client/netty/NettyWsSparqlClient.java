@@ -44,16 +44,19 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
+import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
@@ -156,7 +159,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         public WsBIt(ByteRope requestMsg, BatchType<B> batchType, Vars vars,
                      @Nullable BindQuery<B> bindQuery) {
             super(batchType, vars, FSProperties.queueMaxRows(), NettyWsSparqlClient.this);
-            this.handler = new WsHandler<>(requestMsg, this, true, bindQuery);
+            this.handler = new WsHandler<>(NettyWsSparqlClient.this, requestMsg,
+                                           this, true, bindQuery);
             acquireRef();
             request();
         }
@@ -181,10 +185,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             super(batchType, outVars, NettyWsSparqlClient.this);
             this.query = query;
             this.bindQuery = bindQuery;
-            this.handler = new WsHandler<>(makeRequest(), this, false, bindQuery);
             var bReceiver = handler.parser.bindingsReceiver();
             if (bReceiver != null)
                 bReceiver.rebindAcquire();
+            this.handler = new WsHandler<>(NettyWsSparqlClient.this, makeRequest(),
+                                           this, false, bindQuery);
             acquireRef();
         }
 
@@ -256,8 +261,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public Vars bindableVars() { return query.allVars(); }
     }
 
-    private final class WsHandler<B extends Batch<B>>
+    private static final class WsHandler<B extends Batch<B>>
             implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
+        private static final VarHandle REC_SENDER;
+        static {
+                REC_SENDER = lookup().findVarHandle(WsHandler.class, "plainRecSender", WsHandler.BindingsSender.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
         private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
         private ByteRope requestMsg;
         private boolean gotFrames;
@@ -267,10 +279,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private @Nullable ChannelHandlerContext ctx;
         private @MonotonicNonNull ChannelRecycler recycler;
         private final CompletableBatchQueue<B> destination;
+        @SuppressWarnings("unused") private BindingsSender<B> plainRecSender;
         private @MonotonicNonNull Channel lastCh;
 
-        public WsHandler(ByteRope requestMsg, CompletableBatchQueue<B> destination,
-                         boolean selfRecycle, @Nullable BindQuery<B> bq) {
+        public WsHandler(NettyWsSparqlClient sparqlClient, ByteRope requestMsg,
+                         CompletableBatchQueue<B> destination, boolean selfRecycle,
+                         @Nullable BindQuery<B> bq) {
             this.requestMsg = requestMsg;
             this.destination = destination;
             this.selfRecycle = selfRecycle;
@@ -280,6 +294,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 var useful = bq.bindingsVars().intersection(bq.query.publicVars());
                 parser = new WsClientParser<>(destination, bq, useful);
             }
+            this.sparqlClient = sparqlClient;
+        NettyWsSparqlClient sparqlClient() { return sparqlClient; }
         }
 
         NettyWsSparqlClient sparqlClient() { return NettyWsSparqlClient.this; }
@@ -396,7 +412,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 else
                     error = new FSIllegalStateException("coldComplete unsatisfied preconditions");
             }
-            parser.feedError(FSException.wrap(endpoint, error));
+            parser.feedError(FSException.wrap(sparqlClient.endpoint, error));
         }
 
         private void complete(@Nullable Throwable error) {
@@ -436,22 +452,29 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
             if (ctx == null)
                 throw new IllegalStateException("createSender() before attach()");
-            return new BindingsSender<>(this, ctx);
+            //noinspection unchecked
+            var sender = (BindingsSender<B>)REC_SENDER.getAndSetRelease(this, null);
+            return sender == null ? new BindingsSender<>(this, ctx)
+                                  : sender.thaw(true);
         }
 
         private static final class BindingsSender<B extends Batch<B>> extends NettyResultsSender<TextWebSocketFrame> {
+            private static final byte REC_ST_SENDER     = 1;
+            private static final byte REC_ST_SERIALIZER = 2;
             private final WsHandler<B> wsHandler;
-            boolean recycledSerializer;
+            byte recycled;
 
             private static final class RecycleAction extends Action {
                 public static final RecycleAction INSTANCE = new RecycleAction();
-                public RecycleAction() {super("RECYCLE");}
-
+                public RecycleAction() {super("RECYCLE_SENDER");}
                 @Override public void run(NettyResultsSender<?> sender) {
                     var bs = (BindingsSender<?>) sender;
-                    if (!bs.recycledSerializer) {
-                        bs.recycledSerializer = true;
-                        ((WsSerializer)bs.serializer).recycle();
+                    if (bs.recycled != 0)
+                        return;
+                    bs.recycled = REC_ST_SENDER;
+                    if (REC_SENDER.compareAndExchangeRelease(bs.wsHandler, null, bs) != null) {
+                        bs.recycled = REC_ST_SERIALIZER;
+                        bs.recycleSerializer();
                     }
                 }
             }
@@ -462,30 +485,47 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 sink.sizeHint(wsHandler.sparqlClient().bindingsSizeHint);
             }
 
+            @This BindingsSender<B> thaw(boolean autoTouch) {
+                if (recycled != REC_ST_SENDER)
+                    throw new IllegalStateException("recycled != REC_ST_SENDER");
+                recycled = 0;
+                if (autoTouch)
+                    autoTouch(true);
+                return this;
+            }
+
+            void recycleSerializer() {
+                if (recycled == 0) {
+                    assert ctx.executor().inEventLoop() : "called from outside event loop";
+                    recycled = REC_ST_SERIALIZER;
+                    ((WsSerializer)serializer).recycle();
+                }
+            }
+
             @Override public void close() {
                 super.close();
-                if (!recycledSerializer)
+                if (recycled == 0)
                     execute(RecycleAction.INSTANCE);
             }
 
             @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-                if (recycledSerializer) throw new IllegalStateException("recycled");
+                if (recycled != 0) throw new IllegalStateException("recycled");
                 super.sendInit(vars, subset, isAsk);
             }
 
             @Override public void sendSerializedAll(Batch<?> batch) {
-                if (recycledSerializer) throw new IllegalStateException("recycled");
+                if (recycled != 0) throw new IllegalStateException("recycled");
                 super.sendSerializedAll(batch);
             }
 
             @Override
             public <N extends Batch<N>> void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
-                if (recycledSerializer) throw new IllegalStateException("recycled");
+                if (recycled != 0) throw new IllegalStateException("recycled");
                 super.sendSerializedAll(batch, nodeConsumer);
             }
 
             @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
-                if (recycledSerializer) throw new IllegalStateException("recycled");
+                if (recycled != 0) throw new IllegalStateException("recycled");
                 super.sendSerialized(batch, from, nRows);
             }
 
