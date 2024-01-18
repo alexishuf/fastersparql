@@ -142,7 +142,7 @@ public class Measure implements Callable<Void>{
                 return trace.isEmpty() ||
                         !trace.getLast().getMethod().getType().getName().startsWith(INTELLIJ);
             });
-            Files.copy(filtered, dest, REPLACE_EXISTING);
+            Files.move(filtered, dest, REPLACE_EXISTING);
         } catch (Throwable t) {
             log.error("Failed to post-process {}", dest);
         }
