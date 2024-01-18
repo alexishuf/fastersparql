@@ -41,6 +41,7 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     private @MonotonicNonNull ChannelHandlerContext ctx;
     private boolean handshakeStarted, handshakeComplete, attached, detached;
     private byte @Nullable [] previewU8;
+    private final Runnable onDelegate = this::onDelegate;
     private Throwable earlyFailure;
 
 
@@ -50,20 +51,25 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     }
 
     public void delegate(NettyWsClientHandler delegate) {
-        if (ctx == null || ctx.executor().inEventLoop()) {
-            if (this.delegate != null && this.delegate != delegate) {
-                String msg = "Already has delegate=" + this.delegate + ", cannot set " + delegate;
-                throw new IllegalStateException(msg);
-            }
-            this.delegate = delegate;
-            if (earlyFailure != null)
-                detach(earlyFailure);
-            else if (ctx != null)
-                tryHandshake();
-        } else if (ctx != null) {
-            ctx.executor().execute(() -> delegate(delegate));
+        if (this.delegate != null && this.delegate != delegate) {
+            String msg = "Already has delegate=" + this.delegate + ", cannot set " + delegate;
+            throw new IllegalStateException(msg);
         }
+        this.delegate = delegate;
+        var exec = ctx == null ? null : ctx.executor();
+        if (exec != null && !exec.inEventLoop()) exec.execute(onDelegate);
+        else                                     onDelegate();
     }
+
+    private void onDelegate() {
+        if (delegate == null)
+            return;
+        if (earlyFailure != null)
+            detach(earlyFailure);
+        else if (ctx != null)
+            tryHandshake();
+    }
+
 
     private void tryHandshake() {
         check(delegate != null);
