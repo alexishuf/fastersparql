@@ -300,7 +300,15 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             bindingNotified = false;
         }
     }
-    private void appendSentBindings(B b) { appendSentBindingsByRef(b.dup()); }
+    private void appendSentBindings(B b) {
+        while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+        try {
+            if (sentBindings == null) sentBindings = b.dup();
+            else                      sentBindings.copy(b);
+        } finally {
+            SB_LOCK.setRelease(this, 0);
+        }
+    }
     private void appendSentBindingsByRef(B b) {
         while ((int)SB_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
