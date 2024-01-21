@@ -170,7 +170,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return "C.WB:" + (channel == null ? "null" : channel.id().asShortText());
         }
 
-        @Override protected void cleanup(@Nullable Throwable e) { releaseRef(); }
+        @Override protected void cleanup(@Nullable Throwable e) {
+            try {
+                super.cleanup(e);
+            } finally { releaseRef(); }
+        }
         @Override protected void request()                      { handler.open(); }
     }
 
