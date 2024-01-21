@@ -589,14 +589,18 @@ public final class Results {
     public <B extends Batch<B>> void check(BIt<B> it) throws AssertionError {
         List<List<Term>> acList = new ArrayList<>();
         Throwable thrown = null;
-        try {
+        try (var w = ThreadJournal.watchdog(System.err, 100)) {
+            w.start(10_000_000_000L);
             for (B b = null; (b = it.nextBatch(b)) != null; ) {
                 for (var n = b; n != null; n = n.next) {
                     for (int i = 0; i < n.rows; i++)
                         acList.add(normalizeRow(n, i));
                 }
             }
-        } catch (Throwable t) { thrown = t; }
+        } catch (Throwable t) {
+            ThreadJournal.dumpAndReset(System.err, 100);
+            thrown = t;
+        }
         check(acList, thrown, it.vars());
     }
 

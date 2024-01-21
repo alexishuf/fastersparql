@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -12,15 +13,14 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.concurrent.locks.LockSupport.*;
 
 public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements CallbackBIt<B> {
-    private static final VarHandle LOCK;
     private static final VarHandle READY;
     static {
         try {
-            LOCK = lookup().findVarHandle(SPSCBIt.class, "plainLock", int.class);
             READY = lookup().findVarHandle(SPSCBIt.class, "plainReady", Batch.class);
         } catch (Throwable t) {
             throw new ExceptionInInitializerError(t);
@@ -34,8 +34,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     private @Nullable B filling;
     private long fillingStart = Timestamp.ORIGIN;
     protected int maxItems;
-    @SuppressWarnings("unused") // access through STATE
-    private int plainLock;
     private Thread consumer, producer;
 
     public SPSCBIt(BatchType<B> batchType, Vars vars, int maxItems) {
@@ -69,29 +67,15 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- helper methods --- --- --- */
 
     /**
-     * Spin until {@code LOCK} is exclusively held by the caller thread.
-     *
-     * <p>Locking is not recursive. Unlock with {@code LOCK.setRelease(this, 0)}.</p>
-     */
-    private void lock() {
-        while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-            Thread.yield();
-    }
-
-    /**
      * Either take a non-null batch from {@code READY} (setting it to {@code null}) or
      * acquire the {@code LOCK}.
      * @return {@code null} iff locked, else the non-null batch taken from {@code READY}.
      */
-    private B lockOrTakeReady() {
+    private B lockOrTakeReady(Thread me) {
         B b;
-        while (true) {
-            //noinspection unchecked
-            b = (B)READY.getAndSetAcquire(this, null);
-            if (b != null || (int)LOCK.compareAndExchangeAcquire(this, 0, 1) == 0)
-                break;
+        //noinspection unchecked
+        while ((b=(B)READY.getAndSetAcquire(this, null)) == null && !tryLock(me))
             Thread.yield();
-        }
         return b;
     }
 
@@ -115,44 +99,38 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- termination methods --- --- --- */
 
     @Override public void complete(@Nullable Throwable error) {
-        lock();
-        try {
-            onTermination(error);
-        } finally { LOCK.setRelease(this, 0); }
-        unpark(producer);
-        unpark(consumer);
+        onTermination(error);
     }
 
     @Override public void cancel() { complete(CancelledException.INSTANCE); }
 
-    @Override public void close() {
-        lock();
-        try {
-            super.close();
-        } finally { LOCK.setRelease(this, 0); }
-        unpark(producer);
-        unpark(consumer);
-    }
-
     @Override protected void cleanup(@Nullable Throwable cause) {
-        //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
-        if (filling != null) {
-            if (READY.getOpaque(this) == null) {
-                if (filling.rows > 0) READY.setRelease(this, filling);
-                else batchType.recycle(filling);
-                filling = null;
-            } else if (filling.rows == 0) {
-                batchType.recycle(filling);
-                filling = null;
+        try {
+            //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
+            if (filling != null) {
+                if (READY.getOpaque(this) == null) {
+                    if (filling.rows > 0) READY.setRelease(this, filling);
+                    else batchType.recycle(filling);
+                    filling = null;
+                } else if (filling.rows == 0) {
+                    batchType.recycle(filling);
+                    filling = null;
+                }
             }
+            super.cleanup(cause);
+        } finally {
+            unpark(producer);
+            unpark(consumer);
         }
-        super.cleanup(cause);
     }
 
     /* --- --- --- producer methods --- --- --- */
 
     @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
-        lock();
+        if (ThreadJournal.ENABLED)
+            journal("offer rows=", b.totalRows(), "on", this);
+        var me = Thread.currentThread();
+        lock(me);
         Thread delayedWake = null;
         boolean locked = true;
         try {
@@ -185,9 +163,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         b = null;
                         break;
                     } else if (park) {
-                        producer = Thread.currentThread();
+                        producer = me;
                         //dbg.write("offer: parking, b.rows=", b.rows);
-                        LOCK.setRelease(this, 0);
+                        unlock();
                         locked = false;
                         park(this);
                         producer = null;
@@ -202,7 +180,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 }
             }
         } finally {
-            if (locked) LOCK.setRelease(this, 0);
+            if (locked) unlock();
             if (eager) eager = false;
             unpark(delayedWake);
         }
@@ -210,7 +188,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     }
 
     @Override public void copy(B b) throws TerminatedException, CancelledException {
-        lock();
+        if (ThreadJournal.ENABLED)
+            journal("copy rows=", b.totalRows(), "on", this);
+        var me = Thread.currentThread();
+        lock(me);
         boolean locked = true;
         Thread delayedWake = null;
         try {
@@ -234,9 +215,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                 }
                 if (mustPark(b.totalRows(), dst.totalRows())) { // park() until free capacity
-                    producer = Thread.currentThread();
+                    producer = me;
                     //dbg.write("copy: parking, b.rows=", b.rows);
-                    LOCK.setRelease(this, 0);
+                    unlock();
                     locked = false;
                     park(this);
                     producer = null;
@@ -255,7 +236,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 }
             }
         } finally {
-            if (locked)  LOCK.setRelease(this, 0);
+            if (locked) unlock();
             if (eager) eager = false;
             unpark(delayedWake);
         }
@@ -265,7 +246,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override public @Nullable B nextBatch(@Nullable B offer) {
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
-        B b = lockOrTakeReady();
+        Thread me = Thread.currentThread();
+        B b = lockOrTakeReady(me);
         boolean locked = b == null;
         try {
             if (!locked) return b; // fast path
@@ -295,21 +277,21 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 }
                 // park until time-based completion or unpark from offer()/copy()/cleanup()
                 //dbg.write("nextBatch: parking, parkNs=", parkNs);
-                consumer = Thread.currentThread();
-                LOCK.setRelease(this, 0);
+                consumer = me;
+                unlock();
                 locked = false;
+                journal("park ns=", parkNs, "on", this);
                 if (parkNs == Long.MAX_VALUE)
                     park(this);
                 else
                     parkNanos(this, parkNs);
                 consumer = null;
-                if ((b = lockOrTakeReady()) != null) {
+                if ((b = lockOrTakeReady(me)) != null)
                     break;
-                }
                 locked = true;
             }
         } finally {
-            if (locked) LOCK.setRelease(this, 0);
+            if (locked) unlock();
             // recycle offer if we did not already
             Batch.recycle(offer);
             unpark(producer);
@@ -326,7 +308,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         lock();
         try {
             filling = Batch.recycle(filling);
-        } finally { LOCK.setRelease(this, 0); }
+        } finally { unlock(); }
         checkError();
         return null;
     }

@@ -136,10 +136,6 @@ public final class Values extends Plan {
             metrics = Metrics.createIf(Values.this);
         }
 
-        @Override protected void cleanup(@Nullable Throwable error) {
-            super.cleanup(error);
-        }
-
         @Override public String toString() { return Values.this.toString(); }
     }
 }

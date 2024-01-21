@@ -16,14 +16,17 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
     }
 
     @Override public B nextBatch(@Nullable B b) {
-        if (b != null) batchType.recycle(b);
-        b = batch;
-        batch = null;
-        if (b == null && state() == State.ACTIVE)
-            onTermination(null);
-        else if (b != null)
-            onNextBatch(b);
-        return b;
+        lock();
+        try {
+            if (b != null) batchType.recycle(b);
+            b = batch;
+            batch = null;
+            if (b == null && state() == State.ACTIVE)
+                onTermination(null);
+            else if (b != null)
+                onNextBatch(b);
+            return b;
+        } finally { unlock(); }
     }
 
     @Override public @This BIt<B> tempEager() { return this; }

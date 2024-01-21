@@ -2285,13 +2285,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public @Nullable B nextBatch(@Nullable B b) {
             if (lb == null) return null; // already exhausted
+            boolean locked = false;
             try {
                 long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
                 long innerDeadline = rightSingleRow ? Timestamp.ORIGIN-1 : startNs+minWaitNs;
                 b = batchType.empty(b, nColumns);
                 do {
-                    if (rEnd && !rebind())
-                        break; // reached end of bindings
+                    lock();
+                    locked = true;
+                    if (plainState.isTerminated() || (rEnd && !rebind()))
+                        break; // cancelled or reached end of bindings
                     // fill rb with values from bound rIt
                     rb = rb.clear(tpFreeCols);
                     switch (tpFreeRoles) {
@@ -2364,7 +2367,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         if (hasLexicalJoin) endLexical();
                     }
                     if (bindingNotifier != null) bindingNotifier.notifyBinding(!pub && rEnd);
+                    unlock();
+                    locked = false;
                 } while (readyInNanos(b.totalRows(), startNs) > 0);
+                if (!locked) {
+                    locked = true;
+                    lock();
+                }
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.totalRows());
                 if (b.rows == 0) b = handleEmptyBatch(b);
@@ -2374,6 +2383,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     onTermination(t);
                 lb = null; // signal exhaustion
                 throw t;
+            } finally {
+                if (locked)
+                    unlock();
             }
             return b;
         }

@@ -50,7 +50,9 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
         if (processor != null) {
-            processor.release();
+            try {
+                processor.release();
+            } catch (Throwable t) { reportCleanupError(t); }
             processor = null;
         }
         ExceptionCondenser.closeAll(sourcesIt);
@@ -59,6 +61,7 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     /* --- --- --- implementations --- --- --- */
 
     @Override public @Nullable B nextBatch(@Nullable B b) {
+        lock();
         try {
             do {
                 BatchProcessor<B> p = processor;
@@ -73,6 +76,8 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         } catch (Throwable t) {
             onTermination(t);
             throw new BItReadFailedException(this, t);
+        } finally {
+            unlock();
         }
     }
 

@@ -40,7 +40,7 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
         if (it instanceof AutoCloseable c) {
             try {
                 c.close();
-            } catch (Exception e) { throw new RuntimeException(e); }
+            } catch (Throwable t) { reportCleanupError(t); }
         }
     }
 

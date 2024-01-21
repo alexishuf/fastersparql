@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -18,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
-    private static final Logger log = LoggerFactory.getLogger(BindingBIt.class);
     private static final int GUARDS_POOL_COL = GlobalAffinityShallowPool.reserveColumn();
 
     protected final BatchMerger<B> merger;
@@ -61,9 +61,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             for (var g : guards) {
                 try {
                     g.close();
-                } catch (Throwable t) {
-                    log.error("Guard.close() failed for {}: {}", g, t.toString());
-                }
+                } catch (Throwable t) { reportCleanupError(t); }
             }
             guards = GlobalAffinityShallowPool.offer(GUARDS_POOL_COL, guards);
         }
@@ -72,8 +70,9 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             lb = batchType.recycle(lb);
             rb = batchType.recycle(rb);
         }
-        inner.close();
-        merger.release();
+        try {
+            merger.release();
+        } catch (Throwable t) { reportCleanupError(t); }
         if (cause != null)
             bindQuery.bindings.close();
     }
@@ -91,7 +90,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
 
     @Override public B nextBatch(@Nullable B b) {
         if (lb == null) return null; // already exhausted
+        lock();
+        boolean locked = true;
         try {
+            if (plainState.isTerminated())
+                return null; // cancelled
             long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
             boolean rightEmpty = false, bindingEmpty = false;
             b = batchType.empty(b, nColumns);
@@ -100,17 +103,48 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                     if (++leftRow >= lb.rows) {
                         leftRow = 0;
                         B n = lb.dropHead();
-                        if (n != null)
+                        if (n != null) {
                             lb = n;
-                        else if ((lb = bindQuery.bindings.nextBatch(n)) == null)
-                            break; // reached end
+                        } else {
+                            unlock();
+                            locked = false;
+                            B nlb = bindQuery.bindings.nextBatch(n);
+                            lock();
+                            locked = true;
+                            if (nlb != null && plainState == State.ACTIVE) {
+                                lb = nlb;
+                            } else {
+                                lb = batchType.recycle(nlb);
+                                break; // reached end or cancelled
+                            }
+                        }
                     }
                     inner = bind(tempBinding.attach(lb, leftRow));
                     rightEmpty = true;
                     bindingEmpty = true;
                 }
-                if      ((rb = inner.nextBatch(rb)) == null) inner = empty;
-                else if ( rb.rows                   >     0) rightEmpty = false;
+                B rb = this.rb;
+                this.rb = null;
+                unlock();
+                locked = false;
+                try {
+                    rb = inner.nextBatch(rb);
+                } catch (BItReadClosedException e) {
+                    if (state().isTerminated())
+                        break;
+                    throw e;
+                } finally {
+                    lock();
+                    locked = true;
+                }
+                if (plainState.isTerminated()) {
+                    batchType.recycle(rb);
+                    break;
+                } else {
+                    this.rb = rb;
+                }
+                if      (rb      == null) inner = empty;
+                else if (rb.rows >     0) rightEmpty = false;
                 byte action = switch (bindQuery.type) {
                     case JOIN             -> rb != null               ? PUB_MERGE : 0;
                     case LEFT_JOIN        -> rb != null || rightEmpty ? PUB_MERGE : 0;
@@ -129,22 +163,27 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                     if (bindingEmpty) bindQuery.   emptyBinding(seq);
                     else    bindQuery.nonEmptyBinding(seq);
                 }
-            } while (readyInNanos(b.totalRows(), startNs) > 0);
+            } while (readyInNanos(b.totalRows(), startNs) > 0 && !plainState.isTerminated());
             if (b.rows == 0) b = handleEmptyBatch(b);
             else             onNextBatch(b);
         } catch (Throwable t) {
             lb = null; // signal exhaustion
             onTermination(t);
             throw t;
+        } finally {
+            if (locked)
+                unlock();
         }
         return b;
     }
 
     @SuppressWarnings("SameReturnValue") private B handleEmptyBatch(B batch) {
         batch.recycle();
-        safeCleanupThread = Thread.currentThread();
-        onTermination(null);
-        safeCleanupThread = null;
+        if (!plainState.isTerminated()) {
+            safeCleanupThread = Thread.currentThread();
+            onTermination(null);
+            safeCleanupThread = null;
+        }
         return null;
     }
 

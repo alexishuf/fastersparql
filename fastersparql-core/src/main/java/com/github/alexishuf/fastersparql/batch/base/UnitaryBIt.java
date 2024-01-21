@@ -53,27 +53,34 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
     }
 
     @Override public @Nullable B nextBatch(@Nullable B b) {
-        if (pendingError != null)
-            throwPending();
-        //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
-        b = batchType.empty(b, nColumns);
-        //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
-        long start = fillingStart;
-        if (needsStartTime && start == Timestamp.ORIGIN)
-            fillingStart = start = Timestamp.nanoTime();
+        lock();
         try {
-            while (!exhausted && readyInNanos(b.totalRows(), start) > 0)
-                b = fetch(b);
-        } catch (Throwable t) { pendingError = t; }
-        fillingStart = Timestamp.ORIGIN;
-        if (b.rows == 0) {
-            batchType.recycle(b);
-            if (pendingError != null) throwPending();
-            else                      onTermination(null);
-            return null;
+            if (pendingError != null)
+                throwPending();
+            //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
+            b = batchType.empty(b, nColumns);
+            //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
+            long start = fillingStart;
+            if (needsStartTime && start == Timestamp.ORIGIN)
+                fillingStart = start = Timestamp.nanoTime();
+            try {
+                while (!exhausted && readyInNanos(b.totalRows(), start) > 0)
+                    b = fetch(b);
+            } catch (Throwable t) {
+                pendingError = t;
+            }
+            fillingStart = Timestamp.ORIGIN;
+            if (b.rows == 0) {
+                batchType.recycle(b);
+                if (pendingError != null) throwPending();
+                else onTermination(null);
+                return null;
+            }
+            onNextBatch(b);
+            //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
+            return b;
+        } finally {
+            unlock();
         }
-        onNextBatch(b);
-        //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
-        return b;
     }
 }

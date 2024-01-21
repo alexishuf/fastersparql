@@ -28,11 +28,14 @@ public final class EmptyBIt<B extends Batch<B>> extends AbstractBIt<B> {
         else                               return new EmptyBIt<>(type, Vars.EMPTY);
     }
 
-    @Override public B            nextBatch(@Nullable B b) {
-        batchType.recycle(b);
-        if (state() == State.ACTIVE)
-            onTermination(null);
-        return null;
+    @Override public B nextBatch(@Nullable B b) {
+        lock();
+        try {
+            batchType.recycle(b);
+            if (state() == State.ACTIVE)
+                onTermination(null);
+            return null;
+        } finally { unlock(); }
     }
     @Override public @This BIt<B> tempEager() { return this; }
     @Override public String        toString() { return "EMPTY"; }

@@ -61,6 +61,8 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
-        if (cause != null) inner.close();
+        try {
+            inner.close();
+        } catch (Throwable t) { reportCleanupError(t); }
     }
 }

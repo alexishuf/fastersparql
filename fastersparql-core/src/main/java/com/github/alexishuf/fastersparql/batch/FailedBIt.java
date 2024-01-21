@@ -17,11 +17,14 @@ public class FailedBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     public FailedBIt(BatchType<B> bt, Throwable error) { this(bt, Vars.EMPTY, error); }
 
-    @Override public B            nextBatch(@Nullable B b) {
-        batchType.recycle(b);
-        if (state() == State.ACTIVE)
-            onTermination(error);
-        throw error;
+    @Override public B nextBatch(@Nullable B b) {
+        lock();
+        try {
+            batchType.recycle(b);
+            if (state() == State.ACTIVE)
+                onTermination(error);
+            throw error;
+        } finally { unlock(); }
     }
 
     @Override public @This BIt<B> tempEager() { return this; }

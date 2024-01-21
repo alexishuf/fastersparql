@@ -126,6 +126,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
             super(batchType, query.publicVars(), FSProperties.queueMaxRows(),
                   NettySparqlClient.this);
             this.request = createRequest(query);
+            acquireRef();
             request();
         }
 
@@ -139,8 +140,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            request.release();
+            try { super.cleanup(cause); } catch (Throwable t) { reportCleanupError(t); }
+            try { releaseRef();         } catch (Throwable t) { reportCleanupError(t); }
+            try { request.release();    } catch (Throwable t) { reportCleanupError(t); }
         }
 
         private void connected(Channel ch, NettyHandler handler) {

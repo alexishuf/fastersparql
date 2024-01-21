@@ -22,8 +22,9 @@ public final class DedupConcatBIt<B extends Batch<B>> extends ConcatBIt<B> {
     /* --- --- --- customize ConcatBIt behavior --- --- --- */
 
     @Override protected void cleanup(@Nullable Throwable cause) {
-        super.cleanup(cause);
-        dedup.release();
+        try {
+            super.cleanup(cause);
+        } finally { dedup.release(); }
     }
 
     @Override protected @Nullable BatchProcessor<B> createProcessor(BIt<B> source, int sourceIdx) {

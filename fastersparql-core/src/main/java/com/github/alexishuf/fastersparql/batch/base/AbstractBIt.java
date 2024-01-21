@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -32,10 +33,12 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
     protected static final VarHandle STATE;
+    protected static final VarHandle WORKING_THREAD;
 
     static {
         try {
-            STATE = lookup().findVarHandle(AbstractBIt.class, "plainState", State.class);
+            STATE          = lookup().findVarHandle(AbstractBIt.class, "plainState", State.class);
+            WORKING_THREAD = lookup().findVarHandle(AbstractBIt.class, "plainWorkingThread", Thread.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -47,6 +50,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     @SuppressWarnings("CanBeFinal") protected State plainState = State.ACTIVE;
     protected boolean needsStartTime = false, eager = false;
     protected final short nColumns;
+    @SuppressWarnings("unused") private @Nullable Thread plainWorkingThread;
+    private int workingDepth;
     protected @MonotonicNonNull Throwable error;
     protected final BatchType<B> batchType;
     protected @Nullable MetricsFeeder metrics;
@@ -110,20 +115,9 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      * @param cause if non-null, this is the exception that caused the termination.
      */
     protected final void onTermination(@Nullable Throwable cause) {
+        ThreadJournal.journal("onTermination", cause, "on", this);
         State tgt = cause == null ? State.COMPLETED
                 : (cause instanceof BItClosedAtException ? State.CANCELLED : State.FAILED);
-        if (STATE.compareAndExchangeRelease(this, State.ACTIVE, tgt) != State.ACTIVE) {
-            if (tgt == State.FAILED) {
-                if (error == null)
-                    log.info(ON_TERM_TPL_PREV, this, cause, "null");
-                else
-                    log.debug(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
-            } else {
-                log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
-            }
-            return;
-        }
-        error = cause;
         switch (tgt) {
             case COMPLETED -> log.trace(ON_TERM_TPL, this, "");
             case CANCELLED -> log.trace(ON_TERM_TPL, this, "close()/cancelled");
@@ -135,24 +129,64 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
                     log.info(ON_TERM_TPL, this, msg);
             }
         }
+        lock();
         try {
-            if (metrics != null)
-                metrics.completeAndDeliver(cause, tgt == State.CANCELLED);
-        } catch (Throwable t) {
-            log.error("{}.metrics.completeAndDeliver({}) failed", this, cause, t);
-        }
-        try {
-            cleanup(cause);
-        } catch (Throwable t) {
-            log.error("{}.cleanup() failed", this, t);
+            if (STATE.compareAndExchangeRelease(this, State.ACTIVE, tgt) != State.ACTIVE) {
+                if (tgt == State.FAILED) {
+                    if (error == null)
+                        log.info(ON_TERM_TPL_PREV, this, cause, "null");
+                    else
+                        log.debug(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
+                } else {
+                    log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
+                }
+                return;
+            }
+            error = cause;
+            try {
+                if (metrics != null)
+                    metrics.completeAndDeliver(cause, tgt == State.CANCELLED);
+            } catch (Throwable t) {
+                log.error("{}.metrics.completeAndDeliver({}) failed", this, cause, t);
+            }
+            try {
+                cleanup(cause);
+            } catch (Throwable t) {
+                reportCleanupError(t);
+            }
+        } finally {
+            unlock();
         }
     }
     private static final String ON_TERM_TPL_PREV = "{}.onTermination({}) ignored: previous onTermination({})";
     private static final String ON_TERM_TPL = "{}.onTermination({})";
 
+    protected void reportCleanupError(Throwable t) {
+        log.error("{}.cleanup() error: ", this, t);
+    }
+
     /* --- --- --- helpers --- --- --- */
 
     public State state() { return (State)STATE.getAcquire(this); }
+
+    protected void lock() { lock(Thread.currentThread()); }
+
+    protected void lock(Thread me) { while (!tryLock(me)) Thread.onSpinWait(); }
+
+    protected boolean tryLock(Thread me) {
+        var owner = (Thread)WORKING_THREAD.compareAndExchangeAcquire(this, null, me);
+        if (owner != null && owner != me)
+            return false;
+        ++workingDepth;
+        return true;
+    }
+
+    protected void unlock() {
+        if (workingDepth <= 0)
+            throw new IllegalStateException("mismatched unlockWorking()");
+        if (--workingDepth == 0)
+            WORKING_THREAD.setRelease(this, null);
+    }
 
     /**
      * This will be called after {@link BIt#minBatch(int)}, {@link BIt#maxBatch(int)},

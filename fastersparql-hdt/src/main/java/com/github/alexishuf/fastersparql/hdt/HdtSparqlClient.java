@@ -455,8 +455,9 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
-            super.cleanup(cause);
-            releaseRef();
+            try {
+                super.cleanup(cause);
+            } finally { releaseRef(); }
         }
 
         private long bind(Term term, long sourcedId, TripleComponentRole role,
