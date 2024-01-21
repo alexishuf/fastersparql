@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -39,6 +40,19 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     }
 
     @Override public @Nullable Channel channel() { return channel; }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = new StringBuilder().append(journalName());
+        if (type != StreamNodeDOT.Label.MINIMAL)
+            appendToSimpleLabel(sb);
+        if (type.showState()) {
+            sb.append("\nstate=").append(flags.render(state())).append(", requested=");
+            StreamNodeDOT.appendRequested(sb, requested());
+        }
+        if (type.showStats() && stats != null)
+            stats.appendToLabel(sb);
+        return sb.toString();
+    }
 
     @Override protected void appendToSimpleLabel(StringBuilder out) {
         out.append(" ch=").append(channel);

@@ -34,11 +34,14 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
+import io.netty.util.concurrent.Future;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -48,6 +51,7 @@ import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.fromMed
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.lang.System.identityHashCode;
+import static java.lang.Thread.onSpinWait;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -61,7 +65,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
     public NettySparqlClient(SparqlEndpoint ep) {
         super(withSupported(ep, SUPPORTED_METHODS));
         try {
-            Supplier<NettyHandler> handlerFac = NettyHandler::new;
+            Supplier<NettyHandler> handlerFac = () -> new NettyHandler(this);
             this.netty = new NettyClientBuilder().buildHTTP(ep.uri(), handlerFac);
         } catch (Throwable t) {
             throw FSException.wrap(ep, t);
@@ -122,6 +126,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
     private class QueryBIt<B extends Batch<B>> extends NettySPSCBIt<B>
             implements NettyHttpClient.ConnectionHandler<NettyHandler> {
         private final FullHttpRequest request;
+        private @Nullable NettyHandler handler;
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), FSProperties.queueMaxRows(),
@@ -133,11 +138,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public String journalName() {
             return "C.QB:" + (channel == null ? "null" : channel.id().asShortText());
-        }
-
-        @Override protected void request() {
-            request.retain(); // retain for retries, Nett will release() on write()
-            netty.request(request, this::connected, this::complete);
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
@@ -156,15 +156,24 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public void onConnected(Channel ch, NettyHandler handler) {
             this.channel = ch;
-            handler.setup(this);
             lock();
             try {
+                this.handler = handler;
                 if (state().isTerminated())
                     throw NettyHttpClient.ABORT_REQUEST;
                 handler.setup(this);
             } finally { unlock(); }
         }
+
         @Override public void onConnectionError(Throwable cause) { complete(cause); }
+
+        @Override public void close() {
+            lock();
+            try {
+                if (!state().isTerminated() && handler != null)
+                    handler.beforeCancel(this);
+            } finally { unlock(); }
+            super.close();
         }
     }
 
@@ -176,7 +185,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable B lb;
         private @Nullable BatchMerger<B> merger;
         private @Nullable Vars mergerFreeVars;
-
+        private @Nullable NettyHandler handler;
 
         public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), NettySparqlClient.this);
@@ -225,9 +234,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
             if (ThreadJournal.ENABLED)
                 journal("connected em=", this, "ch=", ch.toString());
             setChannel(ch);
-            handler.setup(this);
             int st = lock(statePlain());
             try {
+                this.handler = handler;
                 if ((st&IS_CANCEL_REQ) != 0 || (isCancelled(st)))
                     throw NettyHttpClient.ABORT_REQUEST;
                 handler.setup(this);
@@ -236,6 +245,13 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public void onConnectionError(Throwable cause) { complete(cause); }
 
+        @Override public void cancel() {
+            int st = lock(statePlain());
+            try {
+                if ((st&(IS_TERM|IS_CANCEL_REQ)) == 0 && handler != null)
+                    handler.beforeCancel(this);
+            } finally { unlock(st); }
+            super.cancel();
         }
 
         @Override protected @Nullable B deliver(B b) {
@@ -274,13 +290,27 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public Vars bindableVars() { return originalQuery.allVars(); }
     }
 
+    private static final class NettyHandler extends NettyHttpHandler {
+        private static final VarHandle SETUP_LOCK;
+        static {
+            try {
+                SETUP_LOCK = MethodHandles.lookup().findVarHandle(NettyHandler.class, "plainSetupLock", int.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
 
-    private final class NettyHandler extends NettyHttpHandler {
         private CompletableBatchQueue<?> downstream;
         private @MonotonicNonNull ResultsParser<?> parser;
         private @Nullable Charset decodeCS;
         private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
         private int resBytes = 0;
+        private final NettySparqlClient sparqlClient;
+        @SuppressWarnings("unused") private int plainSetupLock;
+
+        private NettyHandler(NettySparqlClient sparqlClient) {
+            this.sparqlClient = sparqlClient;
+        }
 
         @Override public String toString() {
             return String.format("{ch=%s, %s, resBytes=%d}@%x",
@@ -299,18 +329,31 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         public void setup(CompletableBatchQueue<?> downstream) {
-            journal("setup nettyHandler=", this, "down=", downstream);
-            resBytes = 0;
-            this.downstream = downstream;
-            expectResponse();
+            while ((int)SETUP_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+                onSpinWait();
+            try {
+                journal("setup nettyHandler=", this, "down=", downstream);
+                resBytes = 0;
+                this.downstream = downstream;
+                expectResponse();
+            } finally { SETUP_LOCK.setRelease(this, 0); }
+        }
+
+        public void beforeCancel(CompletableBatchQueue<?> downstream) {
+            while ((int)SETUP_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+                onSpinWait();
+            try {
+                if (downstream == this.downstream && markTerminated())
+                    journal("beforeCancel(): marked as term on", this);
+            } finally { SETUP_LOCK.setRelease(this, 0); }
         }
 
         @Override protected void successResponse(HttpResponse resp) {
             if (downstream == null)
-                throw new FSException(endpoint, "HttpResponse received before setup()");
+                throw new FSException(sparqlClient.endpoint, "HttpResponse received before setup()");
             var mt = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
             if (mt == null)
-                throw new InvalidSparqlResultsException(endpoint, "No Content-Type in HTTP response");
+                throw new InvalidSparqlResultsException(sparqlClient.endpoint, "No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
             parser = ResultsParser.createFor(fromMediaType(mt), downstream);
@@ -318,7 +361,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override protected void error(Throwable cause) {
             journal("error on", this, ": ", cause);
-            FSException ex = FSException.wrap(endpoint, cause);
+            FSException ex = FSException.wrap(sparqlClient.endpoint, cause);
             if (parser != null)
                 parser.feedError(ex);
             if (downstream == null)

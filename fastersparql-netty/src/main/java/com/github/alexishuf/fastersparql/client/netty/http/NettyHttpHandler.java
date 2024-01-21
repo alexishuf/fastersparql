@@ -74,7 +74,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         ChannelHandlerContext ctx = this.ctx;
         if (ctx != null)
             ctx.channel().config().setAutoRead(true);
-        if ((boolean)TERMINATED.compareAndExchangeRelease(this, true, false)) {
+        if (unMarkTerminated()) {
             journal("expectResponse() on ", this);
             httpResponse = null;
             if (failureBody != ByteRope.EMPTY)
@@ -85,6 +85,14 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             assert false : "expectResponse() on non-terminated NettyHttpHandler";
         }
     }
+
+    protected boolean markTerminated() {
+        return !(boolean)TERMINATED.compareAndExchangeRelease(this, false, true);
+    }
+    protected boolean unMarkTerminated() {
+        return (boolean)TERMINATED.compareAndExchangeRelease(this, true, false);
+    }
+
 
     /**
      * Called once a {@link HttpStatusClass#SUCCESS} response starts (status and headers arrived,
@@ -127,7 +135,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
      * (no new request) was/will be issued.
      */
     private void releaseChannel() {
-        if (!((boolean)TERMINATED.compareAndExchangeRelease(this, false, true))) {
+        if (markTerminated()) {
             journal("releasing channel", this);
             httpResponse = null;
             recycler.recycle(ctx.channel());
@@ -196,8 +204,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
         if ((boolean)TERMINATED.getAcquire(this)) {
-            journal("post-term msg on", this);
-            log.error("Ignoring post-terminated message {}", msg);
+            logPostTerm(msg);
             return;
         }
         HttpResponse response = httpResponse;
@@ -231,5 +238,17 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
                     fail(null); // will build a FSServerException from the response
             }
         }
+    }
+
+    private void logPostTerm(HttpObject msg) {
+        int bytes = msg instanceof HttpContent hc ? hc.content().readableBytes() : 0;
+        if (msg instanceof HttpResponse res) {
+            journal("post-term HTTP ", res.status().code(),  "bytes=", bytes,
+                    "on", this);
+        } else {
+            journal("post-term HTTP content bytes=", bytes, "last=",
+                    msg instanceof LastHttpContent ? 1 : 0, "on", this);
+        }
+        log.info("Ignoring post-terminated {} {}", msg.getClass().getSimpleName(), msg);
     }
 }

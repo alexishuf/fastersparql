@@ -130,10 +130,13 @@ public abstract class ResultsParser<B extends Batch<B>> {
         try {
             if (rope == null || rope.len == 0)
                 return; // no-op
+            if ((boolean)TERMINATED.getAcquire(this))
+                throw TerminatedException.INSTANCE;
             doFeedShared(rope);
             emitBatch();
         } catch (TerminatedException|CancelledException e) {
-            if (!(boolean) TERMINATED.compareAndExchangeRelease(this, false, true))
+            emitLastBatch();
+            if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true))
                 cleanup(e);
             throw e;
         } catch (Throwable t) {
@@ -264,7 +267,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
             dst.complete(ex);
             cleanup(ex);
         }
-        throw TerminatedException.INSTANCE;
+        throw new RuntimeException(t);
     }
 
     private void emitLastBatch() {
@@ -275,6 +278,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
                     batch.abortPut();
                 }
                 emitBatch();
+            } catch (CancelledException|TerminatedException ignored) {
             } catch (Throwable t) {
                 log.warn("Ignoring emitLastBatch() failure", t);
             }

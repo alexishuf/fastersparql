@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.client.util.ClientRetry;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import io.netty.channel.Channel;
+import io.netty.channel.EventLoop;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -31,7 +32,12 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> implem
 
     @Override public void complete(@Nullable Throwable error) {
         final Channel ch = channel;
-        assert ch == null || ch.eventLoop().inEventLoop() : "complete() outside event loop";
+        EventLoop el;
+        if (ch != null && !(el=ch.eventLoop()).inEventLoop()) {
+            Throwable finalError = error;
+            el.execute(() -> complete(finalError));
+            return;
+        }
         error = FSException.wrap(client.endpoint(), error);
         if (state() == State.ACTIVE && ClientRetry.retry(++retries, error, this::request))
             return; //will retry request
