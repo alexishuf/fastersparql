@@ -20,7 +20,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -152,7 +151,7 @@ class NettyClientBuilderTest {
             assertTrue(hadResponse, "HttpContent before HttpResponse");
             String string = content.content().toString(UTF_8);
             if (string.isEmpty()) {
-                assertTrue(content instanceof LastHttpContent, "if empty, chunk must be last");
+                assertInstanceOf(LastHttpContent.class, content, "if empty, chunk must be last");
             } else {
                 assertTrue(string.length() <= 16,
                         "chunk is too long (" + string.length() + ")");
@@ -246,9 +245,20 @@ class NettyClientBuilderTest {
                                              "text/x.payload+req",
                                 String.valueOf(payloadSize), UTF_8);
                         var response = new CompletableFuture<String>();
-                        c.request(req, (BiConsumer<Channel, ClientHandler>)
-                                  (ch, h) -> h.setup(response, id, payloadSize),
-                                  response::completeExceptionally);
+                        c.connect(new NettyHttpClient.ConnectionHandler<ClientHandler>() {
+                            @Override
+                            public void onConnected(Channel ch, ClientHandler handler) {
+                                handler.setup(response, id, payloadSize);
+                            }
+                            @Override public void onConnectionError(Throwable cause) {
+                                response.completeExceptionally(cause);
+                            }
+                            @Override public HttpRequest httpRequest() { return req; }
+                            @Override
+                            public void operationComplete(io.netty.util.concurrent.Future<?> future) {
+                                c.handleChannel(future, this);
+                            }
+                        });
                         return response.get();
                     }
                 }));

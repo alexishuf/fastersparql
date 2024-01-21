@@ -7,30 +7,32 @@ import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
+import io.netty.channel.*;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
 import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.ReferenceCounted;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.GenericFutureListener;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.util.concurrent.ExecutionException;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 
 public final class NettyHttpClient implements AutoCloseable {
     public static final String HANDLER_NAME = "handler";
+
+    public static final AbortRequest ABORT_REQUEST = new AbortRequest();
+    public static final class AbortRequest extends RuntimeException {
+        private AbortRequest() { super("abort NettyHttpClient.request()");}
+    }
 
     private final EventLoopGroupHolder groupHolder;
     private final ActiveChannelSet activeChannels;
@@ -139,32 +141,51 @@ public final class NettyHttpClient implements AutoCloseable {
         return req;
     }
 
-    public <T extends NettyHttpHandler> void
-    request(HttpRequest request, BiConsumer<Channel, T> onConnected, Consumer<Throwable> onError) {
-        if (closed) throw new IllegalStateException("already close()ed");
-        (pool == null ? bootstrap.connect() : pool.acquire()).addListener(f -> {
-            try {
-                Channel ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
-                var headers = request.headers();
-                headers.set(CONNECTION, connectionHeaderValue);
-                headers.set(HOST, host);
-                if (request instanceof HttpContent hc && !headers.contains(CONTENT_LENGTH))
-                    headers.set(CONTENT_LENGTH, hc.content().readableBytes());
-                //noinspection unchecked
-                T handler = (T) ch.pipeline().get(HANDLER_NAME);
-                if (handler == null) {
-                    var msg = baseUri+" closed connection before the local Channel initialized";
-                    throw new FSException(msg);
-                }
-                onConnected.accept(ch, handler);
-                ch.writeAndFlush(request);
-            } catch (Throwable t) {
-                // caller expects a request to be release()ed
-                if (request instanceof ReferenceCounted r)
-                    r.release();
-                onError.accept(t instanceof ExecutionException ? t.getCause() : t);
+    public <T extends NettyHttpHandler> void handleChannel(Future<?> f, ConnectionHandler<T> h) {
+        HttpRequest request = h.httpRequest();
+        boolean sent = false;
+        Channel ch = null;
+        try {
+            ch = f instanceof ChannelFuture cf ? cf.channel() : (Channel) f.get();
+            var headers = request.headers();
+            headers.set(CONNECTION, connectionHeaderValue);
+            headers.set(HOST, host);
+            if (request instanceof HttpContent hc && !headers.contains(CONTENT_LENGTH))
+                headers.set(CONTENT_LENGTH, hc.content().readableBytes());
+            //noinspection unchecked
+            T handler = (T) ch.pipeline().get(HANDLER_NAME);
+            if (handler == null) {
+                var msg = baseUri+" closed connection before the local Channel initialized";
+                throw new FSException(msg);
             }
-        });
+            h.onConnected(ch, handler);
+            sent = true;
+            ch.writeAndFlush(request);
+        } catch (Throwable t) {
+            // caller expects a request to be release()ed
+            if (!sent && request instanceof ReferenceCounted r)
+                r.release();
+            if (t == ABORT_REQUEST) {
+                if (ch != null && ch.isActive()) ch.close();
+            } else {
+                h.onConnectionError(t instanceof ExecutionException ? t.getCause() : t);
+            }
+        }
+    }
+
+    public interface ConnectionHandler<T extends NettyHttpHandler>
+            extends GenericFutureListener<Future<?>> {
+        void onConnected(Channel ch, T handler);
+        void onConnectionError(Throwable cause);
+        HttpRequest httpRequest();
+    }
+
+    public <T extends NettyHttpHandler> void
+    connect(ConnectionHandler<T> handler) {
+        if (closed) throw new IllegalStateException("already close()ed");
+        Future<?> future = pool == null ? bootstrap.connect() : pool.acquire();
+        //noinspection rawtypes,unchecked
+        future.addListener((GenericFutureListener)handler);
     }
 
     @Override public void close() {

@@ -119,7 +119,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
      *  while {@link NettyHandler}'s lifecycle is attached to the Netty channel which may be
      *  reused for multiple SPARQL queries.</p>
      */
-    private class QueryBIt<B extends Batch<B>> extends NettySPSCBIt<B> {
+    private class QueryBIt<B extends Batch<B>> extends NettySPSCBIt<B>
+            implements NettyHttpClient.ConnectionHandler<NettyHandler> {
         private final FullHttpRequest request;
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
@@ -145,13 +146,30 @@ public class NettySparqlClient extends AbstractSparqlClient {
             try { request.release();    } catch (Throwable t) { reportCleanupError(t); }
         }
 
-        private void connected(Channel ch, NettyHandler handler) {
+        @Override protected void request() { netty.connect(this); }
+
+        @Override public void operationComplete(Future<?> future) {
+            netty.handleChannel(future, this);
+        }
+
+        @Override public HttpRequest httpRequest() { return request.retain(); }
+
+        @Override public void onConnected(Channel ch, NettyHandler handler) {
             this.channel = ch;
             handler.setup(this);
+            lock();
+            try {
+                if (state().isTerminated())
+                    throw NettyHttpClient.ABORT_REQUEST;
+                handler.setup(this);
+            } finally { unlock(); }
+        }
+        @Override public void onConnectionError(Throwable cause) { complete(cause); }
         }
     }
 
-    private final class QueryEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
+    private final class QueryEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B>
+            implements NettyHttpClient.ConnectionHandler<NettyHandler> {
         private final SparqlQuery originalQuery;
         private SparqlQuery boundQuery;
         private @Nullable FullHttpRequest boundRequest;
@@ -189,20 +207,35 @@ public class NettySparqlClient extends AbstractSparqlClient {
             return 8*super.preferredRequestChunk();
         }
 
-        @Override protected void request() {
-            journal("sending HTTP request for", this);
+        @Override protected void request() { netty.connect(this); }
+
+        @Override public void operationComplete(Future<?> future) {
+            netty.handleChannel(future, this);
+        }
+
+        @Override public HttpRequest httpRequest() {
             var request = this.boundRequest;
             if (request == null)
                 this.boundRequest = request = createRequest(boundQuery);
             request.retain(); // retain for retries, Nett will release() on write()
-            netty.request(request, this::connected, this::complete);
+            return request;
         }
 
-        private void connected(Channel ch, NettyHandler handler) {
+        @Override public void onConnected(Channel ch, NettyHandler handler) {
             if (ThreadJournal.ENABLED)
                 journal("connected em=", this, "ch=", ch.toString());
             setChannel(ch);
             handler.setup(this);
+            int st = lock(statePlain());
+            try {
+                if ((st&IS_CANCEL_REQ) != 0 || (isCancelled(st)))
+                    throw NettyHttpClient.ABORT_REQUEST;
+                handler.setup(this);
+            } finally { unlock(st); }
+        }
+
+        @Override public void onConnectionError(Throwable cause) { complete(cause); }
+
         }
 
         @Override protected @Nullable B deliver(B b) {
