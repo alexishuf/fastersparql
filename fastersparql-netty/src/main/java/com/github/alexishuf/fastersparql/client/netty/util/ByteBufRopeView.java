@@ -138,7 +138,7 @@ public final class ByteBufRopeView {
         byte[] copy = this.copy;
         if (copy == null || copy.length < size)
             this.copy = copy = new byte[size];
-        bb.readBytes(this.copy);
+        bb.readBytes(copy, 0, size);
         sr.wrapSegment(MemorySegment.ofArray(copy), copy, 0, size);
         return sr;
     }
