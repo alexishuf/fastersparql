@@ -162,11 +162,8 @@ public abstract sealed class Plan implements SparqlQuery
     public final void replace(Plan[] operands) {
         if (operands.length < 3) {
             operandsArray = null;
-            switch (2-operands.length) {
-                case 0: right = operands[1];
-                case 1: left  = operands[0];
-                default: break;
-            }
+            left  = operands.length > 0 ? operands[0] : null;
+            right = operands.length > 1 ? operands[1] : null;
         } else {
             left  = operands[0];
             right = operands[1];
