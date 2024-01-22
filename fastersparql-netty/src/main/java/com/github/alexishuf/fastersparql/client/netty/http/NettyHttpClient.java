@@ -166,7 +166,7 @@ public final class NettyHttpClient implements AutoCloseable {
             if (!sent && request instanceof ReferenceCounted r)
                 r.release();
             if (t == ABORT_REQUEST) {
-                if (ch != null && ch.isActive()) ch.close();
+                if (ch != null) recycler.recycle(ch);
             } else {
                 h.onConnectionError(t instanceof ExecutionException ? t.getCause() : t);
             }
