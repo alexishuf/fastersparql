@@ -457,7 +457,9 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                 this.error = error;
             if ((st&LEFT_TERM) == 0) {
                 st = setFlagsRelease(st, flag);
-                if ((st&(RIGHT_TERM|RIGHT_STARVED)) != 0 && (lb==null || (st&IS_CANCEL_REQ) != 0))
+                boolean canTerminate = (st&RIGHT_TERM) != 0
+                        || ((st&RIGHT_STARVED) != 0 && (lb == null || (st&IS_CANCEL_REQ) != 0));
+                if (canTerminate)
                     st = terminateStage(st);
             }
         } finally {
@@ -497,7 +499,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
             assert (state & (LEFT_TERM|RIGHT_TERM)) == LEFT_COMPLETED;
             termState = COMPLETED;
         }
-        lr = -1;
+        dropLeftQueued();
         var downstream = rightRecv.downstream;
         state = unlock(state);
         if (moveStateRelease(state, termState)) {
