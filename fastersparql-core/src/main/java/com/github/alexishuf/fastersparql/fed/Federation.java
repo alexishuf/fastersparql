@@ -477,6 +477,8 @@ public class Federation extends AbstractSparqlClient {
 
                 if (nonTP != 0)
                     addNonTP(plan, nonTP, bound, nBound);
+                if (nBound == 1)
+                    yield bound[0];
                 plan.replace(bound);
                 yield plan;
             }
@@ -652,6 +654,8 @@ public class Federation extends AbstractSparqlClient {
 
         if (nonTP != 0)
             addNonTP(join, nonTP, bound, nBound);
+        if (nBound == 1)
+            return bound[0];
         join.replace(bound);
         return join;
     }
@@ -714,6 +718,8 @@ public class Federation extends AbstractSparqlClient {
 
         if (nonTP > 0)
             addNonTP(join, sourced, bound, nBound);
+        if (nBound == 1)
+            return bound[0];
         join.replace(bound);
         return join;
     }
