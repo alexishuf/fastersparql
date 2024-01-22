@@ -190,6 +190,7 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
         rightRecv.rebindRelease();
+        lr                   = -1;
         lb                   = batchType.recycle(lb);
         fillingLB            = batchType.recycle(fillingLB);
         rightRecv.singleton  = batchType.recycle(rightRecv.singleton);

@@ -120,7 +120,7 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         if ((state()&IS_CANCEL_REQ) != 0) {
             Channel ch = channel;
             if (ch != null)
-                ch.close();
+                ch.eventLoop().execute(ch::close);
         }
     }
 }

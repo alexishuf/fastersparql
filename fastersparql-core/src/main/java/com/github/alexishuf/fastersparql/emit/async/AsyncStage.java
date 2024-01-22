@@ -90,7 +90,7 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
             long deadline = Timestamp.nextTick(2);
             batch = deliver(batch);
             if (Timestamp.nanoTime() > deadline)
-                setFlagsRelease(state, IS_ASYNC);
+                unlock(setFlagsRelease(lock(state), IS_ASYNC));
             return batch;
         } else {
             if ((state&IS_TERM) == 0) {
@@ -144,6 +144,18 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
         //noinspection unchecked
         bt.recycle((B)QUEUE.getAndSetAcquire(this, (B)null));
         super.doRelease();
+    }
+
+    @Override public void cancel() {
+        int st = lock(statePlain()); // block setting of IS_ASYNC (if not set)
+        try {
+            if ((st&IS_ASYNC) == 0) { // not async, cancel up
+                up.cancel();
+                return;
+            }
+        } finally { unlock(st); }
+
+        super.cancel(); // IS_ASYNC, cancel as a TaskEmitter
     }
 
     @Override protected void resume() { up.request(requested()); }
