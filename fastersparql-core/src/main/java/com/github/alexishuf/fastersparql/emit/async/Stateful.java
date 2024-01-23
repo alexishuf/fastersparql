@@ -430,9 +430,7 @@ public abstract class Stateful {
             if ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e)
                 current = lockCold();
         }
-        current |= LOCKED_MASK;
-        //if (ENABLED) journal("locked, s=", current, flags, this);
-        return current;
+        return current|LOCKED_MASK;
     }
 
     private int lockCold() {
