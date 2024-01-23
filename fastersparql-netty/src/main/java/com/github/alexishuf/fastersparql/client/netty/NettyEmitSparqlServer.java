@@ -446,9 +446,13 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                                           HttpResponseStatus status,
                                           boolean cancelled, @Nullable Throwable error) {
             if (ThreadJournal.ENABLED) {
-                journal("endQuery, status=", status.code(), "handler=", this);
-                if (cancelled || error != null)
-                    journal("endQuery, cancelled=", cancelled ? 1 : 0, "error=", error);
+                journal("endQuery, status=", status.code(), "cancelled=", cancelled?1:0,
+                        "handler=", this);
+                if (error != null) {
+                    String msg = error.toString();
+                    if (msg.length() > 40) msg = msg.substring(0, 40)+"...";
+                    journal("endQuery, error=", msg);
+            }
             }
             if (this.sender != sender) {
                 badEndQuerySender(sender, status, cancelled, error);

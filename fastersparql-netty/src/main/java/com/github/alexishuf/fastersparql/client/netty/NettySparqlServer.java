@@ -30,6 +30,7 @@ import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -485,8 +486,13 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
                                            boolean cancelled) {
-            journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
-                    "handler=", this);
+            if (ThreadJournal.ENABLED) {
+                journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
+                        "handler=", this);
+                var msg = errorMessage.length() < 40 ? errorMessage
+                        : errorMessage.toString().substring(0, 50)+"...";
+                journal("error=", msg);
+            }
             HttpContent msg;
             ByteBuf bb = ctx.alloc().buffer(errorMessage.length());
             if (responseStarted) {
@@ -715,8 +721,13 @@ public class NettySparqlServer implements AutoCloseable {
         @Override
         protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
                                  boolean cancelled) {
-            journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
-                    "handler=", this);
+            if (ThreadJournal.ENABLED) {
+                journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
+                        "handler=", this);
+                var msg = errorMessage.length() < 40 ? errorMessage
+                        : errorMessage.toString().substring(0, 50)+"...";
+                journal("error=", msg);
+            }
             var sink = new ByteBufSink(ctx.alloc()).touch();
             sink.append(cancelled ? CANCELLED : ERROR).appendEscapingLF(errorMessage).append('\n');
             ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
