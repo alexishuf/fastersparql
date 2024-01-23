@@ -87,6 +87,11 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     @Override public BatchType<B> batchType()  { return bt; }
 
 
+    @Override public boolean   isComplete() { return isCompleted(state()); }
+    @Override public boolean  isCancelled() { return isCancelled(state()); }
+    @Override public boolean     isFailed() { return isFailed(state()); }
+    @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
+
     @Override public void cancel() {
         int st = statePlain();
         if ((st&IS_CANCEL_REQ) != 0 || moveStateRelease(statePlain(), CANCEL_REQUESTING))

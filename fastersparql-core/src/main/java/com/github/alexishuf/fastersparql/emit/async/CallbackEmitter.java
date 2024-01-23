@@ -36,9 +36,6 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
      */
     protected abstract void resume();
 
-    @Override public boolean isTerminated() {return (state()&IS_TERM) != 0;}
-    @Override public boolean isComplete() {return isCompleted(state());}
-    @Override public boolean isCancelled() {return isCancelled(state());}
     @Override public @Nullable Throwable error() {
         return (state()&~IS_TERM_DELIVERED) == FAILED ? error : null;
     }

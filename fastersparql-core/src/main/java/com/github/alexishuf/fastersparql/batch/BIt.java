@@ -254,6 +254,20 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      */
     @Override void close();
 
+    /**
+     * Cancel the {@link BIt} as {@link #close()} would, but also returns a boolean indicating
+     * if termination occurred due to this call ({@code true}) or if the {@link BIt} was
+     * already in a {@link State#isTerminated()} state ({@code false})
+     *
+     * <p>Note that after this method returns another thread might still be calling
+     * {@link #nextBatch(Batch)} and such calls might return non-null and non-empty batches
+     * for an arbitrary window after this method or {@link #close()} were called, depending on
+     * how the {@link BIt} implementation</p>
+     *
+     * @return {@code true} if this call caused termination of the {@link BIt}
+     */
+    boolean tryCancel();
+
     enum State {
         ACTIVE,
         COMPLETED,

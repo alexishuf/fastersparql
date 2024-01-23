@@ -268,6 +268,11 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
         @Override public BatchType<B> batchType()          { return p.batchType; }
         @Override public void            cancel()          { p.doCancel(); }
 
+        @Override public boolean   isComplete() { return Stateful.isCompleted(p.state()); }
+        @Override public boolean  isCancelled() { return Stateful.isCancelled(p.state()); }
+        @Override public boolean     isFailed() { return Stateful.   isFailed(p.state()); }
+        @Override public boolean isTerminated() { return (p.state()&IS_TERM) != 0; }
+
         @Override
         public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException, MultipleRegistrationUnsupportedException {
             if ((p.state()&IS_INIT) == 0)

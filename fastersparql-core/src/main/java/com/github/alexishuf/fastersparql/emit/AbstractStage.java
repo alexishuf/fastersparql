@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -23,6 +24,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     public final BatchType<O> batchType;
     public final Vars vars;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
+    private int state;
 
     public AbstractStage(BatchType<O> batchType, Vars vars) {
         this.batchType = batchType;
@@ -55,6 +57,11 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
             ThreadJournal.journal("subscribed", receiver, "to", this);
     }
 
+    @Override public boolean   isComplete() { return Stateful.isCompleted(state); }
+    @Override public boolean  isCancelled() { return Stateful.isCancelled(state); }
+    @Override public boolean     isFailed() { return Stateful.isFailed(state); }
+    @Override public boolean isTerminated() { return (state& Stateful.IS_TERM) != 0; }
+
     @Override public void cancel() {
         if (upstream == null) throw new NoEmitterException();
         upstream.cancel();
@@ -82,6 +89,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
             stats.onRebind(binding);
         if (upstream == null)
             throw new NoEmitterException();
+        state = Stateful.CREATED;
         upstream.rebind(binding);
     }
 
@@ -99,14 +107,20 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public @MonotonicNonNull Emitter<I> upstream() { return upstream; }
     @Override public void onComplete() {
         if (downstream == null) throw new NoReceiverException();
+        state = Stateful.COMPLETED;
         downstream.onComplete();
+        if (state == Stateful.COMPLETED) state = Stateful.COMPLETED_DELIVERED;
     }
     @Override public void onCancelled() {
         if (downstream == null) throw new NoReceiverException();
+        state = Stateful.CANCELLED;
         downstream.onCancelled();
+        if (state == Stateful.CANCELLED) state = Stateful.CANCELLED_DELIVERED;
     }
     @Override public void onError(Throwable cause) {
         if (downstream == null) throw new NoReceiverException();
+        state = Stateful.FAILED;
         downstream.onError(cause);
+        if (state == Stateful.FAILED) state = Stateful.FAILED_DELIVERED;
     }
 }

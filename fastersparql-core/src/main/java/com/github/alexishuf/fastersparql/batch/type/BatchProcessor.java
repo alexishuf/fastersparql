@@ -151,6 +151,11 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override final public Vars bindableVars() { return bindableVars; }
 
+    @Override public boolean   isComplete() { return isCompleted(state()); }
+    @Override public boolean  isCancelled() { return isCancelled(state()); }
+    @Override public boolean     isFailed() { return isFailed(state()); }
+    @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
+
     @Override public final void cancel() {
         if (upstream != null)
             upstream.cancel();

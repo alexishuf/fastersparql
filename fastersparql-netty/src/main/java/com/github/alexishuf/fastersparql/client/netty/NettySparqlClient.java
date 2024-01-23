@@ -40,8 +40,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -51,7 +49,6 @@ import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.fromMed
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.lang.System.identityHashCode;
-import static java.lang.Thread.onSpinWait;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -158,22 +155,21 @@ public class NettySparqlClient extends AbstractSparqlClient {
             this.channel = ch;
             lock();
             try {
-                this.handler = handler;
-                if (state().isTerminated())
+                if (canSendRequest()) {
+                    this.handler = handler;
+                    handler.setup(this);
+                } else {
+                    this.handler = null;
                     throw NettyHttpClient.ABORT_REQUEST;
-                handler.setup(this);
+                }
             } finally { unlock(); }
         }
 
         @Override public void onConnectionError(Throwable cause) { complete(cause); }
 
-        @Override public void close() {
-            lock();
-            try {
-                if (!state().isTerminated() && handler != null)
-                    handler.beforeCancel(this);
-            } finally { unlock(); }
-            super.close();
+        @Override protected void cancelAfterRequestSent() {
+            assert handler != null : "request sent but handler == null";
+            handler.cancelAndClose(this);
         }
     }
 
@@ -216,7 +212,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
             return 8*super.preferredRequestChunk();
         }
 
-        @Override protected void request() { netty.connect(this); }
+        @Override protected void request() {
+            handler = null;
+            netty.connect(this);
+        }
 
         @Override public void operationComplete(Future<?> future) {
             netty.handleChannel(future, this);
@@ -236,22 +235,21 @@ public class NettySparqlClient extends AbstractSparqlClient {
             setChannel(ch);
             int st = lock(statePlain());
             try {
-                this.handler = handler;
-                if ((st&IS_CANCEL_REQ) != 0 || (isCancelled(st)))
-                    throw NettyHttpClient.ABORT_REQUEST;
-                handler.setup(this);
+                if (canSendRequest()) {
+                    this.handler = handler;
+                    handler.setup(this);
+                } else {
+                    throw NettyHttpClient.ABORT_REQUEST; // recycle ch
+                }
             } finally { unlock(st); }
         }
 
         @Override public void onConnectionError(Throwable cause) { complete(cause); }
 
-        @Override public void cancel() {
-            int st = lock(statePlain());
-            try {
-                if ((st&(IS_TERM|IS_CANCEL_REQ)) == 0 && handler != null)
-                    handler.beforeCancel(this);
-            } finally { unlock(st); }
-            super.cancel();
+        @Override protected boolean cancelAfterRequestSent() {
+            assert handler != null : "REQUEST_SENT but handler == null";
+            handler.cancelAndClose(this);
+            return false; // still do TaskEmitter.cancel()
         }
 
         @Override protected @Nullable B deliver(B b) {
@@ -263,7 +261,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(STARTED|RETRIES_MASK, LOCKED_MASK);
+            int st = resetForRebind(REBIND_CLEAR, LOCKED_MASK);
             try {
                 boundQuery = originalQuery.bound(binding);
                 var freeVars = boundQuery.publicVars();
@@ -291,22 +289,12 @@ public class NettySparqlClient extends AbstractSparqlClient {
     }
 
     private static final class NettyHandler extends NettyHttpHandler {
-        private static final VarHandle SETUP_LOCK;
-        static {
-            try {
-                SETUP_LOCK = MethodHandles.lookup().findVarHandle(NettyHandler.class, "plainSetupLock", int.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
-
         private CompletableBatchQueue<?> downstream;
         private @MonotonicNonNull ResultsParser<?> parser;
         private @Nullable Charset decodeCS;
         private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
         private int resBytes = 0;
         private final NettySparqlClient sparqlClient;
-        @SuppressWarnings("unused") private int plainSetupLock;
 
         private NettyHandler(NettySparqlClient sparqlClient) {
             this.sparqlClient = sparqlClient;
@@ -329,23 +317,17 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         public void setup(CompletableBatchQueue<?> downstream) {
-            while ((int)SETUP_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-                onSpinWait();
-            try {
-                journal("setup nettyHandler=", this, "down=", downstream);
-                resBytes = 0;
-                this.downstream = downstream;
-                expectResponse();
-            } finally { SETUP_LOCK.setRelease(this, 0); }
+            journal("setup nettyHandler=", this, "down=", downstream);
+            resBytes = 0;
+            this.downstream = downstream;
+            expectResponse();
         }
 
-        public void beforeCancel(CompletableBatchQueue<?> downstream) {
-            while ((int)SETUP_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
-                onSpinWait();
-            try {
-                if (downstream == this.downstream && markTerminated())
-                    journal("beforeCancel(): marked as term on", this);
-            } finally { SETUP_LOCK.setRelease(this, 0); }
+        public void cancelAndClose(CompletableBatchQueue<?> downstream) {
+            if (downstream == this.downstream && markTerminated()) {
+                journal("cancel-induced ctx.close() on ", this);
+                ctx.close();
+            }
         }
 
         @Override protected void successResponse(HttpResponse resp) {

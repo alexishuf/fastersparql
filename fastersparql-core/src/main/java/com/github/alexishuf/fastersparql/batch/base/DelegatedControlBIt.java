@@ -64,10 +64,13 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         }
     }
 
-    @Override public void close() {
-        if (!(boolean)TERM.getAcquire(this))
+    @Override public final void close() { tryCancel(); }
+
+    @Override public final boolean tryCancel() {
+        boolean done = !(boolean)TERM.compareAndExchangeAcquire(this, false, true);
+        if (done)
             onTermination(true, null);
-        delegate.close();
+        return delegate.tryCancel() & done;
     }
 
     @Override public BatchType<B> batchType() { return batchType; }

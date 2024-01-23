@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.batch.RequestAwareCompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -13,11 +14,12 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 
-public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> implements ChannelBound {
+public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
+        implements ChannelBound, RequestAwareCompletableBatchQueue<B> {
     private int retries;
     protected final SparqlClient client;
     protected @MonotonicNonNull Channel channel;
-    private boolean backPressured;
+    private boolean backPressured, requestSent;
 
     public NettySPSCBIt(BatchType<B> batchType, Vars vars, int maxBatches,
                         SparqlClient client) {
@@ -28,7 +30,31 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> implem
     protected abstract void request();
     protected void afterNormalComplete() {}
 
+    /**
+     * Cancel a query after the WS frame or HTTP request has already been sent. This can be
+     * implemented by sending a {@code !cancel } or closing the {@link Channel}.
+     */
+    protected abstract void cancelAfterRequestSent();
+
+    /* --- --- --- RequestAwareCompletableBatchQueue --- --- --- */
+
+    @Override public void lockRequest() { lock(); }
+    @Override public void unlockRequest() { unlock(); }
+
+    @Override public boolean canSendRequest() {
+        if (!ownsLock())
+            throw new IllegalStateException("not locked");
+        if (state().isTerminated())
+            return false;
+        requestSent = true;
+        return true;
+    }
+
+    /* --- --- --- ChannelBound --- --- --- */
+
     @Override public @Nullable Channel channel() { return channel; }
+
+    /* --- --- --- SPSCBIt --- --- --- */
 
     @Override public void complete(@Nullable Throwable error) {
         final Channel ch = channel;
@@ -73,6 +99,24 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B> implem
             backPressured = false;
         }
         return b;
+    }
+
+    @Override public void close() {
+        lock();
+        try {
+            if (!state().isTerminated() && requestSent)
+                cancelAfterRequestSent();
+            super.close();
+        } finally { unlock(); }
+    }
+
+    @Override public void cancel() {
+        lock();
+        try {
+            if (!state().isTerminated() && requestSent)
+                cancelAfterRequestSent();
+            super.cancel();
+        } finally { unlock(); }
     }
 
     @Override public String toString() {

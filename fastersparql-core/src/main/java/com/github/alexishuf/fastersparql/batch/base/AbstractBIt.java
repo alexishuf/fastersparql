@@ -169,9 +169,9 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
 
     public State state() { return (State)STATE.getAcquire(this); }
 
-    protected void lock() { lock(Thread.currentThread()); }
-
-    protected void lock(Thread me) { while (!tryLock(me)) Thread.onSpinWait(); }
+    protected void        lock()      { lock(Thread.currentThread()); }
+    protected boolean ownsLock()      { return plainWorkingThread == Thread.currentThread(); }
+    protected void    lock(Thread me) { while (!tryLock(me)) Thread.onSpinWait(); }
 
     protected boolean tryLock(Thread me) {
         var owner = (Thread)WORKING_THREAD.compareAndExchangeAcquire(this, null, me);
@@ -184,6 +184,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     protected void unlock() {
         if (workingDepth <= 0)
             throw new IllegalStateException("mismatched unlockWorking()");
+        assert plainWorkingThread == Thread.currentThread() : "wrong thread";
         if (--workingDepth == 0)
             WORKING_THREAD.setRelease(this, null);
     }
@@ -341,6 +342,16 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     @Override public void close() {
         if (state() == State.ACTIVE)
             onTermination(new BItClosedAtException(this));
+    }
+
+    @Override public boolean tryCancel() {
+        lock();
+        try {
+            if (state().isTerminated())
+                return false;
+            onTermination(new BItClosedAtException(this));
+            return true;
+        } finally { unlock(); }
     }
 
     protected String toStringNoArgs() {

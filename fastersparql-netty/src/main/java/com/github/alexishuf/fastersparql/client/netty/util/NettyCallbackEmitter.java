@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
+import com.github.alexishuf.fastersparql.batch.RequestAwareCompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
+import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
@@ -17,14 +19,19 @@ import static com.github.alexishuf.fastersparql.client.util.ClientRetry.retry;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B>
-        implements ChannelBound{
-    private static final int NO_AUTO_READ = 0x40000000;
-    protected static final int STARTED    = 0x20000000;
-    protected static final int RETRIES_MASK = 0x1f000000;
-    protected static final int RETRIES_ONE  = 0x01000000;
-    private static final Stateful.Flags FLAGS = TASK_FLAGS.toBuilder()
+        implements ChannelBound, RequestAwareCompletableBatchQueue<B> {
+    private   static final int NO_AUTO_READ  = 0x40000000;
+    protected static final int STARTED       = 0x20000000;
+    protected static final int RETRIES_MASK  = 0x1f000000;
+    protected static final int RETRIES_ONE   = 0x01000000;
+    protected static final int CANCEL_CALLED = 0x00800000;
+    protected static final int REQUEST_SENT  = 0x00400000;
+    protected static final int REBIND_CLEAR = STARTED|RETRIES_MASK|CANCEL_CALLED|REQUEST_SENT;
+    protected static final Stateful.Flags FLAGS = TASK_FLAGS.toBuilder()
             .flag(NO_AUTO_READ,    "NO_AUTO_READ")
             .flag(STARTED,         "STARTED")
+            .flag(CANCEL_CALLED,   "CANCEL_CALLED")
+            .flag(REQUEST_SENT,    "REQUEST_SENT")
             .counter(RETRIES_MASK, "retries")
             .build();
 
@@ -34,10 +41,13 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
 
     public NettyCallbackEmitter(BatchType<B> batchType, Vars vars, SparqlClient client) {
         super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+        assert flags.contains(FLAGS) : "bad Flags";
         this.client = client;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);
     }
+
+    /* --- --- --- ChannelBound --- --- --- */
 
     @Override public @Nullable Channel channel() { return channel; }
 
@@ -65,6 +75,8 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     @Override public final String toString() {
         return "NettyCallbackEmitter["+client.endpoint()+"]"+channel;
     }
+
+    /* --- --- --- helper methods --- --- --- */
 
     private void setAutoRead0() {
         var ch = channel;
@@ -94,7 +106,20 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
             channel.close();
     }
 
+    /* --- --- --- abstract methods --- --- --- */
+
     protected abstract void request();
+
+    /**
+     * Handles a {@link #cancel()} after the request WS frame or HTTP request has already
+     * been sent to the server.
+     *
+     * @return {@code true} iff this implementation fully handled the cancel and
+     *         {@link TaskEmitter#cancel()}  must not be called.
+     */
+    protected abstract boolean cancelAfterRequestSent();
+
+    /* --- --- --- CallbackEmitter --- --- --- */
 
     @Override protected int complete2state(int current, @Nullable Throwable cause) {
         cause = cause == CancelledException.INSTANCE ? cause
@@ -116,11 +141,29 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     }
 
     @Override public void cancel() {
+        int st = lock(statePlain());
+        try {
+            st = setFlagsRelease(st, CANCEL_CALLED);
+            if ((st&(IS_CANCEL_REQ|IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
+                if (cancelAfterRequestSent())
+                    return; // do not do super.cancel() if implementation handles it
+            }
+            assert (st&REQUEST_SENT) == 0 : "expected !REQUEST_SENT";
+            // else: terminated or will ABORT_REQUEST at onConnected()
+        } finally { unlock(st); }
         super.cancel();
-        if ((state()&IS_CANCEL_REQ) != 0) {
-            Channel ch = channel;
-            if (ch != null)
-                ch.eventLoop().execute(ch::close);
-        }
+    }
+
+    /* --- --- --- RequestAwareCompletableBatchQueue --- --- --- */
+
+    @Override public void   lockRequest() {   lock(statePlain()); }
+    @Override public void unlockRequest() { unlock(statePlain()); }
+
+    @Override public boolean canSendRequest() {
+        int st = statePlain();
+        if ((st&CANCEL_CALLED) != 0)
+            return false;
+        setFlagsRelease(st, REQUEST_SENT);
+        return true;
     }
 }

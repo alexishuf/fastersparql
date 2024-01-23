@@ -42,6 +42,19 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable, Req
         return Math.max(b, b*batchType().preferredTermsPerBatch()/cols);
     }
 
+    /** Whether {@link Receiver#onComplete()} has been delivered downstream */
+    boolean isComplete();
+
+    /** Whether {@link Receiver#onCancelled()} has been delivered downstream */
+    boolean isCancelled();
+
+    /** Whether {@link Receiver#onError(Throwable)} has been delivered downstream */
+    boolean isFailed();
+
+    /** Whether {@link Receiver#onComplete()}, {@link Receiver#onCancelled()} or
+     *  {@link Receiver#onError(Throwable)} has been delivered downstream*/
+    boolean isTerminated();
+
     /**
      * Notifies that the {@link Receiver} wishes to stop receiving batches. Once the
      * emitter can ensure it will not deliver new batches, it must call

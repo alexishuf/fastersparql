@@ -370,6 +370,11 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
             journal("subscribed", receiver, "to", this);
     }
 
+    @Override public boolean   isComplete() {return Stateful.isCompleted(state());}
+    @Override public boolean  isCancelled() {return Stateful.isCancelled(state());}
+    @Override public boolean     isFailed() {return Stateful   .isFailed(state());}
+    @Override public boolean isTerminated() {return (state()&IS_TERM) != 0;}
+
     @Override public void cancel() {
         if (ENABLED) journal("cancel()", this);
         int st = lock(statePlain()), next = st&STATE_MASK;
