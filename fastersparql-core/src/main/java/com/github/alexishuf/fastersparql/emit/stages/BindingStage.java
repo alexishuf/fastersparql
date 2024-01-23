@@ -801,12 +801,13 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
                         journal("r completed, but cannot startNextBinding, st=", lockedSt, flags, "on", BindingStage.this);
                     }
                 }
-            } catch (Throwable t) {
-                log.error("onComplete() failed", t);
-                rightFailedOrCancelled(RIGHT_FAILED, t);
-            } finally {
                 if ((lockedSt&LOCKED_MASK) != 0)
                     unlock(lockedSt);
+            } catch (Throwable t) {
+                log.error("onComplete() failed", t);
+                if ((lockedSt&LOCKED_MASK) != 0)
+                    unlock(lockedSt);
+                rightFailedOrCancelled(RIGHT_FAILED, t);
             }
         }
 
