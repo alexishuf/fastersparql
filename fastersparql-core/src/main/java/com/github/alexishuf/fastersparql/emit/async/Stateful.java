@@ -276,14 +276,20 @@ public abstract class Stateful {
      */
     protected boolean moveStateRelease(int current, int nextState) {
         nextState &= STATE_MASK;
-        int ex, updated;
-        do {
-            if      ((current & LOCKED_MASK) != 0) Thread.onSpinWait();
-            else if (!isSuccessor(current, nextState) ) return false;
-            ex = current&UNLOCKED_MASK;
-            updated = (current&UNLOCKED_FLAGS_MASK)|nextState;
-            current = (int)S.compareAndExchangeRelease(this, ex, updated);
-        } while (current != ex);
+        int updated;
+        while (true){
+            if ((current&LOCKED_MASK) != 0) {
+                Thread.onSpinWait();
+                current = (int)S.getOpaque(this);
+            } else if (isSuccessor(current, nextState)) {
+                int ex = current&UNLOCKED_MASK;
+                updated = (current&UNLOCKED_FLAGS_MASK)|nextState;
+                if ((current=(int)S.compareAndExchangeRelease(this, ex, updated)) == ex)
+                    break;
+            } else {
+                return false;
+            }
+        }
         if (ENABLED)
             journal("transition to", updated, flags, "on", this);
         return true;

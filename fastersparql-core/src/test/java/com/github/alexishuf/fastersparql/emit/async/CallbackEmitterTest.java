@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
@@ -10,9 +11,12 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.UnsetError;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -26,6 +30,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.MAX_VALUE;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -67,6 +72,7 @@ class CallbackEmitterTest {
                     }
                 }
             }
+            journal("fed all rows, st=", state(), flags, "cb=", this);
             if      (fail)   complete(new RuntimeException("test-fail"));
             else if (cancel) cancel();
             else             complete(null);
@@ -81,16 +87,19 @@ class CallbackEmitterTest {
         @Override public Vars bindableVars() { return Vars.EMPTY; }
 
         @Override protected void onFirstRequest() {
+            journal("onFirstRequest, st=", state(), flags, "cb=", this);
             super.onFirstRequest();
             feedTask = ForkJoinPool.commonPool().submit(this::feed);
         }
 
         @Override protected void pause() {
+            journal("pause() st=", state(), flags, "cb=", this);
             canFeed.acquireUninterruptibly();
             canFeed.drainPermits();
         }
 
         @Override protected void resume() {
+            journal("resume() st=", state(), flags, "cb=", this);
             canFeed.release();
         }
     }
@@ -113,10 +122,20 @@ class CallbackEmitterTest {
                 Semaphore ready = new Semaphore(0);
                 Throwable[] errorOrCancel = {null};
                 var receiver = new Receiver<CompressedBatch>() {
+                    private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
+
+                    @Override public String label(StreamNodeDOT.Label type) {
+                        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+                        if (stats != null && type.showStats())
+                            stats.appendToLabel(sb);
+                        return sb.toString();
+                    }
+
                     @Override public Stream<? extends StreamNode> upstreamNodes() {
                         return Stream.of(cb);
                     }
                     @Override public CompressedBatch onBatch(CompressedBatch batch) {
+                        if (stats != null) stats.onBatchPassThrough(batch);
                         cb.request(1);
                         actual[0].copy(batch);
                         return batch;
@@ -135,7 +154,10 @@ class CallbackEmitterTest {
                 };
                 cb.subscribe(receiver);
                 cb.request(1);
-                ready.acquireUninterruptibly();
+                try (var w = ThreadJournal.watchdog(System.out, 100)) {
+                    w.start(20_000_000_000L);
+                    ready.acquireUninterruptibly();
+                }
                 if (failAt <= height) {
                     if (errorOrCancel[0] == null)
                         fail("Expected onError()");
@@ -176,9 +198,14 @@ class CallbackEmitterTest {
 
     @ParameterizedTest @MethodSource
     void test(D d) {
+        ThreadJournal.resetJournals();
+        ResultJournal.clear();
         d.run();
-        for (int i = 0; i < 32; i++)
+        for (int i = 0; i < 32; i++) {
+            ThreadJournal.resetJournals();
+            ResultJournal.clear();
             d.run();
+        }
     }
 
     @Test

@@ -144,11 +144,10 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         int st = lock(statePlain());
         try {
             st = setFlagsRelease(st, CANCEL_CALLED);
-            if ((st&(IS_CANCEL_REQ|IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
+            if ((st&(IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
                 if (cancelAfterRequestSent())
                     return; // do not do super.cancel() if implementation handles it
             }
-            assert (st&REQUEST_SENT) == 0 : "expected !REQUEST_SENT";
             // else: terminated or will ABORT_REQUEST at onConnected()
         } finally { unlock(st); }
         super.cancel();
