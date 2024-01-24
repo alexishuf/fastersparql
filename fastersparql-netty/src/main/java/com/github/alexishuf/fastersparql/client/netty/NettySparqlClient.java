@@ -167,9 +167,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public void onConnectionError(Throwable cause) { complete(cause); }
 
-        @Override protected void cancelAfterRequestSent() {
+        @Override protected boolean cancelAfterRequestSent() {
             assert handler != null : "request sent but handler == null";
             handler.cancelAndClose(this);
+            return false;
         }
     }
 

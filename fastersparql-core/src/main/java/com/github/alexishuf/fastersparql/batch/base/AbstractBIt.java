@@ -114,7 +114,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
      *
      * @param cause if non-null, this is the exception that caused the termination.
      */
-    protected final void onTermination(@Nullable Throwable cause) {
+    protected final boolean onTermination(@Nullable Throwable cause) {
         ThreadJournal.journal("onTermination", cause, "on", this);
         State tgt = cause == null ? State.COMPLETED
                 : (cause instanceof BItClosedAtException ? State.CANCELLED : State.FAILED);
@@ -140,7 +140,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
                 } else {
                     log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
                 }
-                return;
+                return false;
             }
             error = cause;
             try {
@@ -157,6 +157,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         } finally {
             unlock();
         }
+        return true;
     }
     private static final String ON_TERM_TPL_PREV = "{}.onTermination({}) ignored: previous onTermination({})";
     private static final String ON_TERM_TPL = "{}.onTermination({})";
@@ -345,13 +346,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     @Override public boolean tryCancel() {
-        lock();
-        try {
-            if (state().isTerminated())
-                return false;
-            onTermination(new BItClosedAtException(this));
-            return true;
-        } finally { unlock(); }
+        return !state().isTerminated() && onTermination(new BItClosedAtException(this));
     }
 
     protected String toStringNoArgs() {

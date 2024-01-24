@@ -156,9 +156,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     @Override public boolean     isFailed() { return isFailed(state()); }
     @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
 
-    @Override public final void cancel() {
-        if (upstream != null)
-            upstream.cancel();
+    @Override public final boolean cancel() {
+        return upstream != null && upstream.cancel();
     }
 
     @Override public void request(long rows) throws NoReceiverException {

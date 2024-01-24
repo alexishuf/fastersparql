@@ -158,11 +158,13 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     @Override public boolean     isFailed() { return Stateful.   isFailed(state); }
     @Override public boolean isTerminated() { return (state&IS_TERM) != 0; }
 
-    @Override public void cancel() {
+    @Override public boolean cancel() {
+        boolean cancelled = false;
         if ((state&(IS_INIT|IS_LIVE)) != 0) {
             for (int i = 0, count = connectorCount; i < count; i++)
-                connectors[i].up.cancel();
+                cancelled |= connectors[i].up.cancel();
         }
+        return cancelled;
     }
 
     @Override public void rebindAcquire() {

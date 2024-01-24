@@ -375,15 +375,17 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
     @Override public boolean     isFailed() {return Stateful   .isFailed(state());}
     @Override public boolean isTerminated() {return (state()&IS_TERM) != 0;}
 
-    @Override public void cancel() {
-        if (ENABLED) journal("cancel()", this);
+    @Override public boolean cancel() {
+        journal("cancel()", this);
         int st = lock(statePlain()), next = st&STATE_MASK;
         try {
             if ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
                 next = CANCEL_REQUESTED;
                 leftUpstream.cancel();
                 rightRecv.upstream.cancel();
+                return true;
             }
+            return false;
         } finally {
             unlock(st, STATE_MASK, next);
         }

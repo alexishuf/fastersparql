@@ -59,8 +59,14 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable, Req
      * Notifies that the {@link Receiver} wishes to stop receiving batches. Once the
      * emitter can ensure it will not deliver new batches, it must call
      * {@link Receiver#onCancelled()}
+     *
+     * @return {@code true} if this call had an effect and termination will be delivered
+     *         <strong>after</strong> this call. {@code false} if termination has already been
+     *         delivered. Note that even if this returns true, the delivery of a
+     *         {@link Receiver#onError(Throwable)} instead of {@link Receiver#onCancelled()} is
+     *         still possible.
      */
-    void cancel();
+    boolean cancel();
 
     class NoReceiverException extends IllegalStateException {
         public NoReceiverException() {

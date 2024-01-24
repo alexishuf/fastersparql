@@ -9,7 +9,6 @@ import com.github.alexishuf.fastersparql.client.util.ClientRetry;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import io.netty.channel.Channel;
-import io.netty.channel.EventLoop;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -33,8 +32,10 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     /**
      * Cancel a query after the WS frame or HTTP request has already been sent. This can be
      * implemented by sending a {@code !cancel } or closing the {@link Channel}.
+     *
+     * @return {@code true} if the implementation took full responsibility of performing the cancel
      */
-    protected abstract void cancelAfterRequestSent();
+    protected abstract boolean cancelAfterRequestSent();
 
     /* --- --- --- RequestAwareCompletableBatchQueue --- --- --- */
 
@@ -56,26 +57,26 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
 
     /* --- --- --- SPSCBIt --- --- --- */
 
-    @Override public void complete(@Nullable Throwable error) {
-        final Channel ch = channel;
-        EventLoop el;
-        if (ch != null && !(el=ch.eventLoop()).inEventLoop()) {
-            Throwable finalError = error;
-            el.execute(() -> complete(finalError));
-            return;
-        }
+    @Override public boolean complete(@Nullable Throwable error) {
         error = FSException.wrap(client.endpoint(), error);
-        if (state() == State.ACTIVE && ClientRetry.retry(++retries, error, this::request))
-            return; //will retry request
-        if (ch != null) {
-            if (error == null) ch.config().setAutoRead(true);
-            else ch.close();
+        lock();
+        try {
+            final Channel ch = channel;
+            if (state() == State.ACTIVE && ClientRetry.retry(++retries, error, this::request))
+                return false; //will retry request
+            if (ch != null) {
+                if (error == null) ch.config().setAutoRead(true);
+                else ch.close();
+            }
+            boolean first = state() == State.ACTIVE;
+            super.complete(error);
+            if (error == null && first)
+                afterNormalComplete();
+            channel = null;
+            return true;
+        } finally {
+            unlock();
         }
-        boolean first = state() == State.ACTIVE;
-        super.complete(error);
-        if (error == null && first)
-            afterNormalComplete();
-        channel = null;
     }
 
     @Override protected boolean mustPark(int offerRows, int queuedRows) {
@@ -110,12 +111,14 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
         } finally { unlock(); }
     }
 
-    @Override public void cancel() {
+    @Override public boolean cancel() {
         lock();
         try {
-            if (!state().isTerminated() && requestSent)
-                cancelAfterRequestSent();
-            super.cancel();
+            if (state().isTerminated())
+                return false;
+            if (requestSent && cancelAfterRequestSent())
+                return true;
+            return super.cancel();
         } finally { unlock(); }
     }
 

@@ -92,10 +92,12 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     @Override public boolean     isFailed() { return isFailed(state()); }
     @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
 
-    @Override public void cancel() {
+    @Override public boolean cancel() {
+        boolean done = false;
         int st = statePlain();
-        if ((st&IS_CANCEL_REQ) != 0 || moveStateRelease(st, CANCEL_REQUESTING))
+        if ((st&IS_CANCEL_REQ) != 0 || (done=moveStateRelease(st, CANCEL_REQUESTING)))
             awake();
+        return done;
     }
 
     @Override

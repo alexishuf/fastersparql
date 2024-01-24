@@ -51,14 +51,17 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         }
     }
 
-    @Override public void complete(@Nullable Throwable cause) {
+    @Override public boolean complete(@Nullable Throwable cause) {
         int st = state(), tgt = complete2state(st, cause);
-        if (tgt == 0)
+        if (tgt == 0) {
             journal("ignoring (for retry?) complete", cause, "on", this);
-        else if (moveStateRelease(st, tgt))
+        } else if (moveStateRelease(st, tgt)) {
             awake();
-        else
+            return true;
+        } else {
             journal("move to ", tgt, flags, "from", statePlain(), flags, "rejected for", this);
+        }
+        return false;
     }
 
     public @Nullable B offer(B b) throws TerminatedException, CancelledException {

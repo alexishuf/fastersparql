@@ -104,9 +104,8 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
         return state;
     }
 
-    private void doCancel() {
-        moveStateRelease(statePlain(), CANCEL_REQUESTED);
-        upstream.cancel();
+    private boolean doCancel() {
+        return moveStateRelease(statePlain(), CANCEL_REQUESTED) && upstream.cancel();
     }
 
     /* --- --- --- StreamNode --- --- --- */
@@ -266,7 +265,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
 
         @Override public Vars              vars()          { return p.vars; }
         @Override public BatchType<B> batchType()          { return p.batchType; }
-        @Override public void            cancel()          { p.doCancel(); }
+        @Override public boolean         cancel()          { return p.doCancel(); }
 
         @Override public boolean   isComplete() { return Stateful.isCompleted(p.state()); }
         @Override public boolean  isCancelled() { return Stateful.isCancelled(p.state()); }

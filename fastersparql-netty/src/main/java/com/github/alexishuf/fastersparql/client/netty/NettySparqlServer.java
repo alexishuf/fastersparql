@@ -394,16 +394,19 @@ public class NettySparqlServer implements AutoCloseable {
             @Override protected void onError(Throwable t) { // runs on event loop
                 if (ended || t == RoundEndedException.INSTANCE)
                     return;
+                sendingTerminal();
                 ended = true;
                 endRound(INTERNAL_SERVER_ERROR, null, t);
             }
 
             @Override public void sendTrailer() { // runs on drainerThread
+                sendingTerminal();
                 if (sink.needsTouch()) touch();
                 serializeSizeHint = ByteBufSink.adjustSizeHint(serializeSizeHint, sink.sizeHint());
                 try {
                     serializer.serializeTrailer(sink);
                     execute(new EndAction(wrapLast(sink.take())));
+                    disableAutoTouch();
                 } catch (Throwable t) {
                     execute(t);
                 }
@@ -790,9 +793,11 @@ public class NettySparqlServer implements AutoCloseable {
             }
 
             @Override public void sendCancel() {
+                sendingTerminal();
                 if (ctx.channel().isActive()) {
                     touch();
                     execute(new TextWebSocketFrame(sink.append(CANCELLED_MSG).take()));
+                    disableAutoTouch();
                 }
             }
         }
@@ -815,7 +820,7 @@ public class NettySparqlServer implements AutoCloseable {
             SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
             if (f == 'c' && msg.has(0, CANCEL)) {
-                endRound(INTERNAL_SERVER_ERROR, null, wsCancelledEx);
+                endRound(INTERNAL_SERVER_ERROR, "", wsCancelledEx);
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
                 readRequest(msg);
             } else if (waitingVarsRound > 0) {

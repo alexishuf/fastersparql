@@ -179,15 +179,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
         @Override protected void request() { handler.open(); }
 
-        @Override protected void cancelAfterRequestSent() {
+        @Override protected boolean cancelAfterRequestSent() {
             boolean sendCancel = true;
             if (bindQuery != null) {
-                sendCancel = bindQuery.bindings.tryCancel();
+                sendCancel = !bindQuery.bindings.tryCancel();
                 if (sendCancel)
                     journal("bindings completed bfr cancel(), sending !cancel on", this);
             }
             if (sendCancel)
                 handler.sendCancelExternal();
+            return true;
         }
     }
 
@@ -242,15 +243,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override protected void   request() { handler.open(); }
 
         @Override protected boolean cancelAfterRequestSent() {
-            boolean sendCancel = bindQuery == null;
-            if (bindQuery != null) {
-                bindQuery.bindings.cancel();
-                sendCancel = !bindQuery.bindings.isComplete();
-                if (sendCancel)
-                    journal("bindings complete bfr cancel(), sending !cancel on", this);
-            }
-            if (sendCancel)
-                handler.sendCancelExternal();
+            var br = handler.parser.bindingsReceiver();
+            if (br != null)
+                br.cancel(); // stop sending bindings
+            handler.sendCancelExternal();
             return true; // wait server reply to !cancel
         }
 
@@ -301,6 +297,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 = (new String(AbstractWsParser.REQUEST, UTF_8)+"0\n").getBytes(UTF_8);
         private static final int RESETTING    = 0x00000001;
         private static final int OPEN_PENDING = 0x00000002;
+        private static final int CANCELLING   = 0x00000004;
+        private static final int ALL_HANDLER_FLAGS = RESETTING|OPEN_PENDING|CANCELLING;
         static {
             assert REQ_ROWS_FRAME_CAPACITY > AbstractWsParser.REQUEST.length
                     + 19 /* Long.MAX_VALUE */
@@ -315,7 +313,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
+        private static final TextWebSocketFrame CANCEL_FRAME = new TextWebSocketFrame("!cancel\n");
+        private static final TextWebSocketFrame    END_FRAME = new TextWebSocketFrame("!end\n");
+
         private ByteRope requestMsg;
         private boolean gotFrames;
         private final boolean selfRecycle;
@@ -437,7 +437,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } catch (Throwable t) {
                 complete(t);
             } finally {
-                flags = getAndUpdateFlagsRelease(RESETTING|OPEN_PENDING, 0);
+                flags = getAndUpdateFlagsRelease(ALL_HANDLER_FLAGS, 0);
             }
             if ((flags&OPEN_PENDING) != 0) {
                 journal("pending open() after reset, handler=", this);
@@ -464,8 +464,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         private boolean doRequestRows() {
-            long n;
-            if (ctx == null || destination.isTerminated() || (n=(long)REQ.getAcquire(this)) <= 0)
+            if (ctx == null || destination.isTerminated())
+                return false; // no work
+            long n = (long)REQ.getAcquire(this);
+            if (n <= 0 || (plainFlags&CANCELLING) != 0)
                 return false; // no work
             if (requestRowsFrame.refCnt() > 1) {
                 retryRequestRows(); // frame in-use by netty, changing may yield big garbage number
@@ -556,7 +558,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     if (selfRecycle && destination.isTerminated())
                         reset(null);
                 } catch (TerminatedException|CancelledException e) {
-                    sendCancelInternal();
+                    sendCancelFromEventLoop();
                 }
             } else if (frame instanceof CloseWebSocketFrame) {
                 complete(null);
@@ -601,25 +603,32 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         void sendCancelExternal() {
             var ctx = this.ctx;
             if (bbRopeView == null || ctx == null)
-                return;
-            if (!ctx.executor().inEventLoop()) {
-                sendCancelCh = ctx.channel();
-                if (sendCancelTask == null) sendCancelTask = this::doSendCancelExternal;
-                ctx.executor().execute(sendCancelTask);
+                return; // already detached
+            if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) != 0)
+                return; // !cancel already underway
+            if (ctx.executor().inEventLoop()) {
+                forceSendCancelFromEventLoop();
             } else {
-                sendCancelInternal();
+                sendCancelCh = ctx.channel();
+                if (sendCancelTask == null) sendCancelTask = this::doSendCancelTask;
+                ctx.executor().execute(sendCancelTask);
             }
         }
-        private void doSendCancelExternal() {
+        private void doSendCancelTask() {
             Channel ch = sendCancelCh;
             if (ctx == null || ctx.channel() != ch)
                 return; // stale request for !cancel
-            sendCancelInternal();
+            forceSendCancelFromEventLoop();
         }
-        private void sendCancelInternal() {
+        private void forceSendCancelFromEventLoop() {
+            assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
             if (bbRopeView == null || ctx == null || !ctx.channel().isActive())
                 return; // do not send frame after complete() or before attach()
-            ctx.writeAndFlush(new TextWebSocketFrame(Unpooled.wrappedBuffer(CANCEL_MSG)));
+            ctx.writeAndFlush(CANCEL_FRAME.retain());
+        }
+        private void sendCancelFromEventLoop() {
+            if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) == 0)
+                forceSendCancelFromEventLoop();
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
@@ -682,7 +691,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     throw new IllegalStateException("recycled != REC_ST_SENDER");
                 recycled = 0;
                 if (autoTouch)
-                    autoTouch(true);
+                    super.thaw();
                 return this;
             }
 
@@ -722,11 +731,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
 
             @Override public void sendTrailer() {
+                sendingTerminal();
+                disableAutoTouch();
+                execute(END_FRAME.retain());
                 wsHandler.sparqlClient().adjustBindingsSizeHint(sink.sizeHint());
-                super.sendTrailer();
             }
 
             @Override public void sendError(Throwable t) {
+                sendingTerminal();
+                disableAutoTouch();
                 journal("sendError", t, "sender=", this);
                 var escaped = t.toString().replace("\n", "\\n");
                 execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8),
@@ -739,10 +752,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     super("CANCEL");
                     this.handler = handler;
                 }
-                @Override public void run(NettyResultsSender<?> sender) { handler.sendCancelInternal(); }
+                @Override public void run(NettyResultsSender<?> sender) { handler.sendCancelFromEventLoop(); }
             }
 
             @Override public void  sendCancel() {
+                sendingTerminal();
                 journal("sendCancel, sender=", this);
                 execute(new CancelAction(wsHandler), Action.RELEASE_SINK);
             }

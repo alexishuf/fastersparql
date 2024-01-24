@@ -19,7 +19,11 @@ public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
         this.seqWriter     = bindingSeqCol < 0 ? null : new WsBindingSeq();
     }
 
-   @Override protected void commitRow() throws CancelledException, BatchQueue.TerminatedException {
+    @Override protected void onCancel() {
+        dst.cancel();
+    }
+
+    @Override protected void commitRow() throws CancelledException, BatchQueue.TerminatedException {
         if (seqWriter != null)
             seqWriter.write(rowsParsed, batch, bindingSeqCol);
         super.commitRow();

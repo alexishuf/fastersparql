@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -98,11 +99,11 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- termination methods --- --- --- */
 
-    @Override public void complete(@Nullable Throwable error) {
-        onTermination(error);
+    @Override public boolean complete(@Nullable Throwable error) {
+        return onTermination(error);
     }
 
-    @Override public void cancel() { complete(CancelledException.INSTANCE); }
+    @Override public boolean cancel() { return complete(new FSCancelledException()); }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {

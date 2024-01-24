@@ -1003,14 +1003,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        @Override public void cancel() {
+        @Override public boolean cancel() {
+            boolean cancelled;
             int st = lock(statePlain());
             try {
                 rebindPrefetchEnd();
             } finally {
                 unlock(st);
-                super.cancel();
+                cancelled = super.cancel();
             }
+            return cancelled;
         }
 
         private int bindingVarsChanged(int state, Vars bindingVars) {

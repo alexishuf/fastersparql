@@ -62,9 +62,8 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public boolean     isFailed() { return Stateful.isFailed(state); }
     @Override public boolean isTerminated() { return (state& Stateful.IS_TERM) != 0; }
 
-    @Override public void cancel() {
-        if (upstream == null) throw new NoEmitterException();
-        upstream.cancel();
+    @Override public boolean cancel() {
+        return upstream != null && upstream.cancel();
     }
     @Override public void request(long rows) {
         if (upstream == null) throw new NoEmitterException();

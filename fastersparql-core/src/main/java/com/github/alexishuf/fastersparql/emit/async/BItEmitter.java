@@ -39,9 +39,8 @@ public final class BItEmitter<B extends Batch<B>> extends TaskEmitter<B> {
 
      @Override public Vars bindableVars() { return Vars.EMPTY; }
 
-    @Override public void cancel() {
-        super.cancel();
-        it.close();
+    @Override public boolean cancel() {
+        return it.tryCancel();
     }
 
     /* --- --- --- Task methods --- --- --- */

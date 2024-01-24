@@ -211,9 +211,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
         }
         private void doOnComplete() {
-            autoTouch(false);
+            sendingTerminal();
             serializer.serializeTrailer(sink.touch());
             M msg = wrapLast(sink.take());
+            disableAutoTouch();
             try {
                 handler.endQuery(this, OK, false, null);
             } finally {

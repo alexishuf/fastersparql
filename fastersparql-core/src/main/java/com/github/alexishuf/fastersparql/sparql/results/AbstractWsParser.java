@@ -69,10 +69,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     /** The remote peer wants the processing to stop. It will not send any more input and
      *  any further input should be treated as an error. */
-    protected void onCancel() { /* pass */ }
-
-    /** Remote peer's acknowledged a previously sent {@code !cancel} */
-    protected void onCancelled() { /* pass */ }
+    protected void onCancel() { throw new FSCancelledException(); }
 
     /** Handle a client/server-specific control message in rope.sub(begin, eol) and return true
      *  iff there is such message type. */
@@ -144,21 +141,19 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
         termParser.prefixMap.addRef(name, iri);
     }
 
-    private void handleCancelled() {
-        serverSentTermination = true;
-        onCancelled();
-        throw new FSCancelledException();
-    }
-
     private void handleCancel() {
         serverSentTermination = true;
         onCancel();
-        throw new FSCancelledException();
     }
 
     private void handleError(Rope rope, int begin, int eol) {
         serverSentTermination = true;
         throw new FSServerException(rope.toString(begin+ERROR.length, eol));
+    }
+
+    private void handleCancelled() {
+        serverSentTermination = true;
+        feedCancelledAck();
     }
 
     private void handleEnd(Rope rope, int eol) {

@@ -146,13 +146,8 @@ public class AsyncStage<B extends Batch<B>> extends TaskEmitter<B> implements St
         super.doRelease();
     }
 
-    @Override public void cancel() {
-        int st = lock(statePlain()); // block setting of IS_ASYNC (if not set)
-        try {
-            up.cancel();
-        } finally { unlock(st); }
-        if ((st&IS_ASYNC) != 0)
-            super.cancel(); // IS_ASYNC, cancel as a TaskEmitter
+    @Override public boolean cancel() {
+        return up.cancel();
     }
 
     @Override protected void resume() { up.request(requested()); }

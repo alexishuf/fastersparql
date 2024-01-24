@@ -153,11 +153,30 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * given previous contents fed to {@link #feedShared(SegmentRope)}.</p>
      */
     public final void feedEnd() {
-        if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+        if (!(boolean)TERMINATED.getAcquire(this)) {
             Throwable error = doFeedEnd();
+            if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+                emitLastBatch();
+                beforeComplete(error);
+                dst.complete(error);
+                cleanup(null);
+            }
+        }
+    }
+
+    /**
+     * This should be invoked by parser implementations once the results serialization
+     * format itself (and not the underlying protocol, such as HTTP or WebSockets) contains
+     * an acknowledgment that the results are incomplete due to a client-requested cancel
+     * and that no more results follow.
+     */
+    protected final void feedCancelledAck() {
+        if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+            Throwable e = doFeedEnd();
             emitLastBatch();
-            beforeComplete(error);
-            dst.complete(error);
+            beforeComplete(e != null ? e : CancelledException.INSTANCE);
+            if (e == null) dst.cancel();
+            else           dst.complete(e);
             cleanup(null);
         }
     }

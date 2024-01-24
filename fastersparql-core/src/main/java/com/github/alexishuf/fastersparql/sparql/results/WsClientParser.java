@@ -411,9 +411,9 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
      * Get the {@link Receiver} of bindings, if this parser was instantiated with an
      * {@link EmitBindQuery}.
      */
-    public @Nullable RebindableReceiver<B> bindingsReceiver() { return bindingsReceiver; }
+    public @Nullable BindingsReceiver<B> bindingsReceiver() { return bindingsReceiver; }
 
-    private static final class BindingsReceiver<B extends Batch<B>>
+    public static final class BindingsReceiver<B extends Batch<B>>
             extends Stateful implements RebindableReceiver<B>, ResultsSerializer.SerializedNodeConsumer<B> {
         private static final int HAS_SENDER    = 0x20000000;
         private static final int SENDING_INIT  = 0x40000000;
@@ -556,12 +556,19 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             }
         }
 
-        public void cancel() {
-            setFlagsRelease(statePlain(), UP_CANCEL);
-            upstream.cancel();
+        public boolean cancel() {
+            int st = statePlain();
+            if ((st&UP_CANCEL) != 0)
+                return false;
+            st = lock(st);
+            try {
+                if (!compareAndSetFlagRelease(UP_CANCEL))
+                    return false;
+            } finally { unlock(st); }
+            return upstream.cancel();
         }
 
-        public void requestBindings(long n) {
+        private void requestBindings(long n) {
             journal("requestBindings", n, "on", this);
             if (n <= 0) return;
             int st = statePlain();
@@ -579,6 +586,8 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 if ((st&INIT_SENT) == 0) {
                     batchesBfrInit = Batch.quickAppend(batchesBfrInit, batch);
                     return null;
+                } else if ((st&UP_CANCEL) != 0) {
+                    return batch; // after cancel(), do not send any more bindings upstream
                 }
             } finally { unlock(st); }
 

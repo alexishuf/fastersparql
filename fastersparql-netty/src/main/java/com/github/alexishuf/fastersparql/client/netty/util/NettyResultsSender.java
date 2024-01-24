@@ -49,6 +49,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     private byte actionsHead = 0, actionsSize = 0;
     private boolean autoTouch;
     protected boolean active;
+    private volatile boolean termSent;
     @SuppressWarnings("unused") private int plainLock;
     protected @Nullable Thread touchParked, capacityParked;
     private final Object[] instanceActions;
@@ -74,7 +75,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     private static class ReleaseSinkAction extends Action {
         public ReleaseSinkAction() {super("RELEASE");}
         @Override public void run(NettyResultsSender<?> sender) {
-            sender.autoTouch(false);
+            sender.disableAutoTouch();
             sender.sink.release();
         }
     }
@@ -97,7 +98,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void close() {
-        autoTouch(false);
+        disableAutoTouch();
         if (shouldScheduleRelease())
             execute(Action.RELEASE_SINK); // will also lead to recycleSharedActions()
         else if (sharedActions != null)
@@ -126,14 +127,24 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         } finally { unlock(); }
     }
 
-    protected void autoTouch(boolean value) {
+    protected void sendingTerminal() {
+        assert !termSent : "terminal already sent";
+        termSent  = true;
+    }
+
+    protected void disableAutoTouch() {
         lock();
         try {
-            autoTouch = value;
-        } finally {
-            if (value) unlockAndSpawn();
-            else       unlock();
-        }
+            autoTouch = false;
+        } finally { unlock(); }
+    }
+
+    protected void thaw() {
+        lock();
+        try {
+            termSent  = false;
+            autoTouch = true;
+        } finally { unlockAndSpawn(); }
     }
 
     @Override public void preTouch() {
@@ -157,6 +168,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendSerializedAll(Batch<?> batch) {
+        assert !termSent : "sending batch after sendCancel()";
         if (sink.needsTouch()) touch();
         try {
             serializer.serializeAll(batch, sink);
@@ -169,6 +181,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     @Override
     public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
+        assert !termSent : "sending batch after sendCancel()";
         if (sink.needsTouch()) sink.touch();
         try {
             serializer.serializeAll(batch, sink, nodeConsumer);
@@ -180,6 +193,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
+        assert !termSent : "sending batch after sendCancel()";
         if (sink.needsTouch()) touch();
         try {
             serializer.serialize(batch, from, nRows, sink);
@@ -191,11 +205,12 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendTrailer() {
+        sendingTerminal();
         if (sink.needsTouch()) touch();
         try {
             serializer.serializeTrailer(sink);
             M msg = wrapLast(sink.take());
-            autoTouch(false);
+            disableAutoTouch();
             execute(msg, Action.RELEASE_SINK);
         } catch (Throwable t) {
             log.error("Failed to serialize trailer", t);
@@ -204,7 +219,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public void sendError(Throwable t) {
-        autoTouch(false);
+        sendingTerminal();
+        disableAutoTouch();
         execute(t, Action.RELEASE_SINK);
     }
 

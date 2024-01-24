@@ -49,12 +49,19 @@ public interface CompletableBatchQueue<B extends Batch<B>> extends BatchQueue<B>
      *
      * @param cause if null, signals a successful completion, if {@code != null}, is the error
      *              that caused a completion before natural exhaustion of the producers.
+     * @return {@code true} this queue had no previous {@code complete()} or {@link #cancel()}
+     *         call
      */
-    void complete(@Nullable Throwable cause);
+    boolean complete(@Nullable Throwable cause);
 
     /**
-     * Causes producers calling {@link #offer(Batch)} to stop producing by making
+     * Causes the queue to terminate (reporting {@link #isCancelled()}) and will also
+     * cause producers calling {@link #offer(Batch)} to stop producing by making
      * {@link #offer(Batch)} raise an {@link CancelledException}.
+     *
+     * @return {@code true} if this method call had an effect, {@code false} if this queue
+     *         was already previously terminated due to exhaustion, error or a
+     *         previous cancel.
      */
-    void cancel();
+    boolean cancel();
 }
