@@ -73,7 +73,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     private static class ReleaseSinkAction extends Action {
-        public ReleaseSinkAction() {super("RELEASE");}
+        private ReleaseSinkAction() {super("RELEASE");}
         @Override public void run(NettyResultsSender<?> sender) {
             sender.disableAutoTouch();
             sender.sink.release();
@@ -103,6 +103,11 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
             execute(Action.RELEASE_SINK); // will also lead to recycleSharedActions()
         else if (sharedActions != null)
             recycleSharedActions();
+    }
+
+    protected void closeFromEventLoop() {
+        disableAutoTouch();
+        sink.release();
     }
 
     private void copyActions(Object[] dst) {

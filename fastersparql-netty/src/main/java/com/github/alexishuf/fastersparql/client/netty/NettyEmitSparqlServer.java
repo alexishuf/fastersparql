@@ -201,6 +201,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
 
         @Override public void onComplete() {
             journal("onComplete, sender=", this);
+            sendingTerminal();
             execute(COMPLETE_ACTION);
         }
         private static final CompleteAction COMPLETE_ACTION = new CompleteAction();
@@ -210,20 +211,20 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 ((Sender<?>)sender).doOnComplete();
             }
         }
-        private void doOnComplete() {
-            sendingTerminal();
+        protected void doOnComplete() {
             serializer.serializeTrailer(sink.touch());
             M msg = wrapLast(sink.take());
-            disableAutoTouch();
             try {
                 handler.endQuery(this, OK, false, null);
             } finally {
                 ctx.writeAndFlush(msg);
+                closeFromEventLoop();
             }
         }
 
         @Override public final void onCancelled()        {
             journal("onCancelled, abortCause=", abortCause, "sender=", this);
+            sendingTerminal();
             execute(abortCause==null ? CANCEL_ACTION : new ErrorAction<>(abortCause));
         }
         private static final CancelAction<?> CANCEL_ACTION = new CancelAction<>();
@@ -232,11 +233,13 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             @Override public void run(NettyResultsSender<?> sender) {
                 @SuppressWarnings("unchecked") Sender<M> mSender = (Sender<M>) sender;
                 mSender.handler.endQuery(mSender, PARTIAL_CONTENT, true, null);
+                mSender.closeFromEventLoop();
             }
         }
 
         @Override public final void onError(Throwable e) {
             journal("onError", e, "sender=", this);
+            sendingTerminal();
             execute(new ErrorAction<>(e));
         }
         private static final class ErrorAction<M> extends Action {
@@ -248,6 +251,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             @Override public void run(NettyResultsSender<?> sender) {
                 @SuppressWarnings("unchecked") var mSender = (Sender<M>)sender;
                 mSender.handler.endQuery(mSender, INTERNAL_SERVER_ERROR, false, error);
+                mSender.closeFromEventLoop();
             }
         }
     }
@@ -262,6 +266,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     }
 
     private static final class WsSender extends Sender<TextWebSocketFrame> {
+        private static final TextWebSocketFrame END_FRAME = new TextWebSocketFrame("!end\n");
+
         private final WsHandler handler;
         private Vars serializeVars;
         private volatile long lastSentSeq = -1;
@@ -303,7 +309,14 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             Batch<?> tail = batch.tail();
             if (!tail.localView(tail.rows-1, 0, tmpView))
                 throw new IllegalStateException("Missing binding sequence");
-            lastSentSeq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+            long last = lastSentSeq;
+            long seq = WsBindingSeq.parse(tmpView, 0, tmpView.len);
+            if (seq > last) {
+                lastSentSeq = seq;
+            } else if (seq < last) {
+                log.error("non-monotonic step of lastSentSeq from {} to {} on {}", last, seq, this);
+                journal("non-monotonic step from", last, "to", seq, "on", this);
+            }
         }
 
         @Override
@@ -313,9 +326,14 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 updateLastSentSeq(batch);
         }
 
-        @Override public void sendTrailer() {
-            handler.adjustSizeHint(sink.sizeHint());
-            super.sendTrailer();
+        @Override protected void doOnComplete() {
+            try {
+                handler.adjustSizeHint(sink.sizeHint());
+                handler.endQuery(this, OK, false, null);
+            } finally {
+                ctx.writeAndFlush(END_FRAME.retain());
+                closeFromEventLoop();
+            }
         }
     }
 
@@ -505,6 +523,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                         status.code(), cancelledStr, error.getClass().getSimpleName(),
                         sender, this, error);
             }
+            if (sender != null)
+                sender.close();
         }
 
         /* --- --- --- handle SPARQL HTTP protocol --- --- --- */
@@ -634,7 +654,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private static final byte[] MINUS      = "!minus"     .getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
 
-        private static final TextWebSocketFrame CANCELLED = new TextWebSocketFrame("!cancelled\n");
+        private static final TextWebSocketFrame CANCELLED_FRAME = new TextWebSocketFrame("!cancelled\n");
+
 
         private static final NoTraceException READ_VARS_NO_QUERY_EX = new NoTraceException("attempt to read bindings vars before query command");
         private static final NoTraceException VARS_NO_LF_EX = new NoTraceException("bindings vars frame does nto end in \\n (LF, 0x0A)");
@@ -694,7 +715,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                         var ex = new FSCancelledException(null, "server received !cancel from client");
                         bindingsParser.feedError(ex);
                     }
-                    (msg = CANCELLED).retain();
+                    (msg = CANCELLED_FRAME).retain();
                 } else if (error != null) {
                     String errMsg = error instanceof NoTraceException
                             ? error.getMessage() : error.toString();
@@ -709,8 +730,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
             if (msg != null) {
                 ctx.write(msg);
-                ctx.writeAndFlush(new CloseWebSocketFrame());
-                ctx.close();
+                if (error != null) {
+                    ctx.writeAndFlush(new CloseWebSocketFrame());
+                    ctx.close();
+                }
             }
         }
 
