@@ -25,14 +25,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     }
 
     /**
-     * Causes calls to {@link #offer(Batch)} and {@link #putRow(Batch, int)} to stop sometime
-     * after entry into this method. This method undoes and is undone by {@link #resume()}
+     * Causes calls to {@link #offer(Batch)} and to stop sometime after entry into this
+     * method. This method undoes and is undone by {@link #resume()}
      */
     protected abstract void pause();
 
     /**
-     * Causes calls to {@link #offer(Batch)} and {@link #putRow(Batch, int)} to resume at
-     * some point the entry of this method. This method undoes and is undone by {@link #pause()}
+     * Causes calls to {@link #offer(Batch)} and to resume at some point after the entry
+     * into this method. This method undoes and is undone by {@link #pause()}
      */
     protected abstract void resume();
 
@@ -81,27 +81,6 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         }
         awake();
         return null;
-    }
-
-    public void putRow(B batch, int row) throws TerminatedException, CancelledException {
-        int st = lock(statePlain());
-        try {
-            if ((st&STATE_MASK) == CANCEL_REQUESTED) {
-                throw CancelledException.INSTANCE;
-            } else if ((st&IS_TERM) != 0) {
-                throw TerminatedException.INSTANCE;
-            } else {
-                B dst = queue;
-                if (dst == null) {
-                    queue = dst = bt.createForThread(threadId, batch.cols);
-                    dst.reserveAddLocals(avgRows*(batch.localBytesUsed()/batch.rows));
-                }
-                dst.putRow(batch, row);
-            }
-        } finally {
-            unlock(st);
-        }
-        awake();
     }
 
     @Override protected void task(int threadId) {

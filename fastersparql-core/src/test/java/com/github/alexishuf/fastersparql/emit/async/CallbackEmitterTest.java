@@ -60,11 +60,7 @@ class CallbackEmitterTest {
                     canFeed.acquireUninterruptibly();
                     canFeed.release();
                     try {
-                        if ((r & 1) == 0) {
-                            COMPRESSED.recycle(offer(node.dupRow(r)));
-                        } else {
-                            putRow(node, r);
-                        }
+                        COMPRESSED.recycle(offer(node.dupRow(r)));
                     } catch (CancelledException e) {
                         break;
                     } catch (TerminatedException e) {
