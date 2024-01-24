@@ -169,6 +169,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     @Override public void sendSerializedAll(Batch<?> batch) {
         assert !termSent : "sending batch after sendCancel()";
+        if (actionsSize == actions.length && !ctx.channel().isActive()) {
+            log.error("channel is closed, {} will not serialize", this);
+            return;
+        }
         if (sink.needsTouch()) touch();
         try {
             serializer.serializeAll(batch, sink);
@@ -182,6 +186,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     @Override
     public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
         assert !termSent : "sending batch after sendCancel()";
+        if (actionsSize == actions.length && !ctx.channel().isActive()) {
+            log.error("channel is closed, {} will not serialize", this);
+            return;
+        }
         if (sink.needsTouch()) sink.touch();
         try {
             serializer.serializeAll(batch, sink, nodeConsumer);
@@ -194,6 +202,10 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
 
     @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
         assert !termSent : "sending batch after sendCancel()";
+        if (actionsSize == actions.length && !ctx.channel().isActive()) {
+            log.error("channel is closed, {} will not serialize", this);
+            return;
+        }
         if (sink.needsTouch()) touch();
         try {
             serializer.serialize(batch, from, nRows, sink);
@@ -281,7 +293,8 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
         lock();
         try {
             active = false;
-            while (actionsSize-- > 0) {
+            while (actionsSize > 0) {
+                --actionsSize;
                 Object a = actions[actionsHead];
                 if      (a instanceof Action           ac) { ac.run(this); ++nActions;  }
                 else if (a instanceof ReferenceCounted rc) { rc.release(); ++nReleases; }
