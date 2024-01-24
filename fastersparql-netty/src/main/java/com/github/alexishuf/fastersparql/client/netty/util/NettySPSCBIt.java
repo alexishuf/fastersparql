@@ -111,14 +111,14 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
         } finally { unlock(); }
     }
 
-    @Override public boolean cancel() {
+    @Override public boolean cancel(boolean ack) {
         lock();
         try {
             if (state().isTerminated())
                 return false;
-            if (requestSent && cancelAfterRequestSent())
-                return true;
-            return super.cancel();
+            if (!ack && requestSent && cancelAfterRequestSent())
+                return true; //cancelAfterRequestSent() sent a !cancel
+            return super.cancel(ack);
         } finally { unlock(); }
     }
 

@@ -262,6 +262,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     /* --- --- --- parsing for !control messages  --- --- --- */
 
+    @Override protected void onCancel() {
+        throw new FSServerException("server sent spontaneous !cancel");
+    }
+
     private void handleBindRequest(long n) {
         if (bindingsReceiver != null) {
             bindingsReceiver.requestBindings(n);
@@ -393,11 +397,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 sender.sendCancel();
             sendEnd = false;
         } catch (Throwable t) {
+            sendEnd = false;
             if (!serverSentTermination && sender != null)
                 sender.sendError(t);
             log.warn("sendBindingsThread() dying ", t);
-            dst.cancel();
-            sendEnd = false;
         } finally {
             if (sender != null) {
                 if (sendEnd && !serverSentTermination)

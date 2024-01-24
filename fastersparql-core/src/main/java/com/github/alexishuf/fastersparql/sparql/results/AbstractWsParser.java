@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
@@ -69,7 +68,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     /** The remote peer wants the processing to stop. It will not send any more input and
      *  any further input should be treated as an error. */
-    protected void onCancel() { throw new FSCancelledException(); }
+    protected abstract void onCancel();
 
     /** Handle a client/server-specific control message in rope.sub(begin, eol) and return true
      *  iff there is such message type. */

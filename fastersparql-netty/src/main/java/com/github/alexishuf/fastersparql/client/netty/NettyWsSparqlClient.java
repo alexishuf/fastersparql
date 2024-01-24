@@ -247,7 +247,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (br != null)
                 br.cancel(); // stop sending bindings
             handler.sendCancelExternal();
-            return true; // wait server reply to !cancel
+            return true; // wait for !cancelled in response to !cancel
         }
 
         @Override public int preferredRequestChunk() { return 4*super.preferredRequestChunk(); }

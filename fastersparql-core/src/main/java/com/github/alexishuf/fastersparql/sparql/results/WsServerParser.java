@@ -20,7 +20,7 @@ public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     }
 
     @Override protected void onCancel() {
-        dst.cancel();
+        dst.cancel(false);
     }
 
     @Override protected void commitRow() throws CancelledException, BatchQueue.TerminatedException {

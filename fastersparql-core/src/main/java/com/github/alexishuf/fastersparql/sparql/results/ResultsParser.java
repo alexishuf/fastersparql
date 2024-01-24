@@ -175,7 +175,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
             Throwable e = doFeedEnd();
             emitLastBatch();
             beforeComplete(e != null ? e : CancelledException.INSTANCE);
-            if (e == null) dst.cancel();
+            if (e == null) dst.cancel(true);
             else           dst.complete(e);
             cleanup(null);
         }
@@ -184,7 +184,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
     /**
      * Complete the parser with the given error that did not arise from syntax or semantic errors
      * in the results serialization. This should be used to deliver network failures.
-     * Cancellations should be directly delivered via {@link CompletableBatchQueue#cancel()}.
+     * Cancellations should be directly delivered via {@link CompletableBatchQueue#cancel(boolean)}.
      *
      * @param error A non-null, non-serialization and non-cancellation error.
      */
@@ -219,7 +219,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
      *
      * @param cause The error forwarded to {@link CompletableBatchQueue#complete(Throwable)} or
      * {@link CancelledException#INSTANCE} if this is being called due to a
-     * {@link CompletableBatchQueue#cancel()}ed destination.
+     * {@link CompletableBatchQueue#cancel(boolean)}ed destination.
      */
     protected void cleanup(@Nullable Throwable cause) {
         batch = dst.batchType().recycle(batch);

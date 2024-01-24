@@ -143,16 +143,26 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     @Override public boolean cancel() {
         int st = lock(statePlain());
         try {
-            boolean first = (st&CANCEL_CALLED) == 0;
-            // inhibit sending of !query frame / HTTP request
-            st = setFlagsRelease(st, CANCEL_CALLED);
-            if (first && (st&(IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
+            if ((st&CANCEL_CALLED) != 0)
+                return false;
+            st = setFlagsRelease(st, CANCEL_CALLED); // inhibit !query frame / HTTP request
+            if ((st&(IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
                 if (cancelAfterRequestSent())
                     return true; // do not do super.cancel() if implementation handles it
-            }
-            // else: terminated or will ABORT_REQUEST at onConnected()
+            }// else: terminated or will ABORT_REQUEST at onConnected()
         } finally { unlock(st); }
         return super.cancel();
+    }
+
+    @Override public boolean cancel(boolean ack) {
+        if (ack) {
+            boolean done = moveStateRelease(statePlain(), CANCEL_REQUESTING);
+            if (done)
+                awake();
+            return done;
+        } else {
+            return cancel();
+        }
     }
 
     /* --- --- --- RequestAwareCompletableBatchQueue --- --- --- */

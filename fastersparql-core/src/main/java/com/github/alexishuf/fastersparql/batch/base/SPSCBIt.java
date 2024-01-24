@@ -5,6 +5,8 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -103,7 +105,11 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         return onTermination(error);
     }
 
-    @Override public boolean cancel() { return complete(new FSCancelledException()); }
+    @Override public boolean cancel(boolean ack) {
+        FSException e = ack ? new FSCancelledException()
+                            : new FSServerException("server spontaneously cancelled");
+        return complete(e);
+    }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {

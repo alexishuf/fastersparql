@@ -250,7 +250,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override protected boolean cancelAfterRequestSent() {
             assert handler != null : "REQUEST_SENT but handler == null";
             handler.cancelAndClose(this);
-            return false; // still do TaskEmitter.cancel()
+            return false; // do TaskEmitter.cancel()
         }
 
         @Override protected @Nullable B deliver(B b) {

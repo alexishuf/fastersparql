@@ -64,6 +64,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         return false;
     }
 
+    @Override public boolean cancel(boolean ack) {
+        return cancel();
+    }
+
     public @Nullable B offer(B b) throws TerminatedException, CancelledException {
         if (b == null || b.rows == 0)
             return b;
