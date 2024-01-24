@@ -333,10 +333,10 @@ public class SegmentRope extends PlainRope {
         }
         for (long e = end+offset; i < e; ++i) {
             byte v = segment.get(JAVA_BYTE, i);
-            if (v == '\\') ++i; // skip next byte
-            else if (v == c) break;
+            if (v == c) break;
+            if (v == '\\' && ++i == e) --i;
         }
-        return (int) (i-offset);
+        return (int)(i-offset);
     }
 
     static long skipUnsafe(byte[] base, long begin, long end, int[] alphabet) {
