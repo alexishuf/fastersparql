@@ -57,6 +57,8 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         try {
             if (pendingError != null)
                 throwPending();
+            if (plainState.isTerminated())
+                return null;
             //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
             b = batchType.empty(b, nColumns);
             //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
