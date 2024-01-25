@@ -91,14 +91,12 @@ public class NettySparqlServer implements AutoCloseable {
             " \"Accepts\" header. Supported formats: "+ Arrays.stream(negotiator.supported())
                                                               .map(MediaType::toString)
                                                               .collect(Collectors.joining(", "));
-    private final FSCancelledException wsCancelledEx;
     private int serializeSizeHint = WsSerializer.DEF_BUFFER_HINT;
     private final SparqlClient.@Nullable Guard sparqlClientGuard;
 
     public NettySparqlServer(SparqlClient sparqlClient, boolean sharedSparqlClient, String host, int port) {
         this.sparqlClient = sparqlClient;
         this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
-        wsCancelledEx = new FSCancelledException(sparqlClient.endpoint(), "!cancel frame received");
         acceptGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
 //        String debuggerName = sparqlClient.endpoint().toString();
@@ -396,7 +394,7 @@ public class NettySparqlServer implements AutoCloseable {
                     ((SerializeTask<?>)sender).doSendTrailer();
                 }
             }
-            protected void doSendTrailer() {
+            private void doSendTrailer() {
                 if (ended) return;
                 ended = true;
                 serializer.serializeTrailer(sink.touch());
@@ -411,8 +409,31 @@ public class NettySparqlServer implements AutoCloseable {
                 try {
                     execute(TrailerAction.INSTANCE);
                 } catch (Throwable t) {
-                    execute(t);
+                    if (ctx.channel().isActive() && !ended)
+                        TrailerAction.INSTANCE.run(this);
                 }
+            }
+
+            private static final class CancelAction extends Action {
+                private static final CancelAction INSTANCE = new CancelAction();
+                public CancelAction() {super("CANCEL");}
+                @Override public void run(NettyResultsSender<?> sender) {
+                    ((SerializeTask<?>)sender).doSendCancel();
+                }
+            }
+            private void doSendCancel() {
+                if (ended) return;
+                ended = true;
+                String msg = handler instanceof WsSparqlHandler wh && wh.clientCancel
+                        ? "cancel request by WS client"
+                        : "query iterator unexpectedly cancelled";
+                handler.endRound(PARTIAL_CONTENT, msg, CancelledException.INSTANCE);
+                closeFromEventLoop();
+            }
+            @Override public void sendCancel() {
+                sendingTerminal();
+                if (ctx.executor().inEventLoop()) doSendCancel();
+                else                              execute(CancelAction.INSTANCE);
             }
 
             @Override public String toString() {
@@ -450,7 +471,7 @@ public class NettySparqlServer implements AutoCloseable {
                     if (t instanceof BItReadClosedException) {
                         task.sendCancel();
                     } else {
-                        log.info("Drainer thread exiting due to {}", t.toString());
+                        log.debug("Drainer thread exiting due to error", t);
                         task.sendError(t);
                     }
                 } else {
@@ -690,6 +711,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private @Nullable WsServerParser<CompressedBatch> bindingsParser;
         private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
+        private boolean clientCancel;
         private int requestBindingsAt;
         private int waitingVarsRound;
         private BindType bType = BindType.JOIN;
@@ -743,6 +765,8 @@ public class NettySparqlServer implements AutoCloseable {
             super.roundCleanup();
             plainRequested   = 0;
             waitingVarsRound = 0;
+            clientCancel     = false;
+            serializeTask    = null;
             try {
                 var bindingsParser = this.bindingsParser;
                 if (bindingsParser != null)
@@ -823,7 +847,7 @@ public class NettySparqlServer implements AutoCloseable {
             SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
             if (f == 'c' && msg.has(0, CANCEL)) {
-                endRound(INTERNAL_SERVER_ERROR, "", wsCancelledEx);
+                readCancel();
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
                 readRequest(msg);
             } else if (waitingVarsRound > 0) {
@@ -833,6 +857,16 @@ public class NettySparqlServer implements AutoCloseable {
             } else {
                 handleQueryCommand(ctx, msg, f);
             }
+        }
+
+        private void readCancel() {
+            clientCancel = true;
+            if (it != null)
+                it.close(); // will raise BItReadClosedException, that will lead to sendCancel()
+            else if (serializeTask != null)
+                serializeTask.sendCancel(); // will set ended flag then call endRound
+            else
+                endRound(INTERNAL_SERVER_ERROR, "", new FSCancelledException());
         }
 
         private void readRequest(SegmentRope msg) {
