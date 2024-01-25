@@ -863,10 +863,8 @@ public class NettySparqlServer implements AutoCloseable {
             clientCancel = true;
             if (it != null)
                 it.close(); // will raise BItReadClosedException, that will lead to sendCancel()
-            else if (serializeTask != null)
-                serializeTask.sendCancel(); // will set ended flag then call endRound
-            else
-                endRound(INTERNAL_SERVER_ERROR, "", new FSCancelledException());
+            else if (waitingVarsRound != round)
+                log.info("Ignoring rogue !cancel from WS client");
         }
 
         private void readRequest(SegmentRope msg) {
@@ -939,6 +937,11 @@ public class NettySparqlServer implements AutoCloseable {
 
         private void readVarsFrame(SegmentRope msg) {
             if (query == null && fail("null query")) return;
+            if (clientCancel) {
+                endRound(PARTIAL_CONTENT, "client requested cancel",
+                        CancelledException.INSTANCE);
+                return;
+            }
             int len = msg.len, eol = msg.skipUntil(0, len, '\n');
             if (eol == len && fail("No LF (\\n) in vars after !bind frame"))
                 return;
