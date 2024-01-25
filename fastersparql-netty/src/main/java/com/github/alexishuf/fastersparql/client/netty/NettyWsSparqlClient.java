@@ -313,8 +313,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
-        private static final TextWebSocketFrame CANCEL_FRAME = new TextWebSocketFrame("!cancel\n");
-        private static final TextWebSocketFrame    END_FRAME = new TextWebSocketFrame("!end\n");
+        private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
+        private static final byte[] END_MSG    = "!end\n"   .getBytes(UTF_8);
 
         private ByteRope requestMsg;
         private boolean gotFrames;
@@ -624,7 +624,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
             if (bbRopeView == null || ctx == null || !ctx.channel().isActive())
                 return; // do not send frame after complete() or before attach()
-            ctx.writeAndFlush(CANCEL_FRAME.retain());
+            ctx.writeAndFlush(new TextWebSocketFrame(Unpooled.wrappedBuffer(CANCEL_MSG)));
         }
         private void sendCancelFromEventLoop() {
             if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) == 0)
@@ -733,7 +733,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             @Override public void sendTrailer() {
                 sendingTerminal();
                 disableAutoTouch();
-                execute(END_FRAME.retain());
+                execute(new TextWebSocketFrame(Unpooled.wrappedBuffer(END_MSG)));
                 wsHandler.sparqlClient().adjustBindingsSizeHint(sink.sizeHint());
             }
 

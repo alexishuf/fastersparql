@@ -266,7 +266,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     }
 
     private static final class WsSender extends Sender<TextWebSocketFrame> {
-        private static final TextWebSocketFrame END_FRAME = new TextWebSocketFrame("!end\n");
 
         private final WsHandler handler;
         private Vars serializeVars;
@@ -327,13 +326,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         @Override protected void doOnComplete() {
-            try {
-                handler.adjustSizeHint(sink.sizeHint());
-                handler.endQuery(this, OK, false, null);
-            } finally {
-                ctx.writeAndFlush(END_FRAME.retain());
-                closeFromEventLoop();
-            }
+            super.doOnComplete();
+            handler.adjustSizeHint(sink.sizeHint());
         }
     }
 
@@ -653,9 +647,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private static final byte[] NOT_EXISTS = "!not-exists".getBytes(UTF_8);
         private static final byte[] MINUS      = "!minus"     .getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
-
-        private static final TextWebSocketFrame CANCELLED_FRAME = new TextWebSocketFrame("!cancelled\n");
-
+        private static final byte[] CANCELLED_MSG     = "!cancelled\n"       .getBytes(UTF_8);
 
         private static final NoTraceException READ_VARS_NO_QUERY_EX = new NoTraceException("attempt to read bindings vars before query command");
         private static final NoTraceException VARS_NO_LF_EX = new NoTraceException("bindings vars frame does nto end in \\n (LF, 0x0A)");
@@ -674,6 +666,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private boolean clientCancelled, waitingVars;
         private final long implicitRequest = FSProperties.wsImplicitRequest();
         private long earlyRequest = 0;
+        private final TextWebSocketFrame cancelledFrame = new TextWebSocketFrame(
+                Unpooled.wrappedBuffer(CANCELLED_MSG));
 
         private void adjustSizeHint(int observed) {
             sizeHint = ByteBufSink.adjustSizeHint(sizeHint, observed);
@@ -715,7 +709,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                         var ex = new FSCancelledException(null, "server received !cancel from client");
                         bindingsParser.feedError(ex);
                     }
-                    (msg = CANCELLED_FRAME).retain();
+                    (msg = cancelledFrame).content().readerIndex(0).retain();
                 } else if (error != null) {
                     String errMsg = error instanceof NoTraceException
                             ? error.getMessage() : error.toString();

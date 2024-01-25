@@ -428,8 +428,10 @@ public class NettySparqlServer implements AutoCloseable {
             SerializeTask<?> task = null;
             try (var it = this.it) {
                 task = createSerializeTask(round);
-                //Thread.currentThread().setName("drainer-" + ctx.channel());
-                Thread.currentThread().setName("drainer");
+                if (getClass().desiredAssertionStatus())
+                    Thread.currentThread().setName("drainer-"+ctx.channel().id().asShortText());
+                else
+                    Thread.currentThread().setName("drainer");
                 if (query == null || it == null) {
                     fail("null query or it");
                     return;
@@ -481,9 +483,6 @@ public class NettySparqlServer implements AutoCloseable {
             }
             @Override protected HttpContent wrapLast(ByteBuf bb) {
                 return new DefaultLastHttpContent(bb);
-            }
-            @Override public void sendCancel() {
-                sendError(new FSCancelledException());
             }
         }
 
@@ -687,9 +686,6 @@ public class NettySparqlServer implements AutoCloseable {
         private static final byte[] CANCELLED = "!cancelled ".getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
 
-        private static final TextWebSocketFrame END_FRAME = new TextWebSocketFrame("!end\n");
-        private static final TextWebSocketFrame CANCELLED_FRAME = new TextWebSocketFrame("!cancelled\n");
-
         private final int maxBindings = wsServerBindings();
 
         private @Nullable WsServerParser<CompressedBatch> bindingsParser;
@@ -806,21 +802,6 @@ public class NettySparqlServer implements AutoCloseable {
                 super.sendSerializedAll(batch, nodeConsumer);
                 if (handler.bindQuery != null && batch.rows > 0)
                     updateLastSentSeq(batch);
-            }
-
-            @Override protected void doSendTrailer() {
-                if (ended) return;
-                ended = true;
-                ctx.writeAndFlush(END_FRAME.retain());
-                handler.endRound(OK, null, null);
-                closeFromEventLoop();
-            }
-
-            @Override public void sendCancel() {
-                sendingTerminal();
-                if (ctx.channel().isActive())
-                    execute(CANCELLED_FRAME.retain());
-                close();
             }
         }
 
