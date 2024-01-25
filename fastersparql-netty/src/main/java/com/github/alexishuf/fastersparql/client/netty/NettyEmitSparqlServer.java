@@ -716,11 +716,13 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                     msg = new TextWebSocketFrame("!error " + errMsg.replace("\n", "\\n") + "\n");
                 }
             } finally {
-                this.sender         = null;
-                this.bindingsParser = null;
-                this.bindQuery      = null;
-                this.emitter        = null;
-                this.earlyRequest   = 0;
+                this.sender          = null;
+                this.bindingsParser  = null;
+                this.bindQuery       = null;
+                this.emitter         = null;
+                this.earlyRequest    = 0;
+                this.clientCancelled = false;
+                this.waitingVars     = false;
             }
             if (msg != null) {
                 ctx.write(msg);
@@ -751,18 +753,24 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) {
             SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
-            if (f == 'c' && msg.has(0, CANCEL)) {
-                clientCancelled = true;
-                endQuery(sender, PARTIAL_CONTENT, true, null);
-            } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
+            if (f == 'c' && msg.has(0, CANCEL))
+                readCancel();
+            else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST))
                 readRequest(msg);
-            } else if (waitingVars) {
+            else if (waitingVars)
                 readVarsFrame(msg);
-            } else if (bindingsParser != null) {
+            else if (bindingsParser != null)
                 readBindings(bindingsParser, msg);
-            } else {
+            else
                 handleQueryCommand(ctx, msg, f);
-            }
+        }
+
+        private void readCancel() {
+            clientCancelled = true;
+            if (emitter != null)
+                emitter.cancel();
+            else if (!waitingVars)
+                log.error("Ignoring extraneous !cancel");
         }
 
         private void readRequest(SegmentRope msg) {
@@ -875,6 +883,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private void readVarsFrame(SegmentRope msg) {
             if (query == null) { // this should be a dead branch
                 endQuery(sender, INTERNAL_SERVER_ERROR, false, READ_VARS_NO_QUERY_EX);
+                return;
+            }
+            if (clientCancelled) { // !cancel arrived before bindings vars
+                endQuery(sender, PARTIAL_CONTENT, true, null);
                 return;
             }
             int len = msg.len, eol = msg.skipUntil(0, len, '\n');
