@@ -7,10 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
-import com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink;
-import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyResultsSender;
+import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.Requestable;
@@ -40,7 +37,6 @@ import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -70,6 +66,7 @@ import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTE
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static io.netty.buffer.Unpooled.wrappedBuffer;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FORM_URLENCODED;
 import static io.netty.handler.codec.http.HttpHeaderValues.CHUNKED;
@@ -525,7 +522,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             try (var ps = new PrintStream(msg.asOutputStream())) {
                 error.printStackTrace(ps);
             }
-            var msgBB = Unpooled.wrappedBuffer(msg.u8(), 0, msg.len);
+            var msgBB = wrappedBuffer(msg.u8(), 0, msg.len);
             Object hc;
             if (responseStarted) {
                 hc = new DefaultLastHttpContent(msgBB);
@@ -711,8 +708,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private boolean clientCancelled, waitingVars;
         private final long implicitRequest = FSProperties.wsImplicitRequest();
         private long earlyRequest = 0;
-        private final TextWebSocketFrame cancelledFrame = new TextWebSocketFrame(
-                Unpooled.wrappedBuffer(CANCELLED_MSG));
+        private @MonotonicNonNull TextWebSocketFrame cancelledFrame;
 
         private void adjustSizeHint(int observed) {
             sizeHint = ByteBufSink.adjustSizeHint(sizeHint, observed);
@@ -755,7 +751,11 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                         var ex = new FSCancelledException(null, "server received !cancel from client");
                         bindingsParser.feedError(ex);
                     }
-                    (msg = cancelledFrame).content().readerIndex(0).retain();
+                    if ((msg=cancelledFrame) == null)
+                        cancelledFrame = msg = new TextWebSocketFrame(wrappedBuffer(CANCELLED_MSG));
+                    else
+                        msg.content().readerIndex(0);
+                    msg.retain();
                 } else if (error != null) {
                     String errMsg = error instanceof NoTraceException
                             ? error.getMessage() : error.toString();
@@ -777,6 +777,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 if (error != null) {
                     ctx.writeAndFlush(new CloseWebSocketFrame());
                     ctx.close();
+                } else {
+                    ctx.flush();
                 }
             }
         }
