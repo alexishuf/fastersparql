@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,10 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         if (p == null)
             return in;
         return new ProcessorBIt<>(in, p, null);
+    }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        return processor.label(type);
     }
 
     protected void cleanup(boolean cancelled, @Nullable Throwable error) {

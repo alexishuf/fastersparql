@@ -134,7 +134,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return "C.QB:" + (channel == null ? "null" : channel.id().asShortText());
+            return "C.QB:" + (lastChannel == null ? "null" : lastChannel.id().asShortText());
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
@@ -152,7 +152,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public HttpRequest httpRequest() { return request.retain(); }
 
         @Override public void onConnected(Channel ch, NettyHandler handler) {
-            this.channel = ch;
+            this.channel     = ch;
+            this.lastChannel = ch;
             lock();
             try {
                 if (canSendRequest()) {

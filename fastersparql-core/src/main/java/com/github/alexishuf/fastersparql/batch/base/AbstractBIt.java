@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -362,6 +363,13 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     @Override public String toString() { return toStringNoArgs(); }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = new StringBuilder().append(cls2name(getClass())).append(':').append(id());
+        if (type.showState())
+            sb.append('[').append(state().name()).append(']');
+        return sb.toString();
+    }
 
     protected String toStringWithOperands(Collection<?> operands) {
         int taken = 0, n = operands.size();

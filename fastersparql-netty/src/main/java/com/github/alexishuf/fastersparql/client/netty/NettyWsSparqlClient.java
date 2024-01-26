@@ -168,8 +168,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             request();
         }
 
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return Stream.ofNullable(bindQuery == null ? null : bindQuery.bindings);
+        }
+
         @Override public String journalName() {
-            return "C.WB:" + (channel == null ? "null" : channel.id().asShortText());
+            return "C.WB:" + (lastChannel == null ? "null" : lastChannel.id().asShortText());
         }
 
         @Override protected void cleanup(@Nullable Throwable e) {

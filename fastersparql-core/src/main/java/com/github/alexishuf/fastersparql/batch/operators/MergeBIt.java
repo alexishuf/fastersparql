@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -19,6 +20,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
 
 import static java.lang.invoke.MethodHandles.lookup;
 
@@ -88,6 +90,10 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     public List<? extends BIt<B>> sources() { return sources; }
+
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
+        return sources.stream();
+    }
 
     /* --- --- helper methods --- --- --- */
 

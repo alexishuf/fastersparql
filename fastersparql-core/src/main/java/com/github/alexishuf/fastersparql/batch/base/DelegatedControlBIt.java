@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
@@ -86,6 +87,12 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     @Override public String toString() {
         return cls2name(getClass()) +'('+delegate.toString()+')';
+    }
+
+    @Override public String label(StreamNodeDOT.Label type) {
+        var sb = new StringBuilder().append(cls2name(getClass())).append('(');
+        sb.append(delegate.label(StreamNodeDOT.Label.MINIMAL)).append(')');
+        return sb.toString();
     }
 
     @Override public BIt<B> preferred() {
