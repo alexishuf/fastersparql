@@ -287,6 +287,10 @@ public final class Modifier extends Plan {
             allowed = this.limit = limit;
         }
 
+        @Override public long upstreamRequestLimit() {
+            return Modifier.upstreamRequestLimit(skip, allowed);
+        }
+
         @Override public String toString() {
             var sb = new StringBuilder();
             if (limit != Long.MAX_VALUE) sb.append("LIMIT " ).append(limit);
@@ -334,6 +338,10 @@ public final class Modifier extends Plan {
             super(bt, inVars, filters);
             skip = this.offset = offset;
             allowed = this.limit = limit;
+        }
+
+        @Override public long upstreamRequestLimit() {
+            return Modifier.upstreamRequestLimit(skip, allowed);
         }
 
         @Override public String toString() {
