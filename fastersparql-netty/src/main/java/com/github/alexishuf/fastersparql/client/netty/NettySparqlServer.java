@@ -753,7 +753,7 @@ public class NettySparqlServer implements AutoCloseable {
 
         private @Nullable WsServerParser<CompressedBatch> bindingsParser;
         private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
-        private boolean clientCancel;
+        private boolean clientCancel, cancel;
         private int requestBindingsAt;
         private int waitingVarsRound;
         private BindType bType = BindType.JOIN;
@@ -783,9 +783,9 @@ public class NettySparqlServer implements AutoCloseable {
         /* --- --- --- QueryHandler methods --- --- --- */
 
         @Override protected void waitForRequested(int batchRows) {
-            if ((long)WS_REQ.getAndAddRelease(this, (long)-batchRows)-batchRows <= 0) {
+            if ((long)WS_REQ.getAndAddRelease(this, (long)-batchRows)-batchRows <= 0 && !cancel) {
                 journal("parking handler=", this, "until !request");
-                while ((long)WS_REQ.getAcquire(this) <= 0)
+                while ((long)WS_REQ.getAcquire(this) <= 0 && !cancel)
                     LockSupport.park(this);
             }
         }
@@ -805,6 +805,8 @@ public class NettySparqlServer implements AutoCloseable {
             var sink = new ByteBufSink(ctx.alloc()).touch();
             sink.append(cancelled ? CANCELLED : ERROR).appendEscapingLF(errorMessage).append('\n');
             ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
+            if (!cancelled)
+                ctx.close();
         }
 
         @Override public void roundCleanup() {
@@ -812,6 +814,7 @@ public class NettySparqlServer implements AutoCloseable {
             plainRequested   = 0;
             waitingVarsRound = 0;
             clientCancel     = false;
+            cancel           = false;
             serializeTask    = null;
             try {
                 var bindingsParser = this.bindingsParser;
@@ -908,14 +911,20 @@ public class NettySparqlServer implements AutoCloseable {
         }
 
         private void readServerClosed() {
-            if (it != null) it.close();
+            cancel = true;
+            if (it != null) {
+                it.close();
+                LockSupport.unpark(drainerThread);
+            }
         }
 
         private void readCancel() {
             clientCancel = true;
-            if (it != null)
+            cancel       = true;
+            if (it != null) {
                 it.close(); // will raise BItReadClosedException, that will lead to sendCancel()
-            else if (waitingVarsRound != round)
+                LockSupport.unpark(drainerThread);
+            } else if (waitingVarsRound != round)
                 log.info("Ignoring rogue !cancel from WS client");
         }
 
