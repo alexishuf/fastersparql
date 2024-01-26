@@ -30,6 +30,7 @@ import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.FastAliveSet;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
@@ -52,8 +53,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -71,6 +71,7 @@ import static io.netty.util.AsciiString.indexOfIgnoreCaseAscii;
 import static java.lang.Thread.startVirtualThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Expose a {@link SparqlClient} (which includes a {@link Federation}) through the SPARQL
@@ -92,13 +93,16 @@ public class NettySparqlServer implements AutoCloseable {
                                                               .map(MediaType::toString)
                                                               .collect(Collectors.joining(", "));
     private int serializeSizeHint = WsSerializer.DEF_BUFFER_HINT;
+    private final FastAliveSet<QueryHandler<?>> queryHandlers = new FastAliveSet<>(512);
+    private boolean serverClosed;
+    private @MonotonicNonNull Semaphore handlersClosed;
     private final SparqlClient.@Nullable Guard sparqlClientGuard;
 
     public NettySparqlServer(SparqlClient sparqlClient, boolean sharedSparqlClient, String host, int port) {
         this.sparqlClient = sparqlClient;
         this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
         acceptGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup();
+        workerGroup = new NioEventLoopGroup(FSProperties.nettyEventLoopThreads());
 //        String debuggerName = sparqlClient.endpoint().toString();
         server = new ServerBootstrap().group(acceptGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
@@ -133,19 +137,32 @@ public class NettySparqlServer implements AutoCloseable {
     }
 
     @Override public void close()  {
-        CountDownLatch latch = new CountDownLatch(3);
-        server.close().addListener(f -> {
-            latch.countDown();
-            acceptGroup.shutdownGracefully(10, 50, MILLISECONDS)
-                       .addListener(f2 -> {
-                           latch.countDown();
-                           workerGroup.shutdownGracefully(10, 50, MILLISECONDS)
-                                      .addListener(f3 -> latch.countDown());
-                       });
-        });
+        if (serverClosed) return;
+        serverClosed = true;
+        var workersTerminated = new Semaphore(0);
+        handlersClosed = new Semaphore(0);
+        int[] handlersCount = {0};
+        server.close().addListener(f ->
+                acceptGroup.shutdownGracefully(10, 50, MILLISECONDS).addListener(f2 -> {
+                   queryHandlers.destruct(h -> {
+                       try {
+                           ++handlersCount[0];
+                           h.close();
+                       } catch (Throwable t) {
+                           log.debug("Ignoring {} while closing {} due to server shutdown", t, h);
+                           handlersClosed.release();
+                       }
+                   });
+                   try {
+                       if (!handlersClosed.tryAcquire(handlersCount[0], 10, SECONDS))
+                           log.warn("{} handlers not closed in under 10s, leaking", this);
+                   } catch (InterruptedException ignored) {}
+                   workerGroup.shutdownGracefully(100, 5_000, MILLISECONDS)
+                              .addListener(f3 -> workersTerminated.release());
+               }));
         try {
-            if (!latch.await(10, TimeUnit.SECONDS))
-                log.warn("{} is taking too long to shutdown, leaking.", this);
+            if (!workersTerminated.tryAcquire(16, SECONDS))
+                log.warn("{} is taking too long to shutdown, leaking EventLoopGroups", this);
         } catch (InterruptedException e) {
             log.warn("Interrupted while closing {}, leaking.", this);
             Thread.currentThread().interrupt();
@@ -179,7 +196,19 @@ public class NettySparqlServer implements AutoCloseable {
         protected Vars serializeVars = Vars.EMPTY;
         @MonotonicNonNull protected ResultsSerializer serializer;
         protected int round = -1;
+        protected @Nullable Thread drainerThread;
         protected final NettySparqlServer server = NettySparqlServer.this;
+
+        void close() {
+            try {
+                var it = this.it;
+                if (it == null || !it.tryCancel())
+                    handlersClosed.release();
+            } catch (Throwable t) {
+                log.info("Ignoring {} during QueryHandler.close of {}",
+                        t.getClass().getSimpleName(), this);
+            }
+        }
 
         @Override public @Nullable Channel channel() {
             return ctx == null ? null : ctx.channel();
@@ -197,8 +226,11 @@ public class NettySparqlServer implements AutoCloseable {
 
         @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
             super.channelInactive(ctx);
-            if (query != null)
-                fail(ctx.channel() + " closed before query completed");
+            queryHandlers.remove(this);
+            if (query != null) {
+                fail(serverClosed ? "channel closed due to server closing"
+                                  : "unexpected closure of channel");
+            }
         }
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) {
@@ -481,6 +513,8 @@ public class NettySparqlServer implements AutoCloseable {
             } finally {
                 if (task != null)
                     task.close();
+                if (handlersClosed != null)
+                    handlersClosed.release();
             }
         }
     }
@@ -492,6 +526,10 @@ public class NettySparqlServer implements AutoCloseable {
 
         private static final Pattern QUERY_RX = Pattern.compile("(?i)[?&]query=([^&]+)");
         private static final byte[] QUERY_EQ = "QUERY=".getBytes(UTF_8);
+
+        public SparqlHandler() {
+            queryHandlers.add(this);
+        }
 
         /* --- --- --- QueryHandler methods --- --- --- */
 
@@ -521,6 +559,8 @@ public class NettySparqlServer implements AutoCloseable {
                         : errorMessage.toString().substring(0, 50)+"...";
                 journal("error=", msg);
             }
+            if (!ctx.channel().isActive())
+                return;
             HttpContent msg;
             ByteBuf bb = ctx.alloc().buffer(errorMessage.length());
             if (responseStarted) {
@@ -543,7 +583,9 @@ public class NettySparqlServer implements AutoCloseable {
             httpVersion = req.protocolVersion();
             responseStarted = false;
             int r = beginRound();
-            if (!req.decoderResult().isSuccess()) {
+            if (serverClosed) {
+                endRound(INTERNAL_SERVER_ERROR, "server closing", null);
+            } else if (!req.decoderResult().isSuccess()) {
                 endRound(BAD_REQUEST, "Could not decode HTTP request", null);
             } else if (!req.uri().startsWith(SP_PATH)) {
                 endRound(NOT_FOUND, "Path not found, HTTP sparql endpoint is at SP_PATH", null);
@@ -623,7 +665,7 @@ public class NettySparqlServer implements AutoCloseable {
                                  .set(TRANSFER_ENCODING, CHUNKED);
                     responseStarted = true;
                     ctx.writeAndFlush(res);
-                    startVirtualThread(() -> drainerThread(round));
+                    drainerThread = startVirtualThread(() -> drainerThread(round));
                 }
             }
         }
@@ -718,11 +760,13 @@ public class NettySparqlServer implements AutoCloseable {
         private WsSerializeTask serializeTask;
         private final SegmentRope tmpView = new SegmentRope();
         private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
-        private @Nullable Thread drainerThread;
         private final long implicitRequest = FSProperties.wsImplicitRequest();
         @SuppressWarnings("FieldCanBeLocal") private long plainRequested;
 
-        public WsSparqlHandler() {serializer = WsSerializer.create(serializeSizeHint);}
+        public WsSparqlHandler() {
+            serializer = WsSerializer.create(serializeSizeHint);
+            queryHandlers.add(this);
+        }
 
         /* --- --- --- Requestable methods (used by bindingsParser) --- --- --- */
 
@@ -756,6 +800,8 @@ public class NettySparqlServer implements AutoCloseable {
                         : errorMessage.toString().substring(0, 50)+"...";
                 journal("error=", msg);
             }
+            if (!ctx.channel().isActive())
+                return;
             var sink = new ByteBufSink(ctx.alloc()).touch();
             sink.append(cancelled ? CANCELLED : ERROR).appendEscapingLF(errorMessage).append('\n');
             ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
@@ -846,7 +892,9 @@ public class NettySparqlServer implements AutoCloseable {
         protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) {
             SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
-            if (f == 'c' && msg.has(0, CANCEL)) {
+            if (serverClosed) {
+                readServerClosed();
+            } else if (f == 'c' && msg.has(0, CANCEL)) {
                 readCancel();
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
                 readRequest(msg);
@@ -857,6 +905,10 @@ public class NettySparqlServer implements AutoCloseable {
             } else {
                 handleQueryCommand(ctx, msg, f);
             }
+        }
+
+        private void readServerClosed() {
+            if (it != null) it.close();
         }
 
         private void readCancel() {
