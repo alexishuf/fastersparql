@@ -30,7 +30,6 @@ import com.github.alexishuf.fastersparql.sparql.results.*;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -258,7 +257,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public void request(long rows) throws NoReceiverException {
             super.request(rows);
-            handler.requestRows(rows);
+            handler.requestRows(requested());
         }
 
         @Override public void rebindAcquire() {
@@ -450,21 +449,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         void requestRows(long n) {
-            if (Async.maxRelease(REQ, this, n)) {
-                journal("scheduling !request", n, "handler=", this);
-                var ctx = this.ctx;
-                if (ctx != null && (plainFlags&OPEN_PENDING) == 0) {
-                    var exec = ctx.executor();
-                    if (exec.inEventLoop()) doRequestRows();
-                    else                    exec.execute(requestRowsTask);
-                }
+            REQ.setRelease(this, n);
+            journal("scheduling !request", n, "handler=", this);
+            var ctx = this.ctx;
+            if (ctx != null && (plainFlags&OPEN_PENDING) == 0) {
+                var exec = ctx.executor();
+                if (exec.inEventLoop()) doRequestRows();
+                else                    exec.execute(requestRowsTask);
             }
-        }
-
-        private void retryRequestRows() {
-            journal("retry !request", plainRequest, "handler=", this);
-            if (ctx != null)
-                ctx.executor().execute(requestRowsTask);
         }
 
         private boolean doRequestRows() {
@@ -474,7 +466,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (n <= 0 || (plainFlags&CANCELLING) != 0)
                 return false; // no work
             if (requestRowsFrame.refCnt() > 1) {
-                retryRequestRows(); // frame in-use by netty, changing may yield big garbage number
+                // frame in-use by netty, changing may yield big garbage number
+                ctx.executor().execute(requestRowsTask);
                 return false;
             } else {
                 journal("sending !request", n, "handler=", this);
@@ -482,7 +475,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 requestRowsMsg.len = AbstractWsParser.REQUEST.length;
                 requestRowsMsg.append(n).append('\n');
                 // update wrapping ByteBuf
-                assert requestRowsMsg.len <= REQ_ROWS_FRAME_CAPACITY;
+                assert requestRowsBB.array() == requestRowsMsg.utf8;
                 requestRowsBB.readerIndex(0).writerIndex(requestRowsMsg.len);
                 // send !request n
                 ctx.writeAndFlush(requestRowsFrame.retain());
@@ -556,9 +549,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     return; // ignore frame after complete
                 gotFrames = true;
                 try {
-                    long parsedBefore = parser.rowsParsed();
                     parser.feedShared(bbRopeView.wrapAsSingle(f.content()));
-                    REQ.getAndAddRelease(this, -(parser.rowsParsed()-parsedBefore));
                     if (selfRecycle && destination.isTerminated())
                         reset(null);
                 } catch (TerminatedException|CancelledException e) {
