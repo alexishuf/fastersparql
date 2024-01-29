@@ -17,6 +17,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.client.util.ClientRetry.retry;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B>
         implements ChannelBound, RequestAwareCompletableBatchQueue<B> {
@@ -83,18 +84,24 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         if (ch != null) {
             var cfg = ch.config();
             boolean autoRead = (state()&NO_AUTO_READ) == 0;
-            if (cfg.isAutoRead() != autoRead)
+            if (cfg.isAutoRead() != autoRead) {
+                journal(autoRead ? "autoRead=true on" : "autoRead=false on", this, "ch=", ch);
                 cfg.setAutoRead(autoRead);
+            }
         }
     }
 
     private void setAutoRead(boolean value) {
-        int state = statePlain();
-        if (value) clearFlagsRelease(state, NO_AUTO_READ);
-        else       setFlagsRelease  (state, NO_AUTO_READ);
+        if (value) {
+            clearFlagsRelease(statePlain(), NO_AUTO_READ);
+        } else if (!compareAndSetFlagRelease(NO_AUTO_READ)) {
+            return;
+        }
         Channel ch = this.channel;
-        if (ch != null)
+        if (ch != null) {
+            journal(value ? "sched autoRead=true on" : "sched autoRead=false on", this, "ch=", ch);
             ch.eventLoop().execute(autoReadSetter);
+        }
     }
 
     protected void setChannel(Channel channel) {
@@ -163,6 +170,11 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         } else {
             return cancel();
         }
+    }
+
+    @Override protected void deliverTermination(int current, int termState) {
+        channel = null;
+        super.deliverTermination(current, termState);
     }
 
     /* --- --- --- RequestAwareCompletableBatchQueue --- --- --- */

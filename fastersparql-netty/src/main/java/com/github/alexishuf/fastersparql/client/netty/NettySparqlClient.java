@@ -362,7 +362,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
             ByteBuf bb = content.content();
             resBytes += bb.readableBytes();
             try {
-               parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
+                parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
                                                    : new ByteRope(bb.toString(decodeCS)));
                 if (content instanceof LastHttpContent) {
                     if (ThreadJournal.ENABLED)
