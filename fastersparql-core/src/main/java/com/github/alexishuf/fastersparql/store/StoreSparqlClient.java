@@ -2525,10 +2525,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     lb = n;
                 } else {
                     lb = left.nextBatch(null);
-                    if (lb                   == null) return false;
-                    if (startBindingNotifier != null) startBindingNotifier.startBinding();
+                    if (lb == null) return false;
                 }
             }
+            if (startBindingNotifier != null) startBindingNotifier.startBinding();
             rEmpty = true;
             B lb = this.lb;
             int lr = this.lr;
