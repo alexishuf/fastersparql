@@ -169,7 +169,7 @@ class NettyEmitSparqlServerTest {
 
     private void resetJournalAndCheck(Results results, SparqlClient client,
                                       BatchType<?> batchType) {
-        NettyChannelDebugger.flushActive();
+        NettyChannelDebugger.reset();
         ThreadJournal.resetJournals();
         results.check(client, batchType);
     }
@@ -191,7 +191,7 @@ class NettyEmitSparqlServerTest {
                 resetJournalAndCheck(results, client, batchType);
             startNs = nanoTime(); // saturate CPUs with same test
             for (int i = 0; i < 10 || nanoTime()-startNs < minNs; i++) {
-                NettyChannelDebugger.flushActive();
+                NettyChannelDebugger.reset();
                 ThreadJournal.resetJournals();
                 assertEquals(List.of(), range(0, concurrent).parallel().mapToObj(ignored -> {
                     try {
@@ -199,7 +199,7 @@ class NettyEmitSparqlServerTest {
                         return null;
                     } catch (Throwable t) {
                         Async.uninterruptibleSleep(100);
-                        NettyChannelDebugger.dumpAndFlushActive(System.out);
+                        NettyChannelDebugger.dumpAndReset(System.out);
                         return t;
                     }
                 }).filter(Objects::nonNull).toList());

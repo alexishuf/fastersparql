@@ -30,8 +30,6 @@ import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
-import org.apache.commons.io.output.CloseShieldOutputStream;
-import org.apache.commons.io.output.TeeOutputStream;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -203,6 +201,7 @@ public class Measure implements Callable<Void>{
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
         Plan plan = null;
+        NettyChannelDebugger.reset();
         ResultJournal.clear();
         ThreadJournal.resetJournals();
         try {
@@ -269,16 +268,17 @@ public class Measure implements Callable<Void>{
         File nettyFile = new File("/tmp/"+name+".netty");
         File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
         try (var dot     = new FileWriter(dotFile,     UTF_8);
-             var journal = new OutputStreamWriter(
-                     new TeeOutputStream(new CloseShieldOutputStream(System.out),
-                                         new FileOutputStream(journalFile, false)));
+             var journal = new FileWriter(journalFile, false);
+//             var journal = new OutputStreamWriter(
+//                     new TeeOutputStream(new CloseShieldOutputStream(System.out),
+//                                         new FileOutputStream(journalFile, false)));
              var netty = new PrintStream(nettyFile);
              var results = new FileWriter(resultsFile, UTF_8)) {
             ThreadJournal.dumpAndReset(journal, 100);
             ResultJournal.dump(results);
             dot.append(sn.toDOT(WITH_STATE_AND_STATS));
             sn.renderDOT(svg, WITH_STATE_AND_STATS);
-            NettyChannelDebugger.dumpAndFlushActive(netty);
+            NettyChannelDebugger.dumpAndReset(netty);
             System.out.println("Wrote "+svg);
         } catch (IOException ignored) {}
     }

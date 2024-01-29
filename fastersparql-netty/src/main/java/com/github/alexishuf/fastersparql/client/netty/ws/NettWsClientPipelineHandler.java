@@ -144,6 +144,7 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
             previewU8 = ArrayPool.BYTE.offer(previewU8, previewU8.length);
     }
 
+    private static final int PREVIEW_LEN = 60-12-1-24-4-1;
     private void logMessage(Object msg) {
         if (msg instanceof HttpResponse r) {
             journal("Received HTTP ", r.status().code(), "on", this);
@@ -153,18 +154,21 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
             ByteBuf bb = f.content();
             byte[] previewU8 = this.previewU8;
             if (previewU8 == null)
-                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(19);
-            int frameLen = bb.readableBytes(), previewLen = Math.min(frameLen, 16);
+                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(PREVIEW_LEN+3);
+            int frameLen = bb.readableBytes(), previewLen = Math.min(frameLen, PREVIEW_LEN);
             bb.getBytes(bb.readerIndex(), this.previewU8, 0, previewLen);
             while (previewLen > 0 && previewU8[previewLen-1] <= ' ')
                 --previewLen;
+            for (int i = 0; i < previewLen; i++) {
+                if (previewU8[i] <= ' ') previewU8[i] = ' ';
+            }
             if (frameLen > 16) {
                 previewU8[previewLen++] = '.';
                 previewU8[previewLen++] = '.';
                 previewU8[previewLen++] = '.';
             }
-            journal("Received WS frame with ", frameLen, "bytes on", this);
-            journal("preview=", new String(previewU8, 0, previewLen, UTF_8));
+            journal("got WS frame bytes=", frameLen, "on", this,
+                    new String(previewU8, 0, previewLen, UTF_8));
         }
     }
 

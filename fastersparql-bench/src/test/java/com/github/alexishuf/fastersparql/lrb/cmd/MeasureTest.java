@@ -88,11 +88,11 @@ class MeasureTest {
     }
 
     @BeforeEach void setUp() {
-        NettyChannelDebugger.flushActive();
+        NettyChannelDebugger.reset();
     }
 
     @AfterEach void tearDown() {
-        NettyChannelDebugger.flushActive();
+        NettyChannelDebugger.reset();
         System.setProperty(FSProperties.OP_CROSS_DEDUP, String.valueOf(originalCrossDedup));
         FSProperties.refresh();
         for (File d : tempDirs) {

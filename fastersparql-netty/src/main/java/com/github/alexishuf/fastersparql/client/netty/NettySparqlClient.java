@@ -193,7 +193,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return String.format("C.QE@%x", System.identityHashCode(this));
+            return String.format("C.QE:%s@%x",
+                    lastChannel == null ? "null" : lastChannel.id().asShortText(),
+                    System.identityHashCode(this));
         }
 
         @Override protected void doRelease() {

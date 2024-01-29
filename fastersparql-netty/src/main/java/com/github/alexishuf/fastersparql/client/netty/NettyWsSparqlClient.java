@@ -223,7 +223,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public String journalName() {
             return String.format("C.WE:%s@%x",
-                    channel == null ? "null" : channel.id().asShortText(),
+                    lastChannel == null ? "null" : lastChannel.id().asShortText(),
                     System.identityHashCode(this));
         }
 

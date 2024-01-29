@@ -40,7 +40,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    @SuppressWarnings("unused") public static void dumpActive(PrintStream dest) {
+    @SuppressWarnings("unused") public static void dump(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
@@ -50,7 +50,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    public static void flushActive() {
+    public static void reset() {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE)
@@ -58,7 +58,7 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
         } finally { ACTIVE_LOCK.unlock(); }
     }
 
-    @SuppressWarnings("unused") public static void dumpAndFlushActive(PrintStream dest) {
+    @SuppressWarnings("unused") public static void dumpAndReset(PrintStream dest) {
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
