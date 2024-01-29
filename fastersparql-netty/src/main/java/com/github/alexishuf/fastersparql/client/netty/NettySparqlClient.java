@@ -25,6 +25,7 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
@@ -95,14 +96,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
     private FullHttpRequest createRequest(SparqlQuery qry) {
         var cfg = endpoint.configuration();
-        var method = method(cfg, qry.sparql().len());
+        SegmentRope sparql = qry.sparql();
+        var method = method(cfg, sparql.len());
         Rope body = switch (method) {
-            case POST -> qry.sparql();
-            case FORM -> formString(qry.sparql(), cfg.params());
+            case POST -> sparql;
+            case FORM -> formString(sparql, cfg.params());
             case GET  -> null;
             default   -> throw new FSInvalidArgument(method+" not supported by "+this);
         };
-        String pathAndParams = firstLine(endpoint, cfg, qry.sparql());
+        String pathAndParams = firstLine(endpoint, cfg, body == null ? sparql : null);
         String accept        = qry.isGraph() ? rdfAcceptString(cfg.rdfAccepts())
                                            : resultsAcceptString(cfg.resultsAccepts());
         if (body == null)
