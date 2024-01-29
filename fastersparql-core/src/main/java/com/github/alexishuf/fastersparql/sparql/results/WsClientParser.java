@@ -25,6 +25,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.UnsetError;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -274,8 +275,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         } else {
             if (bindingsSender == null)
                 bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
-            int add = (int) Math.min(MAX_VALUE-(long)plainBindingsRequested, n);
-            if ((int)B_REQUESTED.getAndAddRelease(this, add) <= 0)
+            if (Async.maxRelease(B_REQUESTED, this, (int)n))
                 Unparker.unpark(bindingsSender);
         }
     }
@@ -354,10 +354,14 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     @Override public void setFrameSender(WsFrameSender<?, ?> frameSender) {
         super.setFrameSender(frameSender);
-        if (bindingsReceiver != null)
+        if (bindingsReceiver != null) {
             bindingsReceiver.onFrameSender(frameSender);
-        else
-            Unparker.unpark(bindingsSender);
+        } else if (bindQuery != null) {
+            if (bindingsSender == null)
+                bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
+            else
+                Unparker.unpark(bindingsSender);
+        }
     }
 
     private void sendBindingsThread() {
