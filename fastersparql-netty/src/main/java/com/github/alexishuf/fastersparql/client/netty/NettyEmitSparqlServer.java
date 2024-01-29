@@ -833,10 +833,14 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
 
         private void readRequest(SegmentRope msg) {
+            int start = AbstractWsParser.REQUEST.length;
             try {
-                request(msg.parseLong(AbstractWsParser.REQUEST.length));
+                start = msg.skipWS(start, msg.len);
+                long n = msg.hasAnyCase(start, AbstractWsParser.MAX)
+                       ? Long.MAX_VALUE : msg.parseLong(start);
+                request(n);
             } catch (Throwable t) {
-                int eol = msg.skip(AbstractWsParser.REQUEST.length, msg.len, Rope.UNTIL_WS);
+                int eol = msg.skip(start, msg.len, Rope.UNTIL_WS);
                 var ex = new InvalidSparqlResultsException("Invalid control message: "
                                                            +msg.toString(0, eol));
                 endQuery(sender, PARTIAL_CONTENT, false, ex);

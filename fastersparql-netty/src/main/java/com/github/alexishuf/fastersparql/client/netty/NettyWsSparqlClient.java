@@ -459,6 +459,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             }
         }
 
+        private static final byte[] MAX_LF = "MAX\n".getBytes(UTF_8);
         private boolean doRequestRows() {
             if (ctx == null || destination.isTerminated())
                 return false; // no work
@@ -473,7 +474,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 journal("sending !request", n, "handler=", this);
                 // write the request
                 requestRowsMsg.len = AbstractWsParser.REQUEST.length;
-                requestRowsMsg.append(n).append('\n');
+                if (n == Long.MAX_VALUE) requestRowsMsg.append(MAX_LF);
+                else                     requestRowsMsg.append(n).append('\n');
                 // update wrapping ByteBuf
                 assert requestRowsBB.array() == requestRowsMsg.utf8;
                 requestRowsBB.readerIndex(0).writerIndex(requestRowsMsg.len);

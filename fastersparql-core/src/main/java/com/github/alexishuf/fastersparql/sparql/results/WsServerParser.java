@@ -32,7 +32,9 @@ public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     @Override protected boolean handleRoleSpecificControl(Rope rope, int begin, int eol) {
         if (!rope.has(0, REQUEST))
             return false;
-        requestable.request(rope.parseLong(begin + REQUEST.length));
+        int start = rope.skipWS(begin+REQUEST.length, rope.len);
+        long n = rope.hasAnyCase(start, MAX) ? Long.MAX_VALUE : rope.parseLong(start);
+        requestable.request(n);
         return true;
     }
 }

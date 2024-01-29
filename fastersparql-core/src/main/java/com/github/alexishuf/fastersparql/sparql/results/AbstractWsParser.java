@@ -40,6 +40,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     public static final byte[] CANCELLED        = "!cancelled".getBytes(UTF_8);
     public static final byte[] END              = "!end".getBytes(UTF_8);
     public static final byte[] REQUEST          = "!request ".getBytes(UTF_8);
+    public static final byte[] MAX              = "MAX".getBytes(UTF_8);
 
     private static final ByteRope PING_ACK_FRAME = new ByteRope("!ping-ack\n");
 
