@@ -40,7 +40,6 @@ public class FSProperties {
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
-    public static final String WS_SERVER_BINDINGS        = "fastersparql.ws.server.bindings";
     public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
     public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
@@ -71,7 +70,6 @@ public class FSProperties {
     public static final int     DEF_BATCH_MIN_WAIT_US         = BIt.QUICK_MIN_WAIT_NS/1_000;
     public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS/1_000;
     public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 32;
-    public static final int     DEF_WS_SERVER_BINDINGS        = 256;
     public static final int     DEF_WS_IMPLICIT_REQUEST       = DEF_EMIT_REQ_CHUNK_BATCHES/4;
     public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
@@ -97,7 +95,6 @@ public class FSProperties {
     private static int CACHE_BATCH_MIN_SIZE            = -1;
     private static int CACHE_BATCH_MIN_WAIT_US         = -1;
     private static int CACHE_BATCH_MAX_WAIT_US         = -1;
-    private static int CACHE_WS_SERVER_BINDINGS        = -1;
     private static int CACHE_BATCH_QUEUE_ROWS          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
     private static int CACHE_OP_REDUCED_BATCHES        = -1;
@@ -201,7 +198,6 @@ public class FSProperties {
         CACHE_BATCH_MIN_SIZE            = -1;
         CACHE_BATCH_MIN_WAIT_US         = -1;
         CACHE_BATCH_MAX_WAIT_US         = -1;
-        CACHE_WS_SERVER_BINDINGS        = -1;
         CACHE_WS_IMPLICIT_REQUEST       = -1;
         CACHE_BATCH_QUEUE_ROWS          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
@@ -420,7 +416,7 @@ public class FSProperties {
 
     /**
      * The default value for {@link BIt#minWait(long, TimeUnit)} in iterators that knowingly
-     * receive data from an asynchronous source and not from a intermediary processing step.
+     * receive data from an asynchronous source and not from an intermediary processing step.
      *
      * @param timeUnit The desired unit of the duration value.
      * @return a non-negative value to be passed to {@link BIt#minWait(long, TimeUnit)}
@@ -534,20 +530,6 @@ public class FSProperties {
             CACHE_BATCH_SELF_VALIDATE = v;
         }
         return v;
-    }
-
-    /**
-     * The default number of bindings that a server will initially request from the client
-     * in a {@code !bind} operation. As the bindings are processed, the server will send new,
-     * smaller requests to the client aiming to keep at most this number of bindings ready at
-     * the server side.
-     *
-     * @return a positive number of rows
-     */
-    public static @Positive int wsServerBindings() {
-        int i = CACHE_WS_SERVER_BINDINGS;
-        if (i <= 0) CACHE_WS_SERVER_BINDINGS = i = readPositiveInt(WS_SERVER_BINDINGS, DEF_WS_SERVER_BINDINGS);
-        return i;
     }
 
     /**

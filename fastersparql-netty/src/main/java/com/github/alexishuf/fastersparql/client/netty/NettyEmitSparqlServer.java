@@ -53,6 +53,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.PrintStream;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.Semaphore;
@@ -286,7 +288,6 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     }
 
     private static final class WsSender extends Sender<TextWebSocketFrame> {
-
         private final WsHandler handler;
         private Vars serializeVars;
         private volatile long lastSentSeq = -1;
@@ -683,6 +684,14 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         }
     }
 
+    private static final VarHandle WS_BIND_REQ;
+    static {
+        try {
+            WS_BIND_REQ = MethodHandles.lookup().findVarHandle(WsHandler.class, "plainBindReq", long.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
     private final class WsHandler extends QueryHandler<WebSocketFrame, TextWebSocketFrame>
             implements WsFrameSender<ByteBufSink, ByteBuf>, Requestable {
         private static final byte[] CANCEL     = "!cancel"    .getBytes(UTF_8);
@@ -693,26 +702,37 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         private static final byte[] NOT_EXISTS = "!not-exists".getBytes(UTF_8);
         private static final byte[] MINUS      = "!minus"     .getBytes(UTF_8);
         private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
+        private static final byte[] BIND_REQUEST      = "!bind-request ".getBytes(UTF_8);
         private static final byte[] CANCELLED_MSG     = "!cancelled\n"       .getBytes(UTF_8);
+        private static final int LONG_MAX_VALUE_LEN   = String.valueOf(Long.MAX_VALUE).length();
 
         private static final NoTraceException READ_VARS_NO_QUERY_EX = new NoTraceException("attempt to read bindings vars before query command");
         private static final NoTraceException VARS_NO_LF_EX = new NoTraceException("bindings vars frame does nto end in \\n (LF, 0x0A)");
         private static final NoTraceException NO_VAR_MARKER_EX = new NoTraceException("missing ?/$ marker in var name");
 
-        private final ByteRope tmpSeq = new ByteRope(BIND_EMPTY_STREAK.length+12).append(BIND_EMPTY_STREAK);
         private final SegmentRope tmpView = new SegmentRope();
         private @Nullable WsServerParser<CompressedBatch> bindingsParser;
         private BindType bType = BindType.JOIN;
         private @Nullable Emitter<CompressedBatch> emitter;
         private @Nullable VolatileBindQuery bindQuery;
-        private byte @MonotonicNonNull [] fullBindReq, halfBindReq;
-        private volatile long requestBindingsAt;
-        private final int maxBindings = FSProperties.wsServerBindings();
-        private int sizeHint;
+        @SuppressWarnings("unused") private long plainBindReq;
+        private final ByteRope bindReqRope;
+        private final TextWebSocketFrame bindReqFrame;
+        private WsSender wsSender;
         private boolean clientCancelled, waitingVars;
+        private int sizeHint;
         private final long implicitRequest = FSProperties.wsImplicitRequest();
         private long earlyRequest = 0;
         private @MonotonicNonNull TextWebSocketFrame cancelledFrame;
+        private final Runnable sendBindReqTask = this::sendBindReq;
+
+        public WsHandler() {
+            bindReqRope = new ByteRope(
+                    BIND_REQUEST.length+LONG_MAX_VALUE_LEN+1+      // !bind-request N\n
+                    BIND_EMPTY_STREAK.length+LONG_MAX_VALUE_LEN+1) // !bind-empty-streak S\n
+                    .append(BIND_REQUEST);
+            bindReqFrame = new TextWebSocketFrame(wrappedBuffer(bindReqRope.u8()));
+        }
 
         private void adjustSizeHint(int observed) {
             sizeHint = ByteBufSink.adjustSizeHint(sizeHint, observed);
@@ -767,10 +787,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 }
             } finally {
                 this.sender          = null;
+                this.wsSender        = null;
                 this.bindingsParser  = null;
                 this.bindQuery       = null;
                 this.emitter         = null;
-                this.earlyRequest    = 0;
                 this.clientCancelled = false;
                 this.waitingVars     = false;
                 if (handlersClosed != null)
@@ -818,7 +838,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             else if (bindingsParser != null)
                 readBindings(bindingsParser, msg);
             else
-                handleQueryCommand(ctx, msg, f);
+                handleQueryCommand(msg, f);
         }
 
         private void readAfterServerClose() {
@@ -851,7 +871,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
         }
 
-        private void handleQueryCommand(ChannelHandlerContext ctx, SegmentRope msg, byte f) {
+        private void handleQueryCommand(SegmentRope msg, byte f) {
             byte[] ex = null;
             boolean waitingVars = true;
             switch (f) {
@@ -870,81 +890,65 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             }
             var sparql = new ByteRope(msg.toArray(ex.length, msg.len));
             Plan query = parseQuery(sparql);
-            if (query == null)
+            if (query == null || waitingVars)
                 return;
-            if (waitingVars) {
-                requestBindingsAt = maxBindings >> 1;
-                if (fullBindReq == null) {
-                     fullBindReq = ("!bind-request " + maxBindings + "\n").getBytes(UTF_8);
-                     halfBindReq = ("!bind-request " + (maxBindings >> 1) + "\n").getBytes(UTF_8);
-                }
-                ctx.writeAndFlush(new TextWebSocketFrame(
-                        ctx.alloc().buffer().writeBytes(fullBindReq)));
-            } else {
-                emitter = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
-                sender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
-                sender.start();
-            }
+            emitter = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
+            sender = wsSender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
+            wsSender.start();
         }
 
         private void readBindings(WsServerParser<CompressedBatch> bindingsParser,
                                   SegmentRope msg) {
             try {
                 bindingsParser.feedShared(msg);
-            } catch (TerminatedException|CancelledException ignored) {
-                return;
-            }
-            if (bindingsParser.rowsParsed() >= requestBindingsAt)
-                checkAndRequestBindings();
+            } catch (TerminatedException|CancelledException ignored) {}
         }
 
-        private void checkAndRequestBindings() {
-            var bindingsParser = this.bindingsParser;
-            if (bindingsParser == null)
-                return;
-            long parsed = bindingsParser.rowsParsed();
-            if (parsed >= requestBindingsAt) {
-                requestBindingsAt = parsed + (maxBindings>>1);
-                var bb = ctx.alloc().buffer(32);
-                bb.writeBytes(halfBindReq);
-                //noinspection DataFlowIssue bindQuery != null
-                long emptySeq = bindQuery.emptySeq;
-                WsSender sender = (WsSender)this.sender;
-                if (sender != null && sender.canSendEmptyStreak()) {
-                    tmpSeq.len = BIND_EMPTY_STREAK.length;
-                    tmpSeq.append(emptySeq).append('\n');
-                    bb.ensureWritable(tmpSeq.len);
-                    bb.writeBytes(tmpSeq.u8(), 0, tmpSeq.len);
+        private void sendBindReq() {
+            if (bindReqFrame.refCnt() > 1) {
+                retrySendBindReq();
+            } else {
+                bindReqRope.len = BIND_REQUEST.length;
+                bindReqRope.append((long)WS_BIND_REQ.getAcquire(this)).append((byte)'\n');
+                if (wsSender != null && wsSender.canSendEmptyStreak()) {
+                    //noinspection DataFlowIssue
+                    bindReqRope.append(BIND_EMPTY_STREAK)
+                               .append(bindQuery.emptySeq).append(((byte)'\n'));
                 }
-                ctx.writeAndFlush(new TextWebSocketFrame(bb));
+                assert bindReqFrame.content().array() == bindReqRope.utf8 : "rope grown";
+                bindReqFrame.content().readerIndex(0).writerIndex(bindReqRope.len);
+                ctx.writeAndFlush(bindReqFrame.retain());
             }
+        }
+        private void retrySendBindReq() {
+            journal("frame in-use, retrying sendBindReq on", this);
+            ctx.executor().execute(sendBindReqTask);
         }
 
         private final class BindingsQueue extends CallbackEmitter<CompressedBatch> {
-            private @Nullable Runnable resumeTask;
-
             private BindingsQueue(Vars vars) {
                 super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
                 if (ResultJournal.ENABLED)
                     ResultJournal.initEmitter(this, vars);
             }
 
-            @Override public   String toString() { return ctx.channel().toString(); }
-            @Override public   void   pause()    { requestBindingsAt = Long.MAX_VALUE; }
+            @Override public String toString() {
+                return "S.WH.BQ:"+ctx.channel().id().asShortText();
+            }
 
-            @Override public void resume() {
-                requestBindingsAt = 0;
-                var resumeTask = this.resumeTask;
-                if (resumeTask == null)
-                    this.resumeTask = resumeTask = WsHandler.this::checkAndRequestBindings;
-                ctx.executor().execute(resumeTask);
+            @Override public Vars     bindableVars() { return Vars.EMPTY; }
+            @Override public   void          pause() { }
+            @Override public   void         resume() { }
+
+            @Override public void request(long rows) throws NoReceiverException {
+                WS_BIND_REQ.setRelease(WsHandler.this, rows);
+                ctx.executor().execute(sendBindReqTask);
+                super.request(rows);
             }
 
             @Override public void rebind(BatchBinding binding) {
                 throw new UnsupportedOperationException();
             }
-
-            @Override public Vars bindableVars() { return Vars.EMPTY; }
         }
 
         private void readVarsFrame(SegmentRope msg) {
@@ -980,13 +984,14 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             // create bindings -> BindingStage -> sender pipeline
 
             var bindingsQueue = new BindingsQueue(bindingsVars);
-            bindingsParser = new WsServerParser<>(bindingsQueue, this);
+            var bindingsParser = new WsServerParser<>(bindingsQueue, this);
+            this.bindingsParser = bindingsParser;
             bindQuery = new VolatileBindQuery(query, bindingsQueue, bType);
             var emitter = sparqlClient.emit(bindQuery, Vars.EMPTY);
             this.emitter = emitter;
             bindingsParser.setFrameSender(this);
             var sender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
-            this.sender = sender;
+            this.sender = wsSender = sender;
 
             // only send binding seq number and right unbound vars
             Vars all = emitter.vars();
@@ -996,7 +1001,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 if (!bindingsVars.contains(v)) serializeVars.add(v);
             sender.serializeVars = serializeVars;
 
-            // start bindings -> BindingStage -> sender pipiline
+            // start bindings -> BindingStage -> sender pipeline
             sender.start();
             readBindings(bindingsParser, msg);
         }
