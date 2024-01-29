@@ -57,6 +57,15 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
 
     @Override public @Nullable Channel channel() { return channel; }
 
+    @Override public void setChannel(Channel channel) {
+        if (channel == null) {
+            this.channel = null;
+        } else {
+            this.channel     = channel;
+            this.lastChannel = channel;
+        }
+    }
+
     /* --- --- --- BIt --- --- --- */
 
     @Override public String label(StreamNodeDOT.Label type) {

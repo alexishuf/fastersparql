@@ -5,5 +5,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface ChannelBound {
     @Nullable Channel channel();
+    void setChannel(Channel ch);
     String journalName();
 }

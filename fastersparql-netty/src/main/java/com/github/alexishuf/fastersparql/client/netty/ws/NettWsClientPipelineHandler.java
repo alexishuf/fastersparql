@@ -114,6 +114,10 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
 
     @Override public @Nullable Channel channel() { return ctx == null ? null : ctx.channel(); }
 
+    @Override public void setChannel(Channel ch) {
+        if (ch != channel()) throw new UnsupportedOperationException();
+    }
+
     @Override public String journalName() {
         return "WPH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
     }

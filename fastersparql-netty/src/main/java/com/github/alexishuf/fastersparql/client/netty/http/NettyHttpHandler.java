@@ -50,6 +50,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         return this.ctx == null ? null : this.ctx.channel();
     }
 
+    @Override public void setChannel(Channel ch) {
+        if (ch != channel()) throw new UnsupportedOperationException();
+    }
+
     @Override public String journalName() {
         return "NHH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
     }

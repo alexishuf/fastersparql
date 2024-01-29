@@ -214,6 +214,10 @@ public class NettySparqlServer implements AutoCloseable {
             return ctx == null ? null : ctx.channel();
         }
 
+        @Override public void setChannel(Channel ch) {
+            if (ch != channel()) throw new UnsupportedOperationException();
+        }
+
         @Override public String journalName() {
             return "S.QH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
         }

@@ -90,6 +90,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
     }
 
     @Override public @Nullable Channel channel() { return ctx.channel(); }
+    @Override public void setChannel(Channel ch) { throw new UnsupportedOperationException(); }
     @Override public String        journalName() { return "NRS:"+ctx.channel().id().asShortText(); }
 
     @Override public String toString() {

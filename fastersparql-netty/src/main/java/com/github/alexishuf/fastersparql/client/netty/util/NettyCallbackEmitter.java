@@ -36,7 +36,8 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
             .counter(RETRIES_MASK, "retries")
             .build();
 
-    protected @MonotonicNonNull Channel channel;
+    protected @Nullable Channel channel;
+    protected @MonotonicNonNull Channel lastChannel;
     private final Runnable autoReadSetter = this::setAutoRead0;
     protected final SparqlClient client;
 
@@ -104,13 +105,18 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         }
     }
 
-    protected void setChannel(Channel channel) {
+    @Override public void setChannel(Channel channel) {
         if (this.channel == channel)
             return;
-        this.channel = channel;
-        int st = state();
-        if ((st&IS_CANCEL_REQ) != 0 || isCancelled(st))
-            channel.close();
+        if (channel == null) {
+            this.channel = null;
+        } else {
+            this.lastChannel = channel;
+            this.channel     = channel;
+            int st           = state();
+            if ((st&IS_CANCEL_REQ) != 0 || isCancelled(st))
+                channel.close();
+        }
     }
 
     /* --- --- --- abstract methods --- --- --- */

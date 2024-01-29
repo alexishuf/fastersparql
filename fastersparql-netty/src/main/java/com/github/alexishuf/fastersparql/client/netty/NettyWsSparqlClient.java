@@ -212,8 +212,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             acquireRef();
         }
 
-        @Override public void setChannel(Channel channel) { super.setChannel(channel); }
-
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             out.append(" ch=").append(channel);
         }
@@ -434,6 +432,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                         sender.thaw(false).recycleSerializer();
                     if (ctx != null && ctx.channel() == ch) {
                         this.ctx = null;
+                        if (destination instanceof ChannelBound cb)
+                            cb.setChannel(null);
                         recycler.recycle(ch);
                     }
                 }
@@ -489,6 +489,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public @Nullable Channel channel() { return lastCh; }
 
+        @Override public void setChannel(Channel ch) {
+            if (ch != null && ch != lastCh) throw new UnsupportedOperationException();
+        }
+
         @Override public String journalName() {
             var id = lastCh == null ? "null" : lastCh.id().asShortText();
             return "C.WH:"+id+'@'+Integer.toHexString(System.identityHashCode(this));
@@ -512,8 +516,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.recycler = recycler;
             this.ctx      = ctx;
             this.lastCh   = ch;
-            if (destination instanceof WsEmitter<B> e)
-                e.setChannel(ch);
+            if (destination instanceof ChannelBound cb)
+                cb.setChannel(ch);
             if (bbRopeView == null)
                 bbRopeView = ByteBufRopeView.create();
             doQuery();

@@ -387,6 +387,10 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             return ctx == null ? null : ctx.channel();
         }
 
+        @Override public void setChannel(Channel ch) {
+            if (ch != channel()) throw new UnsupportedOperationException();
+        }
+
         /* --- --- --- channel events that do not depend on SPARQL protocol variant--- --- --- */
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
