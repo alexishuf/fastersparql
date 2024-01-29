@@ -70,7 +70,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private boolean bindingNotified = true;
     private @MonotonicNonNull Thread bindingsSender;
     @SuppressWarnings("unused") private int plainSentBindingsLock;
-    @SuppressWarnings("unused") private int plainBindingsRequested;
+    @SuppressWarnings("FieldCanBeLocal") private int plainBindingsRequested;
 
     /* --- --- --- constructors --- --- --- */
 
@@ -525,7 +525,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             try {
                 if ((st&INIT_SENT) == 0 && bindingsRequest > reqBfrInit)
                     reqBfrInit = bindingsRequest;
-                if ((st&BR_FLAGS_MASK) == HAS_SENDER && reqBfrInit > 0)
+                if ((st&BR_FLAGS_MASK) == HAS_SENDER)
                     stSet = SENDING_INIT;
             } finally { st = unlock(st, 0, stSet); }
 
