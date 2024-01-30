@@ -15,12 +15,15 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 /**
  * A {@link BIt} that receives UTF-8 bytes of result sets serializations
@@ -52,6 +55,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
     protected boolean incompleteRow;
     private boolean eager;
     @SuppressWarnings("unused") private boolean plainTerminated;
+    private final BatchType<B> batchType;
+    private final int outCols;
 
     /** Interface used via SPI to discover {@link ResultsParser} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
@@ -101,7 +106,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
 
     protected ResultsParser(CompletableBatchQueue<B> dst) {
         this.dst = dst;
-        this.batch = dst.createBatch();
+        this.batchType = dst.batchType();
+        this.outCols = dst.vars().size();
     }
 
     /**
@@ -132,6 +138,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
                 return; // no-op
             if ((boolean)TERMINATED.getAcquire(this))
                 throw TerminatedException.INSTANCE;
+            if (batch == null)
+                batch = dst.fillingBatch();
             doFeedShared(rope);
             emitBatch();
         } catch (TerminatedException|CancelledException e) {
@@ -154,6 +162,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
      */
     public final void feedEnd() {
         if (!(boolean)TERMINATED.getAcquire(this)) {
+            if (batch == null)
+                batch = batchType.create(outCols);
             Throwable error = doFeedEnd();
             if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
                 emitLastBatch();
@@ -172,6 +182,8 @@ public abstract class ResultsParser<B extends Batch<B>> {
      */
     protected final void feedCancelledAck() {
         if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+            if (batch == null)
+                batch = batchType.create(outCols);
             Throwable e = doFeedEnd();
             emitLastBatch();
             beforeComplete(e != null ? e : CancelledException.INSTANCE);
@@ -204,8 +216,11 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * {@link CompletableBatchQueue#complete(Throwable)} call.</p>
      */
     public void reset() {
-        if (batch == null)
-            batch = dst.createBatch();
+        if (batch != null && batch.rows > 0) {
+            if (ThreadJournal.ENABLED)
+                journal("batch.totalRows=", batch.totalRows(), "during reset on", this);
+            batch.clear();
+        }
         incompleteRow   = false;
         eager           = false;
         rowsParsed      = 0;
@@ -222,7 +237,11 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * {@link CompletableBatchQueue#cancel(boolean)}ed destination.
      */
     protected void cleanup(@Nullable Throwable cause) {
-        batch = dst.batchType().recycle(batch);
+        if (batch != null) {
+            if (ThreadJournal.ENABLED && batch.rows > 0)
+                journal("batch.totalRows=", batch.totalRows(), "during cleanup of", this);
+            batch = dst.batchType().recycle(batch);
+        }
     }
 
     /**
@@ -266,8 +285,11 @@ public abstract class ResultsParser<B extends Batch<B>> {
         ++rowsParsed;
         incompleteRow = false;
         batch.commitPut();
-        if (eager)
+        if (eager) {
             emitBatch();
+            if (batch == null)
+                batch = batchType.create(outCols);
+        }
     }
 
     protected final void beginRow() {
@@ -309,9 +331,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
             eager = true; // emit when row completes on next feedShared()
         } else if (batch != null && batch.rows > 0) {
             eager = false;
-            if ((batch = dst.offer(batch)) == null)
-                batch = dst.createBatch();
-            else
+            if ((batch = dst.offer(batch)) != null)
                 batch.clear();
         }
     }

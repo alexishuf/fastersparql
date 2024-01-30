@@ -43,8 +43,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override public void reset() {
         inputColumns = -1;
-        column = 0;
-        line = 0;
+        column       =  0;
+        line         =  0;
         if (partialLine    != null) partialLine   .clear();
         if (fedPartialLine != null) fedPartialLine.clear();
         super.reset();

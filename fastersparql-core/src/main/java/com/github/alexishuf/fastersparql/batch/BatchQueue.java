@@ -14,8 +14,15 @@ public interface BatchQueue<B extends Batch<B>> {
     /** Names for the columns in {@link #offer(Batch)}ed batches. */
     Vars vars();
 
-    /** Create an empty batch with {@link #vars()}{@code .size()} columns. */
-    default B createBatch() { return batchType().create(vars().size()); }
+    /** Get a (not necessarily empty) batch where new rows may be appended.
+     *  Such batch <strong>MUST</strong> be passed to {@link #offer(Batch)}
+     *  even if no rows are appended, since it may contain rows previously
+     *  {@link #offer(Batch)}ed and not yet delivered.
+     *
+     * @return a batch with {@link #vars()}{@code .size()} columns that may have pre-existing
+     * rows and must be {@link #offer(Batch)}ed back even if no rows are appended to it.
+     */
+    B fillingBatch();
 
     class QueueStateException extends Exception {
         public QueueStateException(String message) { super(message); }
@@ -47,6 +54,4 @@ public interface BatchQueue<B extends Batch<B>> {
      *                            retain ownership of {@code b}
      */
     @Nullable B offer(B b) throws TerminatedException, CancelledException;
-
-
 }

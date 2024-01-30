@@ -133,6 +133,18 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- producer methods --- --- --- */
 
+    @Override public B fillingBatch() {
+        lock();
+        try {
+            B f = filling;
+            if (f == null) f = batchType.create(vars.size());
+            else           filling = null;
+            return f;
+        } finally {
+            unlock();
+        }
+    }
+
     @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
         if (ThreadJournal.ENABLED)
             journal("offer rows=", b.totalRows(), "on", this);

@@ -12,16 +12,12 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
 
 public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         implements CompletableBatchQueue<B> {
-    private @Nullable B queue;
+    private @Nullable B ready, filling;
     private int avgRows;
 
     public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner, int worker,
                            int initState, Flags flags) {
         super(batchType, vars, runner, worker, initState, flags);
-    }
-
-    @Override public B createBatch() {
-        return bt.createForThread(threadId, outCols);
     }
 
     /**
@@ -64,8 +60,16 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         return false;
     }
 
-    @Override public boolean cancel(boolean ack) {
-        return cancel();
+    @Override public boolean cancel(boolean ack) { return cancel(); }
+
+    @Override public B fillingBatch() {
+        int st = lock(statePlain());
+        try {
+            B f = filling;
+            if (f == null) f = bt.createForThread(threadId, outCols);
+            else           filling = null;
+            return f;
+        } finally { unlock(st); }
     }
 
     public @Nullable B offer(B b) throws TerminatedException, CancelledException {
@@ -74,12 +78,14 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         b.requireUnpooled();
         int st = lock(statePlain());
         try {
-            if ((st&(IS_TERM|IS_CANCEL_REQ)) == 0)
-                queue = Batch.quickAppend(queue, b);
-            else if (isCancelled(st) || (st&IS_CANCEL_REQ) != 0)
+            if ((st&(IS_TERM|IS_CANCEL_REQ)) == 0) {
+                if (ready == null) ready = b;
+                else               filling = Batch.quickAppend(filling, b);
+            } else if (isCancelled(st) || (st&IS_CANCEL_REQ) != 0) {
                 throw CancelledException.INSTANCE;
-            else // if ((st&IS_TERM) != 0)
+            } else { // if ((st&IS_TERM) != 0)
                 throw TerminatedException.INSTANCE;
+            }
         } finally {
             unlock(st);
         }
@@ -94,9 +100,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
             long deadline = Timestamp.nextTick(1);
-            while (queue != null) {
-                B b = queue;
-                queue = null;
+            while (ready != null) {
+                B b     = ready;
+                ready   = filling;
+                filling = null;
                 st = unlock(st);
                 avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
                 if (b.rows > 0) {
@@ -111,7 +118,8 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 }
                 st = lock(st);
             }
-            if (queue == null) {
+            if (ready == null) {
+                assert filling == null : "ready == null but filling != null";
                 termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
                 if (termState != 0) {
