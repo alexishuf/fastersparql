@@ -24,8 +24,16 @@ public abstract class IdConverterBIt<B extends Batch<B>, S extends Batch<S>> ext
             onTermination(false, null);
             return null;
         }
-        out = putConverting(batchType.empty(out, in.cols), in);
-        lastIn = in;
+        lock();
+        try {
+            if (isTerminated()) {
+                delegate.batchType().recycle(in);
+                return null;
+            } else {
+                out = putConverting(batchType.empty(out, in.cols), in);
+                lastIn = in;
+            }
+        } finally { unlock(); }
         if (metrics != null) metrics.batch(out.totalRows());
         return out;
     }

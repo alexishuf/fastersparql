@@ -24,20 +24,22 @@ import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.
 
 public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>> implements BIt<B> {
     private static final Logger log = LoggerFactory.getLogger(DelegatedControlBIt.class);
-    public static final VarHandle TERM;
+    public static final VarHandle OWNER;
     static {
         try {
-            TERM = MethodHandles.lookup().findVarHandle(DelegatedControlBIt.class, "plainTerminated", boolean.class);
+            OWNER = MethodHandles.lookup().findVarHandle(DelegatedControlBIt.class, "plainOwner", Thread.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
     protected BIt<S> delegate;
+    @SuppressWarnings("unused") private @Nullable Thread plainOwner;
+    private short lockDepth;
+    private boolean terminated;
     protected final BatchType<B> batchType;
     protected final Vars vars;
     protected @Nullable MetricsFeeder metrics;
-    @SuppressWarnings("unused") private boolean plainTerminated;
 
     public DelegatedControlBIt(BIt<S> delegate, BatchType<B> batchType, Vars vars) {
         this.delegate = delegate;
@@ -51,27 +53,51 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         return Optional.ofNullable(delegate).stream();
     }
 
+    protected void lock() {
+        Thread me = Thread.currentThread(), ac;
+        int i = 0;
+        while ((ac=(Thread)OWNER.compareAndExchangeAcquire(this, null, me)) != null && ac != me) {
+            if ((i++&0xf) == 0xf) Thread.yield();
+            else Thread.onSpinWait();
+        }
+        ++lockDepth;
+    }
+    protected void unlock() {
+        if (lockDepth <= 0) throw new IllegalStateException("not locked");
+        assert plainOwner == Thread.currentThread() : "not locked by this thread";
+        if (--lockDepth == 0)
+            OWNER.setRelease(this, null);
+    }
+
+    protected boolean isTerminated() { return terminated; }
+
     protected abstract void cleanup(boolean cancelled, @Nullable Throwable error);
 
-    protected void onTermination(boolean cancelled, @Nullable Throwable error) {
-        if ((boolean)TERM.compareAndExchangeRelease(this, false, true)) {
-            log.trace("Ignoring onTermination({}, {}) on terminated {}", cancelled, error, this);
-        } else {
-            try {
-                cleanup(cancelled, error);
-            } catch (Throwable t) {
-                log.warn("Ignoring cleanup() failure for {}", this, t);
+    protected boolean onTermination(boolean cancelled, @Nullable Throwable error) {
+        lock();
+        try {
+            if (!terminated) {
+                terminated = true;
+                try {
+                    cleanup(cancelled, error);
+                } catch (Throwable t) {
+                    log.warn("Ignoring cleanup() failure for {}", this, t);
+                }
+                return true;
             }
+        } finally {
+            unlock();
         }
+        log.trace("Ignoring onTermination({}, {}) on terminated {}", cancelled, error, this);
+        return false;
     }
 
     @Override public final void close() { tryCancel(); }
 
     @Override public final boolean tryCancel() {
-        boolean done = !(boolean)TERM.compareAndExchangeAcquire(this, false, true);
-        if (done)
-            onTermination(true, null);
-        return delegate.tryCancel() & done;
+        boolean done = delegate.tryCancel();
+        done &= onTermination(true, null);
+        return done;
     }
 
     @Override public BatchType<B> batchType() { return batchType; }
