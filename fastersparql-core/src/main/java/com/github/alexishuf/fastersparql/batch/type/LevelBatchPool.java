@@ -28,15 +28,15 @@ public class LevelBatchPool<B extends Batch<B>> implements LeakyPool {
 
     private final int[] ctrl;
     private final B[] pool;
-    private final short smallHi, generalHi;
+    private final short generalHi, smallHi;
     private final int largeHi, hugeHi;
     private final Factory<B> factory;
     private final BatchPool<B> generalPool;
 
     @SuppressWarnings("unchecked")
     public LevelBatchPool(Factory<B> factory, BatchPool<B> generalPool, short generalPoolCapacity) {
-        this.smallHi     = (short)Math.max(64, generalPoolCapacity<<4);
         this.generalHi   = generalPoolCapacity;
+        this.smallHi     = (short)Math.min(Short.MAX_VALUE, generalPoolCapacity<<1);
         this.largeHi     = generalPoolCapacity<<2;
         this.hugeHi      = generalPoolCapacity<<4;
         this.factory     = factory;
@@ -54,13 +54,13 @@ public class LevelBatchPool<B extends Batch<B>> implements LeakyPool {
 
     public B get(int terms) {
         B b = null;
-        if (terms <= hugeHi) {
+        if (terms <= generalHi) {
+            return generalPool.get();
+        } else if (terms <= hugeHi) {
             int ctrlBase;
             if      (terms <=   smallHi) ctrlBase = SMALL_CTRL_BASE;
-            else if (terms <= generalHi) return generalPool.get();
             else if (terms <=   largeHi) ctrlBase = LARGE_CTRL_BASE;
             else                         ctrlBase = HUGE_CTRL_BASE;
-
             b = getFromStack(ctrlBase);
         }
         return b == null ? factory.create(terms) : b;
@@ -84,12 +84,11 @@ public class LevelBatchPool<B extends Batch<B>> implements LeakyPool {
 
     public @Nullable B offer(B b) {
         int ctrlBase, cap = b.termsCapacity();
-        if      (cap ==   smallHi) ctrlBase = SMALL_CTRL_BASE;
-        else if (cap == generalHi) return generalPool.offer(b);
+        if      (cap == generalHi) return generalPool.offer(b);
+        else if (cap ==   smallHi) ctrlBase = SMALL_CTRL_BASE;
         else if (cap ==   largeHi) ctrlBase = LARGE_CTRL_BASE;
         else if (cap ==    hugeHi) ctrlBase = HUGE_CTRL_BASE;
         else                       return b;
-
         return offerToStack(ctrlBase, b);
     }
 
