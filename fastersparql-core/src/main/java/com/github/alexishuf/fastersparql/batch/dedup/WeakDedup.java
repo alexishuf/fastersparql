@@ -61,7 +61,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         RowBucket<B> rows = null;
         this.big = DistinctType.WEAK.compareTo(type) < 0;
         if (this.big) {
-            rowsCapacity = Math.min(Short.MAX_VALUE, rowsCapacity*reducedBatches());
+            rowsCapacity = Math.min(Short.MAX_VALUE/cols, rowsCapacity*reducedBatches());
             if ((rows = bucketPool(batchType).get()) != null)
                 rows.clear(rowsCapacity, cols);
         }
