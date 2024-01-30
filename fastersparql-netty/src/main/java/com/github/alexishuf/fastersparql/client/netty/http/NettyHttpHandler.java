@@ -45,6 +45,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private ByteRope failureBody = ByteRope.EMPTY;
     @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through TERMINATED
     private boolean plainTerminated = true;
+    private boolean cancelled;
 
     @Override public @Nullable Channel channel() {
         return this.ctx == null ? null : this.ctx.channel();
@@ -90,10 +91,16 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         }
     }
 
+    protected boolean markCancelled() {
+        if (!plainTerminated)
+            cancelled = true;
+        return !(boolean)TERMINATED.compareAndExchangeRelease(this, false, true);
+    }
     protected boolean markTerminated() {
         return !(boolean)TERMINATED.compareAndExchangeRelease(this, false, true);
     }
     protected boolean unMarkTerminated() {
+        cancelled = false;
         return (boolean)TERMINATED.compareAndExchangeRelease(this, true, false);
     }
 
@@ -247,12 +254,13 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private void logPostTerm(HttpObject msg) {
         int bytes = msg instanceof HttpContent hc ? hc.content().readableBytes() : 0;
         if (msg instanceof HttpResponse res) {
-            journal("post-term HTTP ", res.status().code(),  "bytes=", bytes,
-                    "on", this);
+            journal(cancelled ? "post-cancel HTTP" : "post-term HTTP", res.status().code(),
+                    "bytes=", bytes, "on", this);
         } else {
-            journal("post-term HTTP content bytes=", bytes, "last=",
-                    msg instanceof LastHttpContent ? 1 : 0, "on", this);
+            journal(cancelled ? "post-cancel HTTP content bytes=" : "post-term HTTP content bytes=",
+                    bytes, "last=", msg instanceof LastHttpContent?1:0, "on", this);
         }
-        log.info("Ignoring post-terminated {} {}", msg.getClass().getSimpleName(), msg);
+        if (!cancelled)
+            log.info("Ignoring post-terminated {} {}", msg.getClass().getSimpleName(), msg);
     }
 }

@@ -330,7 +330,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         public void cancelAndClose(CompletableBatchQueue<?> downstream) {
-            if (downstream == this.downstream && markTerminated()) {
+            if (downstream == this.downstream && markCancelled()) {
                 journal("cancel-induced ctx.close() on ", this);
                 ctx.close();
             }
