@@ -20,6 +20,15 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         super(batchType, vars, runner, worker, initState, flags);
     }
 
+    @Override protected void doRelease() {
+        try {
+            ready   = bt.recycle(ready);
+            filling = bt.recycle(filling);
+        } finally {
+            super.doRelease();
+        }
+    }
+
     /**
      * Causes calls to {@link #offer(Batch)} and to stop sometime after entry into this
      * method. This method undoes and is undone by {@link #resume()}
