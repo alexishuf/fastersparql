@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -341,8 +343,14 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 try {
                     exBindings.check(bq.bindings);
                     try (BIt<B> it = batchType.convert(expected.asBIt())) {
-                        for (B b = null; (b = it.nextBatch(b)) != null; )
-                            b = cb.offer(b);
+                        for (B b = null; (b = it.nextBatch(b)) != null; ) {
+                            try {
+                                b = cb.offer(b);
+                            } catch (CancelledException|TerminatedException e) {
+                                batchType.recycle(b);
+                                break;
+                            }
+                        }
                     } finally {
                         cb.complete(null);
                     }

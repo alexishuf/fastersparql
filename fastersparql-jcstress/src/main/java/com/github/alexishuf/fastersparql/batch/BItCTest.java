@@ -56,10 +56,12 @@ public class BItCTest {
     }
 
     static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
-        TermBatch mine = null;
+        TermBatch mine;
         try {
             mine = it.offer(b);
-        } catch (BatchQueue.TerminatedException|BatchQueue.CancelledException ignored) {}
+        } catch (BatchQueue.TerminatedException|BatchQueue.CancelledException e) {
+            mine = b;
+        }
         if (mine != null) {
             mine.clear();
             mine.beginPut();

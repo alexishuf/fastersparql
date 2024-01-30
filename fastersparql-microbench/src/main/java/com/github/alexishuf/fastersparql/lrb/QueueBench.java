@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 
+import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -100,7 +101,11 @@ public class QueueBench {
                     warnedNoInputs = true;
                 } else {
                     for (Batch b : inputs) {
-                        bt.recycle(it.offer(b));
+                        try {
+                            bt.recycle(it.offer(b));
+                        } catch (BatchQueue.CancelledException| BatchQueue.TerminatedException e) {
+                            bt.recycle(b);
+                        }
                     }
                 }
                 it.complete(null);
