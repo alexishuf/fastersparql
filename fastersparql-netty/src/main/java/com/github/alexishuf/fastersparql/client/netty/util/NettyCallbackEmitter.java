@@ -17,7 +17,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.client.util.ClientRetry.retry;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackEmitter<B>
         implements ChannelBound, RequestAwareCompletableBatchQueue<B> {
@@ -38,7 +37,7 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
 
     protected @Nullable Channel channel;
     protected @MonotonicNonNull Channel lastChannel;
-    private final Runnable autoReadSetter = this::setAutoRead0;
+    private final Runnable updateAutoReadTask = this::updateAutoRead;
     protected final SparqlClient client;
 
     public NettyCallbackEmitter(BatchType<B> batchType, Vars vars, SparqlClient client) {
@@ -82,31 +81,6 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
 
     /* --- --- --- helper methods --- --- --- */
 
-    private void setAutoRead0() {
-        var ch = channel;
-        if (ch != null) {
-            var cfg = ch.config();
-            boolean autoRead = (state()&NO_AUTO_READ) == 0;
-            if (cfg.isAutoRead() != autoRead) {
-                journal(autoRead ? "autoRead=true on" : "autoRead=false on", this, "ch=", ch);
-                cfg.setAutoRead(autoRead);
-            }
-        }
-    }
-
-    private void setAutoRead(boolean value) {
-        if (value) {
-            clearFlagsRelease(statePlain(), NO_AUTO_READ);
-        } else if (!compareAndSetFlagRelease(NO_AUTO_READ)) {
-            return;
-        }
-        Channel ch = this.channel;
-        if (ch != null) {
-            journal(value ? "sched autoRead=true on" : "sched autoRead=false on", this, "ch=", ch);
-            ch.eventLoop().execute(autoReadSetter);
-        }
-    }
-
     @Override public void setChannel(Channel channel) {
         if (this.channel == channel)
             return;
@@ -148,11 +122,29 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
         return super.complete2state(current, cause);
     }
 
-    @Override public void  pause() { setAutoRead(false); }
+    @Override public void  pause() {
+        var ch = channel;
+        if (ch != null)
+            ch.eventLoop().execute(updateAutoReadTask);
+    }
     @Override public void resume() {
-        setAutoRead(true);
+        var ch = channel;
+        if (ch != null)
+            ch.eventLoop().execute(updateAutoReadTask);
         if (compareAndSetFlagRelease(STARTED))
             request();
+    }
+    private void updateAutoRead() {
+        Channel ch = channel;
+        if (ch != null) {
+            boolean goal = requested() > 0;
+            int st = statePlain();
+            if ((st&NO_AUTO_READ) == 0 != goal) {
+                ch.config().setAutoRead(goal);
+                if (goal) clearFlagsRelease(st, NO_AUTO_READ);
+                else        setFlagsRelease(st, NO_AUTO_READ);
+            }
+        }
     }
 
     @Override public boolean cancel() {

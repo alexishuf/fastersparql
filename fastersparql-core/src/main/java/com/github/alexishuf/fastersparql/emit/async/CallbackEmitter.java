@@ -106,18 +106,16 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 filling = null;
                 st = unlock(st);
                 avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
-                if (b.rows > 0) {
-                    if ((b = deliver(b)) != null)
-                        b.recycle();
-                    if (requested() <= 0)
-                        pause();
-                }
+                if (b.rows > 0 && (b = deliver(b)) != null)
+                    b.recycle();
                 if (Timestamp.nanoTime() > deadline) {
                     awake();
                     break;
                 }
                 st = lock(st);
             }
+            if (requested() <= 0 && (st&IS_LIVE) != 0)
+                pause();
             if (ready == null) {
                 assert filling == null : "ready == null but filling != null";
                 termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
