@@ -27,6 +27,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
     private boolean recycled;
 
     private static final int THREADS = getRuntime().availableProcessors();
+    private static final int PRIMED_COUNT = 2*THREADS;
     private static final int REDUCED_POOL_CAPACITY = 16*THREADS;
     @SuppressWarnings("unchecked") private static LIFOPool<RowBucket<?>>[] POOLS = new LIFOPool[10];
 
@@ -50,7 +51,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
             PoolCleaner.INSTANCE.monitor(pool); // clear refs of buckets removed from pool
             // prime pool
             int capacity = Math.min(Short.MAX_VALUE, bt.preferredTermsPerBatch()*reducedBatches());
-            for (int thread = 0; thread < THREADS; thread++)
+            for (int i = 0; i < PRIMED_COUNT; i++)
                 pool.offer(bt.createBucket(capacity, 1));
         }
     }
