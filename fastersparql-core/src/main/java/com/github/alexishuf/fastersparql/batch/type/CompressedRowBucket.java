@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
@@ -29,9 +30,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private static final LevelPool<byte[][]> DATA_POOL = new LevelPool<>(byte[][].class,
             16, 1024, 16, 1, 1);
 
-    private int cols;
     private byte[][] rowsData;
     private SegmentRope[] shared;
+    private int cols, rows;
+    private long[] has;
 
     public CompressedRowBucket(int rowsCapacity, int cols) {
         int level = rowsCapacity == 0 ? 0 : 33 - Integer.numberOfLeadingZeros(rowsCapacity-1);
@@ -39,14 +41,21 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
             this.rowsData = new byte[1<<level][];
         else
             Arrays.fill(this.rowsData, null);
-        this.shared = segmentRopesAtLeast(rowsData.length*cols);
+        this.shared = segmentRopesAtLeastUpcycle(rowsData.length*cols);
+        this.has = longsAtLeastUpcycle(BS.longsFor(rowsData.length));
+        Arrays.fill(has, 0, BS.longsFor(rowsCapacity), 0L);
         this.cols = cols;
+        this.rows = rowsCapacity;
     }
 
     @Override public BatchType<CompressedBatch> batchType()  { return COMPRESSED; }
-    @Override public int                        capacity()   { return rowsData.length; }
+    @Override public int                        capacity()   { return rows; }
     @Override public int                        cols()       { return cols; }
-    @Override public boolean                    has(int row) { return rowsData[row] != null; }
+
+    @Override public boolean has(int row) {
+        if (row >= rows) throw new IndexOutOfBoundsException(row);
+        return BS.get(has, row);
+    }
 
     static { assert Integer.bitCount(SL_OFF) == 0; }
     private static short readOff(byte[] d, int c) {
@@ -59,61 +68,73 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         return (short)( (d[i]&0xff) | ((d[i+1]&0xff) << 8) );
     }
 
-    private static void clearRowsData(byte[][] d) {
-        int i = 0;
-        for(; i < d.length; ++i) {
-            byte[] row = d[i];
-            d[i] = null;
-            if (row != null && BYTE.offer(row, row.length) != null)
-                break; // stop recycling once pool rejects
+    @Override public void maximizeCapacity() {
+        int max = rowsData.length;
+        if (rows < max) {
+            BS.clear(has, rows, max);
+            rows = max;
         }
-        Arrays.fill(d, i, d.length, null);
     }
 
-    @Override public void maximizeCapacity() {}
-
     @Override public void grow(int additionalRows) {
-        if (additionalRows <= 0) return;
-        byte[][] oldData = rowsData;
-        int required = oldData.length + additionalRows;
-        byte[][] newData = DATA_POOL.getAtLeast(required);
-        if (newData == null)
-            newData = new byte[required][];
-        else
-            Arrays.fill(newData, oldData.length, newData.length, null);
-        arraycopy(oldData, 0, newData, 0, oldData.length);
-        rowsData = newData;
-        DATA_POOL.offer(oldData, oldData.length);
-        required = rowsData.length * cols;
-        if (shared.length < required)
-            shared = ArrayPool.grow(shared, required);
+        if (additionalRows <= 0)
+            return;
+        int required = rows+additionalRows;
+        if (required > rowsData.length) {
+            byte[][] newData = DATA_POOL.getAtLeast(required);
+            if (newData == null)
+                newData = new byte[required][];
+            byte[][] oldData = rowsData;
+            arraycopy(oldData, 0, newData, 0, rows);
+            rowsData = newData;
+            recycleRowsData(oldData);
+            has = ArrayPool.grow(has, BS.longsFor(newData.length));
+            int terms = required*cols;
+            if (terms > shared.length)
+                shared = ArrayPool.grow(shared, terms);
+        }
+        BS.clear(has, rows, required);
+        rows = required;
     }
 
     @Override public void clear(int rowsCapacity, int cols) {
-        clearRowsData(rowsData);
-        if (rowsData.length < rowsCapacity) {
-            DATA_POOL.offer(rowsData, rowsData.length);
-            rowsData = DATA_POOL.getAtLeast(rowsCapacity);
-            if (rowsData == null)
-                rowsData = new byte[rowsCapacity][];
-            else
-                Arrays.fill(rowsData, null);
+        if (rowsCapacity > rowsData.length) {
+            recycleRowsData(rowsData);
+            var newData = DATA_POOL.getAtLeast(rowsCapacity);
+            if (newData == null)
+                newData = new byte[rowsCapacity][];
+            rowsData = newData;
+            has = longsAtLeast(BS.longsFor(newData.length), has);
         }
-        int required = rowsData.length * cols;
-        if (shared.length < required)
-            shared = segmentRopesAtLeast(required, shared);
-        Arrays.fill(shared, 0, required, null);
+        int terms = rowsData.length*cols;
+        if (shared.length < terms)
+            shared = segmentRopesAtLeastUpcycle(terms);
+        this.rows = rowsCapacity;
         this.cols = cols;
+        Arrays.fill(has, 0, BS.longsFor(rowsCapacity), 0L);
     }
 
     @Override public @Nullable CompressedRowBucket recycleInternals() {
-        clearRowsData(rowsData);
-        DATA_POOL.offer(rowsData, rowsData.length);
+        recycleRowsData(rowsData);
         rowsData = EMPTY_ROWS_DATA;
-        SEG_ROPE.offer(shared, shared.length);
+        rows = 0;
+        SEG_ROPE.offerToNearest(shared, shared.length);
         shared = EMPTY_SEG_ROPE;
+        LONG.offerToNearest(has, has.length);
+        has = EMPTY_LONG;
         cols = 0;
         return null;
+    }
+
+    private static void recycleRowsData(byte[][] rowsData) {
+        if (DATA_POOL.offer(rowsData, rowsData.length) != null) {
+            for(int i = 0; i < rowsData.length; ++i) {
+                byte[] row = rowsData[i];
+                rowsData[i] = null;
+                if (row != null && BYTE.offer(row, row.length) != null)
+                    break; // stop recycling once pool rejects
+            }
+        }
     }
 
     private class It implements Iterator<CompressedBatch> {
@@ -158,10 +179,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         short nr = 0, rCap = (short)(b.termsCapacity()/cols);
         short localsRequired = 0;
         int startRow = row;
-        for (; nr <= rCap; ++nr) {
+        for (boolean missing = true; nr <= rCap; ++nr) {
             // find next non-empty row
-            byte[] rd = null;
-            while (row < rowsData.length && (rd=rowsData[row]) == null) ++row;
+            while (row < rows && (missing = BS.get(has, row))) ++row;
+            byte[] rd = missing ? null : rowsData[row];
             if (rd == null) break;
 
             // check if row fits in b
@@ -179,10 +200,10 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         row = startRow;
         rCap = nr;
         nr = 0;
-        for (; nr < rCap; ++nr, ++row) {
+        for (boolean missing = true; nr < rCap; ++nr, ++row) {
             // find next non-empty row
-            byte[] rd = null;
-            while (row < rowsData.length && (rd=rowsData[row]) == null) ++row;
+            while (row < rows && (missing = BS.get(has, row))) ++row;
+            byte[] rd = missing ? null : rowsData[row];
             if (rd == null)
                 break; // can happen if bucket was concurrently modified
             // copy row
@@ -193,46 +214,54 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
 
     @Override public void set(int dst, CompressedBatch batch, int row) {
         rowsData[dst] = batch.copyToBucket(rowsData[dst], shared, dst, row);
+        BS.set(has, dst);
     }
 
     @Override public void set(int dst, int src) {
-        byte[] s = rowsData[src], d = rowsData[dst];
-        if (s == null) {
-            if (d != null)
-                BYTE.offer(d, d.length);
-            rowsData[dst] = null;
-        } else if (s != d) {
+        if (dst == src)
+            return;
+        byte[] s, d = rowsData[dst];
+        if (BS.get(has, src)) {
+            BS.set(has, dst);
+            s = rowsData[src];
             rowsData[dst] = d = bytesAtLeast(s.length, d);
             arraycopy(s, 0, d, 0, s.length);
-            arraycopy(shared, src*cols, shared, dst*cols, cols);
+            arraycopy(shared, src * cols, shared, dst * cols, cols);
+        } else {
+            BS.clear(has, dst);
+            rowsData[dst] = BYTE.offerToNearest(d, d.length);
         }
     }
 
     @Override public void set(int dst, RowBucket<CompressedBatch> other, int src) {
         var bucket = (CompressedRowBucket) other;
         int cols = this.cols;
-        if (bucket.cols < cols) throw new IllegalArgumentException("cols mismatch");
+        if (bucket.cols < cols)
+            throw new IllegalArgumentException("cols mismatch");
         byte[] s = bucket.rowsData[src], d = rowsData[dst];
-        if (s == null) {
-            if (d != null)
-                BYTE.offer(d, d.length);
-            rowsData[dst] = null;
-        } else {
+        if (BS.get(bucket.has, src)) {
+            BS.set(has, dst);
             rowsData[dst] = d = bytesAtLeast(s.length, d);
             arraycopy(s, 0, d, 0, s.length);
             arraycopy(bucket.shared, src*bucket.cols, shared, dst*cols, cols);
+        } else if (d != null) {
+            BS.clear(has, dst);
+            rowsData[dst] = BYTE.offer(d, d.length);
         }
     }
 
     @Override public void putRow(CompressedBatch dst, int srcRow) {
-        dst.copyFromBucket(rowsData[srcRow], shared, srcRow);
+        if (srcRow >= rows)
+            throw new IndexOutOfBoundsException(srcRow);
+        else if (BS.get(has, srcRow))
+            dst.copyFromBucket(rowsData[srcRow], shared, srcRow);
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int otherRow) {
         int cols = this.cols, shIdx = row*cols;
         if (cols != other.cols) throw new IllegalArgumentException("cols mismatch");
         byte[] data = rowsData[row];
-        if (data == null) return false;
+        if (data == null || !BS.get(has, row)) return false;
         boolean eq = true;
         var tmp     = Term.pooledMutable();
         var dataSeg = MemorySegment.ofArray(data);
@@ -260,6 +289,8 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     }
 
     @Override public int hashCode(int row) {
+        if (!BS.get(has, row))
+            return 0;
         if (!LowLevelHelper.HAS_UNSAFE)
             return safeHashCode(row);
         int h = 0;
@@ -330,7 +361,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private static final byte[] DUMP_NULL = "null".getBytes(UTF_8);
     @Override public void dump(ByteRope dest, int row) {
         byte[] d = rowsData[row];
-        if (d == null) {
+        if (d == null || !BS.get(has, row)) {
             dest.append(DUMP_NULL);
             return;
         }
