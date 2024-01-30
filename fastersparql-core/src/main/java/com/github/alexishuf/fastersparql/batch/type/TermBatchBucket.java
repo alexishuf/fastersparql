@@ -22,7 +22,14 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
         if (rows > Short.MAX_VALUE || cols > Short.MAX_VALUE)
             throw new IllegalArgumentException("rows or cols overflow 2-byte short");
         int terms = rows*cols;
-        b = TERM.createSpecial(terms);
+        TermBatch b = null;
+        if (terms < TERM.preferredTermsPerBatch()) {
+            b = TERM.create(cols);
+            if (b.termsCapacity() < terms) b = TERM.recycle(b);
+        }
+        if (b == null)
+            b = TERM.createSpecial(terms);
+        this.b = b;
         b.rows = (short)rows;
         b.cols = (short)cols;
         Arrays.fill(b.arr, 0, terms, NULL);

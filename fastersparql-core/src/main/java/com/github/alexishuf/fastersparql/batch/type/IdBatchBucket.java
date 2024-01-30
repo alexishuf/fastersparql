@@ -25,7 +25,13 @@ public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
             throw new IllegalArgumentException("rows or cols overflow 2-byte short");
         this.type = type;
         int terms = rows * cols;
-        var b = type.createSpecial(terms);
+        B b = null;
+        if (terms <= type.preferredTermsPerBatch()) {
+            b = type.create(cols);
+            if (b.termsCapacity < terms) b = type.recycle(b);
+        }
+        if (b == null)
+            b = type.createSpecial(terms);
         this.b = b;
         b.rows = (short)rows;
         b.cols = (short)cols;
