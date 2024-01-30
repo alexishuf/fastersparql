@@ -468,6 +468,7 @@ public class NettySparqlServer implements AutoCloseable {
             private void doSendCancel() {
                 if (ended) return;
                 ended = true;
+                sendingTerminal();
                 String msg = handler instanceof WsSparqlHandler wh && wh.clientCancel
                         ? "cancel request by WS client"
                         : "query iterator unexpectedly cancelled";
@@ -475,7 +476,6 @@ public class NettySparqlServer implements AutoCloseable {
                 closeFromEventLoop();
             }
             @Override public void sendCancel() {
-                sendingTerminal();
                 if (ctx.executor().inEventLoop()) doSendCancel();
                 else                              execute(CancelAction.INSTANCE);
             }
