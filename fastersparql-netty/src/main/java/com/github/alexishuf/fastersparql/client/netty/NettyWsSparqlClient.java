@@ -679,7 +679,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     if (bs.recycled != 0)
                         return;
                     bs.recycled = REC_ST_SENDER;
-                    SENDER.compareAndExchangeRelease(bs.wsHandler, bs, null);
                     if (REC_SENDER.compareAndExchangeRelease(bs.wsHandler, null, bs) != null) {
                         bs.recycled = REC_ST_SERIALIZER;
                         bs.recycleSerializer();
@@ -712,6 +711,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
             @Override public void close() {
                 super.close();
+                //noinspection unchecked
+                var ac = (BindingsSender<B>)SENDER.compareAndExchangeRelease(wsHandler, this, null);
+                journal("close", this, "ac=", ac);
                 if (recycled == 0)
                     execute(RecycleAction.INSTANCE);
             }

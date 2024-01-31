@@ -633,8 +633,12 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
         private void doOnComplete() {
             journal("delivering onComplete from", this);
-            if (sender != null)
+            var sender = this.sender;
+            if (sender != null) {
                 sender.sendTrailer();
+                this.sender = null;
+                sender.close();
+            }
         }
 
         private void doOnCancelled(int st) {
@@ -643,8 +647,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                 ResultsSender<?, ?> sender = this.sender;
                 if (sender != null) {
                     if (!parent.serverSentTermination) sender.sendCancel();
-                    if ((sender = this.sender) != null)
+                    if ((sender = this.sender) != null) {
+                        this.sender = null;
                         sender.close();
+                    }
                 }
                 if ((st&UP_CANCEL) == 0)
                     log.info("bindings unexpectedly cancelled");
@@ -657,8 +663,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         private void doOnError(Throwable cause) {
             journal("delivering onError", cause, "from", this);
             try {
+                var sender = this.sender;
                 if (sender != null) {
                     if (!parent.serverSentTermination) sender.sendError(cause);
+                    this.sender = null;
                     sender.close();
                 }
                 log.info("bindings emitter {} failed for {}", upstream, this, cause);
