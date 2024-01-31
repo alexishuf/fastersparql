@@ -16,10 +16,7 @@ import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
-import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
-import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.exceptions.*;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -32,7 +29,6 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.buffer.UnpooledHeapByteBuf;
 import io.netty.channel.Channel;
@@ -55,6 +51,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static io.netty.buffer.Unpooled.wrappedBuffer;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -291,7 +288,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
     private static final class WsHandler<B extends Batch<B>>
             implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
-        private static final VarHandle REC_SENDER;
+        private static final VarHandle REC_SENDER, SENDER;
         private static final VarHandle REQ, FLAGS, RESET_CH;
         private static final int REQ_ROWS_FRAME_CAPACITY = 32;
         private static final byte[] REQ_ROWS_0
@@ -307,6 +304,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             try {
                 REQ        = lookup().findVarHandle(WsHandler.class, "plainRequest",   long.class);
                 REC_SENDER = lookup().findVarHandle(WsHandler.class, "plainRecSender", WsHandler.BindingsSender.class);
+                SENDER     = lookup().findVarHandle(WsHandler.class, "plainSender", WsHandler.BindingsSender.class);
                 FLAGS      = lookup().findVarHandle(WsHandler.class, "plainFlags",     int.class);
                 RESET_CH   = lookup().findVarHandle(WsHandler.class, "plainResetCh",   Channel.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
@@ -320,6 +318,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private ByteRope requestMsg;
         private boolean gotFrames;
         private final boolean selfRecycle;
+        private boolean silenceSender;
         private @Nullable ByteBufRopeView bbRopeView;
         private final WsClientParser<B> parser;
         private @Nullable ChannelHandlerContext ctx;
@@ -331,6 +330,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final TextWebSocketFrame requestRowsFrame;
         private final Runnable requestRowsTask = this::doRequestRows;
         @SuppressWarnings("unused") private BindingsSender<B> plainRecSender;
+        @SuppressWarnings("unused") private BindingsSender<B> plainSender;
         @SuppressWarnings("unused") private int plainFlags;
         private final Runnable resetTask = this::doReset;
         private final Runnable queryTask = this::doQuery;
@@ -354,7 +354,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 parser = new WsClientParser<>(destination, bq, useful);
             }
             requestRowsMsg   = new ByteRope(REQ_ROWS_FRAME_CAPACITY).append(REQ_ROWS_0);
-            requestRowsBB    = (UnpooledHeapByteBuf)Unpooled.wrappedBuffer(requestRowsMsg.u8());
+            requestRowsBB    = (UnpooledHeapByteBuf)wrappedBuffer(requestRowsMsg.u8());
             requestRowsFrame = new TextWebSocketFrame(requestRowsBB);
             assert requestRowsMsg.u8().length >= REQ_ROWS_FRAME_CAPACITY;
             this.sparqlClient = sparqlClient;
@@ -441,6 +441,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 complete(t);
             } finally {
                 flags = getAndUpdateFlagsRelease(ALL_HANDLER_FLAGS, 0);
+                silenceSender = false;
             }
             if ((flags&OPEN_PENDING) != 0) {
                 journal("pending open() after reset, handler=", this);
@@ -531,7 +532,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 try {
                     if (destination.canSendRequest()) {
                         parser.setFrameSender(this);
-                        var bb = Unpooled.wrappedBuffer(requestMsg.backingArray(),
+                        var bb = wrappedBuffer(requestMsg.backingArray(),
                                 requestMsg.backingArrayOffset(), requestMsg.len);
                         ctx.write(new TextWebSocketFrame(bb));
                         if (!doRequestRows())
@@ -608,7 +609,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) != 0)
                 return; // !cancel already underway
             if (ctx.executor().inEventLoop()) {
-                forceSendCancelFromEventLoop();
+                doSendCancelFromEventLoop();
             } else {
                 sendCancelCh = ctx.channel();
                 if (sendCancelTask == null) sendCancelTask = this::doSendCancelTask;
@@ -619,17 +620,18 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             Channel ch = sendCancelCh;
             if (ctx == null || ctx.channel() != ch)
                 return; // stale request for !cancel
-            forceSendCancelFromEventLoop();
+            doSendCancelFromEventLoop();
         }
-        private void forceSendCancelFromEventLoop() {
+        private void doSendCancelFromEventLoop() {
             assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
-            if (bbRopeView == null || ctx == null || !ctx.channel().isActive())
+            if (silenceSender || bbRopeView == null || ctx == null || !ctx.channel().isActive())
                 return; // do not send frame after complete() or before attach()
-            ctx.writeAndFlush(new TextWebSocketFrame(Unpooled.wrappedBuffer(CANCEL_MSG)));
+            ctx.writeAndFlush(new TextWebSocketFrame(wrappedBuffer(CANCEL_MSG)));
+            silenceSender = true;
         }
         private void sendCancelFromEventLoop() {
             if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) == 0)
-                forceSendCancelFromEventLoop();
+                doSendCancelFromEventLoop();
         }
 
         /* --- --- --- WsFrameSender methods --- --- --- */
@@ -655,16 +657,19 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (ctx == null)
                 throw new IllegalStateException("createSender() before attach()");
             //noinspection unchecked
-            var sender = (BindingsSender<B>)REC_SENDER.getAndSetRelease(this, null);
-            return sender == null ? new BindingsSender<>(this, ctx)
-                                  : sender.thaw(true);
+            var sender = (BindingsSender<B>)REC_SENDER.getAndSetAcquire(this, null);
+            if (sender == null) sender = new BindingsSender<>(this, ctx);
+            else                sender.thaw(true);
+            if (SENDER.compareAndExchangeRelease(this, null, sender) != null)
+                throw new IllegalStateException(">1 ResultsSender active");
+            return sender;
         }
 
         private static final class BindingsSender<B extends Batch<B>> extends NettyResultsSender<TextWebSocketFrame> {
             private static final byte REC_ST_SENDER     = 1;
             private static final byte REC_ST_SERIALIZER = 2;
             private final WsHandler<B> wsHandler;
-            byte recycled;
+            private byte recycled;
 
             private static final class RecycleAction extends Action {
                 public static final RecycleAction INSTANCE = new RecycleAction();
@@ -674,6 +679,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     if (bs.recycled != 0)
                         return;
                     bs.recycled = REC_ST_SENDER;
+                    SENDER.compareAndExchangeRelease(bs.wsHandler, bs, null);
                     if (REC_SENDER.compareAndExchangeRelease(bs.wsHandler, null, bs) != null) {
                         bs.recycled = REC_ST_SERIALIZER;
                         bs.recycleSerializer();
@@ -710,61 +716,106 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     execute(RecycleAction.INSTANCE);
             }
 
+            @Override protected boolean beforeSend() {
+                if (wsHandler.silenceSender) {
+                    journal("silenced sender=", this);
+                    return false;
+                }
+                return super.beforeSend();
+            }
+
             @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
                 if (recycled != 0) throw new IllegalStateException("recycled");
+                if (wsHandler.silenceSender) {
+                    journal("will not sendInit on silenced", this);
+                    return;
+                }
                 super.sendInit(vars, subset, isAsk);
             }
 
             @Override public void sendSerializedAll(Batch<?> batch) {
                 if (recycled != 0) throw new IllegalStateException("recycled");
+                if (wsHandler.silenceSender) {
+                    journal("silenced sendSerializedAll on", this);
+                    return;
+                }
                 super.sendSerializedAll(batch);
             }
 
             @Override
             public <N extends Batch<N>> void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
                 if (recycled != 0) throw new IllegalStateException("recycled");
+                if (wsHandler.silenceSender) {
+                    journal("silenced sendSerializedAll on", this);
+                    return;
+                }
                 super.sendSerializedAll(batch, nodeConsumer);
             }
 
             @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
                 if (recycled != 0) throw new IllegalStateException("recycled");
+                if (wsHandler.silenceSender) {
+                    journal("silenced sendSerialized on", this);
+                    return;
+                }
                 super.sendSerialized(batch, from, nRows);
             }
 
             @Override public void sendTrailer() {
+                if (wsHandler.silenceSender) {
+                    journal("silenced sendTrailer on", this);
+                    return;
+                }
                 sendingTerminal();
                 disableAutoTouch();
-                execute(new TextWebSocketFrame(Unpooled.wrappedBuffer(END_MSG)));
+                execute(TrailerAction.INSTANCE);
                 wsHandler.sparqlClient().adjustBindingsSizeHint(sink.sizeHint());
             }
 
-            @Override public void sendError(Throwable t) {
-                sendingTerminal();
-                disableAutoTouch();
-                journal("sendError", t, "sender=", this);
-                var escaped = t.toString().replace("\n", "\\n");
-                execute(Unpooled.copiedBuffer("!error "+escaped+"\n", UTF_8),
-                        Action.RELEASE_SINK);
-            }
-
-            private static final class CancelAction extends Action {
-                private final WsHandler<?> handler;
-                public CancelAction(WsHandler<?> handler) {
-                    super("CANCEL");
-                    this.handler = handler;
+            private static final class TrailerAction extends Action {
+                private static final TrailerAction INSTANCE = new TrailerAction();
+                public TrailerAction() {super("TRAILER");}
+                @Override public void run(NettyResultsSender<?> sender) {
+                    BindingsSender<?> bs = (BindingsSender<?>) sender;
+                    if (bs.wsHandler.silenceSender) {
+                        journal("not sending !end, silenced", this);
+                    } else {
+                        bs.ctx.writeAndFlush(new TextWebSocketFrame(wrappedBuffer(END_MSG)));
+                        bs.wsHandler.silenceSender = true;
+                    }
                 }
-                @Override public void run(NettyResultsSender<?> sender) { handler.sendCancelFromEventLoop(); }
-            }
-
-            @Override public void  sendCancel() {
-                sendingTerminal();
-                journal("sendCancel, sender=", this);
-                execute(new CancelAction(wsHandler), Action.RELEASE_SINK);
             }
 
             @Override protected void onError(Throwable t) {
                 journal("onError", t, "sender=", this);
+                var escaped = "!error "+t.toString().replace("\n", "\\n")+'\n';
+                if (wsHandler.silenceSender) {
+                    journal("not sending !error due to silenced", this);
+                } else {
+                    ctx.writeAndFlush(new TextWebSocketFrame(escaped));
+                    wsHandler.silenceSender = true;
+                }
+                Action.RELEASE_SINK.run(this);
                 wsHandler.complete(t);
+            }
+
+            private static final class CancelAction extends Action {
+                private static final CancelAction INSTANCE = new CancelAction();
+                public CancelAction() {super("CANCEL");}
+                @Override public void run(NettyResultsSender<?> sender) {
+                    ((BindingsSender<?>)sender).wsHandler.sendCancelFromEventLoop();
+                    RELEASE_SINK.run(sender);
+                }
+            }
+
+            @Override public void  sendCancel() {
+                if (wsHandler.silenceSender) {
+                    journal("silenced sendCancel on", this);
+                    return;
+                }
+                sendingTerminal();
+                journal("sendCancel, sender=", this);
+                execute(CancelAction.INSTANCE);
             }
 
             @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
