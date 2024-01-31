@@ -380,7 +380,7 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
      */
     protected M wrapLast(ByteBuf bb) { return wrap(bb); }
 
-    protected void beforeSend() { }
+    protected boolean beforeSend() { return true; }
     protected void onError(Throwable t) {
         journal("onError", t, "sender=", this);
         log.error("{}.run(): failed to run action", this, t);
@@ -434,18 +434,25 @@ public abstract class NettyResultsSender<M> extends ResultsSender<ByteBufSink, B
                 if (touchParked != null || (autoTouch && sink.needsTouch()))
                     doTouch();
                 // execute action
+                ReferenceCounted refCntAction = null;
                 try {
                     if (action instanceof Action a) {
                         a.run(this);
                     } else if (action instanceof Throwable err) {
-                        throw err;
+                        onError(err);
                     } else {
-                        beforeSend();
-                        ctx.write(action);
-                        flush = true;
+                        refCntAction = action instanceof ReferenceCounted r ? r : null;
+                        if (beforeSend()) {
+                            refCntAction = null;
+                            ctx.write(action);
+                            flush = true;
+                        }
                     }
                 } catch (Throwable t) {
                     onError(t);
+                } finally {
+                    if (refCntAction != null)
+                        refCntAction.release();
                 }
             }
             if (flush)

@@ -417,9 +417,10 @@ public class NettySparqlServer implements AutoCloseable {
                 this.drainerRound = round;
             }
 
-            @Override protected void beforeSend() { // runs on event loop
+            @Override protected boolean beforeSend() { // runs on event loop
                 if (drainerRound != handler.round)
                     throw RoundEndedException.INSTANCE;
+                return true;
             }
 
             @Override protected void onError(Throwable t) { // runs on event loop
