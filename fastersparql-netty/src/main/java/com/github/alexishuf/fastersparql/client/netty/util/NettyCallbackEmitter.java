@@ -137,8 +137,8 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
     private void updateAutoRead() {
         Channel ch = channel;
         if (ch != null) {
-            boolean goal = requested() > 0;
-            int st = statePlain();
+            int st = stateAcquire();
+            boolean goal = requested() > 0 || (st&(CANCEL_CALLED|IS_PENDING_TERM|IS_TERM)) != 0;
             if ((st&NO_AUTO_READ) == 0 != goal) {
                 ch.config().setAutoRead(goal);
                 if (goal) clearFlagsRelease(st, NO_AUTO_READ);
@@ -153,6 +153,9 @@ public abstract class NettyCallbackEmitter<B extends Batch<B>> extends CallbackE
             if ((st&CANCEL_CALLED) != 0)
                 return false;
             st = setFlagsRelease(st, CANCEL_CALLED); // inhibit !query frame / HTTP request
+            Channel ch = channel;
+            if (ch != null)
+                ch.eventLoop().execute(updateAutoReadTask);
             if ((st&(IS_TERM|REQUEST_SENT)) == REQUEST_SENT) {
                 if (cancelAfterRequestSent())
                     return true; // do not do super.cancel() if implementation handles it
