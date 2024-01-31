@@ -777,7 +777,7 @@ public class NettySparqlServer implements AutoCloseable {
         private final SegmentRope tmpView = new SegmentRope();
         private final long implicitRequest = FSProperties.wsImplicitRequest();
         private final int reqChunkTerms
-                = Math.max(8, emitReqChunkBatches()/2*COMPRESSED.preferredTermsPerBatch());
+                = Math.max(8, emitReqChunkBatches()/4*COMPRESSED.preferredTermsPerBatch());
         private final Runnable checkAndSendBindReqTask = this::checkAndSendBindReq;
 
         public WsSparqlHandler() {
@@ -1029,11 +1029,13 @@ public class NettySparqlServer implements AutoCloseable {
             var st = serializeTask;
             if (bq == null || bp == null || st == null)
                 return;
-            long queued = bp.rowsParsed()-Math.max(bq.emptySeq, st.lastSentSeq);
-            long allowedByRequest = plainRequested-queued;
-            if (queued+bindReq > bindReqChunk>>1 || allowedByRequest <= bindReq)
-                return; // cannot increase bindReq
-            bindReq = (int)Math.min(bindReqChunk, allowedByRequest);
+            long queued = bp.rowsParsed()-Math.max(bq.emptySeq, Math.max(0, st.lastSentSeq));
+            if (queued+bindReq > bindReqChunk>>1)
+                return; // >half a chunk is queued or pending
+            int allowed = (int)Math.min(bindReqChunk, plainRequested-queued);
+            if (allowed <= 0 || allowed < bindReq<<1)
+                return; // do not send a slightly larger !bind-request
+            bindReq = allowed;
             if (bindReqFrame.refCnt() > 1)  {
                 schedCheckAndSendBindReq();
             } else {
