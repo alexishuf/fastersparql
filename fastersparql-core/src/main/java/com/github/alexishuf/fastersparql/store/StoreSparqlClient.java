@@ -2340,8 +2340,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         prb = rightFilter.filterInPlace(prb);
                         if (preFilterMerger == null)
                             rb = prb; // filterInPlace() may have recycled rb
-                        if (prb.rows == 0)
+                        if (prb.rows == 0) {
+                            unlock();
+                            locked = false;
                             continue;
+                        }
                     }
                     if (prb.rows > 0)
                         rEmpty = false;
@@ -2373,8 +2376,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     locked = false;
                 } while (readyInNanos(b.totalRows(), startNs) > 0);
                 if (!locked) {
-                    locked = true;
                     lock();
+                    locked = true;
                 }
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.totalRows());
