@@ -123,24 +123,25 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
             case COMPLETED -> log.trace(ON_TERM_TPL, this, "");
             case CANCELLED -> log.trace(ON_TERM_TPL, this, "close()/cancelled");
             case FAILED    -> {
-                String msg = cause.toString();
-                if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
-                    log.debug(ON_TERM_TPL, this, msg, cause);
-                else
-                    log.info(ON_TERM_TPL, this, msg);
+                if (!(cause instanceof BItReadClosedException) || state() == State.ACTIVE) {
+                    String msg = cause.toString();
+                    if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
+                        log.debug(ON_TERM_TPL, this, msg, cause);
+                    else
+                        log.info(ON_TERM_TPL, this, msg);
+                }
             }
         }
         lock();
         try {
-            if (STATE.compareAndExchangeRelease(this, State.ACTIVE, tgt) != State.ACTIVE) {
-                if (tgt == State.FAILED) {
-                    if (error == null)
-                        log.info(ON_TERM_TPL_PREV, this, cause, "null");
-                    else
-                        log.debug(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
-                } else {
-                    log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(this.error));
-                }
+            var prev = (State)STATE.compareAndExchangeRelease(this, State.ACTIVE, tgt);
+            if (prev == tgt) {
+                return false;
+            } else if (prev == State.COMPLETED && tgt == State.FAILED) {
+                log.info(ON_TERM_TPL_PREV, this, cause, "null");
+                return false;
+            } else if (prev != State.ACTIVE) {
+                log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(error));
                 return false;
             }
             error = cause;
