@@ -200,7 +200,6 @@ public class Measure implements Callable<Void>{
         msrOp.updateWeakenDistinct(task.query());
         BatchConsumer consumer = consumer(task, rep);
         long start = nanoTime();
-        Plan plan = null;
         NettyChannelDebugger.reset();
         ResultJournal.clear();
         ThreadJournal.resetJournals();
@@ -210,9 +209,9 @@ public class Measure implements Callable<Void>{
         StreamNode results = null;
         try {
             if (plans != null) {
-                plan = requireNonNull(plans.createPlan(task.query()));
-                currentPlan = plan;
-                fedMetrics = new FedMetrics(fed, task.parsed());
+                var plan        = requireNonNull(plans.createPlan(task.query()));
+                currentPlan     = plan;
+                fedMetrics      = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
                 results = switch (msrOp.flowModel) {
@@ -227,7 +226,7 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-            try (var watchdog = watchdog(30, task, plan, results)) {
+            try (var watchdog = watchdog(30, task, currentPlan, results)) {
                 switch (msrOp.flowModel) {
                     case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
                     case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
@@ -242,9 +241,9 @@ public class Measure implements Callable<Void>{
             log.error("Error during rep {} of task={}:", rep, task, t);
         }
         if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-            dump(task.query(), task.query().name(), plan, results);
+            dump(task.query(), task.query().name(), currentPlan, results);
         if (consumer instanceof Checker<?> c && !c.isValid())
-            dump(task.query(), task.query().name(), plan, results);
+            dump(task.query(), task.query().name(), currentPlan, results);
         return (int)((nanoTime()-start)/1_000_000L);
     }
 
