@@ -58,7 +58,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
 
     public WeakDedup(BatchType<B> batchType, int cols, DistinctType type) {
         super(batchType, cols);
-        int rowsCapacity = batchType.preferredTermsPerBatch()/cols;
+        int rowsCapacity = batchType.preferredTermsPerBatch()/Math.max(1, cols);
         RowBucket<B> rows = null;
         this.big = DistinctType.WEAK.compareTo(type) < 0;
         if (this.big) {
