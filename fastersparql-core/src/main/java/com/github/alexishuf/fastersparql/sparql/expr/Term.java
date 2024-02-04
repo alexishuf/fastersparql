@@ -244,10 +244,9 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
 
     private static SegmentRope internIriLocal(SegmentRope src, int begin, int len, boolean copy) {
         if (len <= 3) {
-            if (get(src, begin+len-1) == '>') --len;
-            int i = internIdx(src, begin, len);
+            int i = internIdx(src, begin, len-1);
             if      (i == -2) return CLOSE_IRI;
-            else if (i >=  0) return IRI_LOCALS[len-1][i];
+            else if (i >=  0) return IRI_LOCALS[len-2][i];
         }
         if (copy)
             return new ByteRope(src.toArray(begin, begin+len));
