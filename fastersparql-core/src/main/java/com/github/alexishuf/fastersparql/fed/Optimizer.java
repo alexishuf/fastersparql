@@ -464,7 +464,7 @@ public class Optimizer extends CardinalityEstimator {
                         } else {
                             // new vars are introduced, but they do not seed new joins
                             // they may have a filtering effect
-                            estimate += (int)Math.min(I_MAX, accCost*max(1, 0xff&unjoinedVars));
+                            estimate = (int)Math.min(I_MAX, accCost*(1+(0xff&unjoinedVars)));
                         }
                         if (estimate < minEstimate) {
                             minEstimate = estimate;
