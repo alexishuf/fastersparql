@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static java.lang.Long.*;
+import static java.lang.Math.max;
 
 public class Optimizer extends CardinalityEstimator {
     private static final long I_MAX = Integer.MAX_VALUE;
@@ -419,7 +420,7 @@ public class Optimizer extends CardinalityEstimator {
                             minIdx = hasInputVars ? -(j+1) : j+1;
                         }
                     }
-                    minIdx = Math.abs(minIdx)-1; // reverse the the "sign as hasInputVars" hack
+                    minIdx = Math.abs(minIdx)-1; // reverse the "sign as hasInputVars" hack
                 } else if (i < ops.length-1) {
                     for (int j = i; j < ops.length; j++) {
                         long estimate = faEstimate(ops[j], grounded);
@@ -432,10 +433,10 @@ public class Optimizer extends CardinalityEstimator {
                             } else {
                                 newVars = true;
                                 boolean joined = false;
-                                for (int k = j + 1; !joined && k < ops.length; k++)
-                                    joined = ops[k].allVars().contains(out);
+                                for (int k = i; !joined && k < ops.length; k++)
+                                    joined = k != j && ops[k].allVars().contains(out);
                                 if (joined) fwdJoined = true;
-                                else if (unjoinedVars < 127) ++unjoinedVars;
+                                else        ++unjoinedVars;
                             }
                         }
                         // visit all non-public vars that are not bound by results from preceding
@@ -454,16 +455,16 @@ public class Optimizer extends CardinalityEstimator {
                             // the operand yields no new public/non-public vars, thus it filters
                             estimate = accCost - (accCost >> 4);
                         } else if (cartesian) {
-                            estimate = (int) Math.min(I_MAX, accCost * estimate);
+                            estimate = (int) Math.min(I_MAX, accCost*estimate);
                         } else if (fwdJoined) {
                             // if the operand has vars that participate in joins with
                             // subsequent operators, apply only 25% of the worst case
                             // multiplicative effect
-                            estimate = (int)Math.min(I_MAX, accCost * Math.max(2, (estimate>>2)));
+                            estimate = (int)Math.min(I_MAX, accCost*max(2, (estimate>>2)));
                         } else {
                             // new vars are introduced, but they do not seed new joins
                             // they may have a filtering effect
-                            estimate += (int)Math.min(I_MAX, accCost * Math.max(1, unjoinedVars));
+                            estimate += (int)Math.min(I_MAX, accCost*max(1, 0xff&unjoinedVars));
                         }
                         if (estimate < minEstimate) {
                             minEstimate = estimate;
