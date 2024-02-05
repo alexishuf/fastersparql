@@ -18,12 +18,14 @@ import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 
 public final class TriplePattern extends Plan {
     public final Term s, p, o;
+    public final Vars vars;
 
     public TriplePattern(Term s, Term p, Term o) {
         super(Operator.TRIPLE);
         this.s = s;
         this.p = p;
         this.o = o;
+        this.vars = initVars();
     }
 
     public TriplePattern(CharSequence s, CharSequence p, CharSequence o) {
@@ -31,6 +33,16 @@ public final class TriplePattern extends Plan {
         this.s = Term.valueOf(s);
         this.p = Term.valueOf(p);
         this.o = Term.valueOf(o);
+        this.vars = initVars();
+    }
+
+    private Vars initVars() {
+        if (s.type() != VAR && p.type() != VAR && o.type() != VAR) return Vars.EMPTY;
+        var vars = new Vars.Mutable(3);
+        if (s.type() == VAR) vars.add(s);
+        if (p.type() == VAR) vars.add(p);
+        if (o.type() == VAR) vars.add(o);
+        return vars;
     }
 
     @SuppressWarnings("unused")

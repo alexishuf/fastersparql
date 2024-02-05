@@ -321,14 +321,7 @@ public abstract sealed class Plan implements SparqlQuery
     }
     private Vars computeAllVars() {
         return switch (type) {
-            case TRIPLE -> {
-                TriplePattern p = (TriplePattern) this;
-                Vars.Mutable set = new Vars.Mutable(3);
-                if (p.s.type() == Term.Type.VAR) set.add(p.s);
-                if (p.p.type() == Term.Type.VAR) set.add(p.p);
-                if (p.o.type() == Term.Type.VAR) set.add(p.o);
-                yield set.isEmpty() ? Vars.EMPTY : set;
-            }
+            case TRIPLE -> ((TriplePattern)this).vars;
             case QUERY -> ((Query)this).sparql.allVars();
             case MODIFIER -> {
                 //noinspection DataFlowIssue
