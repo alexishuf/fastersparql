@@ -67,6 +67,15 @@ public class ArrayBinding extends Binding {
         return values[i] == expected;
     }
 
+    public void ground(Vars groundVars) {
+        //noinspection ForLoopReplaceableByForEach
+        for (int i = 0, n = groundVars.size(); i < n; i++) {
+            int dst = vars.indexOf(groundVars.get(i));
+            if (dst >= 0 && values[dst] == null)
+                values[dst] = Term.GROUND;
+        }
+    }
+
     /**
      * Maps the {@code i}-th variable to {@code null}
      *

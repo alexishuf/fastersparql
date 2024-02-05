@@ -479,11 +479,7 @@ public class Optimizer extends CardinalityEstimator {
                 ops[i] = best;
                 accCost = minEstimate;
                 // mark all vars produced by best as ground in subsequent estimations
-                for (var var : best.publicVars()) {
-                    int varIdx = grounded.vars.indexOf(var);
-                    if (grounded.get(varIdx) == null)
-                        grounded.set(varIdx, GROUND);
-                }
+                grounded.ground(best.publicVars());
             }
             p.left  = ops[0];
             p.right = ops[1];
