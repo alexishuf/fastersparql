@@ -274,9 +274,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             // another non-dummy grounded term. The following switch is not the prettiest, but
             // it avoids having 7 call sites to estimatePairs(). Too many call sites are a slight
             // perf issue as the JIT will give up inlining or will output huge code
-            var dummies = TripleRoleSet.fromBitset((t.s == GROUND ? 0x4 : 0x0)
-                                                 | (t.p == GROUND ? 0x2 : 0x0)
-                                                 | (t.o == GROUND ? 0x1 : 0x0));
+            var dummies = t.dummyRoles(binding);
             Triples epObj = null;
             long epKey = 0;
             float dummyWeight = 1;

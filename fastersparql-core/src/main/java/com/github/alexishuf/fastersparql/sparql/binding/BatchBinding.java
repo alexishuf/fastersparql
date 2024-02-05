@@ -1,9 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
@@ -208,6 +205,10 @@ public class BatchBinding extends Binding {
             return batch.termType(b.row, c) != null;
         }
         throw new IndexOutOfBoundsException("var not found");
+    }
+
+    @Override public boolean hasSpecialRef(int i, Term expected) {
+        return batch instanceof TermBatch && get(i) == expected;
     }
 
     @Override public final int writeSparql(int i, ByteSink<?, ?> dest, PrefixAssigner assigner) {

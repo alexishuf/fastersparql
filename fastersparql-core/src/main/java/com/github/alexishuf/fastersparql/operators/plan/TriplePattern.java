@@ -60,6 +60,20 @@ public final class TriplePattern extends Plan {
                           (o.type() == VAR && !binding.has(o) ? 0x1 : 0x0));
     }
 
+    public TripleRoleSet dummyRoles(@Nullable Binding b) {
+        int bitset;
+        if (b == null) {
+            bitset = (s == Term.GROUND ? 4 : 0)
+                   | (p == Term.GROUND ? 2 : 0)
+                   | (o == Term.GROUND ? 1 : 0);
+        } else {
+            bitset = (s == Term.GROUND || b.hasSpecialRef(s, Term.GROUND) ? 4 : 0)
+                   | (p == Term.GROUND || b.hasSpecialRef(p, Term.GROUND) ? 2 : 0)
+                   | (o == Term.GROUND || b.hasSpecialRef(o, Term.GROUND) ? 1 : 0);
+        }
+        return TripleRoleSet.fromBitset(bitset);
+    }
+
     @Override public Plan copy(@Nullable Plan[] ops) { return new TriplePattern(s, p, o); }
 
     @Override

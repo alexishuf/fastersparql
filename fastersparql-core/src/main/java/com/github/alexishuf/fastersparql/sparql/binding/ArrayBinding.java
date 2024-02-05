@@ -63,6 +63,10 @@ public class ArrayBinding extends Binding {
 
     @Override public @Nullable Term get(int i) { return values[i]; }
 
+    @Override public boolean hasSpecialRef(int i, Term expected) {
+        return values[i] == expected;
+    }
+
     /**
      * Maps the {@code i}-th variable to {@code null}
      *

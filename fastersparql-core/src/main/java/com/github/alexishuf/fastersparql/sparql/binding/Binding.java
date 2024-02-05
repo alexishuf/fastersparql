@@ -70,7 +70,7 @@ public abstract class Binding {
     }
 
     /**
-     * Equivalent to {@code get(var(i)}.
+     * Equivalent to {@code get(vars().get(i))}.
      *
      * @param i index of the value to fetch.
      * @return Mapped N-Triples representation of the value bound to the i-th var.
@@ -80,6 +80,38 @@ public abstract class Binding {
 
     /** Equivalent to {@code get(i) != null}, but may avoid instantiating {@link Term}. */
     public boolean has(int i) { return get(i) != null; }
+
+    /**
+     * Test if {@link #vars()}{@code .get(i)} is bound to the same {@code expected} reference.
+     *
+     * <p><strong>WARNING</strong>: The comparison will be made by reference, not by
+     * {@link Term#equals(Object)}. This should only be used with expected being a
+     * special placeholder {@link Term}, such as {@link Term#GROUND}.</p>
+     *
+     * @param i the index of the var to test
+     * @param expected A specific {@link Term} reference.
+     * @return true if {@code get(i) == expected}
+     */
+    public abstract boolean hasSpecialRef(int i, Term expected);
+
+    /**
+     * Equivalent to {@link #hasSpecialRef(int, Term)} using the index of {@code varName},
+     * if var is a var of this binding
+     */
+    @SuppressWarnings("unused")
+    public boolean hasSpecialRef(SegmentRope varName, Term expected) {
+        int i = vars().indexOf(varName);
+        return i >= 0 && hasSpecialRef(i, expected);
+    }
+
+    /**
+     * Equivalent to {@link #hasSpecialRef(int, Term)} using the index of {@code var},
+     * if var is a var of this binding
+     */
+    public boolean hasSpecialRef(Term var, Term expected) {
+        int i = vars().indexOf(var);
+        return i >= 0 && hasSpecialRef(i, expected);
+    }
 
     /* --- --- java.lang.Object methods --- --- --- */
 
