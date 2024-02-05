@@ -20,6 +20,7 @@ import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 
 
 public abstract class CardinalityEstimator {
+    protected static final long I_MAX = Integer.MAX_VALUE;
     public static final String TYPE = "type";
     public static final String PREFER_NATIVE = "prefer-native";
 

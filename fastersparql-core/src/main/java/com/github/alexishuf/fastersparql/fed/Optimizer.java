@@ -24,7 +24,6 @@ import static java.lang.Long.*;
 import static java.lang.Math.max;
 
 public class Optimizer extends CardinalityEstimator {
-    private static final long I_MAX = Integer.MAX_VALUE;
     private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
     private final AffinityShallowPool<State> pool = new AffinityShallowPool<>(State.class);
 

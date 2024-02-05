@@ -50,7 +50,10 @@ import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
-import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -63,6 +66,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveAction;
+import java.util.concurrent.RecursiveTask;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
@@ -70,7 +76,6 @@ import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
@@ -80,6 +85,8 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.EN
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static java.lang.System.arraycopy;
 import static java.util.Arrays.copyOfRange;
 import static java.util.Objects.requireNonNull;
@@ -199,33 +206,57 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         public StoreSingletonFederator(StoreSparqlClient parent) {
             super(parent, StoreSparqlClient.PREFER_NATIVE ? StoreSparqlClient.TYPE : null);
-            this.spo = parent.spo;
-            this.pso = parent.pso;
-            this.ops = parent.ops;
+            this.spo    = parent.spo;
+            this.pso    = parent.pso;
+            this.ops    = parent.ops;
             this.dictId = parent.dictId;
-            int[] avg = new int[3];
-            Thread sThread = Thread.startVirtualThread(() -> avg[0] = computeAvgPairs(spo));
-            Thread pThread = Thread.startVirtualThread(() -> avg[1] = computeAvgPairs(pso));
-            Thread oThread = Thread.startVirtualThread(() -> avg[2] = computeAvgPairs(ops));
-            Async.uninterruptibleJoin(sThread);
-            Async.uninterruptibleJoin(pThread);
-            Async.uninterruptibleJoin(oThread);
-            this.avgS = avg[0];
-            this.avgP = avg[1];
-            this.avgO = avg[2];
-            avgSP = (int)Math.min(Integer.MAX_VALUE, 1+ops.triplesCount()/(float)ops.keysCount());
-            avgSO = (int)Math.min(Integer.MAX_VALUE, 1+pso.triplesCount()/(float)pso.keysCount());
-            avgPO = (int)Math.min(Integer.MAX_VALUE, 1+spo.triplesCount()/(float)spo.keysCount());
-            invAvgSP = 1/(float)avgSP;
-            invAvgSO = 1/(float)avgSO;
-            invAvgPO = 1/(float)avgPO;
+            var compute = ForkJoinPool.commonPool().invoke(new ComputeAvgPairs());
+            this.avgS   = compute.avgS;
+            this.avgP   = compute.avgP;
+            this.avgO   = compute.avgO;
+            this.avgSP  = compute.avgSP;
+            this.avgSO  = compute.avgSO;
+            this.avgPO  = compute.avgPO;
+            invAvgSP    = 1/(float)avgSP;
+            invAvgSO    = 1/(float)avgSO;
+            invAvgPO    = 1/(float)avgPO;
         }
 
-        private int computeAvgPairs(Triples triples) {
-            long sum = 0;
-            for (long k = triples.firstKey(), end = k+triples.keysCount(); k < end; k++)
-                sum += triples.estimatePairs(k);
-            return (int)Math.min(Integer.MAX_VALUE, (long)((float)sum/triples.keysCount()));
+        private class ComputeAvgPairs extends RecursiveTask<ComputeAvgPairs> {
+            int avgS, avgP, avgO, avgSP, avgSO, avgPO;
+            @Override protected ComputeAvgPairs compute() {
+                var spoTask = new ForPermutation(spo);
+                var psoTask = new ForPermutation(pso);
+                var opsTask = new ForPermutation(ops);
+                invokeAll(spoTask, psoTask, opsTask);
+                avgS  = spoTask.avgPairs;
+                avgP  = psoTask.avgPairs;
+                avgO  = opsTask.avgPairs;
+                avgPO = spoTask.avgKeys;
+                avgSO = psoTask.avgKeys;
+                avgSP = opsTask.avgKeys;
+                return this;
+            }
+
+            private static final class ForPermutation extends RecursiveAction {
+                private final Triples triples;
+                int avgPairs, avgKeys;
+                public ForPermutation(Triples triples) {this.triples = triples;}
+                @Override protected void compute() {
+                    long sum = 0, keysCount = 0;
+                    for (long k = triples.firstKey(), end = k+triples.keysCount(); k < end; k++) {
+                        long pairs = triples.estimatePairs(k);
+                        if (pairs > 0) {
+                            ++keysCount;
+                            sum += pairs;
+                        }
+                    }
+                    double keysD = (double)keysCount;
+                    long triplesCount = triples.triplesCount();
+                    this.avgPairs = (int)min(I_MAX, max(1, sum         /keysD));
+                    this.avgKeys  = (int)min(I_MAX, max(1, triplesCount/keysD));
+                }
+            }
         }
 
         @Override public int estimate(TriplePattern t, @Nullable Binding binding) {
@@ -295,11 +326,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                              : (int)(1 + avgO*dummyWeight);
                 case PRE -> {
                     if (dummies == EMPTY)
-                        dummyWeight = Math.min(dummyWeight, spo.estimatePairs(s));
+                        dummyWeight = min(dummyWeight, spo.estimatePairs(s));
                     yield (int)(1 + avgP * dummyWeight);
                 }
             };
-            return (int)Math.min(Integer.MAX_VALUE, estimate);
+            return (int) min(I_MAX, estimate);
         }
 
         @Override
@@ -813,7 +844,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         void request(BatchBinding binding) {
-            short bottom = (short)Math.max(1, binding.row);
+            short bottom = (short) max(1, binding.row);
             Batch<?> bb = binding.batch;
             short rows = bb == null ? 0 : bb.rows;
             short snapshot = stop();
@@ -1126,7 +1157,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return state;
             int termState = state;
             StoreBatch b = TYPE.createForThread(threadId, cols);
-            short sLimit = (short)Math.min(b.termsCapacity/Math.max(1, cols), limit);
+            short sLimit = (short) min(b.termsCapacity/ max(1, cols), limit);
             retry = false;
             switch (freeRoles) {
                 case                             EMPTY_BITS ->    fillAsk(b);
@@ -1832,7 +1863,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private void clearAndCopyNonLexBindings(BatchBinding src, B dst) {
             dst.clear();
             dst.beginPut();
-            for (int c = 0, n = Math.min(64, dst.cols); c < n; c++) {
+            for (int c = 0, n = min(64, dst.cols); c < n; c++) {
                 if ((lexBindingCols & (1L << c)) == 0)
                     src.putTerm(c, dst, c);
             }
