@@ -37,6 +37,10 @@ public class Emitters {
         return new CollectingReceiver<>(e).join();
     }
 
+    public static <B extends Batch<B>> boolean ask(Emitter<B> e) {
+        return new AskReceiver<>(e).has();
+    }
+
     public static void handleEmitError(Receiver<?> downstream, Emitter<?> upstream,
                                        boolean emitterTerminated,
                                        Throwable emitError) {

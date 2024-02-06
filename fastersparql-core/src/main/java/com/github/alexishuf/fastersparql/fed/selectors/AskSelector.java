@@ -1,14 +1,14 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.fed.Selector;
 import com.github.alexishuf.fastersparql.fed.Spec;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -192,31 +192,23 @@ public class AskSelector extends Selector {
             // canon == {s, p, o}
 
             // not in cache, issue a query using the given tp
-            try (BIt<CompressedBatch> it = client.query(COMPRESSED, tp.toAsk()).eager()) {
-                var batch = it.nextBatch(null);
-                boolean has = batch != null;
-                if (has) {
-                    COMPRESSED.recycle(batch);
-                    positive.add(canonBatch, 0);
-                } else {
-                    negative.add(canonBatch, 0);
+            boolean has = Emitters.ask(client.emit(COMPRESSED, tp.toAsk(), Vars.EMPTY));
+            (has ? positive : negative).add(canonBatch, 0);
+            if (has && (vars & 2) == 0) { // if positive and ground predicate, store generalized
+                if (s != X) {
+                    canon[0] = X;
+                    positive.add(canonBatch, 0); // store X p o
                 }
-                if (has && (vars & 2) == 0) { // if positive and ground predicate, store generalized
+                if (o != X) {
+                    canon[2] = X;
+                    positive.add(canonBatch, 0); // store X p X
                     if (s != X) {
-                        canon[0] = X;
-                        positive.add(canonBatch, 0); // store X p o
-                    }
-                    if (o != X) {
-                        canon[2] = X;
-                        positive.add(canonBatch, 0); // store X p X
-                        if (s != X) {
-                            canon[0] = s;
-                            positive.add(canonBatch, 0); // store s p X
-                        }
+                        canon[0] = s;
+                        positive.add(canonBatch, 0); // store s p X
                     }
                 }
-                return has;
             }
+            return has;
         } finally {
             canonBatch.recycle();
         }
