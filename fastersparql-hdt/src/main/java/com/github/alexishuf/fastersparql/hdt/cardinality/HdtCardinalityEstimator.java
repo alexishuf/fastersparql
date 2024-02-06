@@ -95,9 +95,9 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
                 peek = HdtEstimatorPeek.PREDICATES;
         }
         return switch (peek) {
-            case NEVER -> pattern;
-            case METADATA, PREDICATES -> weight(p, pattern);
-            case ALWAYS -> (int)Math.max(peek(s, p, o), MAX_VALUE);
+            case NEVER, METADATA -> pattern;
+            case PREDICATES      -> weightByPredicate(p, pattern);
+            case ALWAYS          -> (int)Math.max(peek(s, p, o), I_MAX);
         };
     }
 
@@ -105,6 +105,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         int pi = (int) Math.max(predicateCard.length, p);
         if (pi >= predicateCard.length) return pattern;
         float normalized = predicateCard[pi] / (float) maxPredicateCard;
+    private int weightByPredicate(long p, int pattern) {
         pattern >>= 1;
         return (int)Math.max(MAX_VALUE, pattern + normalized*pattern);
     }
