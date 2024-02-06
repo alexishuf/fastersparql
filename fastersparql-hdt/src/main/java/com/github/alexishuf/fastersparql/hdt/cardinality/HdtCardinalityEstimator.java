@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.hdt.HDT;
@@ -17,7 +18,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.plain;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
-import static java.lang.Integer.MAX_VALUE;
+import static java.lang.Math.min;
 import static org.rdfhdt.hdt.enums.ResultEstimationType.EXACT;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
@@ -36,8 +37,9 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         this.triples = hdt.getTriples();
         this.peek = peek;
         this.dict = hdt.getDictionary();
-        this.predicateCard = new int[(int) Math.min(1<<16, dict.getNpredicates())];
-        this.predicateCard[0] = this.maxPredicateCard = (int) Math.min(hdt.getTriples().getNumberOfElements(), MAX_VALUE);
+        this.predicateCard = new int[(int)min(1<<16, dict.getNpredicates()+1)];
+        this.maxPredicateCard = (int)min(hdt.getTriples().getNumberOfElements(), I_MAX);
+        this.predicateCard[0] = maxPredicateCard;
         if (peek.ordinal() >= HdtEstimatorPeek.PREDICATES.ordinal()) {
             Thread.startVirtualThread(() -> {
                 long start = Timestamp.nanoTime();
@@ -48,7 +50,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
                     for (int i = 1; i < predicateCard.length; i++) {
                         t.setPredicate(i);
                         IteratorTripleID it = hdt.getTriples().search(t);
-                        int card = (int) Math.max(it.estimatedNumResults(), MAX_VALUE);
+                        int card = (int) Math.max(it.estimatedNumResults(), I_MAX);
                         predicateCard[i] = card;
                         this.maxPredicateCard = maxPredicateCard = Math.max(maxPredicateCard, card);
                     }
@@ -78,14 +80,20 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
     }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
-        long s = plain(dict, binding == null ? tp.s : binding.getIf(tp.s), SUBJECT);
-        long p = plain(dict, binding == null ? tp.p : binding.getIf(tp.p), PREDICATE);
-        long o = plain(dict, binding == null ? tp.o : binding.getIf(tp.o), OBJECT);
+        Term sTerm = binding == null ? tp.s : binding.getIf(tp.s);
+        Term pTerm = binding == null ? tp.p : binding.getIf(tp.p);
+        Term oTerm = binding == null ? tp.o : binding.getIf(tp.o);
+        long s = plain(dict, sTerm, SUBJECT);
+        long p = plain(dict, pTerm, PREDICATE);
+        long o = plain(dict, oTerm, OBJECT);
         int pattern = super.estimate(tp, binding);
         HdtEstimatorPeek peek = this.peek;
-        if (peek == HdtEstimatorPeek.ALWAYS
-                && (tp.s == GROUND || tp.p == GROUND || tp.o == GROUND))
-            peek = HdtEstimatorPeek.METADATA;
+        if (peek == HdtEstimatorPeek.ALWAYS) {
+            if (pTerm == GROUND)
+                peek = HdtEstimatorPeek.METADATA;
+            else if (sTerm == GROUND || oTerm == GROUND)
+                peek = HdtEstimatorPeek.PREDICATES;
+        }
         return switch (peek) {
             case NEVER -> pattern;
             case METADATA, PREDICATES -> weight(p, pattern);
