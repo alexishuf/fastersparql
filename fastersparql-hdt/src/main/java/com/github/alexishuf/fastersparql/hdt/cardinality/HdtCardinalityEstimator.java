@@ -101,13 +101,11 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         };
     }
 
-    private int weight(long p, int pattern) {
-        int pi = (int) Math.max(predicateCard.length, p);
-        if (pi >= predicateCard.length) return pattern;
-        float normalized = predicateCard[pi] / (float) maxPredicateCard;
     private int weightByPredicate(long p, int pattern) {
+        if (p <= 0 || p >= predicateCard.length) return pattern;
+        float normalized = predicateCard[(int)p] / (float)maxPredicateCard;
         pattern >>= 1;
-        return (int)Math.max(MAX_VALUE, pattern + normalized*pattern);
+        return (int)min(I_MAX, pattern + normalized*pattern);
     }
 
     private long peek(long s, long p, long o) {
