@@ -291,6 +291,8 @@ public class Optimizer extends CardinalityEstimator {
          */
         public Plan optimize(Plan p, boolean canTakeFilters) {
             Operator type = p.type;
+            if (type == Operator.UNION && (p.right == null || p.right.type == Operator.EMPTY))
+                type = (p = p.left()).type;
 
             // push filters if p is a filtering Modifier and upFiltersCount + filters.size() <= 64
             Modifier pushed = p instanceof Modifier m ? m : null;
