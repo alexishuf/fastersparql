@@ -33,7 +33,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
 
     public HdtCardinalityEstimator(HDT hdt, HdtEstimatorPeek peek,
                                    @Nullable String name) {
-        super(uncertaintyPenalty(hdt, peek), new CompletableFuture<>());
+        super(new CompletableFuture<>());
         this.triples = hdt.getTriples();
         this.peek = peek;
         this.dict = hdt.getDictionary();
@@ -67,16 +67,6 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
             ready.complete(this);
             log.info("Will not use predicate cardinalities for {}", name);
         }
-    }
-
-    private static int uncertaintyPenalty(HDT hdt, HdtEstimatorPeek peek) {
-        int thousandth = (int) Math.min(hdt.getTriples().getNumberOfElements()>>10, MAX_VALUE);
-        return switch (peek) {
-            case NEVER      -> Math.max(1_000, thousandth);
-            case METADATA   -> Math.max(500, thousandth >>1);
-            case PREDICATES -> Math.max(200, thousandth >>2);
-            case ALWAYS     -> Math.max(100, thousandth >>3);
-        };
     }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
@@ -119,7 +109,7 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         var type = it.numResultEstimation();
         long estimate = it.estimatedNumResults();
         if (estimate < 0)
-            estimate = Math.max((long)uncertaintyPenalty<<1, -(estimate + 1));
-        return (type == EXACT ? 0 : uncertaintyPenalty) + estimate;
+            estimate = -(estimate + 1);
+        return (type == EXACT ? 0 : 1) + estimate;
     }
 }

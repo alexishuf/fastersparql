@@ -12,33 +12,25 @@ import java.util.concurrent.CompletableFuture;
 public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- constants --- --- --- */
     public static final String NAME = "pattern";
-    public static final String PENALTY = "penalty";
-    public static final int DEFAULT_PENALTY = 200;
 
     public static final PatternCardinalityEstimator DEFAULT
-            = new PatternCardinalityEstimator(DEFAULT_PENALTY);
+            = new PatternCardinalityEstimator();
 
     /* --- --- --- lifecycle --- --- --- */
 
-    protected final int uncertaintyPenalty;
-    protected final int typePenalty;
-
-    public PatternCardinalityEstimator(int uncertaintyPenalty) {
-        this(uncertaintyPenalty, new CompletableFuture<>());
-        ready.complete(this);
+    public PatternCardinalityEstimator() {
+        this(new CompletableFuture<>());
     }
 
-    public PatternCardinalityEstimator(int uncertaintyPenalty,
-                                       CompletableFuture<CardinalityEstimator> ready) {
+    public PatternCardinalityEstimator(CompletableFuture<CardinalityEstimator> ready) {
         super(ready);
-        this.uncertaintyPenalty = uncertaintyPenalty;
-        this.typePenalty = uncertaintyPenalty + 21;
+        ready.complete(this);
     }
 
     public static class PatternLoader implements Loader {
         @Override
         public CardinalityEstimator load(SparqlClient client, Spec spec) throws BadSerializationException {
-            return new PatternCardinalityEstimator(spec.getOr(PENALTY, DEFAULT_PENALTY));
+            return new PatternCardinalityEstimator();
         }
 
         @Override public String name() { return NAME; }
