@@ -35,8 +35,10 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
 
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+        if (type.showState())
+            sb.append('[').append(Stateful.Flags.DEFAULT.render(state)).append(']');
         if (type.showStats() && stats != null)
-            return stats.appendToLabel(sb).toString();
+            stats.appendToLabel(sb);
         return sb.toString();
     }
 
