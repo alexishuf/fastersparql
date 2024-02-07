@@ -231,10 +231,11 @@ public class Optimizer extends CardinalityEstimator {
          * @return bitset of filters taken by joins of subsets of {@code join} operands.
          */
         private long takeFiltersOnSubJoins(Plan join) {
+            assert tmpVars.isEmpty() && tmpFilters.isEmpty();
             tmpVars.addAll(join.left().publicVars());
             long allTaken = 0;
 
-            for (int childIdx = 1, n = join.opCount(); childIdx < n; childIdx++) {
+            for (int childIdx = 1, last = join.opCount()-1; childIdx < last; childIdx++) {
                 tmpVars.addAll(join.op(childIdx).publicVars());
                 long bitset = findFilters(tmpVars);
                 if (bitset != 0) {
@@ -248,7 +249,9 @@ public class Optimizer extends CardinalityEstimator {
                             ops[i] = join.op(i);
                         subJoin = new Join(ops);
                     }
-                    join.replace(0, childIdx + 1, new Modifier(subJoin, null, null, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
+                    join.replace(0, childIdx+1, new Modifier(subJoin, null, null, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
+                    last -= childIdx;
+                    childIdx = 0;
                     tmpFilters.clear();
                 }
             }
