@@ -22,7 +22,7 @@ public class HdtSparqlClientFactory implements SparqlClientFactory {
         String name = file.getName();
         if (name.length() > 4 && name.regionMatches(true, name.length()-4, ".hdt", 0, 4))
             return true;
-        log.debug("HdtSparqlClientFactory rejecting non '.hdt'-terminated file {}", file);
+        log.trace("HdtSparqlClientFactory rejecting non '.hdt'-terminated file {}", file);
         return false;
     }
 
