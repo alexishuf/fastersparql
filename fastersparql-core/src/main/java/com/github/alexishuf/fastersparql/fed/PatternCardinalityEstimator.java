@@ -4,10 +4,11 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.concurrent.CompletableFuture;
+
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.RDF_TYPE;
 
 public class PatternCardinalityEstimator extends CardinalityEstimator {
     /* --- --- --- constants --- --- --- */
@@ -40,16 +41,15 @@ public class PatternCardinalityEstimator extends CardinalityEstimator {
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
         return switch (binding == null ? tp.freeRoles() : tp.freeRoles(binding)) {
-            //                              groundRoles
-            case EMPTY       -> 1;       // SUB_PRE_OBJ
-            case OBJ         -> 20;      // SUB_PRE
-            case PRE         -> 10;      // SUB_OBJ
-            case PRE_OBJ     -> 100;     // SUB
-            case SUB         -> 1_000    // PRE_OBJ
-                    + (tp.p == Term.RDF_TYPE ? typePenalty : 0);
-            case SUB_OBJ     -> 10_000;  // PRE
-            case SUB_PRE     -> 2_000;   // OBJ
-            case SUB_PRE_OBJ -> 10_0000; // EMPTY
-        } + uncertaintyPenalty;
+            //                                                       groundRoles
+            case EMPTY       ->         1;                       // SUB_PRE_OBJ
+            case OBJ         ->        20;                       // SUB_PRE
+            case PRE         ->        10;                       // SUB_OBJ
+            case PRE_OBJ     ->       210;                       // SUB
+            case SUB         -> tp.p==RDF_TYPE ? 99_999 : 1_000; // PRE_OBJ
+            case SUB_OBJ     ->   100_000;                       // PRE
+            case SUB_PRE     ->    11_000;                       // OBJ
+            case SUB_PRE_OBJ -> 1_000_000;                       // EMPTY
+        };
     }
 }

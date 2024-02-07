@@ -9,11 +9,13 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static java.lang.System.arraycopy;
+
 public class ArrayBinding extends Binding {
     public static final ArrayBinding EMPTY = new ArrayBinding(Vars.EMPTY, new Term[0]);
 
-    public final Vars vars;
-    private final @Nullable Term[] values;
+    public Vars vars;
+    private @Nullable Term[] values;
 
     public ArrayBinding(Vars vars) {
         this.vars = vars;
@@ -58,6 +60,24 @@ public class ArrayBinding extends Binding {
         return new ArrayBinding(vars, terms);
     }
 
+    public void reset(Vars vars) {
+        this.vars = vars;
+        int n = vars.size();
+        if (values.length < n) values = new Term[n];
+        else                   Arrays.fill(values, 0, n, null);
+    }
+
+    public Term[] swapValues(Term[] newValues) {
+        if (newValues.length < vars.size())
+            throw new IllegalArgumentException("newValues.length < vars.size()");
+        @Nullable Term[] oldValues = this.values;
+        this.values = newValues;
+        return oldValues;
+    }
+
+    public void copyValuesInto(Term[] dst) {
+        arraycopy(values, 0, dst, 0, vars.size());
+    }
 
     @Override public Vars vars() { return vars; }
 
@@ -67,13 +87,28 @@ public class ArrayBinding extends Binding {
         return values[i] == expected;
     }
 
-    public void ground(Vars groundVars) {
+    public boolean hasAll(Vars other) {
+        Vars vars = this.vars;
+        //noinspection ForLoopReplaceableByForEach
+        for (int oIdx = 0, n = other.size(); oIdx < n; oIdx++) {
+             int i = vars.indexOf(other.get(oIdx));
+             if (i < 0 || values[i] == null) return false;
+        }
+        return true;
+    }
+
+    public boolean ground(Vars groundVars) {
+        Vars vars = this.vars;
+        boolean changes = false;
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = groundVars.size(); i < n; i++) {
             int dst = vars.indexOf(groundVars.get(i));
-            if (dst >= 0 && values[dst] == null)
+            if (dst >= 0 && values[dst] == null) {
+                changes = true;
                 values[dst] = Term.GROUND;
+            }
         }
+        return changes;
     }
 
     /**
@@ -134,9 +169,4 @@ public class ArrayBinding extends Binding {
         return set(i, value);
     }
 
-    public Term[] copyValues() { return Arrays.copyOf(values, values.length); }
-
-    public void setValues(Term[] arr) {
-        System.arraycopy(arr, 0, values, 0, arr.length);
-    }
 }

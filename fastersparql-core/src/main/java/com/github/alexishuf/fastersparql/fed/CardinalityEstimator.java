@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.fed;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
@@ -16,7 +17,9 @@ import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 
 public abstract class CardinalityEstimator {
@@ -75,7 +78,7 @@ public abstract class CardinalityEstimator {
 
         // discounts for ASK and LIMIT (with or without OFFSET)
         if (modifier.limit < Long.MAX_VALUE) {
-            int len = (int) Math.max(Integer.MAX_VALUE, modifier.limit + modifier.offset);
+            int len = (int) max(Integer.MAX_VALUE, modifier.limit + modifier.offset);
             if (len == 1) // ASK costs 1/16 (6.25%) of original estimate
                 return 1 + cost>>4;
             if (len < cost) // drop down cost to avg(offset+limit, cost)/2
@@ -92,80 +95,181 @@ public abstract class CardinalityEstimator {
         return cost;
     }
 
-    protected int estimateJoin(Plan plan, @Nullable Binding binding, int shift) {
-        var accBinding = new ArrayBinding(plan.allVars(), binding);
-        int accCost = estimate(plan.left(), accBinding);
-        for (var name : plan.left().publicVars()) {
-            int varIdx = accBinding.vars.indexOf(name);
-            if (accBinding.get(varIdx) == null)
-                accBinding.set(varIdx, GROUND);
+    /**
+     * Compute the cost of joining with a right side that has no unbound
+     * public or private vars. Such join behaves as an EXISTS filter, and evalution of the
+     * right side will be cheap.
+     */
+    protected static int joinWithAsk(long leftCost, int rightAllVars) {
+        int div = rightAllVars <= 2 ? 2 : rightAllVars <= 4 ? 3 : 4;
+        return (int)min(I_MAX, leftCost + rightAllVars - (leftCost >> div));
+    }
+
+    protected static Plan unwrapQuery(Plan plan) {
+        return plan instanceof Query q && q.sparql instanceof Plan p ? p : plan;
+    }
+
+    private static Plan unwrapQueryOrMod(Plan plan) {
+        plan = unwrapQuery(plan);
+        return plan.type == Operator.MODIFIER ? plan.left() : plan;
+    }
+
+    private static boolean hasStarJoin(TriplePattern t, Plan plan) {
+        if (plan instanceof TriplePattern t1)
+            return t.s.equals(t1.s) || t.o.equals(t1.o);
+        for (int i = 0, n = plan.opCount(); i < n; i++) {
+            if ((plan.op(i) instanceof TriplePattern t1) && (t.s.equals(t1.s) || t.o.equals(t1.o)))
+                return true;
         }
-        for (int i = 1, n = plan.opCount(); i < n; i++) {
-            Plan o = plan.op(i);
-            int cost = estimate(o, accBinding);
-            Vars oVars = o.publicVars();
-            boolean noNewVars = true, cartesian = true;
-            short unjoinedNewVars = 0, joins = 0;
-            for (var name : oVars) {
-                int varIdx = accBinding.vars.indexOf(name);
-                if (accBinding.get(varIdx) == null) {
-                    accBinding.set(varIdx, GROUND);
-                    noNewVars = false;
-                    boolean unjoined = true;
-                    for (int j = i+1; j < n; j++) {
-                        Plan oo = plan.op(j);
-                        Vars ooVars = (oo instanceof Modifier ? oo.left() : oo).allVars();
-                        if (ooVars.contains(name)) {
-                            ++joins;
-                            unjoined = false;
-                        }
-                    }
-                    if (unjoined) ++unjoinedNewVars;
-                } else {
-                    cartesian = false;
-                }
-            }
-            if (noNewVars) {
-                if ((o instanceof Modifier m ? m.left() : o).allVars().equals(oVars))
-                    accCost -= accCost >> 4; // o is acting as a filter
-                else
-                    accCost = accCost + cost; // o has a small multiplicative effect, thus we add
-            } else if (cartesian) {
-                // cartesian product may only have a filtering effect in theory
-                accCost *= cost;
-            } else if (joins == 0) {
-                // new vars were added, but they do not contribute to any subsequent join.
-                // assume these vars will not cause filtering. For > 1 new vars, assume that
-                // half of them have multiplicative effect and will introduce an additional row
-                accCost += cost + (accCost*(unjoinedNewVars >> 1));
-            } else {
-                // always assume that a join that introduces vars that feed another
-                // operand is multiplicative. In order to not be overly pessimistic,
-                // assume that for some bindings, o will produce no match. This is emulated by
-                // the shift. If a join involves more than one var, it may produce less results
-                // as each var begins a path and all paths must exist.
-                accCost *= Math.max(2, (cost >> shift) - (joins-1));
-            }
+        return false;
+    }
+    private static boolean hasStarJoin(Plan left, Plan right) {
+        if (left instanceof TriplePattern lTP)
+            return hasStarJoin(lTP, right);
+        else if (right instanceof TriplePattern rTP)
+            return hasStarJoin(rTP, left);
+        for (int i = 0, n = left.opCount(); i < n; i++) {
+            if (left.op(i) instanceof TriplePattern t && hasStarJoin(t, right)) return true;
         }
-        return accCost;
+        return false;
+    }
+
+    private static boolean hasPathJoin(TriplePattern t0, Plan plan) {
+        if (plan instanceof TriplePattern t)
+            return t0.s.equals(t.o) || t0.o.equals(t.s);
+        for (int i = 0, n = plan.opCount(); i < n; i++) {
+            if (plan.op(i) instanceof TriplePattern t && (t.s.equals(t0.o) || t.o.equals(t0.s)))
+                return true;
+        }
+        return false;
+    }
+    private static boolean hasPathJoin(Plan left, Plan right) {
+        if (left instanceof TriplePattern l)
+            return hasPathJoin(l, right);
+        else if (right instanceof TriplePattern r)
+            return hasPathJoin(r, left);
+        for (int i = 0, n = left.opCount(); i < n; i++) {
+            if (left.op(i) instanceof TriplePattern t && hasPathJoin(t, right)) return true;
+        }
+        return false;
+    }
+
+    protected static int join(Plan prev, int prevCost, Plan right, int rightCost) {
+        long total;
+        Plan uwPrev = unwrapQueryOrMod(prev), uwRight = unwrapQueryOrMod(right);
+        if (hasStarJoin(uwPrev, uwRight))
+            return max(1, max(prevCost, rightCost)-1);
+        else if (hasPathJoin(uwPrev, uwRight))
+            total = (long)prevCost+rightCost;
+        else
+            total = (long)prevCost*rightCost;
+        return (int)min(I_MAX, total);
+    }
+    protected static long join(Plan[] ops, int rightIndex, int accCost, int rightCost) {
+        long total = (long)accCost * rightCost;
+        Plan right = unwrapQueryOrMod(ops[rightIndex]);
+        boolean star = false, path = false;
+        for (int i = 0; !star && i < rightIndex; i++) {
+            Plan prev = unwrapQueryOrMod(ops[i]);
+            star = hasStarJoin(prev, right);
+            if (!star && !path)
+                path = hasPathJoin(prev, right);
+        }
+        if (star)
+            total = max(1, max(accCost, rightCost) - 1);
+        if (path)
+            total = accCost+rightCost;
+        return total;
+    }
+
+    /**
+     * Count the number of vars in {@code right} that are not found in {@code leftPub}
+     * nor have a value set in {@code binding}
+     */
+    protected boolean isAsk(@Nullable Binding binding, Vars leftPub, Vars right) {
+        for (SegmentRope v : right) {
+            if (!leftPub.contains(v) && (binding == null || !binding.has(v)))
+                return false;
+        }
+        return true;
+    }
+
+    private static final int MAX_EXISTS_RIGHT_COST = COMPRESSED.preferredTermsPerBatch()/4;
+
+    protected int estimateExists(Plan plan, @Nullable Binding binding) {
+        Plan left = plan.left(), right = plan.right();
+        Vars lPub = left.publicVars(), rAll = right.allVars();
+        long lCost = estimate(left, binding);
+        int rAllSize = rAll.size();
+        if (isAsk(binding, lPub, rAll)) { // right side is an ASK
+            return joinWithAsk(lCost, rAllSize);
+        } else {
+            // right side may yield more than one row. evaluating it might cost,
+            // even if only 1 row is fetched.
+            var accBinding = new ArrayBinding(rAll, binding);
+            accBinding.ground(lPub);
+            int rCost = min(MAX_EXISTS_RIGHT_COST, estimate(right, accBinding)>>7);
+            return (int)min(I_MAX, lCost + rAllSize + lCost*rCost);
+        }
+    }
+
+    protected final int estimateLeftJoin(Plan plan, @Nullable Binding binding) {
+        Plan left = plan.left(), right = plan.right();
+        int lc = estimate(left, binding);
+        if (isAsk(binding, left.publicVars(), right.allVars()))
+            return lc; // LeftJoin(L, R) == L
+        var accBinding = new ArrayBinding(right.allVars(), binding);
+        accBinding.ground(left.publicVars());
+        return join(left, lc, right, estimate(right, accBinding));
+    }
+
+    protected int estimateJoin(Plan plan, @Nullable Binding binding) {
+        Plan[] ops = plan.operandsArray;
+        if (ops != null && ops.length > 2)
+            return estimateNaryJoin(plan, ops, binding);
+        Plan l = plan.left(), r = plan.right();
+        var accBinding = new ArrayBinding(r.allVars(), binding);
+        accBinding.ground(l.publicVars());
+        return join(l, estimate(l, binding), r, estimate(r, accBinding));
+    }
+
+    protected int estimateNaryJoin(Plan plan, Plan[] ops, @Nullable Binding outerBinding) {
+        var binding = new ArrayBinding(plan.allVars(), outerBinding);
+        int acc = estimate(ops[0], binding);
+        for (int i = 1; i < ops.length; i++) {
+            binding.ground(ops[i-1].publicVars());
+            Plan op = ops[i];
+            Vars allVars = op.allVars();
+            acc = isAsk(binding, Vars.EMPTY, allVars)
+                    ? joinWithAsk(acc, allVars.size())
+                    : (int)min(I_MAX, join(ops, i, acc, estimate(op, binding)));
+        }
+        return acc;
     }
 
     public int estimate(Plan plan, @Nullable Binding binding) {
         return switch (plan.type) {
-            case EMPTY -> 0;
-            case VALUES -> ((Values)plan).values().totalRows();
-            case TRIPLE -> estimate((TriplePattern) plan, binding);
-            case QUERY -> estimate((Query)plan, binding);
+            case EMPTY    -> 0;
+            case VALUES   -> ((Values)plan).values().totalRows();
+            case TRIPLE   -> estimate((TriplePattern) plan, binding);
+            case QUERY    -> estimate((Query)plan, binding);
             case MODIFIER -> estimateModifier((Modifier)plan, binding);
-            case UNION -> {
+            case UNION    -> {
                 int sum = 0;
                 for (int i = 0, n = plan.opCount(); i < n; i++)
                     sum += estimate(plan.op(i), binding);
                 yield sum;
             }
-            case MINUS,EXISTS,NOT_EXISTS -> estimateJoin(plan, binding, 8);
-            case JOIN,LEFT_JOIN -> estimateJoin(plan, binding, 2);
+            case MINUS,EXISTS,NOT_EXISTS -> estimateExists  (plan, binding);
+            case LEFT_JOIN               -> estimateLeftJoin(plan, binding);
+            case JOIN                    -> estimateJoin    (plan, binding);
         };
     }
+//
+//    /** Whether estimation for {@code ?s a :Class} are reliable */
+//    public boolean isSTypeClassReliable() { return false; }
+//
+//    /** Whether estimation for {@code ?s :predicate ?o} are reliable */
+//    public boolean isSPredicateOReliable() { return false; }
 
 }
