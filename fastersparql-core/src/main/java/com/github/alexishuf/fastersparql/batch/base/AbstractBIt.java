@@ -369,8 +369,12 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         var sb = new StringBuilder().append(cls2name(getClass())).append(':').append(id());
         if (type.showState())
             sb.append('[').append(state().name()).append(']');
+        if (type.compareTo(StreamNodeDOT.Label.SIMPLE) >= 0)
+            appendToSimpleLabel(sb);
         return sb.toString();
     }
+
+    protected void appendToSimpleLabel(StringBuilder sb) {}
 
     protected String toStringWithOperands(Collection<?> operands) {
         int taken = 0, n = operands.size();

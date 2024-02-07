@@ -88,6 +88,13 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         federator = new SingletonFederator(this, HDT, estimator);
     }
 
+    private void appendToSimpleLabel(StringBuilder sb, TriplePattern tp) {
+        String uri = endpoint.uri();
+        int begin = uri.lastIndexOf('/');
+        String file = begin < 0 ? uri : uri.substring(begin);
+        sb.append('\n').append(tp).append(file);
+    }
+
     @Override public SparqlClient.Guard retain() { return new RefGuard(); }
 
     @Override protected void doClose() {
@@ -148,7 +155,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             it = new EmptyBIt<>(HDT, vars);
         } else {
             var hdtIt = hdt.getTriples().search(new TripleID(s, p, o));
-            it = new HdtIteratorBIt(vars, tp.s, tp.p, tp.o, hdtIt);
+            it = new HdtIteratorBIt(vars, tp, hdtIt);
         }
         var metrics = Metrics.createIf(tp);
         if (metrics != null)
@@ -235,10 +242,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
-            String uri = endpoint.uri();
-            int begin = uri.lastIndexOf('/');
-            String file = begin < 0 ? uri : uri.substring(begin);
-            out.append('\n').append(tp).append(file);
+            HdtSparqlClient.this.appendToSimpleLabel(out, tp);
         }
 
         @Override protected void doRelease() {
@@ -368,11 +372,24 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final byte v0Role;
         private final byte v1Role;
         private final byte v2Role;
+        private @Nullable TriplePattern tp;
+        private final  Term s, p, o;
 
+        public HdtIteratorBIt(Vars vars, TriplePattern tp, IteratorTripleID it) {
+            this(vars, tp, tp.s, tp.p, tp.o, it);
+        }
         public HdtIteratorBIt(Vars vars, Term s, Term p, Term o, IteratorTripleID it) {
+            this(vars, null, s, p, o, it);
+        }
+        private HdtIteratorBIt(Vars vars, @Nullable TriplePattern tp, Term s, Term p, Term o,
+                              IteratorTripleID it) {
             super(HDT, vars);
             acquireRef();
             this.it = it;
+            this.tp = tp;
+            this.s = s;
+            this.p = p;
+            this.o = o;
 
             final int n = vars.size();
             // set v0Role
@@ -389,6 +406,12 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             // set v2Role
             if      (n > 2 && vars.indexOf(o) == 2) v2Role = 3;
             else                                    v2Role = 0;
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            if (tp == null)
+                tp = new TriplePattern(s, p, o);
+            HdtSparqlClient.this.appendToSimpleLabel(sb, tp);
         }
 
         private static void putRole(int col, HdtBatch dest, byte role, TripleID triple, int dictId) {
@@ -458,6 +481,10 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             try {
                 super.cleanup(cause);
             } finally { releaseRef(); }
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            HdtSparqlClient.this.appendToSimpleLabel(sb, right);
         }
 
         private long bind(Term term, long sourcedId, TripleComponentRole role,

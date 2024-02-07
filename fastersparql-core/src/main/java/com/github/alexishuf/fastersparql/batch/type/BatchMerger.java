@@ -5,6 +5,9 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.SIMPLE;
+
 public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
     protected final short[] sources;
     public final short @Nullable [] columns;
@@ -53,18 +56,16 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     @Override public String toString() {
-        String inner = label(StreamNodeDOT.Label.SIMPLE);
-        if (upstream != null)
-            return "<-"+inner+"- "+upstream;
-        return (columns == null ? "Merge(" : "Project") + inner + (columns == null ? ")" : "");
+        return label(SIMPLE)+'('+(upstream == null ? null : upstream.label(MINIMAL))+')';
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
         final StringBuilder sb = new StringBuilder();
+        String id = Integer.toHexString(System.identityHashCode(this));
         if (columns != null) {
-            sb.append(vars).append('@').append(System.identityHashCode(this));
+            sb.append("Project").append(vars).append('@').append(id);
         } else {
-            sb.append('[');
+            sb.append("Merge([");
             for (int i = 0, n = vars.size(); i < n; i++) {
                 if (sources[i] > 0) sb.append(vars.get(i)).append(", ");
             }
@@ -74,7 +75,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
                 if (sources[i] < 0) sb.append(vars.get(i)).append(", ");
             }
             if (sb.charAt(sb.length()-1) == ' ') sb.setLength(sb.length()-2);
-            sb.append("]");
+            sb.append("])@").append(id);
         }
         if (type.showState()) {
             sb.append("\nstate=").append(flags.render(state()))

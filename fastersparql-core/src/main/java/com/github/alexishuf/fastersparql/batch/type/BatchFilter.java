@@ -12,6 +12,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -95,12 +96,12 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
     }
 
     @Override public String toString() {
-        return label(StreamNodeDOT.Label.MINIMAL) + "<-" + upstream;
+        return label(MINIMAL)+'('+(upstream==null ? "null" : upstream.label(MINIMAL))+')';
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = new StringBuilder();
-        if (type == StreamNodeDOT.Label.MINIMAL)
+        if (type == MINIMAL)
             return StreamNodeDOT.minimalLabel(sb, this).toString();
         sb.append(rowFilter).append('@');
         sb.append(Integer.toHexString(System.identityHashCode(this)));

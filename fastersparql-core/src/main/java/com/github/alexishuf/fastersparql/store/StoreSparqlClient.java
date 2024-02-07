@@ -50,6 +50,7 @@ import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
@@ -69,6 +70,7 @@ import java.util.List;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.RecursiveTask;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
@@ -167,6 +169,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
     private static BatchType<?> maybeNative(BatchType<?> requested) {
         return PREFER_NATIVE ? TYPE : requested;
+    }
+
+    private static void appendToSimpleLabel(StringBuilder sb, SparqlEndpoint endpoint,
+                                            TriplePattern tp) {
+        String uri = endpoint.uri();
+        int begin = uri.lastIndexOf('/');
+        String file = begin < 0 ? uri : uri.substring(begin);
+        sb.append('\n').append(tp).append(file);
     }
 
     public class Guard extends RefGuard {
@@ -515,13 +525,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 yield new EmptyBIt<>(TYPE, vars);
             }
-            case OBJ         -> new  StoreValueBIt(vars, t.o,          spo. values(si, pi));
-            case PRE         -> new StoreSubKeyBIt(vars, t.p,          spo.subKeys(si, oi));
-            case PRE_OBJ     -> new   StorePairBIt(vars, t.p, t.o,     spo.  pairs(si));
-            case SUB         -> new  StoreValueBIt(vars, t.s,          ops. values(oi, pi));
-            case SUB_OBJ     -> new   StorePairBIt(vars, t.s, t.o,     pso.  pairs(pi));
-            case SUB_PRE     -> new   StorePairBIt(vars, t.p, t.s,     ops.  pairs(oi));
-            case SUB_PRE_OBJ -> new    StoreScanIt(vars, t.s, t.p, t.o);
+            case OBJ         -> new  StoreValueBIt(vars, t, t.o,          spo. values(si, pi));
+            case PRE         -> new StoreSubKeyBIt(vars, t, t.p,          spo.subKeys(si, oi));
+            case PRE_OBJ     -> new   StorePairBIt(vars, t, t.p, t.o,     spo.  pairs(si));
+            case SUB         -> new  StoreValueBIt(vars, t, t.s,          ops. values(oi, pi));
+            case SUB_OBJ     -> new   StorePairBIt(vars, t, t.s, t.o,     pso.  pairs(pi));
+            case SUB_PRE     -> new   StorePairBIt(vars, t, t.p, t.s,     ops.  pairs(oi));
+            case SUB_PRE_OBJ -> new    StoreScanIt(vars, t);
         };
     }
 
@@ -1143,10 +1153,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         @Override public String toString() { return super.toString()+'('+tp+')'; }
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
-            String uri = endpoint.uri();
-            int begin = uri.lastIndexOf('/');
-            String file = begin < 0 ? uri : uri.substring(begin);
-            out.append('\n').append(tp).append(file);
+            StoreSparqlClient.appendToSimpleLabel(out, endpoint, tp);
         }
 
         @Override protected int produceAndDeliver(int state) {
@@ -1936,14 +1943,21 @@ public class StoreSparqlClient extends AbstractSparqlClient
         /** Copy of {@link StoreSparqlClient#dictId} with better locality. */
         protected final short dictId;
         protected final byte term0Col, term1Col;
-        public StoreIteratorBIt(Vars outVars, int term0Col, int term1Col) {
+        private final TriplePattern tp;
+
+        public StoreIteratorBIt(Vars outVars, int term0Col, int term1Col, TriplePattern tp) {
             super(TYPE, outVars);
             this.dictId = (short) StoreSparqlClient.this.dictId;
             if (term0Col > 127 || term1Col > 127)
                 throw new IllegalArgumentException("too many columns");
             this.term0Col = (byte)term0Col;
             this.term1Col = (byte)term1Col;
+            this.tp = tp;
             acquireRef();
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            StoreSparqlClient.appendToSimpleLabel(sb, endpoint, tp);
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
@@ -1956,8 +1970,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
     final class StoreValueBIt extends StoreIteratorBIt {
         private final Triples.ValueIt vit;
 
-        public StoreValueBIt(Vars vars, Term valueVar, Triples.ValueIt vit) {
-            super(vars, vars.indexOf(valueVar), -1);
+        public StoreValueBIt(Vars vars, TriplePattern tp, Term valueVar, Triples.ValueIt vit) {
+            super(vars, vars.indexOf(valueVar), -1, tp);
             this.vit = vit;
             if (vars.size() > 1) throw new IllegalArgumentException("Expected 1 var");
         }
@@ -1977,8 +1991,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
     final class StorePairBIt extends StoreIteratorBIt {
         private final Triples.PairIt pit;
 
-        public StorePairBIt(Vars pubVars, Term subKeyVar, Term valueVar, Triples.PairIt pit) {
-            super(pubVars, pubVars.indexOf(subKeyVar), pubVars.indexOf(valueVar));
+        public StorePairBIt(Vars pubVars, TriplePattern tp, Term subKeyVar, Term valueVar, Triples.PairIt pit) {
+            super(pubVars, pubVars.indexOf(subKeyVar), pubVars.indexOf(valueVar), tp);
             this.pit = pit;
         }
 
@@ -1998,8 +2012,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
     final class StoreSubKeyBIt extends StoreIteratorBIt {
         private final Triples.SubKeyIt sit;
 
-        public StoreSubKeyBIt(Vars pubVars, Term subKeyVar, Triples.SubKeyIt sit) {
-            super(pubVars, pubVars.indexOf(subKeyVar), -1);
+        public StoreSubKeyBIt(Vars pubVars, TriplePattern tp, Term subKeyVar, Triples.SubKeyIt sit) {
+            super(pubVars, pubVars.indexOf(subKeyVar), -1, tp);
             this.sit = sit;
         }
 
@@ -2019,10 +2033,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final short dictId;
         private final byte sCol, pCol, oCol;
         private final Triples.ScanIt sit;
+        private final TriplePattern tp;
 
-        public StoreScanIt(Vars vars, Term sVar, Term pVar, Term oVar) {
+        public StoreScanIt(Vars vars, TriplePattern tp) {
             super(TYPE, vars);
-            int sCol = vars.indexOf(sVar), pCol = vars.indexOf(pVar), oCol = vars.indexOf(oVar);
+            int sCol = vars.indexOf(tp.s), pCol = vars.indexOf(tp.p), oCol = vars.indexOf(tp.o);
             if (sCol > 127 || pCol > 127 || oCol > 127)
                 throw new IllegalArgumentException("Too many vars");
             this.dictId = (short) StoreSparqlClient.this.dictId;
@@ -2030,7 +2045,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.pCol = (byte)pCol;
             this.oCol = (byte)oCol;
             this.sit = spo.scan();
+            this.tp = tp;
             acquireRef();
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            StoreSparqlClient.appendToSimpleLabel(sb, endpoint, tp);
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {
@@ -2132,6 +2152,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final @Nullable BatchFilter<B> rightFilter;
         private final boolean hasLexicalJoin;
         private final LocalityCompositeDict.@Nullable LocalityLexIt sLexIt, pLexIt, oLexIt;
+        private final TriplePattern tp;
 
         public StoreBindingBIt(BIt<B> left, BindType bindType, Plan right, TriplePattern tp,
                                long s, long p, long o, Vars projection,
@@ -2147,6 +2168,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.metrics = notifier == null ? null : notifier.bindQuery.metrics;
             this.ropeView = batchType == TYPE ? null : new TwoSegmentRope();
             this.dictId = (short)StoreSparqlClient.this.dictId;
+            this.tp = tp;
             Vars leftVars = left.vars();
 
             // detect and setup lexical joins: FILTER(str(?right) = str(?left))
@@ -2285,6 +2307,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     : batchType.merger(projection, leftVars, procRightFree);
             this.lb = batchType.create(leftVars.size());
             acquireRef();
+        }
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return Stream.of(left);
+        }
+
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            StoreSparqlClient.appendToSimpleLabel(sb, endpoint, tp);
         }
 
         @Override protected void cleanup(@Nullable Throwable cause) {

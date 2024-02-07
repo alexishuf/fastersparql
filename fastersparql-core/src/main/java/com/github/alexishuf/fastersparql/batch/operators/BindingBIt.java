@@ -10,13 +10,13 @@ import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     private static final int GUARDS_POOL_COL = GlobalAffinityShallowPool.reserveColumn();
@@ -53,6 +53,10 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     protected void addGuard(SparqlClient.Guard g) {
         //noinspection DataFlowIssue guards != null
         guards.add(g);
+    }
+
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
+        return Stream.of(bindQuery.bindings, inner);
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

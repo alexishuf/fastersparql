@@ -69,7 +69,7 @@ public class AskReceiver<B extends Batch<B>> implements Receiver<B> {
             if (plainResult != 0) sb.append(",HAS");
             sb.append(']');
         }
-        sb.append("<-").append(up.label(StreamNodeDOT.Label.MINIMAL));
+        sb.append('(').append(up.label(StreamNodeDOT.Label.MINIMAL)).append(')');
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
         return sb.toString();

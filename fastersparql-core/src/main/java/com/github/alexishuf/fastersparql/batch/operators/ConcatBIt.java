@@ -8,11 +8,13 @@ import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.stream.Stream;
 
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
@@ -59,6 +61,10 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     }
 
     /* --- --- --- implementations --- --- --- */
+
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
+        return sources.stream();
+    }
 
     @Override public @Nullable B nextBatch(@Nullable B b) {
         lock();
