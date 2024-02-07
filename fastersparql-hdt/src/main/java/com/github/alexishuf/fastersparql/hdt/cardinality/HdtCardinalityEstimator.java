@@ -79,9 +79,6 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         Term sTerm = binding == null ? tp.s : binding.getIf(tp.s);
         Term pTerm = binding == null ? tp.p : binding.getIf(tp.p);
         Term oTerm = binding == null ? tp.o : binding.getIf(tp.o);
-        long s = plain(dict, sTerm, SUBJECT);
-        long p = plain(dict, pTerm, PREDICATE);
-        long o = plain(dict, oTerm, OBJECT);
         int pattern = super.estimate(tp, binding);
         var peek = this.peek;
         if (peek == HdtEstimatorPeek.ALWAYS) {
@@ -92,11 +89,14 @@ public class HdtCardinalityEstimator extends PatternCardinalityEstimator {
         } else if (peek == HdtEstimatorPeek.STATISTICS && pTerm == GROUND) {
             peek = HdtEstimatorPeek.NEVER;
         }
-        return switch (peek) {
-            case NEVER      -> pattern;
-            case STATISTICS -> weightByPredicate(p, pattern);
-            case ALWAYS     -> (int)Math.max(peek(s, p, o), I_MAX);
-        };
+        if (peek == HdtEstimatorPeek.NEVER)
+            return pattern;
+        long p = plain(dict, pTerm, PREDICATE);
+        if (peek == HdtEstimatorPeek.STATISTICS)
+            return weightByPredicate(p, pattern);
+        long s = plain(dict, sTerm, SUBJECT);
+        long o = plain(dict, oTerm, OBJECT);
+        return (int)Math.max(peek(s, p, o), I_MAX);
     }
 
     private int weightByPredicate(long p, int pattern) {
