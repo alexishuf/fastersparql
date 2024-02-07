@@ -72,9 +72,19 @@ public class MeasureOptions {
             "for the recording. The JDK ships with \"default\" and \"profile\" configs")
     public String jfrConfigName = "default";
 
-    @Option(names = "--jfr-exclude-warmup", description = "If this and --jfr-dump are set, " +
-            "the warmup query executions will be excluded from the recording.")
-    public boolean jfrExcludeWarmup = false;
+    @Option(names = "--prof-warmup", description = "Combined with --jfr or --async-profiler," +
+            " will cause the warmup queries to also be profiled.")
+    public boolean profWarmup = false;
+
+    @Option(names = {"--async-profiler", "--ap"}, description = "Enable async-profiler during " +
+            "execution of queries. The async profiler will dump a JFR file to the location" +
+            "given in this option. If this option is not given async-profiler will not even " +
+            "be started. Federation/sources setup will not be recorded.")
+    public String asyncProfiler = null;
+
+    @Option(names = {"--async-profiler-exclude-warmup", "--ap-exclude-warmpup"}, description =
+            "If set async profiler will not be started before warmup queries are completed")
+    public boolean apExcludeWarmup = false;
 
     @Option(names = "--builtin-plans-json", description = "Same effect as --plans-json, but uses " +
             "a built-in JSON file")
@@ -114,14 +124,19 @@ public class MeasureOptions {
             return;
         if (ms > 1_000)
             log.info("cooldown({})", ms);
-        long start = Timestamp.nanoTime();
         var runtime = Runtime.getRuntime();
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
-        PoolCleaner.INSTANCE.sync();
-        if (ms > 50) uninterruptibleSleep(50);
+        PoolCleaner.INSTANCE.sync(); // sets unpooled refs to null, allowing collection
+        if (ms > 10 ||asyncProfiler != null) // null writes SHOULD be visible anyway
+            uninterruptibleSleep(10);
         System.gc();
-        IOUtils.fsync(ms - (Timestamp.nanoTime()-start)/1_000_000);
+
+        long start = Timestamp.nanoTime();
+        if (asyncProfiler != null) // ap sees into GC code, but we are not profiling GC
+            uninterruptibleSleep(50);
+
+        IOUtils.fsync(ms - (ms > 10 ? 10 : 0));
         uninterruptibleSleep(ms - (int)((Timestamp.nanoTime()-start)/1_000_000));
         double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
 

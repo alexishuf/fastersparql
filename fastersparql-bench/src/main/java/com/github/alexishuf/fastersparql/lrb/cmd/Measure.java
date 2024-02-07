@@ -30,6 +30,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
+import one.profiler.AsyncProfiler;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -40,6 +41,7 @@ import picocli.CommandLine.Mixin;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.ParseException;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -65,6 +67,7 @@ public class Measure implements Callable<Void>{
     public PlanRegistry plans;
 
     @Override public Void call() throws Exception {
+        loadProfilers();
         destDir = msrOp.destDir();
         var tasks = qryOp.queries().stream()
                          .map(q -> new MeasureTask(q, srcOp.selKind, srcOp.srcKind))
@@ -94,35 +97,90 @@ public class Measure implements Callable<Void>{
             }
             fed.addFedListener(fedListener);
             fed.addPlanListener(planListener);
-            Path jfrDest = null;
-            if (msrOp.jfr != null && !msrOp.jfr.isEmpty()) {
-                jfrDest = Path.of(msrOp.jfr);
-                var dir = jfrDest.getParent().toFile();
-                if (!dir.isDirectory() && !dir.mkdirs())
-                    throw new IOException("Could not mkdir dir for JFR dump "+jfrDest);
-                if (Files.isDirectory(jfrDest))
-                    throw new IOException("JFR dump already exists as dir: "+jfrDest);
-                jfr = new Recording(Configuration.getConfiguration(msrOp.jfrConfigName));
-                jfr.setDumpOnExit(true);
-                jfr.setDestination(Path.of(msrOp.jfr));
-                log.info("Will dump a JFR recording to {} at exit{}", jfrDest,
-                         msrOp.jfrExcludeWarmup ? "excluding warmup" : "");
-                if (!msrOp.jfrExcludeWarmup) jfr.start();
-            }
+            if (jfr != null && msrOp.profWarmup)
+                jfr.start();
+            asyncProfilerAllowed = asyncProfiler != null && msrOp.profWarmup;
             try {
                 warmup(tasks, fed);
-                if (jfr != null && msrOp.jfrExcludeWarmup)
+                if (jfr != null && !msrOp.profWarmup)
                     jfr.start();
+                asyncProfilerAllowed = asyncProfiler != null;
                 measure(tasks, fed);
             } finally {
+                stopAsyncProfilerIfActive();
                 if (jfr != null)  {
                     jfr.close();
                     postProcessJFR(jfrDest);
                 }
-
             }
         }
         return null;
+    }
+
+    private void mkdir(String string) throws IOException {
+        File file = new File(string);
+        var dir = file.getParentFile();
+        if (dir == null)
+            return; // cwd already exists
+        if (!dir.isDirectory() && !dir.mkdirs())
+            throw new IOException("Could not mkdir dir for file "+file);
+        if (file.isDirectory())
+            throw new IOException("File already exists as dir: "+file);
+    }
+
+    private void loadProfilers() throws IOException, ParseException {
+        if (msrOp.jfr != null && !msrOp.jfr.isEmpty()) {
+            mkdir(msrOp.jfr);
+            jfrDest = Path.of(msrOp.jfr);
+            jfr = new Recording(Configuration.getConfiguration(msrOp.jfrConfigName));
+            jfr.setDumpOnExit(true);
+            jfr.setDestination(jfrDest);
+            log.info("Will dump a JFR recording to {} at exit{}", jfrDest,
+                     msrOp.profWarmup ? " (including warmup)" : "");
+        }
+        if (msrOp.asyncProfiler != null && !msrOp.asyncProfiler.isEmpty()) {
+            mkdir(msrOp.asyncProfiler);
+            asyncProfiler = AsyncProfiler.getInstance();
+            asyncProfilerDest = Path.of(msrOp.asyncProfiler).toAbsolutePath();
+            asyncProfilerCmd = "resume,event=cpu,jfr,file="+msrOp.asyncProfiler;
+            log.info("Will dump a JFR by async-profiler to {} at exit{}",
+                     asyncProfilerDest, msrOp.profWarmup ? " (including warmup)" : "");
+        }
+    }
+
+    private static final int AP_WINDOW_MS = 10;
+    private void resumeAsyncProfilerIfAllowed() {
+        if (asyncProfilerAllowed && !asyncProfilerActive && asyncProfiler != null) {
+            Thread.yield();
+            Async.uninterruptibleSleep(AP_WINDOW_MS);
+            try {
+                asyncProfiler.execute(asyncProfilerCmd);
+                asyncProfilerActive  = true;
+                Thread.yield();
+                Async.uninterruptibleSleep(AP_WINDOW_MS);
+            } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(asyncProfilerDest);
+                } catch (IOException de) {
+                    log.error("Failed to delete stale {}: {}", asyncProfilerDest, de.getMessage());
+                }
+                log.error("Failed to start async-profiler", e);
+            }
+        }
+
+    }
+    private void stopAsyncProfilerIfActive() {
+        if (asyncProfilerActive && asyncProfiler != null) {
+            try {
+                asyncProfiler.execute("stop");
+                Thread.yield();
+                Async.uninterruptibleSleep(AP_WINDOW_MS);
+            } catch (IOException e) {
+                log.error("failed to stop async-profiler", e);
+            } finally {
+                asyncProfilerActive = false;
+            }
+        }
     }
 
     private static final String EXEC_SAMPLE = "jdk.ExecutionSample";
@@ -199,7 +257,6 @@ public class Measure implements Callable<Void>{
     private int run(Federation fed, MeasureTask task, int rep, int timeoutMs) {
         msrOp.updateWeakenDistinct(task.query());
         BatchConsumer consumer = consumer(task, rep);
-        long start = nanoTime();
         NettyChannelDebugger.reset();
         ResultJournal.clear();
         ThreadJournal.resetJournals();
@@ -207,6 +264,8 @@ public class Measure implements Callable<Void>{
             Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
         } catch (IOException ignored) { }
         StreamNode results = null;
+        resumeAsyncProfilerIfAllowed();
+        long startNs = nanoTime(), stopNs;
         try {
             if (plans != null) {
                 var plan        = requireNonNull(plans.createPlan(task.query()));
@@ -233,18 +292,22 @@ public class Measure implements Callable<Void>{
                 }
                 watchdog.stop();
             }
+            stopNs = nanoTime();
 //            try (var out = new PrintStream("/tmp/dump")) {
 //                NettyChannelDebugger.dumpAndFlushActive(out);
 //            }
         } catch (Throwable t) {
+            stopNs = nanoTime();
             consumer.finish(t);
             log.error("Error during rep {} of task={}:", rep, task, t);
+        } finally {
+            stopAsyncProfilerIfActive();
         }
         if (results instanceof Stateful s && s.stateName().contains("FAILED"))
             dump(task.query(), task.query().name(), currentPlan, results);
         if (consumer instanceof Checker<?> c && !c.isValid())
             dump(task.query(), task.query().name(), currentPlan, results);
-        return (int)((nanoTime()-start)/1_000_000L);
+        return (int)((stopNs - startNs)/1_000_000L);
     }
 
     @SuppressWarnings("unused")
@@ -291,6 +354,11 @@ public class Measure implements Callable<Void>{
     private @Nullable Metrics planMetrics;
     private @MonotonicNonNull BatchConsumer consumer;
     private @MonotonicNonNull Recording jfr;
+    private @MonotonicNonNull Path jfrDest;
+    private @MonotonicNonNull AsyncProfiler asyncProfiler;
+    private boolean asyncProfilerAllowed, asyncProfilerActive;
+    private @MonotonicNonNull Path asyncProfilerDest;
+    private @MonotonicNonNull String asyncProfilerCmd;
     private final Map<QueryName, Checker<?>> checkerConsumers = new HashMap<>();
     private final FedMetricsListener fedListener = new FedMetricsListener() {
         @Override public void accept(FedMetrics metrics) {

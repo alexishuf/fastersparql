@@ -136,8 +136,12 @@ class MeasureTest {
         if (nQueries == 0)
             fail("No queries match "+queries);
         File destDir = tempDir();
-        //String jfrDump = "/tmp/" + queries.replace(".*", "") + "-"
-        //               + (flowModel.name().substring(0, 2).toLowerCase()) + ".jfr";
+//        String jfrDump = "/home/alexis/fastersparql/" + queries.charAt(0)
+//                + '-' + sourceKind.name()
+//                + '-' + flowModel.name().substring(0, 2).toLowerCase()
+//                + '-' + (jsonPlans ? "fedxPlan" : "fsPlan")
+//                + ".jfr";
+//        String apDump = jfrDump.replace(".jfr", ".ap.jfr");
         List<String> args = new ArrayList<>(List.of("measure",
                 "--queries", queries,
                 "--source", sourceKind.name(),
@@ -149,7 +153,8 @@ class MeasureTest {
                 "--cool-ms", "1", // minimal amount, just to touch the code
                 "--reps", Integer.toString(nReps),
                 "--seed", "728305461",
-                //"--jfr", jfrDump,
+//                "--jfr", jfrDump,
+//                "--async-profiler", apDump,
                 "--no-weaken-distinct",
                 "--weaken-distinct-B",
                 "--consumer", consumer.name(),
