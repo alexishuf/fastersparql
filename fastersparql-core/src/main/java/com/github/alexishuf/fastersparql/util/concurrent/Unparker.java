@@ -58,6 +58,8 @@ public class Unparker {
     }
 
     public static void unpark(Thread thread) {
+        if (thread == null)
+            return;
         boolean unpark = true;
         if (tryLock()) {
             if (size < CAPACITY) {
