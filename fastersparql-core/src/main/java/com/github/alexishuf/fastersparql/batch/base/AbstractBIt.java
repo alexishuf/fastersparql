@@ -342,9 +342,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
         return this;
     }
 
-    @Override public void close() {
-        if (state() == State.ACTIVE)
-            onTermination(new BItClosedAtException(this));
+    @Override public final void close() {
+        tryCancel();
     }
 
     @Override public boolean tryCancel() {
