@@ -50,10 +50,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @SuppressWarnings("unused") @Override public int                  maxReadyItems()      { return maxItems; }
     @Override public @This CallbackBIt<B> maxReadyItems(int n) { maxItems = n; return this; }
 
-    @Override public boolean isTerminated() {
-        return state().isTerminated();
-    }
-
     @Override public boolean isComplete() {
         return state() == State.COMPLETED;
     }

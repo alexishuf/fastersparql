@@ -134,7 +134,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 try {
                     rb = inner.nextBatch(rb);
                 } catch (BItReadClosedException e) {
-                    if (state().isTerminated())
+                    if (isTerminated())
                         break;
                     throw e;
                 } finally {

@@ -15,6 +15,9 @@ public interface CompletableBatchQueue<B extends Batch<B>> extends BatchQueue<B>
      */
     boolean isTerminated();
 
+    /** Equivalent to {@code !}{@link #isTerminated()}. */
+    default boolean notTerminated() { return !isTerminated(); }
+
     /**
      * Whether this queue was marked as completed without error via a previous
      * {@code complete(null)} call while {@link #isTerminated()} was {@code false}.

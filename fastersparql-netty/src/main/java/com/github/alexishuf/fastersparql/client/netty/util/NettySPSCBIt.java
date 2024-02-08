@@ -47,7 +47,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     @Override public boolean canSendRequest() {
         if (!ownsLock())
             throw new IllegalStateException("not locked");
-        if (state().isTerminated())
+        if (isTerminated())
             return false;
         requestSent = true;
         return true;
@@ -132,7 +132,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     @Override public boolean tryCancel() {
         lock();
         try {
-            if (!state().isTerminated() && requestSent) {
+            if (notTerminated() && requestSent) {
                 cancelAfterRequestSent();
                 return true;
             }
@@ -143,7 +143,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     @Override public boolean cancel(boolean ack) {
         lock();
         try {
-            if (state().isTerminated())
+            if (isTerminated())
                 return false;
             if (!ack && requestSent && cancelAfterRequestSent())
                 return true; //cancelAfterRequestSent() sent a !cancel

@@ -171,6 +171,8 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     /* --- --- --- helpers --- --- --- */
 
     public State state() { return (State)STATE.getAcquire(this); }
+    public boolean isTerminated() { return ((State)STATE.getAcquire(this)).isTerminated(); }
+    public boolean notTerminated() { return !((State)STATE.getAcquire(this)).isTerminated(); }
 
     protected void        lock()      { lock(Thread.currentThread()); }
     protected boolean ownsLock()      { return plainWorkingThread == Thread.currentThread(); }
@@ -347,7 +349,7 @@ public abstract class AbstractBIt<B extends Batch<B>> implements BIt<B> {
     }
 
     @Override public boolean tryCancel() {
-        return !state().isTerminated() && onTermination(new BItClosedAtException(this));
+        return notTerminated() && onTermination(new BItClosedAtException(this));
     }
 
     protected String toStringNoArgs() {
