@@ -187,8 +187,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         unlock();
                         locked = false;
                         park(this);
-                        producer = null;
                         lock();
+                        producer = null;
                         locked = true;
                     } else {
                         f.append(b);
@@ -239,8 +239,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     unlock();
                     locked = false;
                     park(this);
-                    producer = null;
                     lock();
+                    producer = null;
                     locked = true;
                 } else { // put and return
                     dst.copy(b);
@@ -304,9 +304,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     park(this);
                 else
                     parkNanos(this, parkNs);
-                consumer = null;
                 if ((b = lockOrTakeReady(me)) != null)
                     break;
+                consumer = null;
                 locked = true;
             }
         } finally {
