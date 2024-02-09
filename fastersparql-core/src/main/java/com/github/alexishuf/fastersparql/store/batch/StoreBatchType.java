@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
-import com.github.alexishuf.fastersparql.batch.operators.IdConverterBIt;
+import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
@@ -60,7 +60,7 @@ public class StoreBatchType extends IdBatchType<StoreBatch> {
     }
 
     private static class StoreBatchConverterBIt<S extends Batch<S>>
-            extends IdConverterBIt<StoreBatch, S> {
+            extends ConverterBIt<StoreBatch, S> {
         private final int dictId;
 
         public StoreBatchConverterBIt(BIt<S> delegate, BatchType<StoreBatch> batchType,

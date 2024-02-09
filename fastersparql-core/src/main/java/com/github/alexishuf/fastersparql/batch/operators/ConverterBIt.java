@@ -43,11 +43,16 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
                 delegate.batchType().recycle(in);
                 return null;
             } else {
-                (out = batchType.empty(out, in.cols)).putConverting(in);
+                out = putConverting(batchType.empty(out, in.cols), in);
                 lastIn = in;
             }
         } finally { unlock(); }
         if (metrics != null) metrics.batch(out.totalRows());
+        return out;
+    }
+
+    protected B putConverting(B out, S in) {
+        out.putConverting(in);
         return out;
     }
 }
