@@ -49,6 +49,11 @@ public abstract class AbstractFlatMapBIt<B extends Batch<B>> extends AbstractBIt
         return super.maxBatch(size);
     }
 
+    @Override public @This BIt<B> eager() {
+        inner.eager();
+        return super.eager();
+    }
+
     @Override public @This BIt<B> tempEager() {
         inner.tempEager();
         return super.tempEager();

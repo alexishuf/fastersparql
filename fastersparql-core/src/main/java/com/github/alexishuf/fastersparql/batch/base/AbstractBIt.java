@@ -336,7 +336,9 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     }
 
     @Override public boolean tryCancel() {
-        return notTerminated() && onTermination(new BItClosedAtException(this));
+        if (isTerminated()) return false;
+        eager(); // makes nextBatch() return ASAP, if running
+        return onTermination(new BItClosedAtException(this));
     }
 
     protected String toStringNoArgs() {

@@ -57,6 +57,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -2317,6 +2318,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             StoreSparqlClient.appendToSimpleLabel(sb, endpoint, tp);
         }
 
+        @Override public @This BIt<B> eager() {
+            left.eager();
+            return super.eager();
+        }
+
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
                 // close() and failures from nextBatch() are rare. Rarely generating garbage is
@@ -2586,6 +2592,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (n != null) {
                     lb = n;
                 } else {
+                    if (eager)
+                        left.tempEager();
                     lb = left.nextBatch(null);
                     if (lb == null) return false;
                 }
