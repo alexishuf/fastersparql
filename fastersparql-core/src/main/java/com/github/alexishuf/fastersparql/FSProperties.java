@@ -576,7 +576,7 @@ public class FSProperties {
      *         {@code varsCount} columns.
      */
     public static @Positive int itQueueRows(BatchType<?> bt, int varsCount) {
-        return (itQueueBatches()*bt.preferredTermsPerBatch())/Math.max(1, varsCount);
+        return (itQueueBatches()*bt.preferredRowsPerBatch(varsCount));
     }
 
     /**

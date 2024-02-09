@@ -39,7 +39,7 @@ public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable, Req
     default int preferredRequestChunk() {
         int cols = Math.max(1, vars().size());
         int b = FSProperties.emitReqChunkBatches();
-        return Math.max(b, b*batchType().preferredTermsPerBatch()/cols);
+        return Math.max(b, b*batchType().preferredRowsPerBatch(cols));
     }
 
     /** Whether {@link Receiver#onComplete()} has been delivered downstream */

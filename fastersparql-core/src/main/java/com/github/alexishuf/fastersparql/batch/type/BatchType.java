@@ -172,6 +172,22 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
     public short preferredTermsPerBatch() { return PREFERRED_BATCH_TERMS; }
 
     /**
+     * Number rows equivalent to {@link #preferredTermsPerBatch()} for batches with the
+     * given number of columns.
+     *
+     * @param columns number of columns to consider
+     * @return {@code preferredTermsPerBatch()/max(1, columns)}.
+     */
+    public short preferredRowsPerBatch(int columns) {
+        return (short)(preferredTermsPerBatch()/Math.max(1, columns));
+    }
+
+    /** Equivalent to {@link #preferredRowsPerBatch(int)} with {@code vars.size()}. */
+    public short preferredRowsPerBatch(Vars vars) {
+        return (short)(preferredTermsPerBatch()/Math.max(1, vars.size()));
+    }
+
+    /**
      * Create a {@link RowBucket} able to hold {@code rowsCapacity} rows.
      *
      * @param rowsCapacity maximum number of rows to be held in the bucket.

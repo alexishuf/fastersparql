@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -36,11 +35,6 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      * of 4 bytes. Thus, we try to fill 2 cache lines with 1-column rows using a {@code TERM} batch.
      */
     int PREFERRED_MIN_BATCH = (2*64-16)/4;
-
-    /**
-     * Preferred value for {@link BIt#maxBatch(int)}.
-     */
-    int DEF_MAX_BATCH = LevelPool.LARGE_MAX_CAPACITY;
 
     /**
      * Value to use with {@link BIt#minWait(long, TimeUnit)} when one desires the lowest possible
