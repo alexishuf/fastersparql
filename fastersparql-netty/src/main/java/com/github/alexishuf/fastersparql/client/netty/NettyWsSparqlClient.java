@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
@@ -16,7 +15,10 @@ import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
-import com.github.alexishuf.fastersparql.exceptions.*;
+import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
+import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -155,7 +157,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         public WsBIt(ByteRope requestMsg, BatchType<B> batchType, Vars vars,
                      @Nullable ItBindQuery<B> bindQuery) {
-            super(batchType, vars, FSProperties.queueMaxRows(), NettyWsSparqlClient.this);
+            super(batchType, vars, NettyWsSparqlClient.this);
             this.bindQuery = bindQuery;
             this.handler = new WsHandler<>(NettyWsSparqlClient.this, requestMsg,
                                            this, true, bindQuery);

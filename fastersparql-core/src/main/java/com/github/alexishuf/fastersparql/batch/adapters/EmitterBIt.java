@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -12,7 +11,7 @@ public class EmitterBIt<B extends Batch<B>> extends SPSCBIt<B> implements Receiv
     private Throwable cancelCause = CancelledException.INSTANCE;
 
     public EmitterBIt(Emitter<B> emitter) {
-        super(emitter.batchType(), emitter.vars(), FSProperties.queueMaxRows());
+        super(emitter.batchType(), emitter.vars());
         this.upstream = emitter;
         emitter.subscribe(this);
         emitter.request(maxItems);

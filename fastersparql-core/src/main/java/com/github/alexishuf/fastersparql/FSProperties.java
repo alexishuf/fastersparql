@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
@@ -41,7 +42,7 @@ public class FSProperties {
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
     public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
-    public static final String BATCH_QUEUE_ROWS          = "fastersparql.batch.queue.rows";
+    public static final String IT_QUEUE_BATCHES          = "fastersparql.it.queue.batches";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
     public static final String OP_REDUCED_BATCHES        = "fastersparql.op.reduced.batches";
@@ -71,7 +72,7 @@ public class FSProperties {
     public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS/1_000;
     public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 32;
     public static final int     DEF_WS_IMPLICIT_REQUEST       = DEF_EMIT_REQ_CHUNK_BATCHES/4;
-    public static final int     DEF_BATCH_QUEUE_ROWS          = 1<<15;
+    public static final int     DEF_IT_QUEUE_BATCHES          = 4;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
     public static final int     DEF_OP_REDUCED_BATCHES        = 256;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
@@ -95,7 +96,7 @@ public class FSProperties {
     private static int CACHE_BATCH_MIN_SIZE            = -1;
     private static int CACHE_BATCH_MIN_WAIT_US         = -1;
     private static int CACHE_BATCH_MAX_WAIT_US         = -1;
-    private static int CACHE_BATCH_QUEUE_ROWS          = -1;
+    private static int CACHE_IT_QUEUE_BATCHES          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
     private static int CACHE_OP_REDUCED_BATCHES        = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
@@ -199,7 +200,7 @@ public class FSProperties {
         CACHE_BATCH_MIN_WAIT_US         = -1;
         CACHE_BATCH_MAX_WAIT_US         = -1;
         CACHE_WS_IMPLICIT_REQUEST       = -1;
-        CACHE_BATCH_QUEUE_ROWS          = -1;
+        CACHE_IT_QUEUE_BATCHES          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
         CACHE_OP_REDUCED_BATCHES        = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
@@ -551,16 +552,31 @@ public class FSProperties {
     }
 
     /**
-     * The default maximum number of rows (distributed among all queued batches) that a
-     * queue-backed {@link BIt} may hold by default.
+     * The default maximum number of batches queue-backed {@link BIt} may hold by default.
      *
-     * @return a positive number of rows. {@link Integer#MAX_VALUE} represents no upper bound
+     * @return a positive number of rows. {@link Integer#MAX_VALUE} represents no upper bound,
+     *         but values as small as 512 can cause innaceptable over production leading to
+     *         batch pool exhaustion, GC pauses, virtual thread contention, and general
+     *         malaise.
      */
-    public static @Positive int queueMaxRows() {
-        int i = CACHE_BATCH_QUEUE_ROWS;
+    public static @Positive int itQueueBatches() {
+        int i = CACHE_IT_QUEUE_BATCHES;
         if (i <= 0)
-            CACHE_BATCH_QUEUE_ROWS = i = readPositiveInt(BATCH_QUEUE_ROWS, DEF_BATCH_QUEUE_ROWS);
+            CACHE_IT_QUEUE_BATCHES = i = readPositiveInt(IT_QUEUE_BATCHES, DEF_IT_QUEUE_BATCHES);
         return i;
+    }
+
+    /**
+     * Turns {@link #itQueueBatches()} into an equivalent number of rows assuming
+     * default batch size and {@code varsCount} columns.
+     *
+     * @param bt {@link BatchType} of queued batches
+     * @param varsCount number of columns for the queued batches
+     * @return a number of rows that corresponds to {@link #itQueueBatches()} with
+     *         {@code varsCount} columns.
+     */
+    public static @Positive int itQueueRows(BatchType<?> bt, int varsCount) {
+        return (itQueueBatches()*bt.preferredTermsPerBatch())/Math.max(1, varsCount);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
@@ -27,7 +28,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.lang.System.nanoTime;
@@ -48,10 +48,14 @@ class MergeBItTest extends AbstractMergeBItTest {
         }
     }
 
+    private int itQueueRows() {
+        return FSProperties.itQueueRows(TERM, 1);
+    }
+
     @ParameterizedTest @ValueSource(ints = {3, 3*2, 3*4, 3*8, 3*16, 3*100})
     void testCloseBlockedDrainers(int n) throws Exception {
         for (int repetition = 0; repetition < 16; repetition++) {
-            var sources = range(0, n).mapToObj(_ -> new SPSCBIt<>(TERM, X, queueMaxRows())).toList();
+            var sources = range(0, n).mapToObj(_ -> new SPSCBIt<>(TERM, X, itQueueRows())).toList();
             var active = new AtomicBoolean(true);
             Thread feeder = null;
             try (var it = new MergeBIt<>(sources, TERM, X)) {
@@ -88,9 +92,9 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWait() {
         int wait = 50;
-        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -106,9 +110,9 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWaitMerging() {
         int wait = 50, tol = 20;
-        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -128,9 +132,9 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMinWaitMergingConcurrent() throws Exception {
         int wait = 50, tol = wait/2;
-        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s3 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2, s3), TermBatchType.TERM, X)) {
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
@@ -156,8 +160,8 @@ class MergeBItTest extends AbstractMergeBItTest {
 
     @Test void testMaxWait() {
         int min = 20, max = 100;
-        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
-             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, queueMaxRows());
+        try (var s1 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
+             var s2 = new SPSCBIt<>(TermBatchType.TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2), TermBatchType.TERM, X)) {
             it.minBatch(2).minWait(min, MILLISECONDS).maxWait(max, MILLISECONDS);
 

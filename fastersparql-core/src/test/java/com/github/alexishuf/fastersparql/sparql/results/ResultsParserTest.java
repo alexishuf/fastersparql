@@ -16,7 +16,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.ByteBuffer;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -119,7 +118,7 @@ class ResultsParserTest {
     }
 
     private void singleFeed(ResultsParser.Factory factory, Results ex, SegmentRope input, RopeFac ropeFac) {
-        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars(), queueMaxRows())) {
+        try (var dst = new SPSCBIt<>(TermBatchType.TERM, ex.vars())) {
             var parser = factory.create(dst);
             Rope copy = ropeFac.create(input, 0, input.len());
             try {

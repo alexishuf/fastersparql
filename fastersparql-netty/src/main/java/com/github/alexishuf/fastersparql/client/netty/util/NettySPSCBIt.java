@@ -22,9 +22,8 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     private boolean backPressured, requestSent;
     protected @MonotonicNonNull Channel lastChannel;
 
-    public NettySPSCBIt(BatchType<B> batchType, Vars vars, int maxBatches,
-                        SparqlClient client) {
-        super(batchType, vars, maxBatches);
+    public NettySPSCBIt(BatchType<B> batchType, Vars vars, SparqlClient client) {
+        super(batchType, vars);
         this.client = client;
     }
 

@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
@@ -128,8 +127,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable NettyHandler handler;
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), FSProperties.queueMaxRows(),
-                  NettySparqlClient.this);
+            super(batchType, query.publicVars(), NettySparqlClient.this);
             this.request = createRequest(query);
             acquireRef();
             request();

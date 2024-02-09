@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -17,6 +18,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static java.lang.Thread.currentThread;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.concurrent.locks.LockSupport.*;
 
@@ -39,6 +41,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     protected int maxItems;
     private Thread consumer, producer;
 
+    public SPSCBIt(BatchType<B> batchType, Vars vars) {
+        this(batchType, vars, FSProperties.itQueueRows(batchType, vars.size()));
+    }
     public SPSCBIt(BatchType<B> batchType, Vars vars, int maxItems) {
         super(batchType, vars);
         this.maxItems = maxItems;

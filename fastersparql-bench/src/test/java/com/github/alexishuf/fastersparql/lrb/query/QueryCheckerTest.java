@@ -1,12 +1,10 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
-import org.apache.commons.logging.LogFactory;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -89,7 +87,7 @@ class QueryCheckerTest {
                 else                finish.completeExceptionally(error);
             }
         };
-        var it = new SPSCBIt<>(bt, qry.parsed().publicVars(), FSProperties.queueMaxRows());
+        var it = new SPSCBIt<>(bt, qry.parsed().publicVars());
         Thread.startVirtualThread(() -> {
             try {
                 assertNotNull(ex);

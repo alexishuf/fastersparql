@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -122,7 +121,7 @@ class QueryNameTest {
         serializer.serializeTrailer(sink);
 
         //parse
-        try (var parsed = new SPSCBIt<>(type, vars, FSProperties.queueMaxRows())) {
+        try (var parsed = new SPSCBIt<>(type, vars)) {
             var parser = createParser(format, parsed);
             parser.feedShared(sink);
             parser.feedEnd();

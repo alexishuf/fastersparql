@@ -21,10 +21,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 class QueryRunnerTest {
     @ParameterizedTest @ValueSource(booleans = {false, true})
@@ -40,7 +38,7 @@ class QueryRunnerTest {
         var slow = new AbstractSparqlClient(SparqlEndpoint.parse("http://example.org/sparql")) {
             @SuppressWarnings("unchecked") @Override
             protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
-                var it = new SPSCBIt<>(bt, Vars.of("x"), queueMaxRows());
+                var it = new SPSCBIt<>(bt, Vars.of("x"));
                 Thread.startVirtualThread(() -> {
                     for (int i = 0; i < 4; i++) {
                         try { Thread.sleep(100); } catch (InterruptedException ignored) {}
@@ -71,9 +69,9 @@ class QueryRunnerTest {
         assertTrue(ms < 1_100, "run to slow");
         assertEquals(TermBatch.of(termList(0), termList(1), termList(2), termList(3)), acc[0]);
         if (emit)
-            assertTrue(cause[0] instanceof FSCancelledException);
+            assertInstanceOf(FSCancelledException.class, cause[0]);
         else
-            assertTrue(cause[0] instanceof BItReadClosedException);
+            assertInstanceOf(BItReadClosedException.class, cause[0]);
         slow.close();
     }
 

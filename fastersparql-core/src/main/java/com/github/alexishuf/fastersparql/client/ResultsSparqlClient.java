@@ -35,7 +35,6 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static com.github.alexishuf.fastersparql.FSProperties.queueMaxRows;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.Results.*;
@@ -337,7 +336,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
         if (usesBindingAwareProtocol()) {
             var batchType = bq.bindings.batchType();
-            var cb = new SPSCBIt<>(batchType, expected.vars(), queueMaxRows());
+            var cb = new SPSCBIt<>(batchType, expected.vars());
             Thread.startVirtualThread(() -> {
                 Thread.currentThread().setName("feeder-"+endpoint+"-"+cb);
                 try {
