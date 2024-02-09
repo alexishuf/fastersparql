@@ -11,21 +11,34 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.OutputStreamSink;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import static java.lang.Thread.ofPlatform;
+import static java.lang.Thread.NORM_PRIORITY;
 
 public final class QueryRunner {
     private static final Logger log = LoggerFactory.getLogger(QueryRunner.class);
+    private static final ExecutorService drainerService
+            = Executors.newCachedThreadPool(new ThreadFactory() {
+        private final ThreadGroup group = Thread.currentThread().getThreadGroup();
+        private final AtomicInteger nextThreadId = new AtomicInteger();
+
+        @Override public Thread newThread(@NonNull Runnable r) {
+            var t = new Thread(group, r, "QueryRunner-"+nextThreadId.getAndIncrement());
+            t.setDaemon(true);
+            if (t.getPriority() != NORM_PRIORITY)
+                t.setPriority(NORM_PRIORITY);
+            return t;
+        }
+    });
 
     public abstract static class BatchConsumer {
         public final BatchType<?> batchType;
@@ -87,20 +100,33 @@ public final class QueryRunner {
     public static <B extends Batch<B>> void drain(BIt<B> it, BatchConsumer consumer,
                                                   long timeoutMs) {
         if (it != null) {
-            var thread = ofPlatform().name("QueryRunner").start(() -> drain(it, consumer));
-            boolean interrupted = false, kill;
+            Future<?> task = drainerService.submit(() -> drain(it, consumer));
+            boolean interrupted = false, cancel;
             try {
-                kill = !thread.join(Duration.ofMillis(timeoutMs));
+                task.get(timeoutMs, TimeUnit.MILLISECONDS);
+                cancel = false;
             } catch (InterruptedException e) {
-                kill = interrupted = true;
+                cancel = interrupted = true;
+            } catch (ExecutionException e) {
+                log.error("Unexpected {} while draining {} to {}",
+                          e.getCause().getClass(), it, consumer, e);
+                cancel = false;
+            } catch (TimeoutException e) {
+                cancel = true;
             }
-            if (kill) {
-                it.close();
-                while (true) {
-                    try {
-                        thread.join();
-                        break;
-                    } catch (InterruptedException e) { interrupted = true; }
+            if (cancel) {
+                try {
+                    it.tryCancel();
+                } catch (Throwable t) {
+                    log.info("Cancel after timeout on {} failed", it, t);
+                    task.cancel(true);
+                }
+                try {
+                    task.get();
+                } catch (InterruptedException e) {
+                    log.info("Interrupted, leaking post-cancel task for {}", it);
+                } catch (ExecutionException t) {
+                    log.warn("Unexpected exception by post-cancel task for {}", it, t);
                 }
             }
             if (interrupted)
