@@ -38,6 +38,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 
+import static com.github.alexishuf.fastersparql.FSProperties.itQueueBatches;
 import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 
 public class NativeBind {
@@ -81,8 +82,9 @@ public class NativeBind {
         var leftVars = left.vars();
         var nOps = right.opCount();
         var queues = new ArrayList<SPSCBIt<B>>(nOps);
+        int maxRows = bt.preferredRowsPerBatch(leftVars);
         for (int i = 0; i < nOps; i++)
-            queues.add(new SPSCBIt<>(bt, leftVars, left.maxBatch()));
+            queues.add(new SPSCBIt<>(bt, leftVars, maxRows));
 
         Thread scatter = Thread.ofVirtual().unstarted(() -> {
             Thread.currentThread().setName("Scatter-"+(int)SCATTER_NEXT_ID.getAndAddAcquire(1));
