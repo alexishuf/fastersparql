@@ -262,6 +262,15 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      */
     boolean tryCancel();
 
+    /**
+     * Get the current state without ensuring any memory ordering semantics nor expecting
+     * or granting exclusive access. The value returned by this method might be stale even
+     * before control returns to the caller.
+     *
+     * @return the current {@link State}
+     */
+    State state();
+
     enum State {
         ACTIVE,
         COMPLETED,

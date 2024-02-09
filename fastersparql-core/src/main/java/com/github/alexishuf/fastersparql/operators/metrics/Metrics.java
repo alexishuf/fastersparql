@@ -65,6 +65,7 @@ public class Metrics implements MetricsFeeder {
         private long totalNanosPerLeftRow;
         private long leftRowReceived;
         private long totalRightMatches, rightMatches;
+        private int rightBatches;
 
         public JoinMetrics(boolean isLast) {
             this.isLast = isLast;
@@ -97,10 +98,14 @@ public class Metrics implements MetricsFeeder {
         }
 
         @Override public void batch(int n) {
+            ++rightBatches;
             rightMatches += n;
             if (isLast)
                 Metrics.this.batch(n);
         }
+
+        @Override public long batches() {return rightBatches;}
+        @Override public long    rows() {return rightMatches;}
 
         @Override public void completeAndDeliver(@Nullable Throwable cause, boolean cancelled) {
             bindingExhausted(Timestamp.nanoTime());
@@ -174,6 +179,9 @@ public class Metrics implements MetricsFeeder {
         rows += n;
         ++batches;
     }
+
+    @Override public long batches() { return batches; }
+    @Override public long rows()    { return rows; }
 
     @Override public void completeAndDeliver(@Nullable Throwable t, boolean cancelled) {
         if (delivered) return;

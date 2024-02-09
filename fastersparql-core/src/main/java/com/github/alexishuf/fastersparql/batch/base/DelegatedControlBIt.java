@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -19,11 +20,13 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.BIt.State.*;
 import static com.github.alexishuf.fastersparql.batch.base.AbstractBIt.cls2name;
 import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
 
 public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>> implements BIt<B> {
     private static final Logger log = LoggerFactory.getLogger(DelegatedControlBIt.class);
+    private static final boolean STATS_ENABLED = FSProperties.itStats();
     public static final VarHandle OWNER;
     static {
         try {
@@ -36,10 +39,11 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
     protected BIt<S> delegate;
     @SuppressWarnings("unused") private @Nullable Thread plainOwner;
     private short lockDepth;
-    private boolean terminated;
+    private State state = ACTIVE;
     protected final BatchType<B> batchType;
     protected final Vars vars;
     protected @Nullable MetricsFeeder metrics;
+    private long batches, rows;
 
     public DelegatedControlBIt(BIt<S> delegate, BatchType<B> batchType, Vars vars) {
         this.delegate = delegate;
@@ -69,17 +73,21 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
             OWNER.setRelease(this, null);
     }
 
-    protected boolean isTerminated() { return terminated; }
+    protected boolean isTerminated() { return state.isTerminated(); }
 
     protected abstract void cleanup(boolean cancelled, @Nullable Throwable error);
 
     protected boolean onTermination(boolean cancelled, @Nullable Throwable error) {
         lock();
         try {
-            if (!terminated) {
-                terminated = true;
-                if (metrics != null)
-                    metrics.completeAndDeliver(error, cancelled);
+            if (!isTerminated()) {
+                state = cancelled ? CANCELLED : error == null ? COMPLETED : FAILED;
+                try {
+                    if (metrics != null)
+                        metrics.completeAndDeliver(error, cancelled);
+                } catch (Throwable t) {
+                    log.warn("Ignoring failure to deliver metrics from {} to {}", this, metrics, t);
+                }
                 try {
                     cleanup(cancelled, error);
                 } catch (Throwable t) {
@@ -102,9 +110,9 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         return done;
     }
 
-    @Override public BatchType<B> batchType() { return batchType; }
-
-    @Override public final Vars vars()    { return vars; }
+    @Override public       BatchType<B> batchType() { return batchType; }
+    @Override public final Vars         vars()      { return vars; }
+    @Override public       State        state()     { return state; }
 
     @Override public @This BIt<B> metrics(@Nullable MetricsFeeder metrics) {
         this.metrics = metrics;
@@ -118,10 +126,47 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
-        var sb = new StringBuilder().append(cls2name(getClass())).append('(');
+        var sb = selfLabel(type);
+        if (type.showState())
+            sb.append('[').append(state).append(']');
+        sb.append('(');
         sb.append(delegate.label(StreamNodeDOT.Label.MINIMAL)).append(')');
+        State delegateState;
+        if (type.showState() && (delegateState=delegate.state()) != state)
+            sb.append("\n delegate is ").append(delegateState);
+        if (type.showStats())
+            appendStatsToLabel(sb);
         return sb.toString();
     }
+
+    private void appendStatsToLabel(StringBuilder sb) {
+        var m = metrics;
+        if (STATS_ENABLED || m != null) {
+            long batches = this.batches, rows = this.rows;
+            if (!STATS_ENABLED) {
+                batches = m.batches();
+                rows    = m.rows();
+            }
+            sb.append("\ndelivered ").append(rows);
+            sb.append(" rows in ").append(batches).append(" batches");
+        }
+    }
+
+    protected StringBuilder selfLabel(StreamNodeDOT.Label type) {
+        return new StringBuilder().append(cls2name(getClass()));
+    }
+
+    protected void onNextBatch(B b) {
+        var m = metrics;
+        int batchRows = STATS_ENABLED || m != null ? b.totalRows() : 0;
+        if (STATS_ENABLED) {
+            ++batches;
+            rows += batchRows;
+        }
+        if (m != null)
+            m.batch(batchRows);
+    }
+
 
     @Override public BIt<B> preferred() {
         delegate.preferred();

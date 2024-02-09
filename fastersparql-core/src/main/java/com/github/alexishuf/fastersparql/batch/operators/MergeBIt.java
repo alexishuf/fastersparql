@@ -109,7 +109,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 complete(e);
         } catch (TerminatedException|CancelledException e) {
             batchType.recycle(b);
-            if (!isTerminated())
+            if (notTerminated())
                 complete(new Exception("Unexpected "+e.getClass().getSimpleName()));
         } catch (Throwable t) {
             complete(t);

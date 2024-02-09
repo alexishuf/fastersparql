@@ -9,12 +9,14 @@ import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -40,6 +42,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     private long fillingStart = Timestamp.ORIGIN;
     protected int maxItems;
     private Thread consumer, producer;
+    private @Nullable StreamNode upstream;
 
     public SPSCBIt(BatchType<B> batchType, Vars vars) {
         this(batchType, vars, FSProperties.itQueueRows(batchType, vars.size()));
@@ -52,7 +55,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- properties --- --- --- */
 
-    @SuppressWarnings("unused") @Override public int                  maxReadyItems()      { return maxItems; }
+    @SuppressWarnings("unused")
+    @Override public int                  maxReadyItems()      { return maxItems; }
     @Override public @This CallbackBIt<B> maxReadyItems(int n) { maxItems = n; return this; }
 
     @Override public boolean isComplete() {
@@ -66,6 +70,38 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public @Nullable Throwable error() {
         if (state() != State.FAILED) return null;
         return error == null ? new RuntimeException("unknown error") :  error;
+    }
+    /* --- --- --- StreamNode --- --- --- */
+
+    public @This SPSCBIt<B> upstream(StreamNode node) {
+        upstream = node;
+        return this;
+    }
+
+    @Override public Stream<? extends StreamNode> upstreamNodes() {
+        return Stream.ofNullable(upstream);
+    }
+
+    @Override protected void appendStateToLabel(StringBuilder sb) {
+        super.appendStateToLabel(sb);
+        long rows = 0;
+        boolean locked = tryLock(); // we are likely to be called in case of a deadlock
+        try {
+            //noinspection unchecked
+            B ready = (B) READY.getOpaque(this);
+            try {
+                rows += ready.totalRows();
+            } catch (Throwable ignored) {}
+            B filling = this.filling;
+            try {
+                rows += filling == null ? 0 : filling.totalRows();
+            } catch (Throwable ignored) {}
+        } finally {
+            if (locked)
+                unlock();
+
+        }
+        sb.append("\nqueuedRows=").append(rows);
     }
 
     /* --- --- --- helper methods --- --- --- */

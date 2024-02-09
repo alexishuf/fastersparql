@@ -159,15 +159,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                      @Nullable ItBindQuery<B> bindQuery) {
             super(batchType, vars, NettyWsSparqlClient.this);
             this.bindQuery = bindQuery;
+            if (bindQuery != null)
+                upstream(bindQuery.bindings);
             this.handler = new WsHandler<>(NettyWsSparqlClient.this, requestMsg,
                                            this, true, bindQuery);
             acquireRef();
             handler.requestRows(Long.MAX_VALUE);
             request();
-        }
-
-        @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return Stream.ofNullable(bindQuery == null ? null : bindQuery.bindings);
         }
 
         @Override public String journalName() {

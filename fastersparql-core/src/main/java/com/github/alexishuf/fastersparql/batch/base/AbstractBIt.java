@@ -34,6 +34,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     private static final AtomicInteger nextId = new AtomicInteger(1);
     private static final Logger log = LoggerFactory.getLogger(AbstractBIt.class);
     private static final boolean IS_DEBUG_ENABLED = log.isDebugEnabled();
+    private static final boolean STATS_ENABLED = FSProperties.itStats();
     protected static final VarHandle STATE;
 
     static {
@@ -46,7 +47,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
 
     protected long minWaitNs;
     protected long maxWaitNs;
-    protected int minBatch = 1, maxBatch = BIt.DEF_MAX_BATCH, id = 0;
+    protected int minBatch = 1, maxBatch, id = 0;
     @SuppressWarnings("CanBeFinal") protected State plainState = State.ACTIVE;
     protected boolean needsStartTime = false, eager = false;
     protected final short nColumns;
@@ -54,10 +55,12 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     protected final BatchType<B> batchType;
     protected @Nullable MetricsFeeder metrics;
     protected final Vars vars;
+    protected long batches, rows;
 
     public AbstractBIt(BatchType<B> batchType, Vars vars) {
         this.batchType = batchType;
         this.vars = vars;
+        this.maxBatch = Math.max(minBatch, batchType.preferredRowsPerBatch(vars));
         int nColumns = vars.size();
         if (nColumns > Short.MAX_VALUE)
             throw new IllegalArgumentException("columns too large");
@@ -167,8 +170,9 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
 
     /* --- --- --- helpers --- --- --- */
 
-    public State state() { return (State)STATE.getAcquire(this); }
-    public boolean isTerminated() { return ((State)STATE.getAcquire(this)).isTerminated(); }
+    @Override public State state() { return (State)STATE.getAcquire(this); }
+
+    public boolean  isTerminated() { return  ((State)STATE.getAcquire(this)).isTerminated(); }
     public boolean notTerminated() { return !((State)STATE.getAcquire(this)).isTerminated(); }
 
     /**
@@ -184,7 +188,13 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     protected final void onNextBatch(@Nullable B b) {
         if (b == null) return;
         var m = metrics;
-        if (m != null) m.batch(b.totalRows());
+        int batchRows = STATS_ENABLED || m != null ? b.totalRows() : 0;
+        if (STATS_ENABLED) {
+            ++batches;
+            rows += batchRows;
+        }
+        if (m != null)
+            m.batch(batchRows);
         eager = false;
     }
 
@@ -237,7 +247,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
         minWaitNs = FSProperties.batchMinWait(TimeUnit.NANOSECONDS);
         maxWaitNs = FSProperties.batchMaxWait(TimeUnit.NANOSECONDS);
         minBatch  = FSProperties.batchMinSize();
-        maxBatch = Math.max(minBatch, DEF_MAX_BATCH);
+        maxBatch = Math.max(minBatch, batchType.preferredRowsPerBatch(vars));
         updatedBatchConstraints();
         return this;
     }
@@ -330,7 +340,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     }
 
     protected String toStringNoArgs() {
-        return cls2name(getClass())+'@'+id();
+        return label(StreamNodeDOT.Label.SIMPLE);
     }
 
     static String cls2name(Class<?> cls) {
@@ -344,14 +354,36 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     @Override public String toString() { return toStringNoArgs(); }
 
     @Override public String label(StreamNodeDOT.Label type) {
-        var sb = new StringBuilder().append(cls2name(getClass())).append(':').append(id());
+        var sb = minimalLabel();
         if (type.showState())
             sb.append('[').append(state().name()).append(']');
         if (type.compareTo(StreamNodeDOT.Label.SIMPLE) >= 0)
             appendToSimpleLabel(sb);
+        if (type.showState())
+            appendStateToLabel(sb);
+        if (type.showStats())
+            appendStatsToLabel(sb);
         return sb.toString();
     }
 
+    protected StringBuilder minimalLabel() {
+        return new StringBuilder().append(cls2name(getClass())).append(':').append(id());
+    }
+
+    protected void appendStateToLabel(StringBuilder sb) {}
+
+    protected void appendStatsToLabel(StringBuilder sb) {
+        MetricsFeeder m = this.metrics;
+        if (m != null || STATS_ENABLED) {
+            long batches = this.batches, rows = this.rows;
+            if (!STATS_ENABLED) {
+                batches = m.batches();
+                rows    = m.rows();
+            }
+            sb.append("\ndelivered ").append(rows);
+            sb.append(" rows in ").append(batches).append(" batches");
+        }
+    }
     protected void appendToSimpleLabel(StringBuilder sb) {}
 
     protected String toStringWithOperands(Collection<?> operands) {

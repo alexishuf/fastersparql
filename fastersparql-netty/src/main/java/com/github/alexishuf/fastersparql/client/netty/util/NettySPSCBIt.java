@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.util.ClientRetry;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -67,18 +66,16 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
 
     /* --- --- --- BIt --- --- --- */
 
-    @Override public String label(StreamNodeDOT.Label type) {
-        var sb = new StringBuilder().append(journalName()).append(':').append(id());
-        if (type.showState())
-            sb.append('[').append(state()).append(']');
-        if (type != StreamNodeDOT.Label.MINIMAL) {
-            sb.append("\nch=").append(lastChannel);
-            String u = client.endpoint().uri();
-            if (u.startsWith("file:///"))
-                u = u.replaceFirst("^.*/", "");
-            sb.append('\n').append(u);
-        }
-        return sb.toString();
+    @Override protected StringBuilder minimalLabel() {
+        return new StringBuilder().append(journalName());
+    }
+
+    @Override protected void appendToSimpleLabel(StringBuilder sb) {
+        sb.append("\nch=").append(lastChannel);
+        String u = client.endpoint().uri();
+        if (u.startsWith("file:///"))
+            u = u.replaceFirst("^.*/", "");
+        sb.append('\n').append(u);
     }
 
     /* --- --- --- SPSCBIt --- --- --- */

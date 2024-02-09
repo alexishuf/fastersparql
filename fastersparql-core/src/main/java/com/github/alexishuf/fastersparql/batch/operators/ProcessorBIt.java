@@ -8,14 +8,9 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static com.github.alexishuf.fastersparql.exceptions.FSCancelledException.isCancel;
 
 
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
-    private static final Logger log = LoggerFactory.getLogger(ProcessorBIt.class);
     protected final BatchProcessor<B> processor;
 
     public ProcessorBIt(BIt<B> delegate, BatchProcessor<B> processor,
@@ -32,17 +27,12 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         return new ProcessorBIt<>(in, p, null);
     }
 
-    @Override public String label(StreamNodeDOT.Label type) {
-        return processor.label(type);
+    protected StringBuilder selfLabel(StreamNodeDOT.Label type) {
+        var pt = type == StreamNodeDOT.Label.MINIMAL ? type : StreamNodeDOT.Label.SIMPLE;
+        return new StringBuilder().append(processor.label(pt));
     }
 
     protected void cleanup(boolean cancelled, @Nullable Throwable error) {
-        try {
-            if (metrics != null)
-                metrics.completeAndDeliver(error, isCancel(error));
-        } catch (Throwable t) {
-            log.error("{}: Failed to deliver metrics {}", this, metrics, t);
-        }
         processor.release();
         if (error != null)
             delegate.close();
@@ -64,8 +54,8 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                     }
                 } finally { unlock(); }
             }
-            if      (b       == null) onTermination(false, null); //exhausted
-            else if (metrics != null) metrics.batch(b.totalRows());
+            if   (b == null) onTermination(false, null); //exhausted
+            else             onNextBatch(b);
             return b;
         } catch (Throwable t) {
             onTermination(false, t); //error

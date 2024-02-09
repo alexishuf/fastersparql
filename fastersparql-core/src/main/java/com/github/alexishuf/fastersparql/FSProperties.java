@@ -43,6 +43,7 @@ public class FSProperties {
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
     public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
     public static final String IT_QUEUE_BATCHES          = "fastersparql.it.queue.batches";
+    public static final String IT_STATS                  = "fastersparql.it.stats";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
     public static final String OP_REDUCED_BATCHES        = "fastersparql.op.reduced.batches";
@@ -81,7 +82,6 @@ public class FSProperties {
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
-    public static final boolean DEF_EMIT_STATS                = false;
     public static final boolean DEF_EMIT_STATS_LOG            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final boolean DEF_STORE_PREFER_IDS          = true;
@@ -109,6 +109,7 @@ public class FSProperties {
     private static Boolean CACHE_USE_UNSAFE             = null;
     private static Boolean CACHE_OP_CROSS_DEDUP         = null;
     private static Boolean CACHE_OP_OPPORTUNISTIC_DEDUP = null;
+    private static Boolean CACHE_IT_STATS               = null;
     private static Boolean CACHE_EMIT_STATS             = null;
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
@@ -211,6 +212,7 @@ public class FSProperties {
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
         CACHE_OP_CROSS_DEDUP            = null;
+        CACHE_IT_STATS                  = null;
         CACHE_EMIT_STATS                = null;
         CACHE_EMIT_STATS_LOG            = null;
         CACHE_BATCH_POOLED_MARK         = null;
@@ -282,8 +284,29 @@ public class FSProperties {
      */
     public static boolean emitStats() {
         Boolean v = CACHE_EMIT_STATS;
+        if (v == null) {
+            boolean def = FSProperties.class.desiredAssertionStatus();
+            CACHE_EMIT_STATS = v = emitStatsLog() || readBoolean(EMIT_STATS, def);
+        }
+        return v;
+    }
+
+    /**
+     * If {@code true}, {@link BIt} instances will track the number of batches and the
+     * accumulated number of rows returned byu {@link BIt#nextBatch(Batch)}. The main use
+     * case for this tracking is reporting the values at
+     * {@link StreamNode#label(StreamNodeDOT.Label)}.
+     *
+     * <p>Note that {@link BIt} implementations might query this property through a
+     * {@code static final} field, for JIT-friendliness. Thus changes to configuration after
+     * the relevant classes have been loaded may not affect behavior.</p>
+     *
+     * @return {@code true} if {@link BIt}s should track number of batches and number of rows.
+     */
+    public static boolean itStats() {
+        Boolean v = CACHE_IT_STATS;
         if (v == null)
-            CACHE_EMIT_STATS = v = emitStatsLog() || readBoolean(EMIT_STATS, DEF_EMIT_STATS);
+            CACHE_IT_STATS = v = readBoolean(IT_STATS, FSProperties.class.desiredAssertionStatus());
         return v;
     }
 

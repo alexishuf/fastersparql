@@ -6,6 +6,12 @@ public interface MetricsFeeder {
     /** Records that a batch of {@code n} rows was produced. */
     void batch(int n);
 
+    /** Number of previous {@link #batch(int)} calls */
+    long batches();
+
+    /** Sum of all {@code n} in previous {@link #batch(int)} calls */
+    long rows();
+
     /**
      * Signals that no further events will happen for this {@link MetricsFeeder}, performs any
      * required processing on the {@link Metrics} object being built and delivers it to
