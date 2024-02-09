@@ -78,6 +78,8 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         try {
             if (!terminated) {
                 terminated = true;
+                if (metrics != null)
+                    metrics.completeAndDeliver(error, cancelled);
                 try {
                     cleanup(cancelled, error);
                 } catch (Throwable t) {
