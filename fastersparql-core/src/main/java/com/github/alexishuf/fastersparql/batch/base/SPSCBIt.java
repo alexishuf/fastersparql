@@ -157,10 +157,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             while (true) {
                 B f = this.filling;
                 if (plainState.isTerminated()) {
-                    if (plainState == State.CANCELLED)
-                        throw CancelledException.INSTANCE;
-                    else
-                        throw TerminatedException.INSTANCE;
+                    if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
+                    else                               throw TerminatedException.INSTANCE;
                 } else if (f == null) { // no filling batch
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                     if (READY.getOpaque(this) == null && readyInNanos(b.totalRows(), fillingStart) == 0) {
@@ -204,7 +202,6 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             if (eager) eager = false;
             unpark(delayedWake);
         }
-        //noinspection ConstantValue
         return b;
     }
 
@@ -216,12 +213,11 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         boolean locked = true;
         Thread delayedWake = null;
         try {
-            if (plainState.isTerminated()) {
-                if (plainState == State.CANCELLED)
-                    throw CancelledException.INSTANCE;
-                throw TerminatedException.INSTANCE;
-            }
             while (true) {
+                if (plainState.isTerminated()) {
+                    if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
+                    else                               throw TerminatedException.INSTANCE;
+                }
                 B dst = this.filling;
                 // try publishing filling as READY since put() might take > 1us
                 if (dst != null && READY.getOpaque(this) == null
