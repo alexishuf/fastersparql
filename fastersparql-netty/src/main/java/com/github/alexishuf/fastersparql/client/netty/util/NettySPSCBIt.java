@@ -44,7 +44,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
     @Override public void unlockRequest() { unlock(); }
 
     @Override public boolean canSendRequest() {
-        if (!ownsLock())
+        if (!isLocked())
             throw new IllegalStateException("not locked");
         if (isTerminated())
             return false;

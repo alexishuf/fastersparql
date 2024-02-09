@@ -75,10 +75,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
      * acquire the {@code LOCK}.
      * @return {@code null} iff locked, else the non-null batch taken from {@code READY}.
      */
-    private B lockOrTakeReady(Thread me) {
+    private B lockOrTakeReady() {
         B b;
         //noinspection unchecked
-        while ((b=(B)READY.getAndSetAcquire(this, null)) == null && !tryLock(me))
+        while ((b=(B)READY.getAndSetAcquire(this, null)) == null && !tryLock())
             Thread.yield();
         return b;
     }
@@ -149,8 +149,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
         if (ThreadJournal.ENABLED)
             journal("offer rows=", b.totalRows(), "on", this);
-        var me = Thread.currentThread();
-        lock(me);
+        Thread me = null;
+        lock();
         Thread delayedWake = null;
         boolean locked = true;
         try {
@@ -183,7 +183,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                         b = null;
                         break;
                     } else if (park) {
-                        producer = me;
+                        producer = me == null ? me = currentThread() : me;
                         //dbg.write("offer: parking, b.rows=", b.rows);
                         unlock();
                         locked = false;
@@ -204,14 +204,15 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             if (eager) eager = false;
             unpark(delayedWake);
         }
+        //noinspection ConstantValue
         return b;
     }
 
     @Override public void copy(B b) throws TerminatedException, CancelledException {
         if (ThreadJournal.ENABLED)
             journal("copy rows=", b.totalRows(), "on", this);
-        var me = Thread.currentThread();
-        lock(me);
+        Thread me = null;
+        lock();
         boolean locked = true;
         Thread delayedWake = null;
         try {
@@ -235,7 +236,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
                 }
                 if (mustPark(b.totalRows(), dst.totalRows())) { // park() until free capacity
-                    producer = me;
+                    producer = me == null ? me = currentThread() : me;
                     //dbg.write("copy: parking, b.rows=", b.rows);
                     unlock();
                     locked = false;
@@ -266,8 +267,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override public @Nullable B nextBatch(@Nullable B offer) {
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
-        Thread me = Thread.currentThread();
-        B b = lockOrTakeReady(me);
+        @Nullable Thread me = null;
+        B b = lockOrTakeReady();
         boolean locked = b == null;
         try {
             if (!locked) return b; // fast path
@@ -297,7 +298,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 }
                 // park until time-based completion or unpark from offer()/copy()/cleanup()
                 //dbg.write("nextBatch: parking, parkNs=", parkNs);
-                consumer = me;
+                consumer = me == null ? me = currentThread() : me;
                 unlock();
                 locked = false;
                 journal("park ns=", parkNs, "on", this);
@@ -305,7 +306,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     park(this);
                 else
                     parkNanos(this, parkNs);
-                if ((b = lockOrTakeReady(me)) != null)
+                if ((b = lockOrTakeReady()) != null)
                     break;
                 consumer = null;
                 locked = true;
