@@ -150,16 +150,17 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {
-            //dbg.write("cleanup: unpark producer=", producer == null ? 0 : 1, "consumer=", consumer == null ? 0 : 1);
-            if (filling != null) {
-                if (READY.getOpaque(this) == null) {
-                    if (filling.rows > 0) READY.setRelease(this, filling);
-                    else batchType.recycle(filling);
-                    filling = null;
-                } else if (filling.rows == 0) {
-                    batchType.recycle(filling);
-                    filling = null;
-                }
+            B b;
+            if (cause instanceof BItCancelledException) { // drop all queued
+                if ((b=(B)READY.getAndSetRelease(this, null)) != null)
+                    batchType.recycle(b);
+                if ((b=filling) != null)
+                    filling = batchType.recycle(b);
+            } else if ((b=filling) != null) {
+                if (b.rows == 0) // recycle empty filling batch
+                    filling = batchType.recycle(b);
+                else if (READY.compareAndExchangeRelease(this, (B)null, b) == null)
+                    filling = null; // promoted filling to ready
             }
             super.cleanup(cause);
         } finally {
