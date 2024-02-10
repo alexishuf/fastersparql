@@ -239,12 +239,12 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      * well as resources (opn files and connections) may be safely closed.
      *
      * <p>Calling {@code nextBatch()} after this method will result in a
-     * {@link BItReadClosedException}.</p>
+     * {@link BItReadCancelledException}.</p>
      *
      * <p>The cleanup performed by this method occurs implicitly if the {@link BIt} is
      * consumed until its end with {@code nextBatch()}/{@code next()} calls. However, if the
      * cleanup is implicit, subsequent {@code nextBatch()} calls will simply return empty batches
-     * instead of raising an {@link BItReadClosedException}.</p>
+     * instead of raising an {@link BItReadCancelledException}.</p>
      */
     @Override void close();
 

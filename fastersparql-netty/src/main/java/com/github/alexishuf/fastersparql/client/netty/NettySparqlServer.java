@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -336,7 +336,7 @@ public class NettySparqlServer implements AutoCloseable {
             try {
                 boolean cancelled = (cause instanceof FSCancelledException ce
                                         && ce.endpoint() == sparqlClient.endpoint())
-                                 || (cause instanceof BItReadClosedException)
+                                 || (cause instanceof BItReadCancelledException)
                                  || (cause instanceof CancelledException);
                 ByteRope msg;
                 if (cause == null && errorMsg == null) {
@@ -513,7 +513,7 @@ public class NettySparqlServer implements AutoCloseable {
                 log.debug("Drainer thread exiting", e);
             } catch (Throwable t) {
                 if (task != null) {
-                    if (t instanceof BItReadClosedException) {
+                    if (t instanceof BItReadCancelledException) {
                         task.sendCancel();
                     } else {
                         log.debug("Drainer thread exiting due to error", t);

@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -133,7 +133,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 locked = false;
                 try {
                     rb = inner.nextBatch(rb);
-                } catch (BItReadClosedException e) {
+                } catch (BItReadCancelledException e) {
                     if (isTerminated())
                         break;
                     throw e;

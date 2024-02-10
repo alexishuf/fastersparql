@@ -16,7 +16,7 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
         this.batchType = batchType;
     }
 
-    @Override protected void cleanup(boolean cancelled, @Nullable Throwable error) {
+    @Override protected void cleanup(@Nullable Throwable cause) {
         S in = lastIn;
         lastIn = null;
         if (in != null)
@@ -29,12 +29,12 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
         try {
             in = delegate.nextBatch(in);
         } catch (Throwable t) {
-            onTermination(false, t);
+            onTermination(t);
             throw t;
         }
         if (in == null) {
             batchType.recycle(out);
-            onTermination(false, null);
+            onTermination(null);
             return null;
         }
         lock();

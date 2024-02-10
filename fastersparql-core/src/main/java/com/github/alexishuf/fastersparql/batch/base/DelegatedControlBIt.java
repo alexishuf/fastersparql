@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -75,9 +76,10 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     protected boolean isTerminated() { return state.isTerminated(); }
 
-    protected abstract void cleanup(boolean cancelled, @Nullable Throwable error);
+    protected abstract void cleanup(@Nullable Throwable cause);
 
-    protected boolean onTermination(boolean cancelled, @Nullable Throwable error) {
+    protected boolean onTermination(@Nullable Throwable error) {
+        boolean cancelled = error instanceof BItCancelledException;
         lock();
         try {
             if (!isTerminated()) {
@@ -89,7 +91,7 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
                     log.warn("Ignoring failure to deliver metrics from {} to {}", this, metrics, t);
                 }
                 try {
-                    cleanup(cancelled, error);
+                    cleanup(error);
                 } catch (Throwable t) {
                     log.warn("Ignoring cleanup() failure for {}", this, t);
                 }
@@ -106,7 +108,8 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
 
     @Override public final boolean tryCancel() {
         boolean done = delegate.tryCancel();
-        done &= onTermination(true, null);
+        if (!isTerminated())
+            done &= onTermination(BItCancelledException.get(this));
         return done;
     }
 

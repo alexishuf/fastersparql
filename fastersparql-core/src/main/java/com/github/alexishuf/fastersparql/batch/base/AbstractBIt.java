@@ -89,15 +89,15 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
      * </ul>
      *
      * @param cause {@code null} in case of <i>normal completion</i>, the error in case of
-     *              <i>error completion</i>, or a {@link BItClosedAtException} for {@code this}
+     *              <i>error completion</i>, or a {@link BItCancelledException} for {@code this}
      *              in case of <i>cancellation</i>
      */
     protected void cleanup(@Nullable Throwable cause) {}
 
     protected final void checkError() {
         if (STATE.getAcquire(this) == State.ACTIVE || error == null) return;
-        if (error instanceof BItClosedAtException e)
-            throw new BItReadClosedException(this, e.asFor(this));
+        if (error instanceof BItCancelledException e)
+            throw new BItReadCancelledException(this, e);
         throw new BItReadFailedException(this, error);
     }
 
@@ -110,7 +110,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
      *         {@link CallbackBIt#offer(Batch)} has completed or threw {@code cause})</li>
      *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#nextBatch(B)} {@code == null}</li>
      *     <li>{@link BIt#close()} was called ({@code cause} will be
-     *         a {@link BItClosedAtException})</li>
+     *         a {@link BItCancelledException})</li>
      * </ul>
      *
      * @param cause if non-null, this is the exception that caused the termination.
@@ -118,12 +118,12 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     protected final boolean onTermination(@Nullable Throwable cause) {
         ThreadJournal.journal("onTermination", cause, "on", this);
         State tgt = cause == null ? State.COMPLETED
-                : (cause instanceof BItClosedAtException ? State.CANCELLED : State.FAILED);
+                : (cause instanceof BItCancelledException ? State.CANCELLED : State.FAILED);
         switch (tgt) {
             case COMPLETED -> log.trace(ON_TERM_TPL, this, "");
             case CANCELLED -> log.trace(ON_TERM_TPL, this, "close()/cancelled");
             case FAILED    -> {
-                if (!(cause instanceof BItReadClosedException) || state() == State.ACTIVE) {
+                if (!(cause instanceof BItReadCancelledException) || state() == State.ACTIVE) {
                     String msg = cause.toString();
                     if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
                         log.debug(ON_TERM_TPL, this, msg, cause);
@@ -338,7 +338,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     @Override public boolean tryCancel() {
         if (isTerminated()) return false;
         eager(); // makes nextBatch() return ASAP, if running
-        return onTermination(new BItClosedAtException(this));
+        return onTermination(BItCancelledException.get(this));
     }
 
     protected String toStringNoArgs() {

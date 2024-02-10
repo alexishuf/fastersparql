@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
@@ -104,7 +104,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 }
                 if (b.rows > 0) b = offer(b);
             }
-        } catch (BItReadClosedException e) {
+        } catch (BItReadCancelledException e) {
             if (e.it() != sources.get(i)) // ignore if caused by cleanup() calling source.close()
                 complete(e);
         } catch (TerminatedException|CancelledException e) {

@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb.query;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
@@ -71,7 +71,7 @@ class QueryRunnerTest {
         if (emit)
             assertInstanceOf(FSCancelledException.class, cause[0]);
         else
-            assertInstanceOf(BItReadClosedException.class, cause[0]);
+            assertInstanceOf(BItReadCancelledException.class, cause[0]);
         slow.close();
     }
 

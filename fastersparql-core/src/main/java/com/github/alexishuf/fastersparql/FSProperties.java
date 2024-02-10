@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
@@ -43,6 +44,7 @@ public class FSProperties {
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
     public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
     public static final String IT_QUEUE_BATCHES          = "fastersparql.it.queue.batches";
+    public static final String IT_TRACE_CANCEL           = "fastersparql.it.cancel.trace";
     public static final String IT_STATS                  = "fastersparql.it.stats";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
@@ -109,6 +111,7 @@ public class FSProperties {
     private static Boolean CACHE_USE_UNSAFE             = null;
     private static Boolean CACHE_OP_CROSS_DEDUP         = null;
     private static Boolean CACHE_OP_OPPORTUNISTIC_DEDUP = null;
+    private static Boolean CACHE_IT_TRACE_CANCEL        = null;
     private static Boolean CACHE_IT_STATS               = null;
     private static Boolean CACHE_EMIT_STATS             = null;
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
@@ -587,6 +590,25 @@ public class FSProperties {
         if (i <= 0)
             CACHE_IT_QUEUE_BATCHES = i = readPositiveInt(IT_QUEUE_BATCHES, DEF_IT_QUEUE_BATCHES);
         return i;
+    }
+
+    /**
+     * Whether {@link BIt#tryCancel()} should capture a stack trace of its call to be used as
+     * cause of a future {@link BItReadCancelledException}.
+     *
+     * <p>The default is to capture a stack trace only if assertions are enabled. This property
+     * may be read into a {@code static final} field, and thus changes after relevant
+     * classes have been loaded may have no effect on the actual behavior.</p>
+     *
+     * @return whether to capture the stack trace of each {@link BIt#tryCancel()} call.
+     */
+    public static boolean itTraceCancel() {
+        Boolean v = CACHE_IT_TRACE_CANCEL;
+        if (v == null) {
+            boolean def = FSProperties.class.desiredAssertionStatus();
+            CACHE_IT_TRACE_CANCEL = v = readBoolean(IT_TRACE_CANCEL, def);
+        }
+        return Boolean.TRUE.equals(v);
     }
 
     /**

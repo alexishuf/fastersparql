@@ -108,7 +108,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                     if (stop.compareAndSet(false, true))
                         prematureExhaust.set(true);
                     drain.complete(null);
-                } catch (BItReadClosedException e) {
+                } catch (BItReadCancelledException e) {
                     drain.complete(null);
                 } catch (Throwable t) {
                     drain.completeExceptionally(t);

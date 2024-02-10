@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadClosedException;
+import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -396,7 +396,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
                     }
                 }
             }
-        } catch (CancelledException|BItReadClosedException e) {
+        } catch (CancelledException | BItReadCancelledException e) {
             if (!serverSentTermination && sender != null)
                 sender.sendCancel();
             sendEnd = false;

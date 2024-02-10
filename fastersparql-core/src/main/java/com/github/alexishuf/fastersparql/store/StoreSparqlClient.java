@@ -2333,7 +2333,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 // if we arrived here from close(), nextBatch() may be concurrently executing.
                 // it is cheaper to leak rb and fb than to synchronize
-                if (!(cause instanceof BItClosedAtException)) {
+                if (!(cause instanceof BItCancelledException)) {
                     rb = batchType.recycle(rb);
                     fb = batchType.recycle(fb);
                 }

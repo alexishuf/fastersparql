@@ -2,10 +2,11 @@ package com.github.alexishuf.fastersparql.batch;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-public class BItReadClosedException extends BItIllegalStateException {
-    public final BItClosedAtException when;
+public class BItReadCancelledException extends BItIllegalStateException {
+    public final BItCancelledException when;
+    protected final BIt<?> it;
 
-    private static String buildMessage(BIt<?> it, @Nullable BItClosedAtException when) {
+    private static String buildMessage(BIt<?> it, @Nullable BItCancelledException when) {
         StackTraceElement[] trace = when == null ? null : when.getStackTrace();
         var sb = new StringBuilder().append(it).append(" already close()d ");
         if (trace == null) return sb.toString();
@@ -19,8 +20,11 @@ public class BItReadClosedException extends BItIllegalStateException {
         return sb.toString();
     }
 
-    public BItReadClosedException(BIt<?> it, @Nullable BItClosedAtException when) {
-        super(buildMessage(it, when), it);
+    public BItReadCancelledException(BIt<?> it, @Nullable BItCancelledException when) {
+        super(buildMessage(it, when));
         this.when = when;
+        this.it = it;
     }
+
+    public BIt<?> it() { return it; }
 }

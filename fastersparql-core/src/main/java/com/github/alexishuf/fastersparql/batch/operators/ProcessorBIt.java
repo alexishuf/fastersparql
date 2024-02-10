@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
@@ -32,9 +33,9 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         return new StringBuilder().append(processor.label(pt));
     }
 
-    protected void cleanup(boolean cancelled, @Nullable Throwable error) {
+    protected void cleanup(@Nullable Throwable error) {
         processor.release();
-        if (error != null)
+        if (error != null && !(error instanceof BItCancelledException))
             delegate.close();
     }
 
@@ -54,11 +55,11 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                     }
                 } finally { unlock(); }
             }
-            if   (b == null) onTermination(false, null); //exhausted
+            if   (b == null) onTermination(null); //exhausted
             else             onNextBatch(b);
             return b;
         } catch (Throwable t) {
-            onTermination(false, t); //error
+            onTermination(t); //error
             throw t;
         }
     }
