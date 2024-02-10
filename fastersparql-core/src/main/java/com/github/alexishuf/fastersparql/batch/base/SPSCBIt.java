@@ -114,8 +114,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     private B lockOrTakeReady() {
         B b;
         //noinspection unchecked
-        while ((b=(B)READY.getAndSetAcquire(this, null)) == null && !tryLock())
-            Thread.yield();
+        B b = (B)READY.getAndSetAcquire(this, null);
+        if (b == null)
+            lock();
         return b;
     }
 
