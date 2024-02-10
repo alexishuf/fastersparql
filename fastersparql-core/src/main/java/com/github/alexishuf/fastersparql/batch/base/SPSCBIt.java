@@ -339,9 +339,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     park(this);
                 else
                     parkNanos(this, parkNs);
+                consumer = null;
                 if ((b = lockOrTakeReady()) != null)
                     break;
-                consumer = null;
                 locked = true;
             }
         } finally {
