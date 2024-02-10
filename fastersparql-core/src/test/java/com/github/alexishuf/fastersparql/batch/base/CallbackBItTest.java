@@ -241,7 +241,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                         }
                     }
                     drainer.drainUnordered(cb, ints(nSources*2), null);
-                    tasks.await();
+                    tasks.awaitAndReset();
                 }
             }
         }

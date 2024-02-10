@@ -111,30 +111,18 @@ public class TestTaskSet implements AutoCloseable, Consumer<Future<?>> {
         for (int i = 0; i < times; i++) add(callable);
     }
 
-    public void await() throws Exception {
+    public void awaitAndReset() throws Exception {
         var c = new ExceptionCondenser<>(Exception.class, Exception::new);
         for (Future<?> task : tasks) {
             try { task.get(); } catch (Throwable t) { c.condense(t); }
         }
         c.throwIf();
+        tasks.clear();
     }
 
     @Override public void close() throws Exception {
         executor.close();
-        await();
-        Throwable error = null;
-        for (Future<?> task : tasks) {
-            try {
-                task.get();
-            } catch (Throwable t) {
-                Throwable cause = t instanceof ExecutionException ? t.getCause() : t;
-                if (error == null) error = cause;
-                else if (error.getSuppressed().length < 2) error.addSuppressed(cause);
-            }
-        }
-        if      (error instanceof Error e)            throw e;
-        else if (error instanceof RuntimeException e) throw e;
-        else if (error instanceof Exception e)        throw e;
+        awaitAndReset();
     }
 
     public           void       add(Future<?> task) { tasks.add(task); }

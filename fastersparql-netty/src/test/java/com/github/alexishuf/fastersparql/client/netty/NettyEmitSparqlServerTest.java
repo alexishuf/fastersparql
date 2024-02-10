@@ -265,7 +265,7 @@ class NettyEmitSparqlServerTest {
                     }
                 }
             }
-            tasks.await();
+            tasks.awaitAndReset();
         }
     }
 

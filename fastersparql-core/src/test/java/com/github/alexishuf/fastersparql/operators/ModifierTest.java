@@ -207,7 +207,7 @@ public class ModifierTest {
                 tasks.repeat(N_THREADS, () -> {
                     for (int i = 0; i < N_ITERATIONS; i++) d.run();
                 });
-                tasks.await();
+                tasks.awaitAndReset();
             }
         }
     }

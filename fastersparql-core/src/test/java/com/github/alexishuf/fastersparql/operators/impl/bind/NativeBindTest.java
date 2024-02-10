@@ -133,7 +133,7 @@ class NativeBindTest {
             for (int i = 0; i < data.size(); i++) {
                 tasks.repeat(threads, data.get(i));
                 try {
-                    tasks.await();
+                    tasks.awaitAndReset();
                 } catch (Throwable t) {
                     fail("data["+i+"] failed with "+threads+" threads", t);
                 }
