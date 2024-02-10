@@ -67,6 +67,8 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
 
     protected abstract void doFinish(@Nullable Throwable error);
 
+    public int rows() { return rows; }
+
     public boolean isValid() { return OK.equals(explanation()); }
 
     public String explanation() {

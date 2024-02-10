@@ -461,8 +461,8 @@ public class Measure implements Callable<Void>{
                         var query    = currTask == null ? null : currTask.query();
                         var selector = currTask == null ? null : currTask.selector();
                         var source   = currTask == null ? null : currTask.source();
-                        log.info("No missing/unexpected rows for rep {} of {}, sel={}, source={}",
-                                 currRep, query, selector, source);
+                        log.info("No missing/unexpected rows among the {} received for rep {} of {}, sel={}, source={}",
+                                 rows(), currRep, query, selector, source);
                         delete(".missing.tsv");
                         delete(".unexpected.tsv");
                     } else if (currTask != null) {
