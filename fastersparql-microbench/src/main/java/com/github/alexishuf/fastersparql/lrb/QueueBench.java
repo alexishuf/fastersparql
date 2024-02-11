@@ -103,9 +103,7 @@ public class QueueBench {
                     for (Batch b : inputs) {
                         try {
                             bt.recycle(it.offer(b));
-                        } catch (BatchQueue.CancelledException| BatchQueue.TerminatedException e) {
-                            bt.recycle(b);
-                        }
+                        } catch (BatchQueue.QueueStateException ignored) {}
                     }
                 }
                 it.complete(null);

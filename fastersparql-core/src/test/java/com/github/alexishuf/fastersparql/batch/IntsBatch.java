@@ -94,16 +94,15 @@ public class IntsBatch {
     }
 
     public static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
-        TermBatch retained = b;
         try {
-            retained = it.offer(b);
+            var retained = it.offer(b);
+            if (retained != null) {
+                retained = retained.clear(1 + (retained.cols&1));
+                retained.beginPut();
+                for (int c = 0; c < retained.cols; c++) retained.putTerm(c, INVALID_MARKER);
+                retained.commitPut();
+            }
         } catch (TerminatedException|CancelledException ignored) {}
-        if (retained != null) {
-            retained = retained.clear(1 + (retained.cols&1));
-            retained.beginPut();
-            for (int c = 0; c < retained.cols; c++) retained.putTerm(c, INVALID_MARKER);
-            retained.commitPut();
-        }
     }
 
     public static int[] histogram(int[] ints, int size) {

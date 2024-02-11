@@ -90,10 +90,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             if ((st&(IS_TERM|IS_CANCEL_REQ)) == 0) {
                 if (ready == null) ready = b;
                 else               filling = Batch.quickAppend(filling, b);
-            } else if (isCancelled(st) || (st&IS_CANCEL_REQ) != 0) {
-                throw CancelledException.INSTANCE;
-            } else { // if ((st&IS_TERM) != 0)
-                throw TerminatedException.INSTANCE;
+            } else {
+                bt.recycle(b);
+                if (isCancelled(st) || (st&IS_CANCEL_REQ)!=0) throw CancelledException.INSTANCE;
+                else                                          throw TerminatedException.INSTANCE;
             }
         } finally {
             unlock(st);

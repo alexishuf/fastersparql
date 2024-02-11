@@ -94,10 +94,9 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         if (MergeBIt.class.desiredAssertionStatus())
             Thread.currentThread().setName(label(StreamNodeDOT.Label.MINIMAL)+'-'+i);
         BatchProcessor<B> processor = null;
-        B b = null;
         try (var source = sources.get(i)) {
             processor = createProcessor(i);
-            while (notTerminated() && (b = source.nextBatch(b)) != null) {
+            for (B b = null; notTerminated() && (b = source.nextBatch(b)) != null; ) {
                 if (processor != null && notTerminated()) {
                     b = processor.processInPlace(b);
                     if (b == null) break; // happens when LIMIT is reached
@@ -108,7 +107,6 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             if (e.it() != sources.get(i)) // ignore if caused by cleanup() calling source.close()
                 complete(e);
         } catch (TerminatedException|CancelledException e) {
-            batchType.recycle(b);
             if (notTerminated())
                 complete(new Exception("Unexpected "+e.getClass().getSimpleName()));
         } catch (Throwable t) {
@@ -122,14 +120,12 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     public @Nullable B offer(B b) throws CancelledException, TerminatedException {
-        lock();
-        boolean locked = true;
+        boolean locked = lockAndGet();
         try {
             while (offering)
                 canOffer.awaitUninterruptibly();
             offering = true;
-            unlock();
-            locked = false;
+            locked = unlockAndGet();
             return super.offer(b);
         } finally {
             if (!locked)

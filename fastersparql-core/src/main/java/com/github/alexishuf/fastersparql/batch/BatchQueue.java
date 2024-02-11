@@ -49,9 +49,15 @@ public interface BatchQueue<B extends Batch<B>> {
      *         was retained by the caller.
      * @throws TerminatedException if the queue is in a terminal completed or failed state, which
      *                             makes it impossible to eventually deliver {@code b} (or a copy)
-     *                             downstream. The caller will retain ownership of {@code b}
-     * @throws CancelledException if the queue is in a terminal cancelled state. The caller will
-     *                            retain ownership of {@code b}
+     *                             downstream. The caller <strong>still looses</strong> ownership
+     *                             of {@code b}, as if {@code null} had been returned
+     * @throws CancelledException if the queue is in a terminal cancelled state. The caller
+     *                            <strong>still loses</strong> ownership of {@code b}, as if
+     *                            this call had returned {@code null}.
+     * @throws RuntimeException if something unexpectedly goes wrong. the caller MUST assume
+     *                          it lost ownership of {@code b} and implementations should attempt
+     *                          to recycle {@code b} if it has neither been queued nor already
+     *                          recycled when the exception is originally raised.
      */
     @Nullable B offer(B b) throws TerminatedException, CancelledException;
 }

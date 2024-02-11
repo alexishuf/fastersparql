@@ -327,12 +327,14 @@ public abstract class ResultsParser<B extends Batch<B>> {
     }
 
     private void emitBatch() throws CancelledException, TerminatedException {
+        B b;
         if (incompleteRow) {
             eager = true; // emit when row completes on next feedShared()
-        } else if (batch != null && batch.rows > 0) {
+        } else if ((b = this.batch) != null && b.rows > 0) {
+            batch = null;
             eager = false;
-            if ((batch = dst.offer(batch)) != null)
-                batch.clear();
+            if ((b = dst.offer(b)) != null)
+                (batch = b).clear();
         }
     }
 }

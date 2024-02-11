@@ -228,7 +228,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                                         try {
                                             //journal.write("offer b[0][0]=", b.get(0, 0).local[1]-'0', "size=", b.rows);
                                             b = cb.offer(b);
-                                        } catch (CancelledException| TerminatedException ignored) {
+                                        } catch (CancelledException|TerminatedException ignored) {
                                         } finally { lock.unlock(); }
                                     }
                                     //journal.write("exhausted");

@@ -56,18 +56,15 @@ public class BItCTest {
     }
 
     static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
-        TermBatch mine;
         try {
-            mine = it.offer(b);
-        } catch (BatchQueue.TerminatedException|BatchQueue.CancelledException e) {
-            mine = b;
-        }
-        if (mine != null) {
-            mine.clear();
-            mine.beginPut();
-            mine.putTerm(0, INTS[999]);
-            mine.commitPut();
-        }
+            TermBatch mine = it.offer(b);
+            if (mine != null) {
+                mine.clear();
+                mine.beginPut();
+                mine.putTerm(0, INTS[999]);
+                mine.commitPut();
+            }
+        } catch (BatchQueue.QueueStateException ignored) {}
     }
 
     static int parseInt(@Nullable Term term) {

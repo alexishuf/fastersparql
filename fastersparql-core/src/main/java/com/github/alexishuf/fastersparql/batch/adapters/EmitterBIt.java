@@ -22,12 +22,12 @@ public class EmitterBIt<B extends Batch<B>> extends SPSCBIt<B> implements Receiv
         try {
             int n = maxItems - batch.totalRows();
             if (n > 0) upstream.request(n);
-            batch = offer(batch);
+            return offer(batch);
         } catch (Throwable t) {
             if (cancelCause == CancelledException.INSTANCE) cancelCause = t;
             upstream.cancel();
+            return null;
         }
-        return batch;
     }
 
     @Override public void onComplete()             { if (!isTerminated()) complete(null); }

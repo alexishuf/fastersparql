@@ -150,8 +150,8 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         } finally { unlock(); }
     }
 
-    private boolean   lockAndGet() {   lock(); return  true; }
-    private boolean unlockAndGet() { unlock(); return false; }
+    protected final boolean   lockAndGet() {   lock(); return  true; }
+    protected final boolean unlockAndGet() { unlock(); return false; }
 
     @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
         Thread delayedWake = null;
@@ -160,6 +160,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         try {
             while (b != null) {
                 if (plainState.isTerminated()) {
+                    batchType.recycle(b);
                     if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
                     else                               throw TerminatedException.INSTANCE;
                 } else if (queuedRows > 0 && mustPark(bRows, queuedRows)) {

@@ -346,7 +346,6 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                             try {
                                 b = cb.offer(b);
                             } catch (CancelledException|TerminatedException e) {
-                                batchType.recycle(b);
                                 break;
                             }
                         }
