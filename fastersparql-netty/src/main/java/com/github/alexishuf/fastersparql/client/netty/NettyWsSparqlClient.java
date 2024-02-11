@@ -350,7 +350,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if (bq == null) {
                 parser = new WsClientParser<>(destination);
             } else {
-                var useful = bq.bindingsVars().intersection(bq.query.publicVars());
+                var useful = bq.bindingsVars().intersection(bq.query.allVars());
                 parser = new WsClientParser<>(destination, bq, useful);
             }
             requestRowsMsg   = new ByteRope(REQ_ROWS_FRAME_CAPACITY).append(REQ_ROWS_0);
