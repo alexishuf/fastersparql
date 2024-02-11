@@ -1259,15 +1259,30 @@ public abstract class Batch<B extends Batch<B>> {
         return head;
     }
 
-    /** Remove {@code tail} from {@code this}. Assumes {@code this.tail == tail} */
-    protected void dropTail(B tail) {
+    /**
+     * Removes {@code this.tail} from the linked list that starts at this, updating {@code this.tail} and returns the original this.tail.
+     *
+     * <p><strong>Important:</strong> this MAY return {@code this}, in which case
+     * {@code this.tail} remains being {@code this}. Callers must check if the returned
+     * tail is {@code this} and modify their behavior in order to not create references to
+     * the same {@link Batch}.</p>
+     *
+     * @return the original {@link #tail()} of {@code this}, which MAY be {@code this}.
+     */
+    @SuppressWarnings("unchecked") public @NonNull B detachTail() {
+        if (this.tail == this) return (B)this;
         //noinspection unchecked
-        B nTail = (B) this;
-        for (B next1 = this.next; next1 != null && next1 != tail; next1 = nTail.next)
-            nTail = next1;
-        nTail.next = tail.recycle();
-        this.tail = nTail;
+        B nTail = (B)this;
+        for (B n = next; n != null && n != tail; n = nTail.next)
+            nTail = n;
+        B tail = nTail.next;
+        this.tail = nTail.tail = nTail;
+        nTail.next = null;
+        return tail;
     }
+
+    /** Remove {@code this.tail} from {@code this} and recycle it. */
+    protected void dropTail() { detachTail().recycle(); }
 
     void addRowsToZeroColumns(int rows) {
         B tail = this.tailUnchecked();

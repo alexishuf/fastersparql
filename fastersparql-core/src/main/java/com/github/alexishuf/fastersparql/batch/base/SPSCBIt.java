@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -14,34 +15,22 @@ import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.Timestamp.ORIGIN;
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Thread.currentThread;
-import static java.lang.invoke.MethodHandles.lookup;
 import static java.util.concurrent.locks.LockSupport.*;
 
 public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements CallbackBIt<B> {
-    private static final VarHandle READY;
-    static {
-        try {
-            READY = lookup().findVarHandle(SPSCBIt.class, "plainReady", Batch.class);
-        } catch (Throwable t) {
-            throw new ExceptionInInitializerError(t);
-        }
-    }
-
-    //private final DebugJournal.RoleJournal dbg;
-
-    @SuppressWarnings("unused")  // access through READY
-    private @Nullable B plainReady;
+    private @Nullable B ready;
     private @Nullable B filling;
-    private long fillingStart = Timestamp.ORIGIN;
-    protected int maxItems;
     private Thread consumer, producer;
+    protected long queuedRows;
+    protected int maxItems;
+    private long fillingStart = Timestamp.ORIGIN;
     private @Nullable StreamNode upstream;
 
     public SPSCBIt(BatchType<B> batchType, Vars vars) {
@@ -84,41 +73,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override protected void appendStateToLabel(StringBuilder sb) {
         super.appendStateToLabel(sb);
-        long rows = 0;
-        boolean locked = tryLock(); // we are likely to be called in case of a deadlock
-        try {
-            //noinspection unchecked
-            B ready = (B) READY.getOpaque(this);
-            try {
-                rows += ready.totalRows();
-            } catch (Throwable ignored) {}
-            B filling = this.filling;
-            try {
-                rows += filling == null ? 0 : filling.totalRows();
-            } catch (Throwable ignored) {}
-        } finally {
-            if (locked)
-                unlock();
-
-        }
-        sb.append("\nqueuedRows=").append(rows);
+        sb.append("\nqueuedRows=").append(queuedRows);
     }
 
     /* --- --- --- helper methods --- --- --- */
-
-    /**
-     * Either take a non-null batch from {@code READY} (setting it to {@code null}) or
-     * acquire the {@code LOCK}.
-     * @return {@code null} iff locked, else the non-null batch taken from {@code READY}.
-     */
-    private B lockOrTakeReady() {
-        B b;
-        //noinspection unchecked
-        B b = (B)READY.getAndSetAcquire(this, null);
-        if (b == null)
-            lock();
-        return b;
-    }
 
     /***
      * Whether {@link #offer(Batch)} or {@link #copy(Batch)} should {@link LockSupport#park()}
@@ -133,17 +91,21 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
      * @return {@code true} iff the {@link #offer(Batch)}/{@link #copy(Batch)} thread should
      *         park until {@link #nextBatch(Batch)} takes some rows.
      */
-    protected boolean mustPark(int offerRows, int queuedRows) {
+    protected boolean mustPark(int offerRows, long queuedRows) {
         return offerRows+queuedRows > maxItems && queuedRows > 0;
     }
 
     /* --- --- --- termination methods --- --- --- */
 
     @Override public boolean complete(@Nullable Throwable error) {
+        if (ThreadJournal.ENABLED)
+            journal(isTerminated() ? "late complete" : "complete", error, "on", this);
         return onTermination(error);
     }
 
     @Override public boolean cancel(boolean ack) {
+        if (ThreadJournal.ENABLED)
+            journal(isTerminated() ? "late cancel ack=" : "cancel, ack=", ack?1:0, "on", this);
         FSException e = ack ? new FSCancelledException()
                             : new FSServerException("server spontaneously cancelled");
         return complete(e);
@@ -151,17 +113,15 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {
-            B b;
             if (cause instanceof BItCancelledException) { // drop all queued
-                if ((b=(B)READY.getAndSetRelease(this, null)) != null)
-                    batchType.recycle(b);
-                if ((b=filling) != null)
-                    filling = batchType.recycle(b);
-            } else if ((b=filling) != null) {
-                if (b.rows == 0) // recycle empty filling batch
-                    filling = batchType.recycle(b);
-                else if (READY.compareAndExchangeRelease(this, (B)null, b) == null)
-                    filling = null; // promoted filling to ready
+                ready = batchType.recycle(ready);
+                filling = batchType.recycle(filling);
+            } else if (filling != null) {
+                if (filling.rows == 0)  // offer from nextBatch, recycle
+                    batchType.recycle(filling);
+                else // promote to ready
+                    ready   = Batch.quickAppend(ready, filling);
+                filling = null;
             }
             super.cleanup(cause);
         } finally {
@@ -172,67 +132,60 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- producer methods --- --- --- */
 
+    private B fillingTail() {
+        B f = filling, tail = null;
+        if (f != null) {
+            if ((tail = f.detachTail()) == f)
+                this.filling = null;
+            queuedRows -= tail.rows;
+        }
+        return tail;
+    }
+
     @Override public B fillingBatch() {
         lock();
         try {
-            B f = filling;
-            if (f == null) f = batchType.create(vars.size());
-            else           filling = null;
-            return f;
-        } finally {
-            unlock();
-        }
+            B tail = fillingTail();
+            return tail == null ? batchType.create(nColumns) : tail;
+        } finally { unlock(); }
     }
 
+    private boolean   lockAndGet() {   lock(); return  true; }
+    private boolean unlockAndGet() { unlock(); return false; }
+
     @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
-        if (ThreadJournal.ENABLED)
-            journal("offer rows=", b.totalRows(), "on", this);
-        Thread me = null;
-        lock();
         Thread delayedWake = null;
-        boolean locked = true;
+        int bRows = b.totalRows();
+        boolean locked = lockAndGet();
         try {
-            while (true) {
-                B f = this.filling;
+            while (b != null) {
                 if (plainState.isTerminated()) {
                     if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
                     else                               throw TerminatedException.INSTANCE;
-                } else if (f == null) { // no filling batch
-                    if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
-                    if (READY.getOpaque(this) == null && readyInNanos(b.totalRows(), fillingStart) == 0) {
-                        READY.setRelease(this, b);
-                        fillingStart = Timestamp.ORIGIN;
-                        unpark(consumer);
-                    } else { // start filling
-                        this.filling = b;
-                        delayedWake = consumer;
-                    }
-                    b = null;
-                    break;
-                } else {
-                    boolean park = mustPark(b.totalRows(), f.totalRows());
-                    if (plainReady == null && (park || readyInNanos(f.totalRows(), fillingStart) == 0)) {
-                        READY.setRelease(this, f);
-                        fillingStart = Timestamp.ORIGIN;
-                        unpark(consumer);
-                        this.filling = b;
-                        b = null;
-                        break;
-                    } else if (park) {
-                        producer = me == null ? me = currentThread() : me;
-                        //dbg.write("offer: parking, b.rows=", b.rows);
-                        unlock();
-                        locked = false;
-                        park(this);
-                        lock();
-                        producer = null;
-                        locked = true;
+                } else if (queuedRows > 0 && mustPark(bRows, queuedRows)) {
+                    producer = currentThread();
+                    locked = unlockAndGet();
+                    park(this);
+                    producer = null;
+                    locked = lockAndGet();
+                } else if (filling == null) { // no filling batch
+                    if (needsStartTime && fillingStart == ORIGIN)
+                        fillingStart = nanoTime();
+                    if (ready == null && readyInNanos(bRows, fillingStart) == 0) {
+                        ready = b;
+                        fillingStart = ORIGIN;
                     } else {
-                        f.append(b);
-                        b = null;
-                        delayedWake = consumer; // delay unpark() to avoid Thread.yield
-                        break;
+                        filling = Batch.quickAppend(filling, b);
                     }
+                    queuedRows += bRows;
+                    delayedWake = consumer;
+                    b = null;
+                } else  { // append b to filling while unlocked
+                    B f = fillingTail();
+                    locked = unlockAndGet();
+                    f.append(b);
+                    bRows  = (b=f).totalRows();
+                    locked = lockAndGet();
                 }
             }
         } finally {
@@ -240,61 +193,15 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
             if (eager) eager = false;
             unpark(delayedWake);
         }
-        return b;
+        return b; // b is always null, by design
     }
 
     @Override public void copy(B b) throws TerminatedException, CancelledException {
-        if (ThreadJournal.ENABLED)
-            journal("copy rows=", b.totalRows(), "on", this);
-        Thread me = null;
-        lock();
-        boolean locked = true;
-        Thread delayedWake = null;
-        try {
-            while (true) {
-                if (plainState.isTerminated()) {
-                    if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
-                    else                               throw TerminatedException.INSTANCE;
-                }
-                B dst = this.filling;
-                // try publishing filling as READY since put() might take > 1us
-                if (dst != null && READY.getOpaque(this) == null
-                        && readyInNanos(dst.totalRows(), fillingStart) == 0) {
-                    READY.setRelease(this, dst);
-                    fillingStart = Timestamp.ORIGIN;
-                    unpark(consumer); // delayedWake unnecessary
-                    dst = null;
-                }
-                if (dst == null) { // no filling or published filling to READY
-                    filling = dst = batchType.create(nColumns);
-                    if (needsStartTime && fillingStart == Timestamp.ORIGIN) fillingStart = nanoTime();
-                }
-                if (mustPark(b.totalRows(), dst.totalRows())) { // park() until free capacity
-                    producer = me == null ? me = currentThread() : me;
-                    //dbg.write("copy: parking, b.rows=", b.rows);
-                    unlock();
-                    locked = false;
-                    park(this);
-                    lock();
-                    producer = null;
-                    locked = true;
-                } else { // put and return
-                    dst.copy(b);
-                    if (READY.getOpaque(this) == null && readyInNanos(dst.totalRows(), fillingStart)==0) {
-                        READY.setRelease(this, dst);
-                        this.filling = null;
-                        fillingStart = Timestamp.ORIGIN;
-                        //dbg.write("copy: pub after put");
-                    }
-                    delayedWake = consumer; // delay wake to avoid Thread.yield()
-                    break;
-                }
-            }
-        } finally {
-            if (locked) unlock();
-            if (eager) eager = false;
-            unpark(delayedWake);
-        }
+        B filling = fillingBatch();
+        filling.copy(b);
+        filling = offer(filling);
+        if (filling != null)
+            batchType.recycle(filling);
     }
 
     /* --- --- --- consumer methods --- --- --- */
@@ -302,30 +209,29 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public @Nullable B nextBatch(@Nullable B offer) {
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
         @Nullable Thread me = null;
-        B b = lockOrTakeReady();
-        boolean locked = b == null;
+        B b = null, f;
+        boolean locked = true;
+        long parkNs;
+        lock();
         try {
-            if (!locked) return b; // fast path
-            long parkNs;
             while (true) {
-                B filling = this.filling;
-                //noinspection unchecked
-                if ((b = (B)READY.getAndSetAcquire(this, null)) != null) {
+                if ((b = ready) != null) {
+                    ready = null;
                     break;
-                } else if (filling != null) { // steal or determine nanos until re-check
-                    if ((parkNs = readyInNanos(filling.totalRows(), fillingStart)) == 0 || plainState.isTerminated()) {
-                        if (filling.rows > 0) b = filling;
-                        else                  batchType.recycle(filling);
-                        this.filling = null;
+                } else if ((f=filling) != null) { // no ready, but has filling
+                    if ((parkNs = readyInNanos(f.totalRows(), fillingStart)) == 0) {
+                        b            = f;    // filling is ready,
+                        filling      = null; // take it
                         fillingStart = Timestamp.ORIGIN;
                         break;
                     }
-                } else if (plainState.isTerminated()) { // also: READY and filling are null
+                } else if (plainState.isTerminated()) { // also: ready and filling are null
                     break;
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;
                     if (offer != null) {
-                        this.filling = offer.clear(nColumns);
+                        offer.requireUnpooled();
+                        filling = offer.clear(nColumns);
                         offer = null;
                     }
                     if (needsStartTime) fillingStart = nanoTime();
@@ -335,35 +241,35 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 consumer = me == null ? me = currentThread() : me;
                 unlock();
                 locked = false;
-                journal("park ns=", parkNs, "on", this);
-                if (parkNs == Long.MAX_VALUE)
-                    park(this);
-                else
-                    parkNanos(this, parkNs);
+                if (parkNs == Long.MAX_VALUE) park(this);
+                else                          parkNanos(this, parkNs);
                 consumer = null;
-                if ((b = lockOrTakeReady()) != null)
-                    break;
+                lock();
                 locked = true;
             }
         } finally {
-            if (locked) unlock();
+            if (locked) {
+                if (b != null)
+                    queuedRows -= b.totalRows();
+                unlock();
+            }
             // recycle offer if we did not already
-            Batch.recycle(offer);
+            batchType.recycle(offer);
             unpark(producer);
         }
 
-        if (b == null)   // terminal batch
+        if (b == null) // terminal batch
             return onTerminal(); // throw if failed
         onNextBatch(b); // guides getBatch() allocations
-        //dbg.write("nextBatch RET &b=", System.identityHashCode(b), "rows=", b.rows);
         return b;
     }
 
     @SuppressWarnings("SameReturnValue") private @Nullable B onTerminal() {
         lock();
-        try {
-            filling = Batch.recycle(filling);
-        } finally { unlock(); }
+        B f = filling;
+        filling = null;
+        unlock();
+        Batch.recycle(f);
         checkError();
         return null;
     }

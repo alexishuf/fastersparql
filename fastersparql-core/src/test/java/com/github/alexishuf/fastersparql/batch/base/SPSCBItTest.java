@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -177,34 +178,36 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testMaxReadyItems() throws InterruptedException, ExecutionException {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 2)) {
-            TermBatch b1 = intsBatch(1), b2 = intsBatch(2, 3);
-            TermBatch b3 = intsBatch(4, 5), b4 = intsBatch(5, 6);
+            TermBatch b1 = intsBatch(1), b2 = intsBatch(2);
+            TermBatch b3 = intsBatch(3, 4), b4 = intsBatch(5, 6);
             assertTimeout(Duration.ofMillis(5), () -> {
                 assertNull(it.offer(b1));
                 assertNull(it.offer(b2));
-            });
+            }); // it: [1] [2]
             // start a offer(), which will block
             CompletableFuture<TermBatch> f3 = new CompletableFuture<>();
             Thread.startVirtualThread(
                     () -> f3.complete(assertDoesNotThrow(() -> it.offer(b3))));
-            assertThrows(TimeoutException.class, () -> f3.get(5, MILLISECONDS));
+            assertThrows(TimeoutException.class, () -> f3.get(50, MILLISECONDS));
 
             // consuming will unblock offer()
-            assertSame(b1, it.nextBatch(null));
-            assertNull(f3.get()); // offer() was unblocked
+            assertSame(b1, it.nextBatch(null)); // it: [2] [3, 4]?
+            assertSame(b2, it.nextBatch(null)); // it: [3, 4]?
+            assertNull(f3.get()); // offer() was unblocked, it: [3, 4]
 
             // copy() must block() since b3 on filling has 2 items
             Thread t4 = Thread.startVirtualThread(
                     () -> assertDoesNotThrow(() -> it.copy(b4)));
-            assertFalse(t4.join(ofMillis(5)));
+            assertFalse(t4.join(ofMillis(50))); // it: [3, 4]
 
             // consuming will unblock() copy
-            assertSame(b2, it.nextBatch(null));
-            assertTrue(t4.join(ofMillis(5)));
+            assertSame(b3, it.nextBatch(null)); // it: ø
+            assertTrue(t4.join(ofMillis(50))); // it: [5, 6]
 
             // offer() and copy() are visible with order retained
-            assertSame(b3, it.nextBatch(null));
-            assertEquals(b4, it.nextBatch(null));
+            TermBatch last = it.nextBatch(null);
+            assertEquals(b4, last);
+            assertNotSame(b4, last);
         }
     }
 

@@ -173,7 +173,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         if (tail.offerRowBase < 0) return;
         tail.offerRowBase = -1;
         if (tail != this && tail.rows == 0)
-            dropTail(tail);
+            dropTail();
         assert validate();
     }
 

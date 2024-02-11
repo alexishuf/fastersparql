@@ -213,7 +213,7 @@ public final class TermBatch extends Batch<TermBatch> {
         if (tail.offerRowBase < 0) return;
         tail.offerRowBase = -1;
         if (tail != this && tail.rows == 0)
-            dropTail(tail);
+            dropTail();
     }
 
 //    @Override public void put(TermBatch other) {

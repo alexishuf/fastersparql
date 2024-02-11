@@ -899,7 +899,7 @@ public class CompressedBatch extends Batch<CompressedBatch> {
             return; // not inside an uncommitted offer/put
         tail.offerNextLocals = -1;
         if (tail != this && tail.rows == 0)
-            dropTail(tail);
+            dropTail();
     }
 
     @Override public void beginPut() {

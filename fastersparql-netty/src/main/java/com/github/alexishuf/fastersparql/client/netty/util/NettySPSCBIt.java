@@ -102,7 +102,7 @@ public abstract class NettySPSCBIt<B extends Batch<B>> extends SPSCBIt<B>
         }
     }
 
-    @Override protected boolean mustPark(int offerRows, int queuedRows) {
+    @Override protected boolean mustPark(int offerRows, long queuedRows) {
         if (super.mustPark(offerRows, queuedRows)) {
             Channel ch = this.channel;
             assert ch == null || ch.eventLoop().inEventLoop() : "offer() outside channel event loop";
