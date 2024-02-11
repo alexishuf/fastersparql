@@ -285,7 +285,7 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-            try (var watchdog = watchdog(30, task, currentPlan, results)) {
+            try (var watchdog = watchdog(30, task, rep, currentPlan, results)) {
                 switch (msrOp.flowModel) {
                     case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
                     case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
@@ -304,16 +304,16 @@ public class Measure implements Callable<Void>{
             stopAsyncProfilerIfActive();
         }
         if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-            dump(task.query(), task.query().name(), currentPlan, results);
+            dump(task.query(), task.query().name()+'.'+rep, currentPlan, results);
         if (consumer instanceof Checker<?> c && !c.isValid())
-            dump(task.query(), task.query().name(), currentPlan, results);
+            dump(task.query(), task.query().name()+'.'+rep, currentPlan, results);
         return (int)((stopNs - startNs)/1_000_000L);
     }
 
     @SuppressWarnings("unused")
     private Watchdog watchdog(@SuppressWarnings("SameParameterValue") int secs,
-                              MeasureTask task, Plan plan, Object results) {
-        String name = task.query().name()+"."+secs+"s";
+                              MeasureTask task, int rep, Plan plan, Object results) {
+        String name = task.query().name()+'.'+rep+'.'+secs+'s';
         var w = new Watchdog(() -> dump(task.query(), name, plan, (StreamNode)results));
         w.start(secs*1_000_000_000L);
         return w;
