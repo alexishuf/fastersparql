@@ -119,6 +119,12 @@ public class MeasureOptions {
             "number of milliseconds")
     public int cooldownMs = 1_000;
 
+
+    @Option(names = "--no-call-gc", negatable = true, description = "Calls System.gc() during " +
+            "cooldown (after all warmup repetitions and after every measured " +
+            "(non-warmup) repetition")
+    public boolean callGC = true;
+
     public void cooldown(int ms) {
         if (ms < 0)
             return;
@@ -128,19 +134,24 @@ public class MeasureOptions {
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
         PoolCleaner.INSTANCE.sync(); // sets unpooled refs to null, allowing collection
-        if (ms > 10 ||asyncProfiler != null) // null writes SHOULD be visible anyway
-            uninterruptibleSleep(10);
-        System.gc();
+        if (callGC) {
+            if (ms > 10 || asyncProfiler != null) // null writes SHOULD be visible anyway
+                uninterruptibleSleep(10);
+            if (callGC)
+                System.gc();
+        }
 
         long start = Timestamp.nanoTime();
-        if (asyncProfiler != null) // ap sees into GC code, but we are not profiling GC
+        if (callGC && asyncProfiler != null) // ap sees into GC code, but we are not profiling GC
             uninterruptibleSleep(50);
 
         IOUtils.fsync(ms - (ms > 10 ? 10 : 0));
         uninterruptibleSleep(ms - (int)((Timestamp.nanoTime()-start)/1_000_000));
-        double freeAfter = runtime.freeMemory()/(double)runtime.totalMemory();
 
-        log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*(freeAfter-freeBefore)));
+        if (callGC) {
+            double after = runtime.freeMemory()/(double)runtime.totalMemory();
+            log.info("cooldown(): +{}% free memory", String.format("%.2f", 100*(after-freeBefore)));
+        }
     }
 
     public void       cooldown() { cooldown(cooldownMs); }

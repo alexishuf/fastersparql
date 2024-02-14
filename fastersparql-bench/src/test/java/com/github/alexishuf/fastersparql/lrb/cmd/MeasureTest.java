@@ -149,6 +149,7 @@ class MeasureTest {
                 "--data-dir", dataDir.getPath(),
                 "--dest-dir", destDir.getPath(),
                 "--warm-secs", "0",
+                "--no-call-gc",
                 "--warm-cool-ms", "500",
                 "--cool-ms", "1", // minimal amount, just to touch the code
                 "--reps", Integer.toString(nReps),
