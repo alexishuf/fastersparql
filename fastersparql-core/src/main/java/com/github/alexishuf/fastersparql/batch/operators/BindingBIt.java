@@ -81,6 +81,13 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             bindQuery.bindings.close();
     }
 
+    @Override public boolean tryCancel() {
+        boolean did = super.tryCancel();
+        if (did)
+            bindQuery.bindings.tryCancel();
+        return did;
+    }
+
     /* --- --- --- delegate control --- --- --- */
 
     /* --- --- --- binding behavior --- --- --- */

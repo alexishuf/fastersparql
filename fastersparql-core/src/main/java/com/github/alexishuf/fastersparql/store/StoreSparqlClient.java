@@ -2350,6 +2350,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
+        @Override public boolean tryCancel() {
+            boolean did = super.tryCancel();
+            if (did)
+                left.tryCancel();
+            return did;
+        }
+
         @Override public @Nullable B nextBatch(@Nullable B b) {
             if (lb == null) return null; // already exhausted
             boolean locked = false;
