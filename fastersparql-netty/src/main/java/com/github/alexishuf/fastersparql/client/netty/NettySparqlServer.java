@@ -490,7 +490,11 @@ public class NettySparqlServer implements AutoCloseable {
 
         protected void waitForRequested(int batchRows) {}
 
-        protected void drainerThread(int round) {
+        protected final void startDrainerThread(int round) {
+            drainerThread = startVirtualThread(() -> drainerThread(round));
+        }
+
+        protected final void drainerThread(int round) {
             SerializeTask<?> task = null;
             try (var it = this.it) {
                 task = createSerializeTask(round);
@@ -678,7 +682,7 @@ public class NettySparqlServer implements AutoCloseable {
                                  .set(TRANSFER_ENCODING, CHUNKED);
                     responseStarted = true;
                     ctx.writeAndFlush(res);
-                    drainerThread = startVirtualThread(() -> drainerThread(round));
+                    startDrainerThread(round);
                 }
             }
         }
@@ -995,7 +999,7 @@ public class NettySparqlServer implements AutoCloseable {
                 var sparql = new ByteRope(msg.toArray(ex.length, msg.len));
                 if (parseQuery(sparql) && waitingVarsRound <= 0) {
                     if (dispatchQuery(null, BindType.JOIN)) {
-                        drainerThread = startVirtualThread(() -> drainerThread(round));
+                        startDrainerThread(round);
                         request(implicitRequest);
                     }
                 }
@@ -1090,7 +1094,7 @@ public class NettySparqlServer implements AutoCloseable {
                 for (var v : itVars)
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
-                drainerThread = startVirtualThread(() -> drainerThread(round));
+                startDrainerThread(round);
                 if (plainRequested == 0)
                     request(implicitRequest);
                 readBindings(bindingsParser, msg);
