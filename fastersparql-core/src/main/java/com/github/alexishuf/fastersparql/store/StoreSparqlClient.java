@@ -2594,8 +2594,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 } else {
                     if (eager)
                         left.tempEager();
-                    lb = left.nextBatch(null);
-                    if (lb == null) return false;
+                    B nextLB = null;
+                    unlock();
+                    try { //
+                        nextLB = left.nextBatch(null);
+                    } finally {
+                        lock();
+                        if (isTerminated()) // tryCancel()/close() while unlocked
+                            nextLB = batchType.recycle(nextLB); // abort rebind
+                    }
+                    if ((lb = nextLB) == null)
+                        return false;
                 }
             }
             if (startBindingNotifier != null) startBindingNotifier.startBinding();
