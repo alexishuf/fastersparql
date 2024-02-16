@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
-import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -159,20 +158,25 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         }
     }
 
-    @Override protected void cleanup(@Nullable Throwable cause) {
-        super.cleanup(cause);
-        if ((int)ACTIVE_SOURCES.getAcquire(this) != 0)
-            ExceptionCondenser.closeAll(sources);
+    @Override public void close() {
+        super.close();
+        try {
+            for (Thread t : drainerThreads)
+                t.join();
+        } catch (InterruptedException e)  {
+            log.error("Interrupted while joining drainer threads at tryCancel() for {}", this);
+        }
     }
 
     @Override public boolean tryCancel() {
         boolean did = super.tryCancel();
         if (did) {
-            try {
-                for (Thread t : drainerThreads)
-                    t.join();
-            } catch (InterruptedException e)  {
-                log.error("Interrupted while joining drainer threads at tryCancel() for {}", this);
+            for (BIt<B> s : sources) {
+                try {
+                    s.tryCancel();
+                } catch (Throwable t) {
+                    log.warn("Ignoring tryCancel() failure for {} by {}", s, this, t);
+                }
             }
         }
         return did;

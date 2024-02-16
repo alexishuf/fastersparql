@@ -92,7 +92,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
      *         park until {@link #nextBatch(Batch)} takes some rows.
      */
     protected boolean mustPark(int offerRows, long queuedRows) {
-        return offerRows+queuedRows > maxItems && queuedRows > 0;
+        return queuedRows > 0 && offerRows+queuedRows > maxItems && notTerminated();
     }
 
     /* --- --- --- termination methods --- --- --- */

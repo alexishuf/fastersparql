@@ -331,7 +331,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
         return this;
     }
 
-    @Override public final void close() {
+    @Override public void close() {
         tryCancel();
     }
 
