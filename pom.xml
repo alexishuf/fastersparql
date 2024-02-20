@@ -71,6 +71,7 @@
     <module>fastersparql-bench</module>
     <module>fastersparql-microbench</module>
     <module>fastersparql-bom</module>
+    <module>fastersparql-grep</module>
   </modules>
 
   <dependencyManagement> <!-- Fix dependency versions -->
@@ -166,6 +167,16 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
           <version>3.3.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>3.2.4</version>
+        </plugin>
+        <plugin>
+          <groupId>org.skife.maven</groupId>
+          <artifactId>really-executable-jar-maven-plugin</artifactId>
+          <version>2.1.1</version>
         </plugin>
       </plugins>
     </pluginManagement>

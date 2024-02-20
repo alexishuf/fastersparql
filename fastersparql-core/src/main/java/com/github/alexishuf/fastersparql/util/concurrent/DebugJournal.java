@@ -315,10 +315,10 @@ public class DebugJournal {
         private StringBuilder writeObj(StringBuilder sb, Object o, int maxWidth) {
             if (o == null)
                 return sb;
-            if (o instanceof String) {
-                sb.append(o);
+            if (o instanceof String str) {
+                sb.append(str.replace('|', '∥'));
             } else {
-                String str = renderObj(o);
+                String str = renderObj(o).replace('|', '∥');
                 if (maxWidth > 12 && str.length() > maxWidth) {
                     int side = maxWidth - 12 /* ...@12345678 */;
                     sb.append(str, 0, side).append("...");
