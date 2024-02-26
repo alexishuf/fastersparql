@@ -23,18 +23,19 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.Writer;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
-import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.Math.max;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -589,17 +590,18 @@ public final class Results {
     public <B extends Batch<B>> void check(BIt<B> it) throws AssertionError {
         List<List<Term>> acList = new ArrayList<>();
         Throwable thrown = null;
-        try (var w = ThreadJournal.watchdog(System.err, 100)) {
-            w.start(10_000_000_000L);
-            for (B b = null; (b = it.nextBatch(b)) != null; ) {
-                for (var n = b; n != null; n = n.next) {
-                    for (int i = 0; i < n.rows; i++)
-                        acList.add(normalizeRow(n, i));
+        try (var w = Watchdog.spec("check.10s").threadStdErr(100).streamNode(it).startSecs(10)) {
+            try {
+                for (B b = null; (b = it.nextBatch(b)) != null; ) {
+                    for (var n = b; n != null; n = n.next) {
+                        for (int i = 0; i < n.rows; i++)
+                            acList.add(normalizeRow(n, i));
+                    }
                 }
+            } catch (Throwable t) {
+                w.stopAndTrigger();
+                thrown = t;
             }
-        } catch (Throwable t) {
-            ThreadJournal.dumpAndReset(System.err, 100);
-            thrown = t;
         }
         check(acList, thrown, it.vars());
     }
@@ -608,25 +610,11 @@ public final class Results {
         private final List<List<Term>> acList = new ArrayList<>();
 
         public void assertNoError() {
-            try (var w = ThreadJournal.watchdog(System.out, 100)) {
-                w.start(20_000_000_000L).andThen(() -> {
-                    try {
-                        renderDOT(new File("/tmp/test.svg"), WITH_STATE_AND_STATS);
-                    } catch (IOException e) {//noinspection CallToPrintStackTrace
-                        e.printStackTrace();
-                    }
-                });
+            try (var w = Watchdog.spec("check.10s").threadStdOut(100).streamNode(this).startSecs(10)) {
                 Throwable error = getSimple();
                 if (error != null) {
-                    AssertionError assertionError = new AssertionError(error);
-                    try {
-                        ThreadJournal.dumpAndReset(System.err, 80);
-                        ResultJournal.dump(System.err);
-                        renderDOT(new File("/tmp/test.svg"), WITH_STATE_AND_STATS);
-                    } catch (Throwable e) {
-                        throw new AssertionError(e.toString(), assertionError);
-                    }
-                    throw assertionError;
+                    w.stopAndTrigger();
+                    throw new AssertionError(error);
                 }
             }
         }

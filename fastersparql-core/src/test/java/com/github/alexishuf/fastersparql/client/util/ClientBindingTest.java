@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.util.Results;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.junit.jupiter.api.RepeatedTest;
 
 import java.util.List;
@@ -31,7 +32,7 @@ class ClientBindingTest {
                 "3", "31",
                 "3", "32"
         ).query(SPARQL).bindings("?x", "1", "2", "3");
-        try (var w = ThreadJournal.watchdog(System.err, 60);
+        try (var w = Watchdog.spec("test").threadStdErr(60).create();
              var client = client(expected)
                 .answer("1").with("11")
                 .answer("2").with()

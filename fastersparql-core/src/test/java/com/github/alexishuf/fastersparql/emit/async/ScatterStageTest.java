@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
@@ -167,9 +168,8 @@ class ScatterStageTest {
     @ParameterizedTest @MethodSource
     void test(D d) {
         for (int i = 0; i < 20; i++) {
-            ResultJournal.clear();
-            ThreadJournal.resetJournals();
-            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+            Watchdog.reset();
+            try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
                 w.start(2_000_000_000L);
                 d.run();
             } catch ( Throwable t) {

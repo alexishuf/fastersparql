@@ -290,17 +290,8 @@ class GatherAndScatterTest {
                 for (int i = 0; i < nConsumers; i++)
                     consumers.add(new C<>(scatter.createConnector(), consumerBarrier, i));
                 long requestSize = (long) height * nProducers + 1;
-                try (var w = ThreadJournal.watchdog(System.out, 100)) {
-                    w.start(10_000_000_000L).andThen(() -> {
-                        try {
-//                            fakeRoot.renderDOT(new File("/tmp/test.svg"), WITH_STATE_AND_STATS);
-                            System.out.println("\n");
-                            ResultJournal.dump(System.out);
-                            System.out.println("\n"+fakeRoot.toDOT(WITH_STATE_AND_STATS));
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
+                try (var w = Watchdog.spec("test").threadStdOut(100).streamNode(fakeRoot).create()) {
+                    w.start(10_000_000_000L);
                     if (requestSize > 32)
                         Batch.makeValidationCheaper();
                     gather.request(requestSize);

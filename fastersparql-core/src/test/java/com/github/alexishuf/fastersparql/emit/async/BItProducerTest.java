@@ -13,7 +13,7 @@ import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -131,7 +131,7 @@ public class BItProducerTest {
 
     @ParameterizedTest @MethodSource("data")
     void testEmitter(D data) throws Exception {
-        try (var ignored = ThreadJournal.watchdog(System.out, 50).start(2_000_000_000L)) {
+        try (var ignored = Watchdog.spec("test").threadStdOut(50).startSecs(2)) {
             data.testEmitter();
         }
         TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, data::testEmitter);

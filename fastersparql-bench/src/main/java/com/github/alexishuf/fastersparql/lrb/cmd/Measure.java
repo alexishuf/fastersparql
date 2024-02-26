@@ -48,9 +48,7 @@ import java.util.stream.Collectors;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.SAVE;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
-import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.System.nanoTime;
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.util.Objects.requireNonNull;
 
@@ -255,20 +253,21 @@ public class Measure implements Callable<Void>{
     }
 
     private int run(Federation fed, MeasureTask task, int rep, int timeoutMs) {
-        msrOp.updateWeakenDistinct(task.query());
+        QueryName query = task.query();
+        msrOp.updateWeakenDistinct(query);
         BatchConsumer consumer = consumer(task, rep);
         NettyChannelDebugger.reset();
         ResultJournal.clear();
         ThreadJournal.resetJournals();
         try {
-            Files.deleteIfExists(Path.of("/tmp/"+task.query()+".journal"));
+            Files.deleteIfExists(Path.of("/tmp/"+ query +".journal"));
         } catch (IOException ignored) { }
         StreamNode results = null;
         resumeAsyncProfilerIfAllowed();
         long startNs = nanoTime(), stopNs;
         try {
             if (plans != null) {
-                var plan        = requireNonNull(plans.createPlan(task.query()));
+                var plan        = requireNonNull(plans.createPlan(query));
                 currentPlan     = plan;
                 fedMetrics      = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
@@ -285,17 +284,14 @@ public class Measure implements Callable<Void>{
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
-            try (var watchdog = watchdog(30, task, rep, currentPlan, results)) {
+            try (var w = spec(query, rep, ".30s", currentPlan, results).startSecs(30)) {
                 switch (msrOp.flowModel) {
                     case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
                     case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
                 }
-                watchdog.stop();
+                w.stop();
             }
             stopNs = nanoTime();
-//            try (var out = new PrintStream("/tmp/dump")) {
-//                NettyChannelDebugger.dumpAndFlushActive(out);
-//            }
         } catch (Throwable t) {
             stopNs = nanoTime();
             consumer.finish(t);
@@ -304,45 +300,15 @@ public class Measure implements Callable<Void>{
             stopAsyncProfilerIfActive();
         }
         if (results instanceof Stateful s && s.stateName().contains("FAILED"))
-            dump(task.query(), task.query().name()+'.'+rep, currentPlan, results);
+            spec(query, rep, "", currentPlan, results).run();
         if (consumer instanceof Checker<?> c && !c.isValid())
-            dump(task.query(), task.query().name()+'.'+rep, currentPlan, results);
+            spec(query, rep, "", currentPlan, results).run();
         return (int)((stopNs - startNs)/1_000_000L);
     }
 
-    @SuppressWarnings("unused")
-    private Watchdog watchdog(@SuppressWarnings("SameParameterValue") int secs,
-                              MeasureTask task, int rep, Plan plan, Object results) {
-        String name = task.query().name()+'.'+rep+'.'+secs+'s';
-        var w = new Watchdog(() -> dump(task.query(), name, plan, (StreamNode)results));
-        w.start(secs*1_000_000_000L);
-        return w;
-    }
-
-    @SuppressWarnings("unused") private void dump(QueryName qry, String name, Plan plan, StreamNode sn) {
-        Async.uninterruptibleSleep(500);
-        System.out.println(qry.opaque().sparql());
-        if (plan != null)
-            System.out.println(plan);
-        File dotFile = new File("/tmp/"+name+".dot");
-        File journalFile = new File("/tmp/"+name+".journal");
-        File resultsFile = new File("/tmp/"+name+".results");
-        File nettyFile = new File("/tmp/"+name+".netty");
-        File svg = new File(dotFile.getPath().replace(".dot", ".svg"));
-        try (var dot     = new FileWriter(dotFile,     UTF_8);
-             var journal = new FileWriter(journalFile, false);
-//             var journal = new OutputStreamWriter(
-//                     new TeeOutputStream(new CloseShieldOutputStream(System.out),
-//                                         new FileOutputStream(journalFile, false)));
-             var netty = new PrintStream(nettyFile);
-             var results = new FileWriter(resultsFile, UTF_8)) {
-            ThreadJournal.dumpAndReset(journal, 100);
-            ResultJournal.dump(results);
-            dot.append(sn.toDOT(WITH_STATE_AND_STATS));
-            sn.renderDOT(svg, WITH_STATE_AND_STATS);
-            NettyChannelDebugger.dumpAndReset(netty);
-            System.out.println("Wrote "+svg);
-        } catch (IOException ignored) {}
+    private Watchdog.Spec spec(QueryName qry, int rep, String suffix, Plan plan, StreamNode sn) {
+        String name = qry.name()+"."+rep+suffix;
+        return Watchdog.spec(name).plan(plan).sparql(qry.opaque().sparql).streamNode(sn);
     }
 
     /* --- --- --- metrics collection --- --- --- */

@@ -107,11 +107,6 @@ public class ThreadJournal {
         } finally { unlockForWrite(); }
     }
 
-    /** Create an un-{@link Watchdog#start(long)}ed watchdog for
-     *  {@link #dumpAndReset(Appendable, int)}. */
-    public static Watchdog watchdog(Appendable dest, int columnWidth) {
-        return new Watchdog(() -> dumpAndReset(dest, columnWidth));
-    }
 
     private static RoleJournal journal() {
         Thread thread = Thread.currentThread();

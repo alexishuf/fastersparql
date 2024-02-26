@@ -13,8 +13,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -55,8 +54,10 @@ class AsyncStageTest {
             this.failCause = failCause;
         }
 
-        @Override public String label(StreamNodeDOT.Label type) {
-            return STR."P(\{begin}:\{end}})@\{System.identityHashCode(this)}}";
+        @Override protected StringBuilder minimalLabel() {
+            return new StringBuilder().append("P(").append(begin)
+                    .append(':').append(end).append("@")
+                    .append(System.identityHashCode(this));
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -239,9 +240,8 @@ class AsyncStageTest {
 
     private static <B extends Batch<B>> void doTest(BatchType<B> bt, int rows, int producers,
                                                     boolean slow, RuntimeException fail) {
-        try (var w = ThreadJournal.watchdog(System.out, 100)) {
-            ResultJournal.clear();
-            ThreadJournal.resetJournals();
+        Watchdog.reset();
+        try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
             w.start(5_000_000_000L);
             Emitter<B> root;
             if (producers == 1) {

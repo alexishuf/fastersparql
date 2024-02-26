@@ -10,7 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.util.Results;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
@@ -190,13 +190,15 @@ public class ModifierTest {
     
     @ParameterizedTest @MethodSource
     void test(D c) {
-        try (var w = ThreadJournal.watchdog(System.out, 100)) {
-            ThreadJournal.resetJournals();
-            w.start(1_000_000_000L);
-            c.run();
-        } catch (Throwable t) {
-            ThreadJournal.dumpAndReset(System.out, 60);
-            throw t;
+        Watchdog.reset();
+        try (var w = Watchdog.spec("test").threadStdOut(100).startSecs(1)) {
+            try {
+                w.start(1_000_000_000L);
+                c.run();
+            } catch (Throwable t) {
+                w.stopAndTrigger();
+                throw t;
+            }
         }
     }
 

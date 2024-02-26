@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.UnsetError;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
@@ -150,7 +151,7 @@ class CallbackEmitterTest {
                 };
                 cb.subscribe(receiver);
                 cb.request(1);
-                try (var w = ThreadJournal.watchdog(System.out, 100)) {
+                try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
                     w.start(20_000_000_000L);
                     ready.acquireUninterruptibly();
                 }
