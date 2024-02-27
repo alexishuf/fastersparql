@@ -10,6 +10,7 @@ import io.netty.handler.ssl.SslContextBuilder;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.File;
+import java.io.PrintStream;
 
 public class FSNettyProperties extends FSProperties {
     private static final DebugJournal.ObjRenderer CHANNEL_RENDERER
@@ -42,17 +43,21 @@ public class FSNettyProperties extends FSProperties {
     public static final String ELG_SHARED = "fastersparql.netty.eventloopgroup.shared";
     public static final String ELG_KEEPALIVE = "fastersparql.netty.eventloopgroup.keepalive-seconds";
     public static final String WS_MAX_HTTP = "fastersparql.netty.ws.max-http";
+    public static final String DEBUG_CHANNEL_CLIENT = "fastersparql.netty.debug.channel.client";
+    public static final String DEBUG_CHANNEL_SERVER = "fastersparql.netty.debug.channel.server";
 
     /* --- --- --- default values --- --- --- */
 
     public static final File DEF_TRUST_CERT_COLLECTION_FILE = null;
-    public static final boolean DEF_START_TLS     = false;
-    public static final boolean DEF_OCSP          = false;
-    public static final boolean DEF_POOL_ENABLE   = true;
-    public static final boolean DEF_POOL_FIFO     = false;
-    public static final boolean DEF_ELG_SHARED    = true;
-    public static final int     DEF_ELG_KEEPALIVE = 15;
-    public static final int     DEF_WS_MAX_HTTP   = 8192;
+    public static final boolean DEF_START_TLS               = false;
+    public static final boolean DEF_OCSP                    = false;
+    public static final boolean DEF_POOL_ENABLE             = true;
+    public static final boolean DEF_POOL_FIFO               = false;
+    public static final boolean DEF_ELG_SHARED              = true;
+    public static final boolean DEF_DEBUG_CHANNEL_CLIENT    = false;
+    public static final boolean DEF_DEBUG_CHANNEL_SERVER    = false;
+    public static final int     DEF_ELG_KEEPALIVE           = 15;
+    public static final int     DEF_WS_MAX_HTTP             = 8192;
 
     /* --- --- --- accessors --- --- --- */
 
@@ -167,4 +172,26 @@ public class FSNettyProperties extends FSProperties {
     public static int wsMaxHttpResponse() {
         return readPositiveInt(WS_MAX_HTTP, DEF_WS_MAX_HTTP);
     }
+
+    /**
+     * Whether all messages received and sent by the server should be stored and logged
+     * when the channel closes or when {@link NettyChannelDebugger#dump(PrintStream)} is called.
+     *
+     * <p>The default is {@code false}, since this incurs a heavy memory cost and is prone
+     * to causing {@link OutOfMemoryError}s. Changing this at runtime via
+     * {@link #DEBUG_CHANNEL_CLIENT} may have no effect due to channel pooling and due to
+     * caching of the value returned by this method</p>
+     */
+    public static boolean debugClientChannel() { return readBoolean(DEBUG_CHANNEL_CLIENT, DEF_DEBUG_CHANNEL_CLIENT); }
+
+    /**
+     * Whether all messages received and sent by the client should be stored and logged
+     * when the channel closes or when {@link NettyChannelDebugger#dump(PrintStream)} is called.
+     *
+     * <p>The default is {@code false}, since this incurs a heavy memory cost and is prone
+     * to causing {@link OutOfMemoryError}s. Changing this at runtime via
+     * {@link #DEBUG_CHANNEL_SERVER} may have no effect due to channel pooling and due to
+     * caching of the value returned by this method</p>
+     */
+    public static boolean debugServerChannel() { return readBoolean(DEBUG_CHANNEL_SERVER, DEF_DEBUG_CHANNEL_SERVER); }
 }

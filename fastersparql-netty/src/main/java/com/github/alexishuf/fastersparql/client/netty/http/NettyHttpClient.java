@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
-import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
-import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
+import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.bootstrap.Bootstrap;
@@ -27,6 +25,8 @@ import java.util.function.Supplier;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 
 public final class NettyHttpClient implements AutoCloseable {
+    private final static boolean DEBUG = FSNettyProperties.debugClientChannel();
+
     public static final String HANDLER_NAME = "handler";
 
     public static final AbortRequest ABORT_REQUEST = new AbortRequest();
@@ -112,6 +112,8 @@ public final class NettyHttpClient implements AutoCloseable {
             pipeline.addLast("ssl", sslContext.newHandler(ch.alloc()));
         pipeline.addLast("http", new HttpClientCodec());
         pipeline.addLast("decompress", new HttpContentDecompressor());
+        if (DEBUG)
+            pipeline.addLast("debugger", new NettyChannelDebugger("NettyHttpClient"));
 //        pipeline.addLast("log", new LoggingHandler(NettyHttpClient.class,
 //                                                         LogLevel.INFO, ByteBufFormat.SIMPLE));
         NettyHttpHandler handler = hFactory.get();

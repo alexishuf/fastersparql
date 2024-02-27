@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.client.netty.http.ActiveChannelSet;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
@@ -25,21 +26,27 @@ public class NettyWsClient implements AutoCloseable {
     private final Bootstrap bootstrap;
     private final @Nullable SimpleChannelPool pool;
     private final ActiveChannelSet activeChs;
+    private final String uri;
     private boolean closed;
 
     public NettyWsClient(EventLoopGroupHolder elgHolder, URI uri,
                          HttpHeaders headers, boolean pool,
                          boolean poolFIFO, @Nullable SslContext sslContext) {
         this.elgHolder = elgHolder;
-        this.activeChs = new ActiveChannelSet(uri.toString());
+        this.uri = uri.toString();
+        this.activeChs = new ActiveChannelSet(this.uri);
         int maxHttp = FSNettyProperties.wsMaxHttpResponse();
         ChannelRecycler recycler = pool ? this::recycle : ChannelRecycler.CLOSE;
         var initializer = new ChannelInitializer<>() {
+            private final String debugName = FSNettyProperties.debugClientChannel()
+                    ? NettyWsClient.this.toString() : null;
             @Override protected void initChannel(Channel ch) {
                 ChannelPipeline pipe = ch.pipeline();
                 if (sslContext != null)
                     pipe.addLast("ssl", sslContext.newHandler(ch.alloc()));
                 pipe.addLast("http", new HttpClientCodec());
+                if (debugName != null)
+                    pipe.addLast("debug", new NettyChannelDebugger(debugName));
                 pipe.addLast("aggregator", new HttpObjectAggregator(maxHttp));
 //                pipe.addLast("log", new LoggingHandler(NettyWsClient.class, LogLevel.INFO, ByteBufFormat.SIMPLE));
                 pipe.addLast("comp", WebSocketClientCompressionHandler.INSTANCE);
@@ -64,6 +71,10 @@ public class NettyWsClient implements AutoCloseable {
             elgHolder.release();
             throw t;
         }
+    }
+
+    @Override public String toString() {
+        return String.format("NettyWsClient@%x(%s)", System.identityHashCode(this), uri);
     }
 
     private void recycle(Channel ch) {

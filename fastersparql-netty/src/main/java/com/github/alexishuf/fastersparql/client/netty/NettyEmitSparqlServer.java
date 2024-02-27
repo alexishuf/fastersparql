@@ -106,21 +106,23 @@ public class NettyEmitSparqlServer implements AutoCloseable {
         this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
         acceptGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup(FSProperties.nettyEventLoopThreads());
-//        String debuggerName = sparqlClient.endpoint().toString();
         server = new ServerBootstrap().group(acceptGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
+                    private final String debugName = FSNettyProperties.debugServerChannel()
+                            ? NettyEmitSparqlServer.this.sparqlClient.endpoint().toString() : null;
                     @Override protected void initChannel(SocketChannel ch) {
-                        ch.pipeline()
-                                .addLast("http", new HttpServerCodec())
-//                                .addLast("debug", new NettyChannelDebugger(debuggerName))
-//                                .addLast("log", new LoggingHandler(NettySparqlServer.class, LogLevel.INFO, ByteBufFormat.HEX_DUMP))
-                                .addLast("req-aggregator", new HttpObjectAggregator(1<<15, true))
-                                .addLast("keepalive", new HttpServerKeepAliveHandler())
-//                              .addLast("ws-compression", new WebSocketServerCompressionHandler())
-                                .addLast("sparql", new SparqlHandler())
-                                .addLast("ws", new WebSocketServerProtocolHandler(SP_PATH, null, true))
-                                .addLast("ws-sparql", new WsHandler());
+                        var p = ch.pipeline();
+                        p.addLast("http", new HttpServerCodec());
+                        if (debugName != null)
+                            p.addLast("debug", new NettyChannelDebugger(debugName));
+                        //.addLast("log", new LoggingHandler(NettySparqlServer.class, LogLevel.INFO, ByteBufFormat.HEX_DUMP));
+                        p.addLast("req-aggregator", new HttpObjectAggregator(1<<15, true));
+                        p.addLast("keepalive", new HttpServerKeepAliveHandler());
+                        //.addLast("ws-compression", new WebSocketServerCompressionHandler());
+                        p.addLast("sparql", new SparqlHandler());
+                        p.addLast("ws", new WebSocketServerProtocolHandler(SP_PATH, null, true));
+                        p.addLast("ws-sparql", new WsHandler());
                     }
                 }).bind(host, port).syncUninterruptibly().channel();
     }
