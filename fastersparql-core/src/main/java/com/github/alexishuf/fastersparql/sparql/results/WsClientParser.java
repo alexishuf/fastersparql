@@ -52,7 +52,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     static {
         try {
             SB_LOCK     = lookup().findVarHandle(WsClientParser.class, "plainSentBindingsLock",  int.class);
-            B_REQUESTED = lookup().findVarHandle(WsClientParser.class, "plainBindingsRequested", int.class);
+            B_REQUESTED = lookup().findVarHandle(WsClientParser.class, "plainBindingsRequested", long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -71,7 +71,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private boolean bindingNotified = true;
     private @MonotonicNonNull Thread bindingsSender;
     @SuppressWarnings("unused") private int plainSentBindingsLock;
-    @SuppressWarnings("FieldCanBeLocal") private int plainBindingsRequested;
+    @SuppressWarnings("FieldCanBeLocal") private long plainBindingsRequested;
 
     /* --- --- --- constructors --- --- --- */
 
@@ -280,7 +280,7 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
         } else {
             if (bindingsSender == null)
                 bindingsSender = Thread.startVirtualThread(this::sendBindingsThread);
-            if (Async.maxRelease(B_REQUESTED, this, (int)n))
+            if (Async.maxRelease(B_REQUESTED, this, n))
                 Unparker.unpark(bindingsSender);
         }
     }
@@ -384,19 +384,19 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
             sender = frameSender.createSender();
 
             bindings.preferred().tempEager();
-            int allowed = 0; // bindings requested by the server
+            long allowed = 0; // bindings requested by the server
 
             sender.sendInit(bindings.vars(), usefulBindingsVars, false);
             while ((batch = bindings.nextBatch(batch)) != null) {
                 appendSentBindings(batch);
                 for (var b = batch; b != null; b = b.next) {
                     for (int r = 0, rows = b.rows, taken; r < rows; r += taken) {
-                        while ((allowed += (int) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
+                        while ((allowed += (long) B_REQUESTED.getAndSetAcquire(this, 0)) == 0)
                             LockSupport.park(this);
                         if (allowed < 0) allowed = MAX_VALUE;
                         if (isTerminated())
                             throw CancelledException.INSTANCE;
-                        allowed -= taken = Math.min(allowed, rows - r);
+                        allowed -= taken = (int)Math.min(allowed, rows - r);
                         sender.sendSerialized(b, r, taken);
                     }
                 }
