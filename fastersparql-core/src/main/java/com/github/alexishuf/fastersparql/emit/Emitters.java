@@ -33,6 +33,17 @@ public class Emitters {
         return projector == null ? in : projector.subscribeTo(in);
     }
 
+    public static <B extends Batch<B>> void discard(Emitter<B> em) {
+        if (em == null)
+            return;
+        try {
+            em.subscribe(new DiscardingReceiver<>());
+            em.cancel();
+        } catch (Throwable t) {
+            log.error("Ignoring {} while discarding {}", t.getClass().getSimpleName(), em, t);
+        }
+    }
+
     @SuppressWarnings("unused") public static <B extends Batch<B>> B collect(Emitter<B> e) {
         return new CollectingReceiver<>(e).join();
     }
