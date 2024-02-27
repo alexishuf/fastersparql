@@ -7,10 +7,10 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQuery;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
+import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
@@ -102,7 +102,7 @@ public interface SparqlClient extends AutoCloseable {
      *
      * <p>Likely exceptions:</p>
      * <ul>
-     *     <li>{@link InvalidSparqlQuery} if the {@link SparqlClient} implementation validates
+     *     <li>{@link InvalidSparqlException} if the {@link SparqlClient} implementation validates
      *         queries and the given query has a syntax error.</li>
      *     <li>{@link InvalidSparqlQueryType}: if the query is not a SELECT nor an ASK query</li>
      *     <li>{@link FSServerException} if the server returns a non-200 response</li>
