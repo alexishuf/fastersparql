@@ -535,6 +535,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                         parser.setFrameSender(this);
                         var bb = wrappedBuffer(requestMsg.u8(), 0, requestMsg.len);
                         ctx.write(new TextWebSocketFrame(bb));
+//                        var sb = new StringBuilder();
+//                        sb.append("!info ").append(journalName()).append(' ');
+//                        if (destination instanceof ChannelBound dst) {
+//                            sb.append(dst.journalName());
+//                        } else {
+//                            sb.append(destination.getClass().getSimpleName()).append('@');
+//                            sb .append(Integer.toHexString(System.identityHashCode(destination)));
+//                        }
+//                        ctx.write(new TextWebSocketFrame(Unpooled.copiedBuffer(sb.append('\n').toString(), UTF_8)));
                         if (!doRequestRows())
                             ctx.flush();
                     } else if (selfRecycle) {

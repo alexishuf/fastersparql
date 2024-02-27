@@ -833,12 +833,18 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 readCancel();
             else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST))
                 readRequest(msg);
+            else if (f == 'i' && msg.has(0, AbstractWsParser.INFO))
+                readInfo(msg);
             else if (waitingVars)
                 readVarsFrame(msg);
             else if (bindingsParser != null)
                 readBindings(bindingsParser, msg);
             else
                 handleQueryCommand(msg, f);
+        }
+
+        private void readInfo(SegmentRope msg) {
+            journal(msg.toString(0, msg.skipUntil(0, msg.len, '\n')), "handler=", this);
         }
 
         private void readAfterServerClose() {

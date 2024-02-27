@@ -19,6 +19,7 @@ import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics.JoinMetrics;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
@@ -265,6 +266,10 @@ public class WsClientParser<B extends Batch<B>> extends AbstractWsParser<B> {
 
     @Override protected void onCancel() {
         throw new FSServerException("server sent spontaneous !cancel");
+    }
+
+    @Override protected void onInfo(SegmentRope rope, int begin, int end) {
+        journal(rope.toString(begin, end), "dst=", dst);
     }
 
     private void handleBindRequest(long n) {

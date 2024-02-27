@@ -32,6 +32,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     public static final byte[] BIND_REQUEST     = "!bind-request ".getBytes(UTF_8);
     public static final byte[] BIND_EMPTY_UNTIL = "!bind-empty-streak ".getBytes(UTF_8);
     public static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
+    public static final byte[] INFO             = "!info ".getBytes(UTF_8);
     public static final byte[] PING             = "!ping".getBytes(UTF_8);
     public static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);
     public static final byte[] ERROR            = "!error".getBytes(UTF_8);
@@ -66,6 +67,8 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
         //noinspection unchecked
         sender.sendFrame(sender.createSink().append(PING_ACK_FRAME));
     }
+
+    protected void onInfo(SegmentRope rope, int begin, int end) { /* pass */}
 
     /** The remote peer wants the processing to stop. It will not send any more input and
      *  any further input should be treated as an error. */
@@ -102,6 +105,8 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
                 onPingAck();
             else if (first == 'p' && rope.has(begin, PING))
                 onPing();
+            else if (first == 'i' && rope.has(begin, INFO))
+                onInfo(rope, begin, eol);
             else if (!handleRoleSpecificControl(rope, begin, eol))
                 throw badControl(rope, begin, eol);
             ++line;
