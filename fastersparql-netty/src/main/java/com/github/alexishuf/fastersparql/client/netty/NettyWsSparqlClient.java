@@ -462,16 +462,17 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         private static final byte[] MAX_LF = "MAX\n".getBytes(UTF_8);
         private boolean doRequestRows() {
-            if (ctx == null || destination.isTerminated())
+            var ctx = this.ctx;
+            if (ctx == null || destination.isTerminated() || (plainFlags&CANCELLING) != 0) {
                 return false; // no work
-            long n = (long)REQ.getAcquire(this);
-            if (n <= 0 || (plainFlags&CANCELLING) != 0)
-                return false; // no work
-            if (requestRowsFrame.refCnt() > 1) {
+            } else if (requestRowsFrame.refCnt() > 1) {
                 // frame in-use by netty, changing may yield big garbage number
                 ctx.executor().execute(requestRowsTask);
                 return false;
             } else {
+                long n = (long)REQ.getAndSetAcquire(this, 0L);
+                if (n <= 0)
+                    return false; // no work
                 journal("sending !request", n, "handler=", this);
                 // write the request
                 requestRowsMsg.len = AbstractWsParser.REQUEST.length;
@@ -532,8 +533,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 try {
                     if (destination.canSendRequest()) {
                         parser.setFrameSender(this);
-                        var bb = wrappedBuffer(requestMsg.backingArray(),
-                                requestMsg.backingArrayOffset(), requestMsg.len);
+                        var bb = wrappedBuffer(requestMsg.u8(), 0, requestMsg.len);
                         ctx.write(new TextWebSocketFrame(bb));
                         if (!doRequestRows())
                             ctx.flush();
