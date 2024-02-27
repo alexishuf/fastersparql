@@ -14,10 +14,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -89,13 +86,8 @@ class GatherAndScatterTest {
                     ResultJournal.initEmitter(this, vars);
             }
 
-            @Override public String label(StreamNodeDOT.Label type) {
-                var sb = new StringBuilder().append("P(").append(id).append(')');
-                if (type.showState())
-                    sb.append("\nstate=").append(flags.render(state()));
-                if (EmitterStats.ENABLED && type.showStats() && stats != null)
-                    stats.appendToLabel(sb);
-                return sb.toString();
+            @Override protected StringBuilder minimalLabel() {
+                return new StringBuilder().append("P(").append(id).append(')');
             }
 
             @Override protected int produceAndDeliver(int state) {
