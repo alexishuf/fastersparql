@@ -36,15 +36,16 @@ public class FSNettyProperties extends FSProperties {
     /* --- --- --- property names --- --- --- */
 
     public static final String TRUST_CERT_COLLECTION_FILE = "fastersparql.netty.ssl.trusted";
-    public static final String START_TLS = "fastersparql.netty.ssl.starttls";
-    public static final String OCSP = "fastersparql.netty.ssl.ocsp";
-    public static final String POOL_ENABLE = "fastersparql.netty.pool.enable";
-    public static final String POOL_FIFO = "fastersparql.netty.pool.fifo";
-    public static final String ELG_SHARED = "fastersparql.netty.eventloopgroup.shared";
-    public static final String ELG_KEEPALIVE = "fastersparql.netty.eventloopgroup.keepalive-seconds";
-    public static final String WS_MAX_HTTP = "fastersparql.netty.ws.max-http";
-    public static final String DEBUG_CHANNEL_CLIENT = "fastersparql.netty.debug.channel.client";
-    public static final String DEBUG_CHANNEL_SERVER = "fastersparql.netty.debug.channel.server";
+    public static final String START_TLS                  = "fastersparql.netty.ssl.starttls";
+    public static final String OCSP                       = "fastersparql.netty.ssl.ocsp";
+    public static final String POOL_ENABLE                = "fastersparql.netty.pool.enable";
+    public static final String POOL_FIFO                  = "fastersparql.netty.pool.fifo";
+    public static final String ELG_SHARED                 = "fastersparql.netty.eventloopgroup.shared";
+    public static final String ELG_KEEPALIVE              = "fastersparql.netty.eventloopgroup.keepalive-seconds";
+    public static final String WS_MAX_HTTP                = "fastersparql.netty.ws.max-http";
+    public static final String CHANNEL_DEBUG_CLIENT       = "fastersparql.netty.channel.debug.client";
+    public static final String CHANNEL_DEBUG_SERVER       = "fastersparql.netty.channel.debug.server";
+    public static final String CHANNEL_INFO               = "fastersparql.netty.channel.info";
 
     /* --- --- --- default values --- --- --- */
 
@@ -54,8 +55,9 @@ public class FSNettyProperties extends FSProperties {
     public static final boolean DEF_POOL_ENABLE             = true;
     public static final boolean DEF_POOL_FIFO               = false;
     public static final boolean DEF_ELG_SHARED              = true;
-    public static final boolean DEF_DEBUG_CHANNEL_CLIENT    = false;
-    public static final boolean DEF_DEBUG_CHANNEL_SERVER    = false;
+    public static final boolean DEF_CHANNEL_DEBUG_CLIENT    = false;
+    public static final boolean DEF_CHANNEL_DEBUG_SERVER    = false;
+    public static final boolean DEF_CHANNEL_INFO            = FSNettyProperties.class.desiredAssertionStatus();
     public static final int     DEF_ELG_KEEPALIVE           = 15;
     public static final int     DEF_WS_MAX_HTTP             = 8192;
 
@@ -179,10 +181,10 @@ public class FSNettyProperties extends FSProperties {
      *
      * <p>The default is {@code false}, since this incurs a heavy memory cost and is prone
      * to causing {@link OutOfMemoryError}s. Changing this at runtime via
-     * {@link #DEBUG_CHANNEL_CLIENT} may have no effect due to channel pooling and due to
+     * {@link #CHANNEL_DEBUG_CLIENT} may have no effect due to channel pooling and due to
      * caching of the value returned by this method</p>
      */
-    public static boolean debugClientChannel() { return readBoolean(DEBUG_CHANNEL_CLIENT, DEF_DEBUG_CHANNEL_CLIENT); }
+    public static boolean debugClientChannel() { return readBoolean(CHANNEL_DEBUG_CLIENT, DEF_CHANNEL_DEBUG_CLIENT); }
 
     /**
      * Whether all messages received and sent by the client should be stored and logged
@@ -190,8 +192,18 @@ public class FSNettyProperties extends FSProperties {
      *
      * <p>The default is {@code false}, since this incurs a heavy memory cost and is prone
      * to causing {@link OutOfMemoryError}s. Changing this at runtime via
-     * {@link #DEBUG_CHANNEL_SERVER} may have no effect due to channel pooling and due to
+     * {@link #CHANNEL_DEBUG_SERVER} may have no effect due to channel pooling and due to
      * caching of the value returned by this method</p>
      */
-    public static boolean debugServerChannel() { return readBoolean(DEBUG_CHANNEL_SERVER, DEF_DEBUG_CHANNEL_SERVER); }
+    public static boolean debugServerChannel() { return readBoolean(CHANNEL_DEBUG_SERVER, DEF_CHANNEL_DEBUG_SERVER); }
+
+    /**
+     * Whether a {@code x-fastersparql-info } HTTP header or and {@code !info} WebSocket frame
+     * should be sent by the client or server containing tracing keys for debug purposes.
+     *
+     * <p>The default is {@code false}, client and servers are always prepared to accept
+     * such headers and frames, regardless of this property. Changes at runtime via the
+     * {@link #CHANNEL_INFO} property may have no effect due to caching.</p>
+     */
+    public static boolean channelInfo() {  return readBoolean(CHANNEL_INFO, DEF_CHANNEL_INFO); }
 }

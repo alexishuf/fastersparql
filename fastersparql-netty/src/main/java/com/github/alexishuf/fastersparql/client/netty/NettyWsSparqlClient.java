@@ -59,6 +59,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(NettyWsSparqlClient.class);
+    private static final boolean SEND_INFO = FSNettyProperties.channelInfo();
 
     private final NettyWsClient netty;
     private int bindingsSizeHint = WsSerializer.DEF_BUFFER_HINT;
@@ -525,6 +526,15 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             doQuery();
         }
 
+        private void doSendInfo(ChannelHandlerContext ctx) {
+            ByteBuf bb = ctx.alloc().buffer();
+            bb.writeBytes(INFO).writeCharSequence(journalName(), UTF_8);
+            if (destination instanceof ChannelBound cb)
+                bb.writeChar(' ').writeCharSequence(cb.journalName(), UTF_8);
+            bb.writeChar('\n');
+            ctx.write(new TextWebSocketFrame(bb));
+        }
+
         private void doQuery() {
             if (ctx == null) {
                 complete(new IllegalStateException("doQuery() while detached"));
@@ -535,15 +545,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                         parser.setFrameSender(this);
                         var bb = wrappedBuffer(requestMsg.u8(), 0, requestMsg.len);
                         ctx.write(new TextWebSocketFrame(bb));
-//                        var sb = new StringBuilder();
-//                        sb.append("!info ").append(journalName()).append(' ');
-//                        if (destination instanceof ChannelBound dst) {
-//                            sb.append(dst.journalName());
-//                        } else {
-//                            sb.append(destination.getClass().getSimpleName()).append('@');
-//                            sb .append(Integer.toHexString(System.identityHashCode(destination)));
-//                        }
-//                        ctx.write(new TextWebSocketFrame(Unpooled.copiedBuffer(sb.append('\n').toString(), UTF_8)));
+                        if (SEND_INFO)
+                            doSendInfo(ctx);
                         if (!doRequestRows())
                             ctx.flush();
                     } else if (selfRecycle) {

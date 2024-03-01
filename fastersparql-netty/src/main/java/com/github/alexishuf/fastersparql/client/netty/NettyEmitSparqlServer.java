@@ -52,6 +52,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.PrintStream;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -65,6 +66,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -88,6 +90,7 @@ public class NettyEmitSparqlServer implements AutoCloseable {
     private static final String SP_PATH = "/sparql";
     private static final String APPLICATION_SPARQL_QUERY = "application/sparql-query";
     private static final String TEXT_PLAIN_U8 = "text/plain; charset=utf-8";
+    private static final boolean SEND_INFO = FSNettyProperties.channelInfo();
 
     private final EventLoopGroup acceptGroup;
     private final EventLoopGroup workerGroup;
@@ -300,6 +303,18 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             super(serializer, handler, upstream);
             this.handler = handler;
             serializeVars = upstream.vars();
+            Thread.ofVirtual().start(() -> { //FIXME debug
+                var ch = handler.ctx.channel();
+                try {
+                    Thread.sleep(30_000);
+                    var svg = new File(String.format("%s-%d-%d.svg", ch,
+                            ((InetSocketAddress)ch.remoteAddress()).getPort(),
+                            ((InetSocketAddress)ch.localAddress()).getPort()));
+                    upstream.renderDOT(svg, WITH_STATE_AND_STATS);
+                } catch (Throwable t) {
+                    log.error("Failed to render state for {} handled by {}", upstream, ch, t);
+                }
+            });
         }
         @Override protected TextWebSocketFrame wrap(ByteBuf b) {return new TextWebSocketFrame(b);}
 
@@ -537,6 +552,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 var r = new DefaultFullHttpResponse(HTTP_1_1, status, msgBB);
                 r.headers().set(CONTENT_TYPE, TEXT_PLAIN_U8)
                            .set(CONTENT_LENGTH, msgBB.readableBytes());
+                if (SEND_INFO)
+                    r.headers().set("x-fastersparql-info", journalName());
                 hc = r;
             }
             ctx.writeAndFlush(hc);
@@ -660,6 +677,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             var res = new DefaultHttpResponse(HTTP_1_1, OK);
             res.headers().set(CONTENT_TYPE, resultsSerializer.contentType())
                          .set(TRANSFER_ENCODING, CHUNKED);
+            if (SEND_INFO)
+                res.headers().set("x-fastersparql-info", journalName());
             responseStarted = true;
             ctx.write(res);
             sender.start();
@@ -902,7 +921,16 @@ public class NettyEmitSparqlServer implements AutoCloseable {
                 return;
             emitter = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
             sender = wsSender = new WsSender(WsSerializer.create(sizeHint), this, emitter);
+            if (SEND_INFO)
+                sendInfo();
             wsSender.start();
+        }
+
+        private void sendInfo() {
+            var bb = ctx.alloc().buffer();
+            bb.writeBytes(AbstractWsParser.INFO).writeCharSequence(journalName(), UTF_8);
+            bb.writeChar('\n');
+            ctx.write(new TextWebSocketFrame(bb));
         }
 
         private void readBindings(WsServerParser<CompressedBatch> bindingsParser,
@@ -1010,6 +1038,8 @@ public class NettyEmitSparqlServer implements AutoCloseable {
             sender.serializeVars = serializeVars;
 
             // start bindings -> BindingStage -> sender pipeline
+            if (SEND_INFO)
+                sendInfo();
             sender.start();
             readBindings(bindingsParser, msg);
         }

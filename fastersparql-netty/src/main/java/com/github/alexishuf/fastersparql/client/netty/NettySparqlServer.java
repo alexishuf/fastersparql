@@ -83,6 +83,7 @@ public class NettySparqlServer implements AutoCloseable {
     private static final String SP_PATH = "/sparql";
     private static final String APPLICATION_SPARQL_QUERY = "application/sparql-query";
     private static final String TEXT_PLAIN_U8 = "text/plain; charset=utf-8";
+    private static final boolean SEND_INFO = FSNettyProperties.channelInfo();
 
     private final EventLoopGroup acceptGroup;
     private final EventLoopGroup workerGroup;
@@ -589,6 +590,8 @@ public class NettySparqlServer implements AutoCloseable {
                 var res = new DefaultFullHttpResponse(httpVersion, status, bb);
                 res.headers().set(CONTENT_TYPE, TEXT_PLAIN_U8)
                              .set(CONTENT_LENGTH, bb.readableBytes());
+                if (SEND_INFO)
+                    res.headers().set("x-fastersparql-info", journalName());
                 msg = res;
             }
             ctx.writeAndFlush(msg);
@@ -682,6 +685,8 @@ public class NettySparqlServer implements AutoCloseable {
                     var res = new DefaultHttpResponse(httpVersion, OK);
                     res.headers().set(CONTENT_TYPE, serializer.contentType())
                                  .set(TRANSFER_ENCODING, CHUNKED);
+                    if (SEND_INFO)
+                        res.headers().set("x-fastersparql-info", journalName());
                     responseStarted = true;
                     ctx.writeAndFlush(res);
                     startDrainerThread(round);
@@ -1007,11 +1012,20 @@ public class NettySparqlServer implements AutoCloseable {
                 var sparql = new ByteRope(msg.toArray(ex.length, msg.len));
                 if (parseQuery(sparql) && waitingVarsRound <= 0) {
                     if (dispatchQuery(null, BindType.JOIN)) {
+                        if (SEND_INFO)
+                            sendInfo();
                         startDrainerThread(round);
                         request(implicitRequest);
                     }
                 }
             }
+        }
+
+        private void sendInfo() {
+            ByteBuf bb = ctx.alloc().buffer();
+            bb.writeBytes(AbstractWsParser.INFO).writeCharSequence(journalName(), UTF_8);
+            bb.writeChar('\n');
+            ctx.write(new TextWebSocketFrame(bb));
         }
 
         private void readBindings(WsServerParser<CompressedBatch> bindingsParser, SegmentRope msg) {
@@ -1102,6 +1116,8 @@ public class NettySparqlServer implements AutoCloseable {
                 for (var v : itVars)
                     if (!bindingsVars.contains(v)) serializeVars.add(v);
                 this.serializeVars = serializeVars;
+                if (SEND_INFO)
+                    sendInfo();
                 startDrainerThread(round);
                 if (plainRequested == 0)
                     request(implicitRequest);

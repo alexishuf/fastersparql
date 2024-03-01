@@ -41,6 +41,7 @@ public final class NettyHttpClient implements AutoCloseable {
     private final Bootstrap bootstrap;
     private final String connectionHeaderValue;
     private final ChannelRecycler recycler;
+    public final boolean info = FSNettyProperties.channelInfo();
     private boolean closed = false;
 
     public NettyHttpClient(EventLoopGroupHolder groupHolder, String baseUri,
@@ -152,6 +153,8 @@ public final class NettyHttpClient implements AutoCloseable {
             var headers = request.headers();
             headers.set(CONNECTION, connectionHeaderValue);
             headers.set(HOST, host);
+            if (info)
+                headers.set("x-fastersparql-info", ch.id().asShortText());
             if (request instanceof HttpContent hc && !headers.contains(CONTENT_LENGTH))
                 headers.set(CONTENT_LENGTH, hc.content().readableBytes());
             //noinspection unchecked
