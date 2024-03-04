@@ -34,16 +34,14 @@ public final class LIFOPool<T> implements LeakyPool {
     @SuppressWarnings("unused") public Class<T> itemClass() { return cls; }
 
     @Override public void cleanLeakyRefs() {
-        T[] recycled = this.recycled;
-        int size;
-        while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
-        try {
-            int mid = size;
-            while (mid < recycled.length && recycled[mid] != null)
-                ++mid;
-            for (int i = size; i < mid; i++)
-                recycled[mid] = null;
-        } finally {
+        // clean up in blocks of up to 16 references to avoid high latency on get() and offer()
+        int size, i = 0;
+        for (boolean hasWork = true; hasWork; ) {
+            while ((size=(int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
+            i = Math.max(size, i);
+            int end = Math.min(recycled.length, i+16);
+            while (i < end && (hasWork=recycled[i] != null))
+                recycled[i++] = null;
             S.setRelease(this, size);
         }
     }
