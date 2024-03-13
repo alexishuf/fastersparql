@@ -33,7 +33,7 @@ public class OutputOptions {
         var cl = spec.commandLine();
         if (Files.isDirectory(outFile))
             throw new ParameterException(cl, outFile+" already exists as a directory");
-        Path dir = outFile.getParent();
+        Path dir = outFile.toAbsolutePath().getParent();
         if (Files.notExists(dir)) {
             try {
                 Files.createDirectories(dir);
