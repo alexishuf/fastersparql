@@ -92,10 +92,11 @@ public class QueryBench {
             return (BatchType<B>) switch (this) {
                 case COMPRESSED -> CompressedBatchType.COMPRESSED;
                 case TERM -> TermBatchType.TERM;
-                case NATIVE -> switch (src) {
-                    case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS,HDT_TSV_EMIT,HDT_JSON_EMIT,HDT_WS_EMIT -> HdtBatchType.HDT;
-                    case FS_STORE,FS_TSV,FS_JSON,FS_WS,FS_TSV_EMIT,FS_JSON_EMIT,FS_WS_EMIT  -> StoreBatchType.STORE;
-                };
+                case NATIVE -> {
+                    if (src.isHdt())     yield HdtBatchType.HDT;
+                    if (src.isFsStore()) yield StoreBatchType.STORE;
+                    else                 throw new UnsupportedOperationException();
+                }
             };
         }
     }

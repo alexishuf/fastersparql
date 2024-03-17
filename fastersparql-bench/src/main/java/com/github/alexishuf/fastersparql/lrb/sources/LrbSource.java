@@ -41,12 +41,9 @@ public enum LrbSource {
     }
 
     public String filename(SourceKind type) {
-        return switch (type) {
-            case HDT_FILE,HDT_TSV,HDT_JSON,HDT_WS,HDT_TSV_EMIT,HDT_JSON_EMIT,HDT_WS_EMIT
-                    -> name().replace('_', '-') + ".hdt";
-            case FS_STORE,FS_TSV,FS_JSON,FS_WS,FS_TSV_EMIT,FS_JSON_EMIT,FS_WS_EMIT
-                    -> name().replace('_', '-');
-        };
+        if      (type.isHdt())     return name().replace('_', '-') + ".hdt";
+        else if (type.isFsStore()) return name().replace('_', '-');
+        else                       return name();
     }
 
 }
