@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +38,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     private boolean closeCalled;
     protected DistinctType cheapestDistinct = DistinctType.REDUCED;
     @SuppressWarnings("unused") private int plainRefs;
+    private @Nullable Exception closedAt;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -67,7 +69,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
 
     private void badAcquireRef() {
         REFS.getAndAddRelease(this, -1);
-        throw new FSIllegalStateException(endpoint, this + ": already closed");
+        throw new FSIllegalStateException(endpoint, this + ": already closed", closedAt);
     }
 
     protected final void releaseRef() {
@@ -75,6 +77,8 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         if (old == 1) {
             if (ThreadJournal.ENABLED)
                 ThreadJournal.journal("closing client=", this);
+            if (AbstractSparqlClient.class.desiredAssertionStatus())
+                closedAt = new Exception("closed here");
             log.debug("Closing {}", this);
             doClose();
         } else if (old <= 0) {
