@@ -87,15 +87,12 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
 
     protected void appendToSimpleLabel(StringBuilder out) {}
 
-    @Override public Vars         vars()       { return vars; }
-    @Override public BatchType<B> batchType()  { return bt; }
-
-
-    @Override public boolean   isComplete() { return isCompleted(state()); }
-    @Override public boolean  isCancelled() { return isCancelled(state()); }
-    @Override public boolean     isFailed() { return isFailed(state()); }
-    @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
-
+    @Override public Vars              vars() { return vars; }
+    @Override public BatchType<B> batchType() { return bt; }
+    @Override public boolean     isComplete() { return Stateful.isCompleted(state()); }
+    @Override public boolean    isCancelled() { return Stateful.isCancelled(state()); }
+    @Override public boolean       isFailed() { return Stateful.isFailed(state()); }
+    @Override public boolean   isTerminated() { return (state()&IS_TERM) != 0; }
     @Override public boolean cancel() {
         boolean done = false;
         int st = statePlain();
@@ -127,11 +124,11 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     @Override public void request(long rows) throws NoReceiverException {
         if (rows <= 0)
             return;
-        // on first request(), transition from CREATED to LIVE
+        boolean grown = Async.maxRelease(REQ, this, rows);
         if ((statePlain()&IS_INIT) != 0)
-            onFirstRequest();
-        if (Async.maxRelease(REQ, this, rows))
-            resume();
+            onFirstRequest(); // atomically transition from INIT to a LIVE state
+        if (grown)
+            resume(); // awake() the task or producer
     }
 
     @Override public void rebindAcquire() { delayRelease(); }

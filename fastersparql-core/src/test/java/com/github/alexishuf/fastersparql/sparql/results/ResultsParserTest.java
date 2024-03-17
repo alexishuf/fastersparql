@@ -87,16 +87,6 @@ class ResultsParserTest {
             new OffsetByteRopeFac()
     );
 
-    protected void doTestSingleFeed(ResultsParser.Factory factory, Results expected,
-                                    SegmentRope input) throws Exception {
-        for (RopeFac ropeFac : ROPE_FACTORIES)
-            singleFeed(factory, expected, input, ropeFac);
-        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
-            for (RopeFac ropeFac : ROPE_FACTORIES)
-                tasks.repeat(REPETITIONS, () -> singleFeed(factory, expected, input, ropeFac));
-        }
-    }
-
     protected void doTest(ResultsParser.Factory factory, Results expected,
                           SegmentRope input) throws Exception {
         for (int i = 0; i < 2; i++) {
@@ -107,7 +97,7 @@ class ResultsParserTest {
                 lineFeed(factory, expected, input, ropeFac);
             }
         }
-        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
+        try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
             for (RopeFac ropeFac : ROPE_FACTORIES) {
                 tasks.repeat(REPETITIONS, () -> singleFeed(factory, expected, input, ropeFac));
                 tasks.repeat(REPETITIONS, () -> byteFeed(factory, expected, input, ropeFac));

@@ -9,22 +9,10 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
-    protected static final VarHandle FRAME_SENDER;
-    static {
-        try {
-            FRAME_SENDER = MethodHandles.lookup().findVarHandle(AbstractWsParser.class, "plainFrameSender", WsFrameSender.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-    @SuppressWarnings("unused") private WsFrameSender<?, ?> plainFrameSender;
     protected boolean serverSentTermination = false;
 
     /* --- --- --- vocabulary for the WebSocket protocol --- --- --- */
@@ -33,17 +21,16 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     public static final byte[] BIND_EMPTY_UNTIL = "!bind-empty-streak ".getBytes(UTF_8);
     public static final byte[] PREFIX           = "!prefix ".getBytes(UTF_8);
     public static final byte[] INFO             = "!info ".getBytes(UTF_8);
-    public static final byte[] PING             = "!ping".getBytes(UTF_8);
-    public static final byte[] PING_ACK         = "!ping-ack".getBytes(UTF_8);
+    public static final byte[] PING             = "!ping\n".getBytes(UTF_8);
+    public static final byte[] PING_ACK         = "!ping-ack\n".getBytes(UTF_8);
     public static final byte[] ERROR            = "!error".getBytes(UTF_8);
     public static final byte[] CANCEL           = "!cancel".getBytes(UTF_8);
     public static final byte[] CANCEL_LF        = "!cancel\n".getBytes(UTF_8);
     public static final byte[] CANCELLED        = "!cancelled".getBytes(UTF_8);
     public static final byte[] END              = "!end".getBytes(UTF_8);
+    public static final byte[] END_LF           = "!end\n".getBytes(UTF_8);
     public static final byte[] REQUEST          = "!request ".getBytes(UTF_8);
     public static final byte[] MAX              = "MAX".getBytes(UTF_8);
-
-    private static final ByteRope PING_ACK_FRAME = new ByteRope("!ping-ack\n");
 
     /* --- --- --- constructors --- --- --- */
 
@@ -51,22 +38,12 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
         super(dst);
     }
 
-    public void setFrameSender(WsFrameSender<?,?> frameSender) {
-        var old = (WsFrameSender<?, ?>)FRAME_SENDER.getAndSetRelease(this, frameSender);
-        if (old != null && old != frameSender)
-            throw new IllegalStateException("WsFrameSender already set");
-    }
-
     /* --- --- --- abstract methods --- --- --- */
 
     /** The remote peer sent a !ping-ack message in response to a !ping frame. */
     protected void onPingAck() { /* pass */ }
 
-    protected void onPing() {
-        var sender = frameSender();
-        //noinspection unchecked
-        sender.sendFrame(sender.createSink().append(PING_ACK_FRAME));
-    }
+    protected abstract void onPing();
 
     protected void onInfo(SegmentRope rope, int begin, int end) { /* pass */}
 
@@ -83,7 +60,6 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     @Override public void reset() {
         super.reset();
         serverSentTermination = false;
-        FRAME_SENDER.setRelease(this, (WsFrameSender<?,?>)null);
     }
 
     @Override protected final int handleControl(SegmentRope rope, int begin) {
@@ -115,13 +91,6 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     /* --- --- --- helper methods --- --- --- */
-
-    @SuppressWarnings("rawtypes") protected WsFrameSender frameSender() {
-        var sender = (WsFrameSender<?, ?>)FRAME_SENDER.getAcquire(this);
-        if (sender == null)
-            throw new IllegalStateException("No WsFrameSender set");
-        return sender;
-    }
 
     private void handlePrefix(SegmentRope r, int begin, int eol) {
         int nameBegin = begin+PREFIX.length, colon = r.skipUntil(nameBegin, eol, ':');

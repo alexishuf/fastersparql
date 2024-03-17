@@ -1,46 +1,54 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
+import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.Requestable;
+import com.github.alexishuf.fastersparql.emit.async.BItEmitter;
+import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
+import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
-import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.ContentNegotiator;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.sparql.results.*;
+import com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser;
+import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
+import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.FastAliveSet;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 import io.netty.util.ReferenceCounted;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -54,12 +62,13 @@ import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.FSProperties.emitReqChunkBatches;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -68,18 +77,19 @@ import static io.netty.handler.codec.http.HttpHeaderNames.*;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FORM_URLENCODED;
 import static io.netty.handler.codec.http.HttpHeaderValues.CHUNKED;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 import static io.netty.util.AsciiString.indexOfIgnoreCaseAscii;
-import static java.lang.Thread.startVirtualThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-/**
- * Expose a {@link SparqlClient} (which includes a {@link Federation}) through the SPARQL
- * protocol (HTTP) and the custom WebSocket protocol.
- */
-public class NettySparqlServer implements AutoCloseable {
+public class NettySparqlServer implements AutoCloseable{
     private static final Logger log = LoggerFactory.getLogger(NettySparqlServer.class);
+    private static final EventLoopGroupHolder ACCEPT_ELG
+            = new EventLoopGroupHolder("NettySparqlServer.ACCEPT_ELG", null,
+                                       sharedEventLoopGroupKeepAliveSeconds(), SECONDS, 1);
+    private static final int HANDLER_POOL_SIZE = FSNettyProperties.serverHandlerPool();
+
     private static final String SP_PATH = "/sparql";
     private static final String APPLICATION_SPARQL_QUERY = "application/sparql-query";
     private static final String TEXT_PLAIN_U8 = "text/plain; charset=utf-8";
@@ -89,538 +99,590 @@ public class NettySparqlServer implements AutoCloseable {
     private final EventLoopGroup workerGroup;
     private final Channel server;
     private final SparqlClient sparqlClient;
+    private final LIFOPool<SparqlHandler> sparqlHandlerPool
+            = new LIFOPool<>(SparqlHandler.class, HANDLER_POOL_SIZE);
+    private final LIFOPool<WsHandler> wsHandlerPool
+            = new LIFOPool<>(WsHandler.class, HANDLER_POOL_SIZE);
+    private final boolean useBIt;
     private final ContentNegotiator negotiator = ResultsSerializer.contentNegotiator();
-    private final String noSerializerError = "Cannot generate any of the formats in this request" +
-            " \"Accepts\" header. Supported formats: "+ Arrays.stream(negotiator.supported())
-                                                              .map(MediaType::toString)
-                                                              .collect(Collectors.joining(", "));
-    private int serializeSizeHint = WsSerializer.DEF_BUFFER_HINT;
-    private final FastAliveSet<QueryHandler<?>> queryHandlers = new FastAliveSet<>(512);
-    private boolean serverClosed;
-    private @MonotonicNonNull Semaphore handlersClosed;
+    private int wsSizeHint = WsSerializer.DEF_BUFFER_HINT;
     private final SparqlClient.@Nullable Guard sparqlClientGuard;
+    private final FastAliveSet<QueryHandler<?>> queryHandlers = new FastAliveSet<>(512);
+    private final @Nullable EventLoopGroupHolder workerELGHolder;
+    private @MonotonicNonNull Semaphore handlersClosed;
+    private @MonotonicNonNull FSCancelledException cancelledByServerClose;
 
-    public NettySparqlServer(SparqlClient sparqlClient, boolean sharedSparqlClient, String host, int port) {
-        this.sparqlClient = sparqlClient;
+    public NettySparqlServer(FlowModel flowModel, SparqlClient client, boolean sharedSparqlClient,
+                             String host, int port) {
+        this.sparqlClient = client;
         this.sparqlClientGuard = sharedSparqlClient ? sparqlClient.retain() : null;
-        acceptGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup(FSProperties.nettyEventLoopThreads());
+        this.useBIt = switch (flowModel) {
+            case ITERATE -> true;
+            case EMIT -> false;
+        };
+        if (FSNettyProperties.shareEventLoopGroup()) {
+            acceptGroup     = ACCEPT_ELG.acquire();
+            workerELGHolder = SharedEventLoopGroupHolder.get();
+            workerGroup     = workerELGHolder.acquire();
+        } else {
+            workerELGHolder = null;
+            acceptGroup     = new NioEventLoopGroup(1);
+            workerGroup     = new NioEventLoopGroup(FSProperties.nettyEventLoopThreads());
+        }
         server = new ServerBootstrap().group(acceptGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     private final String debugName = FSNettyProperties.debugServerChannel()
-                            ? NettySparqlServer.this.sparqlClient.endpoint().toString() : null;
+                            ? NettySparqlServer.this.sparqlClient.toString() : null;
                     @Override protected void initChannel(SocketChannel ch) {
-                        var p = ch.pipeline();
+                        var sparql = sparqlHandlerPool.get();
+                        var ws     = wsHandlerPool.get();
+
+                        ChannelPipeline p = ch.pipeline();
                         p.addLast("http", new HttpServerCodec());
                         if (debugName != null)
                             p.addLast("debug", new NettyChannelDebugger(debugName));
                         //p.addLast("log", new LoggingHandler(NettySparqlServer.class, LogLevel.INFO, ByteBufFormat.HEX_DUMP));
                         p.addLast("req-aggregator", new HttpObjectAggregator(1<<15, true));
-                        p.addLast("keepalive", new HttpServerKeepAliveHandler());
+                        p.addLast("keepalive", new io.netty.handler.codec.http.HttpServerKeepAliveHandler());
                         //p.addLast("ws-compression", new WebSocketServerCompressionHandler());
-                        p.addLast("sparql", new SparqlHandler());
+                        p.addLast("sparql", sparql == null ? new SparqlHandler() : sparql);
                         p.addLast("ws", new WebSocketServerProtocolHandler(SP_PATH, null, true));
-                        p.addLast("ws-sparql", new WsSparqlHandler());
+                        p.addLast("ws-sparql", ws == null ? new WsHandler() : ws);
                     }
                 }).bind(host, port).syncUninterruptibly().channel();
     }
 
-    /** Get the TCP port where the server is listening to connections. */
-    public int port() {
-        return ((InetSocketAddress)server.localAddress()).getPort();
-    }
-
-    /** Get the {@link InetSocketAddress} where the server is listening for connections. */
-    @SuppressWarnings("unused") public InetSocketAddress listenAddress() {
-        return (InetSocketAddress)server.localAddress();
-    }
+    public int                        port() { return listenAddress().getPort(); }
+    public InetSocketAddress listenAddress() { return (InetSocketAddress)server.localAddress(); }
 
     @Override public String toString() {
         return "NettySparqlServer"+server+"("+sparqlClient.endpoint()+")";
     }
 
-    @Override public void close()  {
-        if (serverClosed) return;
-        serverClosed = true;
-        var workersTerminated = new Semaphore(0);
-        handlersClosed = new Semaphore(0);
+    @Override public void close() {
+        if (cancelledByServerClose != null) return;
+        cancelledByServerClose = new FSCancelledException(null, "cancelled by server.close()");
         int[] handlersCount = {0};
-        server.close().addListener(f ->
-                acceptGroup.shutdownGracefully(10, 50, MILLISECONDS).addListener(f2 -> {
-                   queryHandlers.destruct(h -> {
-                       try {
-                           ++handlersCount[0];
-                           h.close();
-                       } catch (Throwable t) {
-                           log.debug("Ignoring {} while closing {} due to server shutdown", t, h);
-                           handlersClosed.release();
-                       }
-                   });
-                   try {
-                       if (!handlersClosed.tryAcquire(handlersCount[0], 10, SECONDS))
-                           log.warn("{} handlers not closed in under 10s, leaking", this);
-                   } catch (InterruptedException ignored) {}
-                   workerGroup.shutdownGracefully(100, 5_000, MILLISECONDS)
-                              .addListener(f3 -> workersTerminated.release());
-               }));
-        try {
-            if (!workersTerminated.tryAcquire(16, SECONDS))
-                log.warn("{} is taking too long to shutdown, leaking EventLoopGroups", this);
-        } catch (InterruptedException e) {
-            log.warn("Interrupted while closing {}, leaking.", this);
-            Thread.currentThread().interrupt();
-        } finally {
-            if (sparqlClientGuard == null) sparqlClient.close();
-            else                           sparqlClientGuard.close();
-        }
-    }
-
-    /* --- --- --- handlers --- --- --- */
-
-    private static class VolatileBindQuery extends ItBindQuery<CompressedBatch> {
-        private final WsSparqlHandler wsHandler;
-        volatile long nonEmptySeq = -1, emptySeq = -1;
-
-        public VolatileBindQuery(SparqlQuery query, BIt<CompressedBatch> bindings, BindType type,
-                                 WsSparqlHandler wsHandler) {
-            super(query, bindings, type);
-            this.wsHandler = wsHandler;
-        }
-
-        @Override public void nonEmptyBinding(long sequence) { nonEmptySeq = sequence; }
-        @Override public void    emptyBinding(long sequence) {
-            if (wsHandler.bindReq <= wsHandler.bindReqChunk>>1)
-                wsHandler.schedCheckAndSendBindReq();
-            emptySeq = sequence;
-        }
-    }
-
-    private abstract class QueryHandler<T> extends SimpleChannelInboundHandler<T>
-            implements ChannelBound {
-        protected @MonotonicNonNull ChannelHandlerContext ctx;
-        protected @Nullable Plan query;
-        protected final SparqlParser sparqlParser = new SparqlParser();
-        protected BIt<CompressedBatch> it;
-        protected @Nullable VolatileBindQuery bindQuery;
-        protected ByteBufRopeView bbRopeView = ByteBufRopeView.create();
-        protected Vars serializeVars = Vars.EMPTY;
-        @MonotonicNonNull protected ResultsSerializer serializer;
-        protected int round = -1;
-        protected @Nullable Thread drainerThread;
-        protected final NettySparqlServer server = NettySparqlServer.this;
-
-        void close() {
+        handlersClosed = new Semaphore(0);
+        if (!server.close().awaitUninterruptibly(2, SECONDS))
+            log.error("Server close timeout on {}", this);
+        queryHandlers.destruct(h -> {
             try {
-                var it = this.it;
-                if (it == null || !it.tryCancel())
-                    handlersClosed.release();
+                ++handlersCount[0];
+                h.close();
             } catch (Throwable t) {
-                log.info("Ignoring {} during QueryHandler.close of {}",
-                        t.getClass().getSimpleName(), this);
+                log.info("Ignoring {} while closing {} due to shutdown of server at {}",
+                        t.getClass().getSimpleName(), h, this);
+                handlersClosed.release();
+            }
+        });
+        try {
+            if (!handlersClosed.tryAcquire(handlersCount[0], 10, SECONDS)) {
+                int done = handlersClosed.availablePermits();
+                log.warn("{} handlers closed, abandoning {} while closing {} due to timeout",
+                        done, handlersCount[0] - done, this);
+            }
+        } catch (InterruptedException ignored) {}
+        if (workerELGHolder != null) {
+            ACCEPT_ELG.release();
+            workerELGHolder.release();
+        } else {
+            if (!acceptGroup.shutdownGracefully(50, 100, MILLISECONDS)
+                            .awaitUninterruptibly(1, SECONDS)) {
+                log.warn("acceptGroup too slow to to shutdown, leaking from {}", this);
+            }
+            if (workerGroup.shutdownGracefully(50, 100, SECONDS)
+                           .awaitUninterruptibly(1, SECONDS)) {
+                log.warn("workerGroup too slow to to shutdown, leaking from {}", this);
+            }
+        }
+        if (sparqlClientGuard == null) sparqlClient.close();
+        else                           sparqlClientGuard.close();
+    }
+
+    @ChannelHandler.Sharable
+    private abstract class QueryHandler<I> extends SimpleChannelInboundHandler<I>
+            implements ChannelBound, Receiver<CompressedBatch>, Requestable {
+        protected static final int AC_SEND_BATCH;
+        protected static final int AC_BIND_REQ;
+        protected static final int AC_SEND_TERM;
+        protected static final int AC_CLOSE;
+        protected static final int AC_RECYCLE;
+        protected static final int AC_TOUCH_SINK;
+        private static final BitsetRunnable.Spec BS_RUNNABLE_SPEC;
+        private static final VarHandle Q;
+        static {
+            try {
+                Q = MethodHandles.lookup().findVarHandle(QueryHandler.class, "plainQueueLock", int.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+            var s = new BitsetRunnable.Spec(MethodHandles.lookup());
+            BS_RUNNABLE_SPEC = s;
+            AC_SEND_BATCH = s.add("doSendBatch", false);
+            AC_BIND_REQ   = s.add("doBindReq",   false);
+            AC_SEND_TERM  = s.add("doSendTerm",  false);
+            AC_CLOSE      = s.add("doClose",     false);
+            AC_RECYCLE    = s.add("doRecycle",   true);
+            AC_TOUCH_SINK = s.setLast("doTouchSink");
+        }
+
+        protected static final int ST_RES_STARTED     = 0x001;
+        protected static final int ST_RES_TERMINATED  = 0x002;
+        protected static final int ST_CLOSE_ON_TERM   = 0x004;
+        protected static final int ST_CLOSING         = 0x008;
+        protected static final int ST_NOTIFIED_CLOSED = 0x010;
+        protected static final int ST_CANCEL_REQ      = 0x020;
+        protected static final int ST_POOLED          = 0x040;
+        protected static final int ST_RELEASED        = 0x080;
+        protected static final int ST_UNHEALTHY       = 0x100;
+
+        protected static final LongRenderer ST = st -> {
+            if (st == 0) return "[]";
+            var sb = new StringBuilder().append('[');
+            if ((st&ST_RES_STARTED)     != 0) sb.append("RES_STARTED,");
+            if ((st&ST_RES_TERMINATED)  != 0) sb.append("RES_TERMINATED,");
+            if ((st&ST_CLOSE_ON_TERM)   != 0) sb.append("CLOSE_ON_TERM,");
+            if ((st&ST_CLOSING)         != 0) sb.append("CLOSING,");
+            if ((st&ST_NOTIFIED_CLOSED) != 0) sb.append("NOTIFIED_CLOSE,");
+            if ((st&ST_CANCEL_REQ)      != 0) sb.append("CANCELLED,");
+            if ((st&ST_POOLED)          != 0) sb.append("POOLED,");
+            if ((st&ST_RELEASED)        != 0) sb.append("POOLED,");
+            if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
+            sb.setLength(sb.length()-1);
+            return sb.append(']').toString();
+        };
+
+        public final SparqlParser parser = new SparqlParser();
+        protected ByteBufRopeView bbView = ByteBufRopeView.create();
+        protected @MonotonicNonNull ByteBufSink bbSink = new ByteBufSink(ByteBufAllocator.DEFAULT);
+        protected @MonotonicNonNull ChannelHandlerContext ctx;
+        @SuppressWarnings("unused") private int plainQueueLock;
+        private @Nullable Emitter<CompressedBatch> upstream;
+        private @Nullable Throwable errorOrCancelledException;
+        private CompressedBatch sendQueue;
+        protected int st;
+        private @MonotonicNonNull ByteRope queryRope;
+        protected HandlerBitsetRunnable bsRunnable = new HandlerBitsetRunnable();
+        private Channel lastCh;
+
+        public QueryHandler() {
+            queryHandlers.add(this);
+        }
+
+        protected final ByteRope queryRope(int capacity) {
+            var queryRope = this.queryRope;
+            if (queryRope == null)
+                this.queryRope = queryRope = new ByteRope(capacity);
+            else
+                queryRope.len = 0;
+            return queryRope;
+        }
+
+        /* --- --- --- NettyEmitSparqlServer.close() --- --- --- */
+
+        public void close() { bsRunnable.sched(AC_CLOSE); }
+
+        @SuppressWarnings("unused") private void doClose() {
+            st |= ST_CLOSING;
+            if (upstream != null)
+                upstream.cancel();
+            else if (ctx != null && ctx.channel().isActive())
+                ctx.close();
+            else
+                notifyClosed();
+        }
+
+        private void notifyClosed() {
+            assert inEventLoop() : "not called from event loop";
+            if ((st&ST_NOTIFIED_CLOSED) != 0)
+                return;
+            st |= ST_NOTIFIED_CLOSED;
+            var handlersClosed = NettySparqlServer.this.handlersClosed;
+            if (handlersClosed != null)
+                handlersClosed.release();
+        }
+
+        /* --- --- --- Receiver --- --- --- */
+
+        protected final boolean cancel() {
+            if (upstream != null) {
+                st |= ST_CANCEL_REQ;
+                upstream.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        public final void request(long n) {
+            assert inEventLoop() : "not called from event loop";
+            if (upstream != null && (st&ST_CANCEL_REQ) == 0) {
+                upstream.request(n);
+            } else {
+                journal("skip request", n, "st=", st, ST, "on", this);
+                if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == 0
+                        || (st&(ST_POOLED|ST_RELEASED|ST_CANCEL_REQ)) != 0) {
+                    log.warn("Ignoring unexpected request {} on {}", n, this);
+                }
             }
         }
 
-        @Override public @Nullable Channel channel() {
-            return ctx == null ? null : ctx.channel();
+        protected void subscribeTo(Emitter<CompressedBatch> emitter) {
+            try {
+                assert inEventLoop() && upstream==null
+                        && (st&(ST_RES_STARTED|ST_RES_TERMINATED| ST_CANCEL_REQ |ST_POOLED)) == ST_RES_STARTED
+                        : "not in event loop, already subscribed or not RES_STARTED";
+                errorOrCancelledException = null;
+                sendQueue                 = COMPRESSED.recycle(sendQueue);
+                upstream                  = emitter;
+            } catch (Throwable t) {
+                Emitters.discard(emitter);
+                throw t;
+            }
+            emitter.subscribe(this);
+            bsRunnable.sched(AC_TOUCH_SINK);
         }
 
+        @Override public @Nullable CompressedBatch onBatch(CompressedBatch batch) {
+            if (batch == null || batch.rows == 0)
+                return batch;
+            while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            try {
+                sendQueue = Batch.quickAppend(sendQueue, batch);
+            } finally { Q.setRelease(this, 0); }
+            bsRunnable.sched(AC_SEND_BATCH);
+            return null;
+        }
+
+        @Override public void onComplete() {
+            assert upstream != null : "suspicious onComplete with upstream=null";
+            bsRunnable.sched(AC_SEND_TERM);
+        }
+
+        @Override public void onCancelled() {
+            assert upstream != null : "suspicious onCancelled with upstream=null";
+            if (errorOrCancelledException == null)
+                errorOrCancelledException = CancelledException.INSTANCE;
+            bsRunnable.sched(AC_SEND_TERM);
+        }
+
+        @Override public void onError(Throwable cause) {
+            assert upstream != null : "suspicious onError with upstream=null";
+            if (errorOrCancelledException == null)
+                errorOrCancelledException = cause;
+            bsRunnable.sched(AC_SEND_TERM);
+        }
+
+        /* --- --- --- batch serialization --- --- --- */
+
+        protected abstract Object serialize(CompressedBatch batch);
+
+        @SuppressWarnings("unused") private void doSendBatch() {
+            CompressedBatch batch;
+            while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            try {
+                batch = sendQueue;
+                sendQueue = null;
+            } finally { Q.setRelease(this, 0); }
+            if (batch != null) {
+                try {
+                    if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED)
+                        send(serialize(batch));
+                    else
+                        journal("skip&recycle doSendBatch, st=", st, ST, "on", this);
+                } finally {
+                    COMPRESSED.recycle(batch);
+                }
+            }
+        }
+
+        /* --- --- --- termination --- --- --- */
+
+        /** Send a {@link HttpResponse}/{@link LastHttpContent}/{@link TextWebSocketFrame}
+         *  signaling the query has been fully processed and no more messages will follow
+         *  from the server pertaining this query. <strong>This will be called within the
+         *  event loop</strong> */
+        protected abstract Object termMessage(@Nullable Throwable cause);
+
+        /** Used by {@link #channelUnregistered(ChannelHandlerContext)} to recycle the handler */
+        protected abstract LIFOPool<? extends QueryHandler<I>> pool();
+
+        protected void cleanupAfterEndResponse() {
+            cancel();
+            bbSink.release();
+            while((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            try {
+                sendQueue = COMPRESSED.recycle(sendQueue);
+            } finally { Q.setRelease(this, 0); }
+            errorOrCancelledException = null;
+        }
+
+        protected void finalRelease() {
+            if ((st&ST_RELEASED) != 0)
+                journal("duplicate finalRelease st=", st, ST, "on", this);
+            if ((st&ST_POOLED) != 0)
+                throw new IllegalStateException("finalRelease on pooled");
+            st |= ST_RELEASED;
+            queryHandlers.remove(this);
+            bbView.recycle();
+            bbView = null;
+        }
+
+        @SuppressWarnings("unused") private void doRecycle() {
+            if ((st&ST_POOLED) != 0)
+                throw new IllegalStateException("recycling already pooled");
+            if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED)
+                throw new IllegalStateException("doRecycle with unfinished response");
+            cleanupAfterEndResponse();
+            if ((st&(ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED)) != 0) {
+                journal("will not pool, st=", st, ST, "on", this);
+            } else {
+                st = ST_POOLED;
+                //noinspection unchecked
+                if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) != null)
+                    finalRelease();
+            }
+        }
+
+        @SuppressWarnings("unused") private void doSendTerm() {
+            if ((st&ST_RES_TERMINATED) != 0) {
+                journal("dup doSendTerm() on", this);
+            } else {
+                if ((st&ST_RES_STARTED) == 0) {
+                    assert false : "doSendTerm() before RES_STARTED";
+                    journal("suspicious doSendTerm() before RES_STARTED on", this);
+                }
+                if (upstream == null) {
+                    assert false : "doSendTerm() without upstream";
+                    journal("suspicious doSendTerm() without upstream on", this);
+                } else {
+                    upstream = null;
+                }
+                endResponse(termMessage(errorOrCancelledException));
+            }
+        }
+
+        protected void startResponse() {
+            assert inEventLoop() : "not in event loop";
+            if ((st&ST_RES_STARTED) != 0)
+                throw new IllegalStateException("response already started");
+            st = (st&~ST_RES_TERMINATED) | ST_RES_STARTED;
+        }
+        protected void startResponse(Object msg, boolean flush) {
+            startResponse();
+            if (flush) ctx.writeAndFlush(msg);
+            else       ctx.write(msg);
+        }
+        protected void endResponse(Object msg) {
+            try {
+                assert inEventLoop() : "not in event loop";
+                if ((st&ST_RES_TERMINATED) != 0)
+                    throw new IllegalStateException("response already terminated");
+                st = (st&~ST_RES_STARTED) | ST_RES_TERMINATED;
+                ctx.writeAndFlush(msg);
+            } finally {
+                try {
+                    cleanupAfterEndResponse();
+                } catch (Throwable t) {
+                    log.error("ignoring {} from cleanupAfterEndResponse on {}",
+                              t.getClass().getSimpleName(), this, t);
+                }
+                if ((st&(ST_CLOSING|ST_CLOSE_ON_TERM)) != 0) {
+                    if      (ctx.channel().isActive()) ctx.close();
+                    else if ((st&ST_CLOSING) != 0)     notifyClosed();
+                }
+            }
+        }
+
+        protected void send(Object msg) {
+            assert inEventLoop() : "not in event loop";
+            if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) != ST_RES_STARTED)
+                throw new IllegalStateException("response terminated or not started");
+            ctx.writeAndFlush(msg);
+        }
+
+        /* --- --- --- run in event loop helpers --- --- --- */
+
+        private final class HandlerBitsetRunnable extends BitsetRunnable<QueryHandler<I>> {
+            public HandlerBitsetRunnable() {super(QueryHandler.this, BS_RUNNABLE_SPEC);}
+
+            @Override protected void onMethodError(String methodName, Throwable t) {
+                super.onMethodError(methodName, t);
+                exceptionCaught(ctx, t);
+            }
+        }
+
+        private boolean inEventLoop() {
+            return ctx == null ? bsRunnable.inRun() : ctx.executor().inEventLoop();
+        }
+
+        @SuppressWarnings("unused") protected void doBindReq() { throw new UnsupportedOperationException(); }
+
+        @SuppressWarnings("unused") private void doTouchSink() {
+            if ((st&(ST_POOLED|ST_UNHEALTHY|ST_CLOSING|ST_CLOSE_ON_TERM|ST_NOTIFIED_CLOSED)) == 0
+                    && ctx.channel().isActive()) {
+                bbSink.touch();
+            }
+        }
+
+        /* --- --- --- ChannelBound --- --- --- */
+
+        @Override public @Nullable Channel channelOrLast() {return lastCh;}
+
+        protected String channelId() { return lastCh == null ? "null" : lastCh.id().asShortText(); }
+
         @Override public void setChannel(Channel ch) {
-            if (ch != channel()) throw new UnsupportedOperationException();
+            if (ch != channelOrLast())
+                throw new UnsupportedOperationException();
         }
 
         @Override public String journalName() {
-            return "S.QH:"+(ctx == null ? "null" : ctx.channel().id().asShortText());
+            return "S."+getClass().getSimpleName().charAt(0)+":"+channelId();
+        }
+
+        @Override public String toString() {
+            return journalName()+ST.render(st);
+        }
+
+        /* --- --- --- StreamNode --- --- --- */
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return Stream.ofNullable(upstream);
+        }
+
+        @Override public String label(StreamNodeDOT.Label type) {
+            String name = journalName();
+            return type.showState() ? name+ST.render(st) : name;
         }
 
         @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
-            if (this.ctx == ctx) return;
+            this.st &= ~ST_POOLED;
+            if (this.st != 0) {
+                log.error("dirty st on channelRegistered for {}", this);
+                st = 0;
+            }
             this.ctx = ctx;
+            this.lastCh = ctx.channel();
+            this.bbSink.alloc(ctx.alloc());
+            this.bsRunnable.executor(ctx.executor());
             super.channelRegistered(ctx);
         }
 
-        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-            super.channelInactive(ctx);
-            queryHandlers.remove(this);
-            if (query != null) {
-                fail(serverClosed ? "channel closed due to server closing"
-                                  : "unexpected closure of channel");
-            }
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+            this.bsRunnable.runNow();
+            this.ctx = null;
+            cleanupAfterEndResponse();
+            super.channelUnregistered(ctx);
+            this.bsRunnable.sched(AC_RECYCLE);
         }
 
-        @Override public void channelUnregistered(ChannelHandlerContext ctx) {
-            bbRopeView.recycle();
-            bbRopeView = null;
+        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            if (!cancel() && (st&ST_CLOSING) != 0)
+                notifyClosed();
+            super.channelInactive(ctx);
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            endRound(INTERNAL_SERVER_ERROR, cause.getMessage(), cause);
+            st |= ST_UNHEALTHY|ST_CLOSE_ON_TERM;
+            journal("exceptionCaught handler=", this, ", cause=", cause);
+            log.error("Uncaught exception for handler={}", this, cause);
+            if (errorOrCancelledException == null)
+                errorOrCancelledException = cause;
+            if (!cancel())
+                exceptionCaughtWhileUnsubscribed(cause);
         }
 
-        @Override public String toString() {
-            String simpleName = getClass().getSimpleName();
-            if (ctx == null)
-                return "Unregistered "+simpleName;
-            return simpleName+ctx.channel()+'('+sparqlClient.endpoint().uri()+')';
-        }
-
-        /**
-         * Called once when the current query processing round is complete.
-         *
-         * <p>Implementations of this method MUST signal the completion to clients, either by
-         * sending some data or by closing the connection.</p>
-         *
-         * @param status HTTP status to send if the client expects a {@link HttpResponse}
-         * @param errorMessage If non-null this is a message that describes the error and is
-         *                     intended to be forwarded to the client. If null, it signals the
-         *                     query completed normally (all result rows have been already
-         *                     serialized to the client).
-         * @param cancelled if true, this signals the query was cancelled before completion.
-         *                  This being {@code true} implies {@code errorMessage} being non-null.
-         */
-        protected abstract void onFailure(HttpResponseStatus status,
-                                          CharSequence errorMessage,
-                                          boolean cancelled);
-
-        /**
-         * This method will be called once per round, {@link #endRound(HttpResponseStatus, CharSequence, Throwable)}
-         * effectively ends the round. This method will be called even on successful round
-         * completions (when {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
-         * is not called).
-         *
-         * <p>Implementations should stop still running background tasks and release resources
-         * specific to the round that just ended. If
-         * {@link #onFailure(HttpResponseStatus, CharSequence, boolean)} is called, this will run
-         * after its return.</p>
-         */
-        public void roundCleanup() {
-            if (it != null) {
-                try {
-                    it.close();
-                } catch (Throwable t) {
-                    log.error("Ignoring {} while closing {}", t, it);
-                } finally {
-                    this.it = null;
-                }
-            }
-            this.query = null;
-        }
-
-        protected int beginRound() {
-            if (round > 0)
-                throw new IllegalStateException("Starting new round before last one completed");
-            return round = -round+1;
-        }
-
-        /**
-         * Ends current query processing round, closing the {@link BIt}, its associated
-         * drainer thread and sending a response to the client.
-         *
-         * @param status forwarded to {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
-         * @param errorMsg An error message forwarded to {@link #onFailure(HttpResponseStatus, CharSequence, boolean)}
-         *                 if this is {@code null} but {@code cause} is not,
-         *                 {@code cause.getMessage()} will be used
-         * @param cause If non-null a stack trace will be appended to the
-         *              {@link #onFailure(HttpResponseStatus, CharSequence, boolean)} error message.
-         * @return {@code true} if the current round was still {@code round} and it was completed
-         *         by this call
-         */
-        protected final boolean endRound(HttpResponseStatus status,
-                                         @Nullable CharSequence errorMsg,
-                                         @Nullable Throwable cause) {
-            assert ctx == null || ctx.executor().inEventLoop();
-            int round = this.round;
-            if (round <= 0) {
-                journal("duplicate endRound", round, "status=", status.code(),
-                        "handler=", this);
-                return false; // already ended
-            }
-            try {
-                boolean cancelled = (cause instanceof FSCancelledException ce
-                                        && ce.endpoint() == sparqlClient.endpoint())
-                                 || (cause instanceof BItReadCancelledException)
-                                 || (cause instanceof CancelledException);
-                ByteRope msg;
-                if (cause == null && errorMsg == null) {
-                    msg = null;
-                } else {
-                    msg = new ByteRope();
-                    if      (errorMsg != null) msg.append(errorMsg);
-                    else                       msg.append("Could not complete query: ")
-                                                  .append(cause.getMessage());
-                    if (query != null) {
-                        msg.append("\nQuery:\n").indented(2, query.sparql());
-                        if (msg.get(msg.len-1) != '\n') msg.append('\n');
-                    }
-                    if (cause != null) {
-                        try (var w = new PrintStream(msg.asOutputStream(), true, UTF_8)) {
-                            cause.printStackTrace(w);
-                        }
-                    }
-                }
-                if (status != OK || msg != null)
-                    onFailure(status, msg, cancelled);
-                else
-                    journal("OK endRound", round, "handler=", this);
-                return true; // this call ended round
-            } finally {
-                roundCleanup();
-                this.round = -round;
-            }
-        }
-
-        @SuppressWarnings("SameReturnValue") protected boolean fail(CharSequence errorMessage) {
-            endRound(INTERNAL_SERVER_ERROR, errorMessage, null);
-            return true;
-        }
-
-        protected boolean parseQuery(SegmentRope sparql) {
-            try {
-                query = sparqlParser.parse(sparql, 0);
-                return true;
-            } catch (Throwable e) {
-                endRound(BAD_REQUEST, "Bad query syntax", e);
-            }
-            return false;
-        }
-
-        protected boolean dispatchQuery(@Nullable BIt<CompressedBatch> bindings,
-                                        BindType type) {
-            try {
-                if (bindings != null) {
-                    bindQuery = new VolatileBindQuery(query, bindings, type, (WsSparqlHandler)this);
-                    it = sparqlClient.query(bindQuery);
-                } else {
-                    bindQuery = null;
-                    it = sparqlClient.query(COMPRESSED, query);
-                }
-                journal("handler=", this, "it=", it);
-                serializeVars = it.vars();
-                return true;
-            } catch (Throwable t) {
-                endRound(INTERNAL_SERVER_ERROR, "Could not dispatch query", t);
-            }
-            return false;
-        }
-
-        private static final class RoundEndedException extends RuntimeException {
-            public static final RoundEndedException INSTANCE = new RoundEndedException();
-        }
-
-        protected static abstract class SerializeTask<M> extends NettyResultsSender<M> {
-            protected final QueryHandler<? extends M> handler;
-            protected final int drainerRound;
-            protected boolean ended;
-
-            public SerializeTask(QueryHandler<? extends M> handler, int round) {
-                super(handler.serializer, handler.ctx);
-                sink.sizeHint(handler.server.serializeSizeHint);
-                this.handler      = handler;
-                this.drainerRound = round;
-            }
-
-            @Override protected boolean beforeSend() { // runs on event loop
-                if (drainerRound != handler.round)
-                    throw RoundEndedException.INSTANCE;
-                return true;
-            }
-
-            @Override protected void onError(Throwable t) { // runs on event loop
-                if (ended || t == RoundEndedException.INSTANCE)
-                    return;
-                sendingTerminal();
-                ended = true;
-                handler.endRound(INTERNAL_SERVER_ERROR, null, t);
-                closeFromEventLoop();
-            }
-
-            private static final class TrailerAction extends NettyResultsSender.Action {
-                private static final TrailerAction INSTANCE = new TrailerAction();
-                private TrailerAction() {super("END");}
-                @Override public void run(NettyResultsSender<?> sender) {
-                    ((SerializeTask<?>)sender).doSendTrailer();
-                }
-            }
-            private void doSendTrailer() {
-                if (ended) return;
-                ended = true;
-                serializer.serializeTrailer(sink.touch());
-                ctx.writeAndFlush(wrapLast(sink.take()));
-                handler.endRound(OK, null, null);
-                closeFromEventLoop();
-            }
-            @Override public void sendTrailer() { // runs on drainerThread
-                sendingTerminal();
-                handler.server.serializeSizeHint = ByteBufSink.adjustSizeHint(
-                        handler.server.serializeSizeHint, sink.sizeHint());
-                try {
-                    execute(TrailerAction.INSTANCE);
-                } catch (Throwable t) {
-                    if (ctx.channel().isActive() && !ended)
-                        TrailerAction.INSTANCE.run(this);
-                }
-            }
-
-            private static final class CancelAction extends Action {
-                private static final CancelAction INSTANCE = new CancelAction();
-                public CancelAction() {super("CANCEL");}
-                @Override public void run(NettyResultsSender<?> sender) {
-                    ((SerializeTask<?>)sender).doSendCancel();
-                }
-            }
-            private void doSendCancel() {
-                if (ended) return;
-                ended = true;
-                sendingTerminal();
-                String msg = handler instanceof WsSparqlHandler wh && wh.clientCancel
-                        ? "cancel request by WS client"
-                        : "query iterator unexpectedly cancelled";
-                handler.endRound(PARTIAL_CONTENT, msg, CancelledException.INSTANCE);
-                closeFromEventLoop();
-            }
-            @Override public void sendCancel() {
-                if (ctx.executor().inEventLoop()) doSendCancel();
-                else                              execute(CancelAction.INSTANCE);
-            }
-
-            @Override public String toString() {
-                return journalName()+"{round="+handler.round+"}";
-            }
-        }
-
-        protected abstract SerializeTask<?> createSerializeTask(int round);
-
-        protected void waitForRequested(int batchRows) {}
-
-        protected final void startDrainerThread(int round) {
-            drainerThread = startVirtualThread(() -> drainerThread(round));
-        }
-
-        protected final void drainerThread(int round) {
-            SerializeTask<?> task = null;
-            try (var it = this.it) {
-                task = createSerializeTask(round);
-                if (getClass().desiredAssertionStatus())
-                    Thread.currentThread().setName("drainer-"+ctx.channel().id().asShortText());
-                else
-                    Thread.currentThread().setName("drainer");
-                if (query == null || it == null) {
-                    fail("null query or it");
-                    return;
-                }
-                task.sendInit(it.vars(), serializeVars, query.isAsk());
-                for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                    task.waitCanSend();
-                    task.sendSerializedAll(b);
-                    waitForRequested(b.totalRows());
-                }
-                task.sendTrailer();
-            } catch (NettyResultsSender.NettyExecutionException e) {
-                log.debug("Drainer thread exiting", e);
-            } catch (Throwable t) {
-                if (task != null) {
-                    if (t instanceof BItReadCancelledException) {
-                        task.sendCancel();
-                    } else {
-                        log.debug("Drainer thread exiting due to error", t);
-                        task.sendError(t);
-                    }
-                } else {
-                    log.error("Error creating SerializeTask, racing to end round", t);
-                    endRound(INTERNAL_SERVER_ERROR, null, t);
-                }
-            } finally {
-                if (task != null)
-                    task.close();
-                if (handlersClosed != null)
-                    handlersClosed.release();
-            }
-        }
+        protected abstract void exceptionCaughtWhileUnsubscribed(Throwable cause);
     }
 
+    private class SparqlHandler extends QueryHandler<FullHttpRequest> {
+        private static final byte[] CANCEL_MSG = "query processing was cancelled".getBytes(UTF_8);
+        private static final byte[] BAD_UPGRADE_MSG = "Ony possible upgrade is WebSocket".getBytes(UTF_8);
+        private static final byte[] REQ_BEFORE_RES_MSG = "Request before response to previous request was completed".getBytes(UTF_8);
+        private static final byte[] SERVER_CLOSING_MSG = "Server is closing".getBytes(UTF_8);
+        private static final byte[] BAD_HTTP_VERSION_MSG = "Only HTTP 1.1 is supported".getBytes(UTF_8);
+        private static final byte[] BAD_HTTP_ENCODE_MSG = "Could not decode HTTP request".getBytes(UTF_8);
+        private static final byte[] NOT_FOUND_MSG = "The requested path was not found, use /sparql for SPARQL protocol and the WebSocket extension".getBytes(UTF_8);
+        private static final byte[] NOT_ACCEPTABLE_MSG = ("Cannot satisfy Accept header. Supported types are "
+                + Arrays.stream(ResultsSerializer.contentNegotiator().supported())
+                .map(MediaType::toString).collect(Collectors.joining(", "))).getBytes(UTF_8);
+        private static final byte[] METHOD_NOT_ALLOWED_MSG = "HTTP method not allowed, only HEAD, GET and POST are allowed in SPARQL".getBytes(UTF_8);
+        private static final byte[] MISSING_QUERY_GET_MSG = "Missing \"query=\" parameter in GET request".getBytes(UTF_8);
+        private static final byte[] MISSING_QUERY_FORM_MSG = "Missing \"query\" parameter in application/x-www-form".getBytes(UTF_8);
+        private static final byte[] NOT_FORM_MSG = "Expected Content-Type of request to be application/x-www-form or application/sparql-query".getBytes(UTF_8);
 
-    private final class SparqlHandler extends QueryHandler<FullHttpRequest> {
-        private @MonotonicNonNull HttpVersion httpVersion;
-        private boolean responseStarted = false;
 
-        private static final Pattern QUERY_RX = Pattern.compile("(?i)[?&]query=([^&]+)");
-        private static final byte[] QUERY_EQ = "QUERY=".getBytes(UTF_8);
+        private @MonotonicNonNull ResultsSerializer serializer;
 
-        public SparqlHandler() {
-            queryHandlers.add(this);
+        @Override protected Object serialize(CompressedBatch batch) {
+            serializer.serializeAll(batch, bbSink.touch());
+            return new DefaultHttpContent(bbSink.take());
         }
 
-        /* --- --- --- QueryHandler methods --- --- --- */
+        @Override protected LIFOPool<SparqlHandler> pool() {return sparqlHandlerPool;}
 
-        private static final class SparqlSerializeTask extends SerializeTask<HttpContent> {
-            public SparqlSerializeTask(SparqlHandler handler, int drainerRound) {
-                super(handler, drainerRound);
+        @Override protected Object termMessage(@Nullable Throwable cause) {
+            HttpContent msg;
+            if (cause == null && (st&ST_RES_STARTED) == 0)
+                cause = new IllegalStateException("sendTermination() before RES_STARTED");
+            if (cause == null) {
+                serializer.serializeTrailer(bbSink.touch());
+                msg = new DefaultLastHttpContent(bbSink.take());
+            } else {
+                ByteBuf body;
+                if (cause == CancelledException.INSTANCE) {
+                    journal("cancel-caused sendTermination on", this);
+                    body = wrappedBuffer(CANCEL_MSG);
+                } else {
+                    journal("sendTermination on", this, "due to", cause.getClass().getSimpleName());
+                    ByteRope r = new ByteRope();
+                    try (var ps = new PrintStream(r.asOutputStream())) {
+                        cause.printStackTrace(ps);
+                    }
+                    body = wrappedBuffer(r.u8(), 0, r.len);
+                }
+                if ((st&ST_RES_STARTED) == 0)
+                    msg = new DefaultFullHttpResponse(HTTP_1_1, INTERNAL_SERVER_ERROR, body);
+                else  // should be a dead branch
+                    msg = new DefaultLastHttpContent(body);
             }
-            @Override protected HttpContent wrap(ByteBuf bb) {
-                return new DefaultHttpContent(bb);
-            }
-            @Override protected HttpContent wrapLast(ByteBuf bb) {
-                return new DefaultLastHttpContent(bb);
-            }
+            return msg;
+        }
+
+        @Override protected void exceptionCaughtWhileUnsubscribed(Throwable cause) {
+            sendRequestError(INTERNAL_SERVER_ERROR, cause,
+                    "Unexpected error processing request\n", null, null, null);
+            ctx.close();
         }
 
         @Override
-        protected SerializeTask<?> createSerializeTask(int round) {
-            return new SparqlSerializeTask(this, round);
-        }
-
-        @Override protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
-                                           boolean cancelled) {
-            if (ThreadJournal.ENABLED) {
-                journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
-                        "handler=", this);
-                var msg = errorMessage.length() < 40 ? errorMessage
-                        : errorMessage.toString().substring(0, 50)+"...";
-                journal("error=", msg);
-            }
-            if (!ctx.channel().isActive())
-                return;
-            HttpContent msg;
-            ByteBuf bb = ctx.alloc().buffer(errorMessage.length());
-            if (responseStarted) {
-                msg = new DefaultHttpContent(NettyRopeUtils.write(bb, errorMessage));
-            } else {
-                NettyRopeUtils.write(bb, errorMessage);
-                var res = new DefaultFullHttpResponse(httpVersion, status, bb);
-                res.headers().set(CONTENT_TYPE, TEXT_PLAIN_U8)
-                             .set(CONTENT_LENGTH, bb.readableBytes());
-                if (SEND_INFO)
-                    res.headers().set("x-fastersparql-info", journalName());
-                msg = res;
-            }
-            ctx.writeAndFlush(msg);
-        }
-
-        /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
-
-        @Override protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
+        protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
+            bsRunnable.runNow();
             if (handleUpgrade(req))
                 return;
-            httpVersion = req.protocolVersion();
-            responseStarted = false;
-            int r = beginRound();
-            if (serverClosed) {
-                endRound(INTERNAL_SERVER_ERROR, "server closing", null);
+            if ((st&(ST_POOLED|ST_RELEASED)) != 0) {
+                throw new IllegalStateException("message arrived on released/pooled handler");
+            } else if ((st&ST_RES_STARTED) != 0) {
+                sendRequestError(BAD_REQUEST, REQ_BEFORE_RES_MSG).close();
+            } else if (cancelledByServerClose != null) {
+                sendRequestError(INTERNAL_SERVER_ERROR, SERVER_CLOSING_MSG).close();
+            } else if (req.protocolVersion() != HTTP_1_1) {
+                sendRequestError(BAD_REQUEST, BAD_HTTP_VERSION_MSG).close();
             } else if (!req.decoderResult().isSuccess()) {
-                endRound(BAD_REQUEST, "Could not decode HTTP request", null);
+                sendRequestError(BAD_REQUEST, BAD_HTTP_ENCODE_MSG).close();
             } else if (!req.uri().startsWith(SP_PATH)) {
-                endRound(NOT_FOUND, "Path not found, HTTP sparql endpoint is at SP_PATH", null);
-            } else if (badMethod(req.method())) {
-                endRound(METHOD_NOT_ALLOWED, "Only GET and POST are allowed", null);
+                sendRequestError(NOT_FOUND, NOT_FOUND_MSG);
             } else if (chooseSerializer(req)) {
-                if (req.method().equals(HttpMethod.HEAD)) {
-                    handleHead(req);
-                } else if (req.method().equals(HttpMethod.GET)) {
-                    handleGet(r, req);
-                } else if (req.method().equals(HttpMethod.POST)) {
-                    handlePost(r, req);
-                }
+                if (req.method().equals(HttpMethod.HEAD))
+                    handleHead();
+                else if (req.method().equals(HttpMethod. GET))
+                    handleGet(req);
+                else if (req.method().equals(HttpMethod.POST))
+                    handlePost(req);
+                else
+                    sendRequestError(METHOD_NOT_ALLOWED, METHOD_NOT_ALLOWED_MSG);
             }
         }
 
@@ -633,373 +695,575 @@ public class NettySparqlServer implements AutoCloseable {
                     r.retain(); // both fireChannelRead() and our caller will release
                 ctx.fireChannelRead(request);
             } else {
-                beginRound();
-                endRound(BAD_REQUEST, "Only possible upgrade is websocket", null);
+                sendRequestError(BAD_REQUEST, BAD_UPGRADE_MSG);
             }
             return true; // "handled" the request
         }
 
-        private void handleHead(HttpRequest req) {
-            var resp = new DefaultFullHttpResponse(req.protocolVersion(), OK);
-            resp.headers().set(CONTENT_TYPE, serializer.contentType())
-                          .set(CONTENT_LENGTH, 0)
-                          .set(ALLOW, "GET, POST, HEAD");
-            ctx.writeAndFlush(resp);
-            endRound(OK, null, null);
+        private boolean chooseSerializer(FullHttpRequest req) {
+            try {
+                MediaType mt = negotiator.select(req.headers().valueStringIterator(ACCEPT));
+                if (mt != null) {
+                    if (serializer == null || !mt.accepts(serializer.contentType()))
+                        serializer = ResultsSerializer.create(mt);
+                    return true;
+                }
+            } catch (Throwable t) {
+                log.info("Failed to select and create serializer for accept string {}",
+                        req.headers().getAllAsString(ACCEPT), t);
+            }
+            sendRequestError(NOT_ACCEPTABLE, NOT_ACCEPTABLE_MSG);
+            return false;
         }
 
-        private void handleGet(int round, HttpRequest req) {
+        private void sendRequestError(HttpResponseStatus st, Throwable cause,
+                                      String pre0, Object pre1, Object pre2, Object pre3) {
+            if ((this.st&ST_RES_STARTED) != 0) {
+                log.error("response already started on sendRequestError({}, {}, {}, {}, {}, {}) on {}",
+                          st.code(), cause.getClass().getSimpleName(), pre0, pre1, pre2, pre3, this, cause);
+                journal("sendRequestError after started, HTTP", st.code(), "st=", this.st, ST, cause, this);
+                if ((this.st&ST_RES_TERMINATED) == 0)
+                    endResponse(new DefaultLastHttpContent());
+            } else {
+                try (var ps = new PrintStream(bbSink.asOutputStream(), false, UTF_8)) {
+                    if (pre0 != null) ps.append(pre0);
+                    if (pre1 != null) ps.append(pre1.toString());
+                    if (pre2 != null) ps.append(pre2.toString());
+                    if (pre3 != null) ps.append(pre3.toString());
+                    cause.printStackTrace(ps);
+                }
+                var res = new DefaultFullHttpResponse(HTTP_1_1, st, bbSink.take());
+                HttpHeaders headers = res.headers();
+                headers.set(CONTENT_TYPE, TEXT_PLAIN_U8)
+                        .set(CONTENT_LENGTH, res.content().readableBytes());
+                if (SEND_INFO)
+                    headers.set("x-fastersparql-info", journalName());
+                if ((this.st&ST_RES_STARTED) == 0)
+                    startResponse();
+                endResponse(res);
+            }
+        }
+
+        private ChannelHandlerContext sendRequestError(HttpResponseStatus st, byte[] msg) {
+            if ((this.st&ST_RES_STARTED) != 0) {
+                journal("sendRequestError after started, HTTP", st.code(), "st=", this.st, ST, "on", this);
+                log.error("response already started: sendRequestError({}, {}) on {}", st.code(), new String(msg, UTF_8), this);
+                if ((this.st&ST_RES_TERMINATED) == 0)
+                    endResponse(new DefaultLastHttpContent());
+            } else {
+                var r = new DefaultFullHttpResponse(HTTP_1_1, st, wrappedBuffer(msg));
+                var headers = r.headers();
+                if (st == METHOD_NOT_ALLOWED)
+                    headers.set(ALLOW, "HEAD, GET, POST");
+                if (SEND_INFO)
+                    headers.set("x-fastersparql-info", journalName());
+                if (msg.length > 0) {
+                    headers.set(CONTENT_TYPE, TEXT_PLAIN_U8);
+                    headers.set(CONTENT_LENGTH, msg.length);
+                }
+                if ((this.st&ST_RES_STARTED) == 0)
+                    startResponse();
+                endResponse(r);
+            }
+            return ctx;
+        }
+
+        private void handleHead() {
+            var res = new DefaultFullHttpResponse(HTTP_1_1, OK);
+            HttpHeaders headers = res.headers();
+            headers.set(ALLOW, "HEAD, GET, POST")
+                         .set(CONTENT_TYPE, serializer.contentType())
+                         .set(CONTENT_LENGTH, 0);
+            if (SEND_INFO)
+                headers.set("x-fastersparql-info", journalName());
+            startResponse(res, true);
+        }
+
+        private static final Pattern QUERY_RX = Pattern.compile("(?i)[?&]query=([^&]+)");
+        private void handleGet(FullHttpRequest req) {
             String uri = req.uri();
             var m = QUERY_RX.matcher(uri);
-            if (!m.find()) {
-                endRound(BAD_REQUEST, "Missing query parameter in GET", null);
-                return;
-            }
-            handleQuery(round, unescapeToRope(m.group(1)));
+            if (m.find()) {
+                String escaped = m.group(1);
+                handleQuery(unescapeToRope(escaped, queryRope(escaped.length())));
+            } else
+                sendRequestError(BAD_REQUEST, MISSING_QUERY_GET_MSG);
+
         }
 
-        private void handlePost(int round, FullHttpRequest req) {
-            String ct = req.headers().get(CONTENT_TYPE);
-            PlainRope body = bbRopeView.wrap(req.content());
+        private static final byte[] QUERY_EQ = "QUERY=".getBytes(UTF_8);
+        private void handlePost(FullHttpRequest req) {
+            var ct = req.headers().get(CONTENT_TYPE);
+            var body = bbView.wrap(req.content());
+            var queryRope = queryRope(body.len);
             if (indexOfIgnoreCaseAscii(ct, APPLICATION_X_WWW_FORM_URLENCODED, 0) == 0) {
                 int begin = 0, len = body.len;
                 while (begin < len && !body.hasAnyCase(begin, QUERY_EQ))
                     begin = body.skipUntil(begin, len, '&')+1;
                 begin += QUERY_EQ.length;
                 if (begin >= len)
-                    endRound(BAD_REQUEST, "No query in form",  null);
+                    sendRequestError(BAD_REQUEST, MISSING_QUERY_FORM_MSG);
                 else
-                    handleQuery(round, unescape(body, begin, body.skipUntil(begin, body.len, '&')));
+                    handleQuery(unescape(body, begin, body.skipUntil(begin, body.len, '&'),
+                                         queryRope));
             } else if (indexOfIgnoreCaseAscii(ct, APPLICATION_SPARQL_QUERY, 0) == 0) {
-                handleQuery(round, new ByteRope(body));
+                handleQuery(queryRope.append(body));
             } else {
-                endRound(UNSUPPORTED_MEDIA_TYPE, "Expected Content-Type to be application/x-www-form-urlencoded or application/sparql-query, got "+ct, null);
+                sendRequestError(UNSUPPORTED_MEDIA_TYPE, NOT_FORM_MSG);
             }
         }
 
-        private void handleQuery(int round, SegmentRope sparqlRope) {
-            if (parseQuery(sparqlRope) && dispatchQuery(null, BindType.JOIN)) {
-                if (httpVersion == HttpVersion.HTTP_1_0) {
-                    handleQueryHttp10(round);
-                } else {
-                    var res = new DefaultHttpResponse(httpVersion, OK);
-                    res.headers().set(CONTENT_TYPE, serializer.contentType())
-                                 .set(TRANSFER_ENCODING, CHUNKED);
-                    if (SEND_INFO)
-                        res.headers().set("x-fastersparql-info", journalName());
-                    responseStarted = true;
-                    ctx.writeAndFlush(res);
-                    startDrainerThread(round);
-                }
-            }
-        }
-
-        private void handleQueryHttp10(int round) {
-            startVirtualThread(() -> handleQueryHttp10Thread(round));
-        }
-
-        private void handleQueryHttp10Thread(int round) {
-            var it = this.it;
-            var query = this.query;
-            if (it == null || query == null) {
-                fail("null query or it");
+        private void handleQuery(ByteRope rope) {
+            Plan plan;
+            try {
+                plan = parser.parse(rope, 0);
+            } catch (Throwable t)  {
+                sendRequestError(BAD_REQUEST, t, "Bad query: ",
+                        t instanceof InvalidSparqlException e1 ? e1.getMessage()
+                              : t.getClass().getSimpleName()+": "+t.getMessage(),
+                        "\nQuery:\n", rope);
                 return;
             }
-            var sink = new ByteBufSink(ctx.alloc()).touch();
+            Emitter<CompressedBatch> em;
             try {
-                serializer.init(it.vars(), it.vars(), query.isAsk());
-                serializer.serializeHeader(sink);
-                for (CompressedBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                    if (this.round != round) return;
-                    serializer.serializeAll(b, sink);
-                }
-                serializer.serializeTrailer(sink);
-                ByteBuf bb = sink.take();
-                var res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_0, OK, bb);
-                res.headers().set(CONTENT_TYPE, serializer.contentType())
-                             .set(CONTENT_LENGTH, bb.readableBytes());
-                if (endRound(OK, null, null))
-                    ctx.writeAndFlush(res);
+                if (useBIt)
+                    em = new BItEmitter<>(sparqlClient.query(COMPRESSED, plan));
                 else
-                    res.release();
+                    em = sparqlClient.emit(COMPRESSED, plan, Vars.EMPTY);
             } catch (Throwable t) {
-                endRound(INTERNAL_SERVER_ERROR, null, t);
-                throw t;
-            } finally {
-                sink.release();
+                sendRequestError(INTERNAL_SERVER_ERROR, t,
+                        "Failed to dispatch query: ", rope, "\nReason:", null);
+                return;
             }
-        }
-
-        private static boolean badMethod(HttpMethod method) {
-            return !method.equals(HttpMethod.GET) && !method.equals(HttpMethod.HEAD)
-                    && !method.equals(HttpMethod.POST);
-        }
-
-        private boolean chooseSerializer(HttpRequest req) {
             try {
-                MediaType mt = negotiator.select(req.headers().valueStringIterator(ACCEPT));
-                if (mt != null) {
-                    serializer = ResultsSerializer.create(mt);
-                    return true;
-                }
+                serializer.init(em.vars(), em.vars(), false);
+                serializer.serializeHeader(bbSink.touch());
+                var headers = new DefaultHttpContent(bbSink.take());
+                var response = new DefaultHttpResponse(HTTP_1_1, OK);
+                HttpHeaders responseHeaders = response.headers();
+                responseHeaders.set(CONTENT_TYPE, serializer.contentType())
+                               .set(TRANSFER_ENCODING, CHUNKED);
+                if (SEND_INFO)
+                    responseHeaders.set("x-fastersparql-info", journalName());
+                startResponse(response, false);
+                send(headers);
             } catch (Throwable t) {
-                log.error("Failed to select and create serializer for accept string {}",
-                          req.headers().getAllAsString(ACCEPT), t);
+                Emitters.discard(em);
+                sendRequestError(INTERNAL_SERVER_ERROR, t, "Failed to build HTTP response ",
+                        " and results headers. Reason: ", null, null);
+                return;
             }
-            endRound(NOT_ACCEPTABLE, noSerializerError, null);
-            return false;
+            subscribeTo(em);
+            em.request(Long.MAX_VALUE);
         }
     }
 
-    private static final VarHandle WS_REQ, WS_SCHED_BIND_REQ;
-    static {
-        try {
-            WS_REQ            = MethodHandles.lookup().findVarHandle(WsSparqlHandler.class, "plainRequested", long.class);
-            WS_SCHED_BIND_REQ = MethodHandles.lookup().findVarHandle(WsSparqlHandler.class, "plainSchedCheckAndSendBindReq", boolean.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
+    private abstract class WsHandler0 extends QueryHandler<TextWebSocketFrame> {
+        protected static final byte[] QUERY      = "!query"     .getBytes(UTF_8);
+        protected static final byte[] JOIN       = "!join"      .getBytes(UTF_8);
+        protected static final byte[] LEFT_JOIN  = "!left-join" .getBytes(UTF_8);
+        protected static final byte[] EXISTS     = "!exists"    .getBytes(UTF_8);
+        protected static final byte[] NOT_EXISTS = "!not-exists".getBytes(UTF_8);
+        protected static final byte[] MINUS      = "!minus"     .getBytes(UTF_8);
+        protected static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
+        protected static final byte[] BIND_REQUEST      = "!bind-request ".getBytes(UTF_8);
+        protected static final byte[] ERROR             = "!error "  .getBytes(UTF_8);
+        protected static final byte[] CANCELLED         = "!cancelled\n"  .getBytes(UTF_8);
+        protected static final byte[] END               = "!end\n"        .getBytes(UTF_8);
 
-    private final class WsSparqlHandler extends QueryHandler<WebSocketFrame>
-            implements WsFrameSender<ByteBufSink, ByteBuf>, Requestable {
-        private static final byte[] QUERY = "!query".getBytes(UTF_8);
-        private static final byte[] JOIN = "!join".getBytes(UTF_8);
-        private static final byte[] LEFT_JOIN = "!left-join".getBytes(UTF_8);
-        private static final byte[] EXISTS = "!exists".getBytes(UTF_8);
-        private static final byte[] MINUS = "!minus".getBytes(UTF_8);
-        private static final byte[] NOT_EXISTS = "!not-exists".getBytes(UTF_8);
-        private static final byte[] CANCEL = "!cancel".getBytes(UTF_8);
-        private static final byte[] ERROR = "!error ".getBytes(UTF_8);
-        private static final byte[] CANCELLED = "!cancelled ".getBytes(UTF_8);
-        private static final byte[] BIND_EMPTY_STREAK = "!bind-empty-streak ".getBytes(UTF_8);
-        private static final byte[] BIND_REQ          = "!bind-request ".getBytes(UTF_8);
-        private static final int LONG_MAX_VALUE_LEN   = String.valueOf(Long.MAX_VALUE).length();
+        private static final int LONG_MAX_VALUE_LEN = String.valueOf(Long.MAX_VALUE).length();
 
-        private @Nullable WsServerParser<CompressedBatch> bindingsParser;
-        private boolean clientCancel, cancel;
-        @SuppressWarnings("unused") private boolean plainSchedCheckAndSendBindReq;
-        private int waitingVarsRound;
-        private BindType bType = BindType.JOIN;
-        private long plainRequested;
-        private int bindReq, bindReqChunk;
-        private final ByteRope bindReqRope;
-        private final TextWebSocketFrame bindReqFrame;
-        private WsSerializeTask serializeTask;
-        private final SegmentRope tmpView = new SegmentRope();
-        private final long implicitRequest = FSProperties.wsImplicitRequest();
-        private final int reqChunkTerms
-                = Math.max(8, emitReqChunkBatches()/4*COMPRESSED.preferredTermsPerBatch());
-        private final Runnable checkAndSendBindReqTask = this::checkAndSendBindReq;
+        protected final WsSerializer serializer = WsSerializer.create(wsSizeHint);
+        protected boolean earlyCancel, waitingVars, isBindQuery;
+        protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
+        protected final ByteRope bindReqRope;
+        protected final TextWebSocketFrame bindReqFrame;
+        protected @Nullable WsServerParser<CompressedBatch> bindingsParser;
+        protected final SegmentRope tmpView = new SegmentRope();
+        protected long lastSeqSent;
+        protected @MonotonicNonNull TextWebSocketFrame cancelFrame;
+        protected long earlyRequest;
+        protected BindType bType;
+        protected @Nullable Plan query;
 
-        public WsSparqlHandler() {
-            serializer = WsSerializer.create(serializeSizeHint);
-            queryHandlers.add(this);
+        protected WsHandler0() {
             bindReqRope = new ByteRope(
-                    BIND_REQ.length+LONG_MAX_VALUE_LEN+1+         //!bind-request N\n
-                    BIND_EMPTY_STREAK.length+LONG_MAX_VALUE_LEN+1 //!bind-empty-streak S\n
-            ).append(BIND_REQ);
+                    BIND_REQUEST.length+LONG_MAX_VALUE_LEN+1+      // !bind-request N\n
+                            BIND_EMPTY_STREAK.length+LONG_MAX_VALUE_LEN+1  // !bind-empty-streak S\n
+            ).append(BIND_REQUEST);
             bindReqFrame = new TextWebSocketFrame(wrappedBuffer(bindReqRope.u8()));
-            bindReqChunk = reqChunkTerms>>3;
         }
 
-        /* --- --- --- Requestable methods (used by bindingsParser) --- --- --- */
+    }
 
-        @Override public void request(long rows) throws Emitter.NoReceiverException {
-            if (rows <= 0)
-                return;
-            assert ctx == null || ctx.executor().inEventLoop();
-            if (Async.maxRelease(WS_REQ, this, rows)) {
-                journal("!request", rows, "handler=", this);
-                if (bindReq < bindReqChunk && rows > bindReq)
-                    checkAndSendBindReq();
-                LockSupport.unpark(drainerThread);
-            } else {
-                journal("small !request", rows, "current=",
-                        plainRequested, "handler=", this);
-            }
-        }
-
-        /* --- --- --- QueryHandler methods --- --- --- */
-
-        @Override protected void waitForRequested(int batchRows) {
-            if ((long)WS_REQ.getAndAddRelease(this, (long)-batchRows)-batchRows <= 0 && !cancel) {
-                journal("parking handler=", this, "until !request");
-                while ((long)WS_REQ.getAcquire(this) <= 0 && !cancel)
-                    LockSupport.park(this);
-            }
-        }
-
-        @Override
-        protected void onFailure(HttpResponseStatus status, CharSequence errorMessage,
-                                 boolean cancelled) {
-            if (ThreadJournal.ENABLED) {
-                journal(cancelled ? "cancelled status=" : "failed status=", status.code(),
-                        "handler=", this);
-                var msg = errorMessage.length() < 40 ? errorMessage
-                        : errorMessage.toString().substring(0, 50)+"...";
-                journal("error=", msg);
-            }
-            if (!ctx.channel().isActive())
-                return;
-            var sink = new ByteBufSink(ctx.alloc()).touch();
-            sink.append(cancelled ? CANCELLED : ERROR).appendEscapingLF(errorMessage).append('\n');
-            ctx.writeAndFlush(new TextWebSocketFrame(sink.take()));
-            if (!cancelled)
-                ctx.close();
-        }
-
-        @Override public void roundCleanup() {
-            super.roundCleanup();
-            plainRequested   = 0;
-            waitingVarsRound = 0;
-            bindReqChunk     = reqChunkTerms>>3;
-            bindReq          = 0;
-            clientCancel     = false;
-            cancel           = false;
-            serializeTask    = null;
+    private final class WsHandler extends WsHandler0 implements Requestable {
+        private static final VarHandle BIND_REQUEST_N;
+        static {
             try {
-                var bindingsParser = this.bindingsParser;
-                if (bindingsParser != null)
-                    bindingsParser.feedEnd();
-            } catch (Throwable t) {
-                log.error("Ignoring {} while closing bindingsParser={}", t, bindingsParser);
-            } finally { this.bindingsParser = null; }
-        }
-
-        private static final class WsSerializeTask extends SerializeTask<WebSocketFrame> {
-            private final WsSparqlHandler wsHandler;
-            private volatile long lastSentSeq = -1;
-
-            public WsSerializeTask(WsSparqlHandler handler, int drainerRound) {
-                super(handler, drainerRound);
-                this.wsHandler = handler;
-                if (drainerRound == handler.round) {
-                    handler.serializeTask = this;
-                    handler.schedCheckAndSendBindReq();
-                }
-            }
-
-            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
-                return new TextWebSocketFrame(bb);
-            }
-
-            boolean canSendEmptyStreak() { // runs on event loop
-                lock(); // required due to race on this.active
-                try {
-                    var bindQuery = handler.bindQuery;
-                    if (active || bindQuery == null) return false;
-                    long lastSent = lastSentSeq;
-                    return lastSent == bindQuery.nonEmptySeq && bindQuery.emptySeq > lastSent;
-                } finally { unlock(); }
-            }
-
-            @Override public void sendSerializedAll(Batch<?> batch) { //runs on drainerThread
-                super.sendSerializedAll(batch);
-                if (handler.bindQuery != null && batch.rows > 0)
-                    updateLastSentSeq(batch);
-            }
-
-            private void updateLastSentSeq(Batch<?> batch) {
-                SegmentRope tmpView = wsHandler.tmpView;
-                Batch<?> tail = batch.tail();
-                if (!tail.localView(tail.rows-1, 0, tmpView))
-                    throw new IllegalStateException("Missing binding sequence");
-                long nxt = WsBindingSeq.parse(tmpView, 0, tmpView.len), prev = lastSentSeq;
-                if (nxt > prev) {
-                    lastSentSeq = nxt;
-                    if (wsHandler.bindReq <= wsHandler.bindReqChunk>>1)
-                        wsHandler.schedCheckAndSendBindReq();
-                } else if (nxt < prev) {
-                    journal("non-monotonic lasSentSeq=", nxt, "from", prev);
-                    log.error("Non-monotonic binding seq step from {} to {}", prev, nxt);
-                }
-            }
-
-            @Override
-            public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {
-                super.sendSerializedAll(batch, nodeConsumer);
-                if (handler.bindQuery != null && batch.rows > 0)
-                    updateLastSentSeq(batch);
+                BIND_REQUEST_N = MethodHandles.lookup().findVarHandle(WsHandler.class, "plainBindRequestN", long.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
             }
         }
+        private volatile long emptySeq, nonEmptySeq;
+        @SuppressWarnings("FieldCanBeLocal") private long plainBindRequestN;
+
+        private final class BindingsCallback extends CallbackEmitter<CompressedBatch> {
+            public BindingsCallback(Vars vars) {
+                super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
+                if (ResultJournal.ENABLED)
+                    ResultJournal.initEmitter(this, vars);
+            }
+
+            @Override protected StringBuilder minimalLabel() {
+                return new StringBuilder().append("S.W.BE:").append(channelId());
+            }
+
+            @Override public void request(long rows) throws NoReceiverException {
+                super.request(rows);
+                Async.maxRelease(BIND_REQUEST_N, WsHandler.this, requested());
+                bsRunnable.sched(AC_BIND_REQ);
+            }
+
+            @Override public void rebind(BatchBinding binding) throws RebindException {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override public    String            toString() { return minimalLabel().toString(); }
+            @Override public    Vars          bindableVars() { return Vars.EMPTY; }
+            @Override protected void         startProducer() {}
+            @Override protected void        cancelProducer() { cancel(true); }
+            @Override protected void   earlyCancelProducer() {}
+            @Override protected void       releaseProducer() {}
+            @Override protected void         pauseProducer() {}
+            @Override protected void  resumeProducer(long n) {}
+        }
+
+        private final class BindingsBIt extends SPSCBIt<CompressedBatch> {
+            private int pending;
+
+            public BindingsBIt(Vars vars) {
+                super(COMPRESSED, vars, Math.max(8, COMPRESSED.preferredRowsPerBatch(vars)));
+                plainBindRequestN = pending = maxItems;
+            }
+
+            @Override protected StringBuilder minimalLabel() {
+                return new StringBuilder().append("WS.W.BB:").append(channelId());
+            }
+
+            @Override protected boolean mustPark(int offerRows, long queuedRows) {return false;}
+
+            @Override public @Nullable CompressedBatch nextBatch(@Nullable CompressedBatch offer) {
+                CompressedBatch b = super.nextBatch(offer);
+                if (b != null) {
+                    if ((pending -= b.totalRows()) <= maxItems>>1) {
+                        Async.maxRelease(BIND_REQUEST_N, WsHandler.this, (long)maxItems);
+                        pending = maxItems;
+                        bsRunnable.sched(AC_BIND_REQ);
+                    }
+                }
+                return b;
+            }
+        }
+
+        private static final class BindingsParser extends WsServerParser<CompressedBatch> {
+            public BindingsParser(CompletableBatchQueue<CompressedBatch> dest, Requestable requestable) {
+                super(dest, requestable);
+            }
+
+            @Override protected void onPing() { throw new UnsupportedOperationException(); }
+        }
+
+        private final class VolatileItBindQuery extends ItBindQuery<CompressedBatch> {
+            public VolatileItBindQuery(SparqlQuery query, BindingsBIt bindings, BindType type) {
+                super(query, bindings, type);
+            }
+            @Override public void    emptyBinding(long sequence) {emptySeq    = sequence;}
+            @Override public void nonEmptyBinding(long sequence) {nonEmptySeq = sequence;}
+        }
+
+        private final class VolatileEmitBindQuery extends EmitBindQuery<CompressedBatch> {
+            public VolatileEmitBindQuery(SparqlQuery query, BindingsCallback bindings,
+                                         BindType type) {
+                super(query, bindings, type);
+            }
+            @Override public void    emptyBinding(long sequence) {emptySeq    = sequence;}
+            @Override public void nonEmptyBinding(long sequence) {nonEmptySeq = sequence;}
+        }
+
+        @Override protected void cleanupAfterEndResponse() {
+            super.cleanupAfterEndResponse();
+            bindingsParser   = null;
+            isBindQuery      = false;
+            earlyCancel      = false;
+            earlyRequest     = -1;
+            lastSeqSent      =  0;
+            emptySeq         = -1;
+            nonEmptySeq      = -1;
+        }
+
+        @Override protected void finalRelease() {
+            super.finalRelease();
+            serializer.recycle();
+            if (cancelFrame != null && cancelFrame.refCnt() > 0)
+                cancelFrame.release();
+            if (endFrame != null && endFrame.refCnt() > 0)
+                endFrame.release();
+        }
+
+        @Override protected LIFOPool<WsHandler> pool() {return wsHandlerPool;}
+
+        @Override protected Object termMessage(@Nullable Throwable cause) {
+            wsSizeHint = ByteBufSink.adjustSizeHint(wsSizeHint, bbSink.sizeHint());
+            TextWebSocketFrame frame;
+            if (cause == null) {
+                if (endFrame.refCnt() == 1)
+                    (frame = endFrame.retain()).content().readerIndex(0);
+                else
+                    endFrame = frame = new TextWebSocketFrame(wrappedBuffer(END));
+            } else if (cause == CancelledException.INSTANCE) {
+                if (cancelFrame == null || cancelFrame.refCnt() != 1)
+                    cancelFrame = frame = new TextWebSocketFrame(wrappedBuffer(CANCELLED));
+                else
+                    (frame = cancelFrame.retain()).content().readerIndex(0);
+            } else {
+                bbSink.touch().append(ERROR).append(cause.getClass().getSimpleName())
+                              .append(cause.getMessage().replace("\n", "\\n")).append('\n');
+                ByteBuf content = bbSink.take();
+                if (ThreadJournal.ENABLED) {
+                    int end = Math.min(40, content.readableBytes()-1);
+                    journal("!error st=", st, ST, "on", this,
+                            content.toString(ERROR.length, end, UTF_8));
+                }
+                frame = new TextWebSocketFrame(content);
+            }
+            return frame;
+        }
+
+        @Override protected void exceptionCaughtWhileUnsubscribed(Throwable cause) {
+            sendRequestError("Unexpected exception", cause);
+            ctx.close();
+        }
+
+        private void sendRequestError(Object o0, Object o1) {
+            bbSink.touch().append(ERROR);
+            if (o0 != null) bbSink.append(o0.toString().replace("\n", "\\n"));
+            if (o1 != null) bbSink.append(o1.toString().replace("\n", "\\n"));
+            bbSink.append('\n');
+            ByteBuf content = bbSink.take();
+            if (ThreadJournal.ENABLED) {
+                int end = Math.min(40, content.readableBytes()-1);
+                journal("!error st=", st, ST, "on", this,
+                        content.toString(ERROR.length, end, UTF_8));
+            }
+            if ((st&ST_RES_STARTED) == 0)
+                startResponse();
+            endResponse(new TextWebSocketFrame(content));
+        }
+
+        @Override protected Object serialize(CompressedBatch batch) {
+            if (isBindQuery && batch.rows > 0) {
+                var tail = batch.tail();
+                long seq = tail.localView(tail.rows-1, 0, tmpView)
+                         ? WsBindingSeq.parse(tmpView, 0, tmpView.len) : -1L;
+                if (seq > lastSeqSent)
+                    lastSeqSent = seq;
+                else if (seq < lastSeqSent)
+                    invalidLastSeqSent(seq);
+            }
+            serializer.serializeAll(batch, bbSink.touch());
+            return new TextWebSocketFrame(bbSink.take());
+        }
+
+        private void invalidLastSeqSent(long seq) {
+            if (seq == -1) {
+                journal("Missing binding seq, handler=", this);
+                throw new IllegalStateException("Missing binding seq");
+            } else {
+                journal("non-monotonic lastSeqSent from", lastSeqSent, "to", seq, "on", this);
+                throw new IllegalStateException("non-monotonic step of lastSeqSent from "+lastSeqSent+" to "+seq+" on "+this);
+            }
+        }
+
 
         @Override
-        protected SerializeTask<?> createSerializeTask(int round) {
-            return new WsSerializeTask(this, round);
-        }
-
-        /* --- --- --- SimpleChannelInboundHandler methods and request handling --- --- --- */
-
-        @Override public void channelUnregistered(ChannelHandlerContext ctx) {
-            super.channelUnregistered(ctx);
-            ((WsSerializer)serializer).recycle();
-            serializer = null;
-        }
-
-        @Override
-        protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) {
-            SegmentRope msg = bbRopeView.wrapAsSingle(frame.content());
+        protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) {
+            bsRunnable.runNow();
+            SegmentRope msg = bbView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
-            if (serverClosed) {
-                readServerClosed();
-            } else if (f == 'c' && msg.has(0, CANCEL)) {
+            if (cancelledByServerClose != null) {
+                readAfterServerClose();
+            } else if ((st&(ST_POOLED|ST_RELEASED)) != 0) {
+                throw new IllegalStateException("message arrived pooled/released handler");
+            } else if (f == 'c' && msg.has(0, AbstractWsParser.CANCEL_LF)) {
                 readCancel();
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
                 readRequest(msg);
-            } else if (f == 'r' && msg.has(0, AbstractWsParser.INFO)) {
-                readInfo(msg);
-            } else if (waitingVarsRound > 0) {
-                readVarsFrame(msg);
-            } else if (bindingsParser != null) {
-                readBindings(bindingsParser, msg);
-            } else {
-                handleQueryCommand(msg, f);
+            } else if ((f != 'i' && f != 'p') || !readUnusual(msg)) {
+                if (waitingVars)
+                    readVarsFrame(msg);
+                else if (bindingsParser != null)
+                    readBindings(bindingsParser, msg);
+                else
+                    handleQueryCommand(msg, f);
             }
         }
 
-        private void readInfo(SegmentRope msg) {
-            journal(msg.toString(0, msg.skipUntil(0, msg.len, '\n')), "handler=", this);
+        private boolean readUnusual(SegmentRope msg) {
+            if (msg.has(0, AbstractWsParser.INFO))
+                journal(msg.toString(0, msg.skipUntil(0, msg.len, '\n')), "on", this);
+            else if (msg.has(0, AbstractWsParser.PING))
+                send(bbSink.touch().append(AbstractWsParser.PING_ACK).take());
+            else if (msg.has(0, AbstractWsParser.PING_ACK))
+                journal("got !ping-ack on", this);
+            else
+                return false; // not an unusual command
+            return true; // handled
         }
 
-        private void readServerClosed() {
-            cancel = true;
-            if (it != null) {
-                it.close();
-                LockSupport.unpark(drainerThread);
-            }
+        private void readAfterServerClose() {
+            if (!cancel() && (st&ST_RES_STARTED) != 0)
+                endResponse(termMessage(cancelledByServerClose));
         }
 
         private void readCancel() {
-            clientCancel = true;
-            cancel       = true;
-            if (it != null) {
-                it.close(); // will raise BItReadClosedException, that will lead to sendCancel()
-                LockSupport.unpark(drainerThread);
-            } else if (waitingVarsRound != round)
-                log.info("Ignoring rogue !cancel from WS client");
+            if (cancel())
+                return;
+            if (waitingVars) {
+                earlyCancel = true;
+            } else {
+                journal("extraneous !cancel, handler=", this);
+                log.info("Ignoring extraneous cancel, handler={}, ch={}", this, channelOrLast());
+            }
         }
 
         private void readRequest(SegmentRope msg) {
             int start = AbstractWsParser.REQUEST.length;
+            long n;
             try {
                 start = msg.skipWS(start, msg.len);
-                long n = msg.hasAnyCase(start, AbstractWsParser.MAX)
-                       ? Long.MAX_VALUE : msg.parseLong(start);
-                request(n);
-            } catch (Throwable t) {
+                n = msg.hasAnyCase(start, AbstractWsParser.MAX)
+                        ? Long.MAX_VALUE : msg.parseLong(start);
+            } catch (NumberFormatException t) {
                 int eol = msg.skip(start, msg.len, Rope.UNTIL_WS);
-                var errorMsg = "Invalid control message: "+msg.toString(0, eol);
-                endRound(PARTIAL_CONTENT, errorMsg, null);
+                sendRequestError("Invalid control message", msg.toString(0, eol));
+                return;
             }
+            if (waitingVars)
+                earlyRequest = n;
+            else
+                request(n);
+        }
+
+        private void readVarsFrame(SegmentRope msg) {
+            if (query == null) {
+                sendRequestError("No query set", null);
+                return;
+            }
+            if (earlyCancel) {
+                endResponse(termMessage(CancelledException.INSTANCE));
+                return;
+            }
+            int len = msg.len, eol = msg.skipUntil(0, len, '\n');
+            if (eol == len) {
+                sendRequestError("bindings vars frame has no line feed (\\n)", null);
+                return;
+            }
+
+            Emitter<CompressedBatch> em = null;
+            try {
+                // artificially insert BINDING_SEQ_VARNAME as 0-th binding var. WsServerParser
+                // will transparently assign values during parsing.
+                var bindingsVars = new Vars.Mutable(10);
+                bindingsVars.add(WsBindingSeq.VAR);
+                for (int i = 0, j; i < eol; i = j+1) {
+                    byte c = msg.get(i);
+                    if (c != '?' && c != '$') {
+                        sendRequestError("No var marker for var", null);
+                        return;
+                    }
+                    j = msg.skipUntil(i, len, '\t',  '\n');
+                    bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
+                }
+                waitingVars = false;
+
+
+                if (useBIt) {
+                    var bindings = new BindingsBIt(bindingsVars);
+                    var bq = new VolatileItBindQuery(query, bindings, bType);
+                    bindingsParser = new BindingsParser(bindings, this);
+                    em = new BItEmitter<>(sparqlClient.query(bq));
+                } else {
+                    var bindings = new BindingsCallback(bindingsVars);
+                    var bq = new VolatileEmitBindQuery(query, bindings, bType);
+                    bindingsParser = new BindingsParser(bindings, this);
+                    em = sparqlClient.emit(bq, Vars.EMPTY);
+                }
+
+                // only send binding seq number and right unbound vars
+                Vars all = em.vars();
+                var serializeVars = new Vars.Mutable(all.size()+1);
+                serializeVars.add(WsBindingSeq.VAR);
+                for (var v : all)
+                    if (!bindingsVars.contains(v)) serializeVars.add(v);
+                startResponse(headersFrame(all, serializeVars), earlyRequest <= 0);
+                subscribeTo(em);
+            } catch (Throwable t) {
+                Emitters.discard(em);
+                sendRequestError("Could not dispatch query: ", t.toString());
+                return;
+            }
+            if (useBIt)
+                doBindReq();
+            if (earlyRequest > 0) {
+                request(earlyRequest);
+                earlyRequest = -1;
+            }
+            readBindings(bindingsParser, msg);
+        }
+
+        private TextWebSocketFrame headersFrame(Vars all, Vars serialize) {
+            serializer.init(all, serialize, false);
+            serializer.serializeHeader(bbSink.touch());
+            return new TextWebSocketFrame(bbSink.take());
+        }
+
+        private void readBindings(WsServerParser<CompressedBatch> bindingsParser,
+                                  SegmentRope msg) {
+            try {
+                bindingsParser.feedShared(msg);
+            } catch (BatchQueue.TerminatedException|CancelledException ignored) {}
+        }
+
+        @Override protected void doBindReq() {
+            long n;
+            if (!isBindQuery || (st&(ST_RES_STARTED|ST_RES_TERMINATED)) != ST_RES_STARTED) {
+                journal("stale/early doBindReq", this);
+            } else if (bindReqFrame.refCnt() > 1) {
+                retryBindReq();
+            } else if ((n=(long)BIND_REQUEST_N.getAndSetAcquire(this, 0)) > 0) {
+                bindReqRope.len = BIND_REQUEST.length;
+                if (n == Long.MAX_VALUE) bindReqRope.append(AbstractWsParser.MAX);
+                else                     bindReqRope.append(n);
+                bindReqRope.append((byte)'\n');
+                long emptySeq = this.emptySeq;
+                if (lastSeqSent == nonEmptySeq && emptySeq > lastSeqSent)
+                    bindReqRope.append(BIND_EMPTY_STREAK).append(emptySeq).append((byte)'\n');
+                assert bindReqFrame.content().array() == bindReqRope.utf8 : "rope grown";
+                bindReqFrame.content().readerIndex(0).writerIndex(bindReqRope.len);
+                send(bindReqFrame.retain());
+            }
+        }
+        private void retryBindReq() {
+            journal("frame in-use, retrying doBindReq on", this);
+            bsRunnable.sched(AC_BIND_REQ);
         }
 
         private void handleQueryCommand(SegmentRope msg, byte f) {
             byte[] ex = null;
-            int round = beginRound();
-            waitingVarsRound = round;
+            boolean isBindQuery = true;
             switch (f) {
-                case 'q' -> { bType = BindType.JOIN;       ex = QUERY; waitingVarsRound = 0; }
+                case 'q' -> { bType = BindType.JOIN;       ex = QUERY; isBindQuery = false; }
                 case 'j' -> { bType = BindType.JOIN;       ex = JOIN; }
                 case 'l' -> { bType = BindType.LEFT_JOIN;  ex = LEFT_JOIN; }
                 case 'e' -> { bType = BindType.EXISTS;     ex = EXISTS; }
@@ -1007,135 +1271,43 @@ public class NettySparqlServer implements AutoCloseable {
                 case 'm' -> { bType = BindType.MINUS;      ex = MINUS; }
             }
             if (ex == null || !msg.has(0, ex)) {
-                fail(new ByteRope().append("Unexpected frame: ").appendEscapingLF(msg));
-            } else {
-                var sparql = new ByteRope(msg.toArray(ex.length, msg.len));
-                if (parseQuery(sparql) && waitingVarsRound <= 0) {
-                    if (dispatchQuery(null, BindType.JOIN)) {
-                        if (SEND_INFO)
-                            sendInfo();
-                        startDrainerThread(round);
-                        request(implicitRequest);
-                    }
-                }
+                var cmd = msg.sub(0, msg.skipUntil(0, msg.len, '\n', ' '));
+                sendRequestError("Unexpected command: ", cmd);
+                return;
             }
-        }
-
-        private void sendInfo() {
-            ByteBuf bb = ctx.alloc().buffer();
-            bb.writeBytes(AbstractWsParser.INFO).writeCharSequence(journalName(), UTF_8);
-            bb.writeChar('\n');
-            ctx.write(new TextWebSocketFrame(bb));
-        }
-
-        private void readBindings(WsServerParser<CompressedBatch> bindingsParser, SegmentRope msg) {
-            long parsedBefore = bindingsParser.rowsParsed();
+            this.waitingVars    = isBindQuery;
+            this.isBindQuery    = isBindQuery;
+            this.bindingsParser = null;
+            var sparql = queryRope(msg.len).append(msg, ex.length, msg.len);
             try {
-                bindingsParser.feedShared(msg);
-            } catch (BatchQueue.TerminatedException|CancelledException ignored) {
+                query = parser.parse(sparql, 0);
+            } catch (Throwable t) {
+                query = null;
+                var reason = (t instanceof InvalidSparqlException e ? e.getMessage():t.toString());
+                sendRequestError("Could not parse query: ", reason);
                 return;
             }
-            long parsed = bindingsParser.rowsParsed()-parsedBefore;
-            if (parsed > 0) {
-                bindReq -= (int)parsed;
-                checkAndSendBindReq();
+            if (SEND_INFO) {
+                bbSink.touch().append("!info ").append(journalName()).append('\n');
+                ctx.writeAndFlush(new TextWebSocketFrame(bbSink.take()));
             }
-        }
+            if (isBindQuery)
+                return;
 
-        private void schedCheckAndSendBindReq() {
-            if (!(boolean)WS_SCHED_BIND_REQ.compareAndExchangeRelease(this, false, true)) {
-                var ctx = this.ctx;
-                if (ctx != null)
-                    ctx.executor().execute(checkAndSendBindReqTask);
-            }
-        }
-        private void checkAndSendBindReq() {
-            WS_SCHED_BIND_REQ.setRelease(this, false);
-            var bq = bindQuery;
-            var bp = bindingsParser;
-            var st = serializeTask;
-            if (bq == null || bp == null || st == null)
-                return;
-            long queued = bp.rowsParsed()-Math.max(bq.emptySeq, Math.max(0, st.lastSentSeq));
-            if (queued+bindReq > bindReqChunk>>1)
-                return; // >half a chunk is queued or pending
-            int allowed = (int)Math.min(bindReqChunk, plainRequested-queued);
-            if (allowed <= 0 || allowed < bindReq<<1)
-                return; // do not send a slightly larger !bind-request
-            bindReq = allowed;
-            if (bindReqFrame.refCnt() > 1)  {
-                schedCheckAndSendBindReq();
-            } else {
-                bindReqRope.len = BIND_REQ.length;
-                bindReqRope.append(bindReq).append((byte) '\n');
-                if (st.canSendEmptyStreak()) {
-                    bindReqRope.append(BIND_EMPTY_STREAK)
-                            .append(bindQuery.emptySeq).append((byte)'\n');
+            Emitter<CompressedBatch> em = null;
+            try {
+                if (useBIt) {
+                    em = new BItEmitter<>(sparqlClient.query(COMPRESSED, query));
+                } else {
+                    em = sparqlClient.emit(COMPRESSED, query, Vars.EMPTY);
                 }
-                assert bindReqFrame.content().array() == bindReqRope.utf8 : "utf8 changed";
-                bindReqFrame.content().readerIndex(0).writerIndex(bindReqRope.len);
-                ctx.writeAndFlush(bindReqFrame.retain());
+                Vars vars = em.vars();
+                startResponse(headersFrame(vars, vars), true);
+                subscribeTo(em);
+            } catch (Throwable t) {
+                Emitters.discard(em);
+                sendRequestError("Could not dispatch query", t.toString());
             }
-        }
-
-        private void readVarsFrame(SegmentRope msg) {
-            if (query == null && fail("null query")) return;
-            if (clientCancel) {
-                endRound(PARTIAL_CONTENT, "client requested cancel",
-                        CancelledException.INSTANCE);
-                return;
-            }
-            int len = msg.len, eol = msg.skipUntil(0, len, '\n');
-            if (eol == len && fail("No LF (\\n) in vars after !bind frame"))
-                return;
-
-            // artificially insert BINDING_SEQ_VARNAME as 0-th binding var. WsServerParserBIt
-            // will transparently assign values during parsing.
-            var bindingsVars = new Vars.Mutable(10);
-            bindingsVars.add(WsBindingSeq.VAR);
-            for (int i = 0, j; i < eol; i = j+1) {
-                byte c = msg.get(i);
-                if (c != '?' && c != '$' && fail("Missing ?/$ in var name"))
-                    return;
-                j = msg.skipUntil(i, len, '\t',  '\n');
-                bindingsVars.add(new ByteRope(j-i-1).append(msg, i+1, j));
-            }
-            var bindings = new SPSCBIt<>(COMPRESSED, bindingsVars, Integer.MAX_VALUE);
-            bindingsParser = new WsServerParser<>(bindings, this);
-            bindingsParser.setFrameSender(this);
-            // do not block if client starts flooding
-            int round = waitingVarsRound;
-            waitingVarsRound = 0;
-            bindReqChunk = reqChunkTerms/Math.max(1, bindingsVars.size()-1);
-
-            if (dispatchQuery(bindings, bType)) {
-                // only send binding seq number and right unbound vars
-                Vars itVars = it.vars();
-                var serializeVars = new Vars.Mutable(itVars.size()+1);
-                serializeVars.add(WsBindingSeq.VAR);
-                for (var v : itVars)
-                    if (!bindingsVars.contains(v)) serializeVars.add(v);
-                this.serializeVars = serializeVars;
-                if (SEND_INFO)
-                    sendInfo();
-                startDrainerThread(round);
-                if (plainRequested == 0)
-                    request(implicitRequest);
-                readBindings(bindingsParser, msg);
-            }
-        }
-
-        /* --- --- --- WsFrameSender --- --- --- */
-
-        @Override public void sendFrame(ByteBuf content) {
-            ctx.writeAndFlush(new TextWebSocketFrame(content));
-        }
-        @Override public ByteBufSink createSink() {
-            return new ByteBufSink(ctx.alloc());
-        }
-        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
-            throw new UnsupportedOperationException(); // server does not send bindings
         }
     }
-
 }

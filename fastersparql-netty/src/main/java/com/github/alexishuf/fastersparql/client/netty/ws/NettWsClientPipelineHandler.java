@@ -21,7 +21,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
-import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory.newHandshaker;
@@ -43,6 +42,7 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     private byte @Nullable [] previewU8;
     private final Runnable onDelegate = this::onDelegate;
     private Throwable earlyFailure;
+    private @MonotonicNonNull Channel lastCh;
 
 
     public NettWsClientPipelineHandler(URI uri, HttpHeaders headers, ChannelRecycler releaser) {
@@ -112,10 +112,10 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
 
     /* --- --- --- implement ChannelBound --- --- --- */
 
-    @Override public @Nullable Channel channel() { return ctx == null ? null : ctx.channel(); }
+    @Override public @Nullable Channel channelOrLast() { return lastCh; }
 
     @Override public void setChannel(Channel ch) {
-        if (ch != channel()) throw new UnsupportedOperationException();
+        if (ch != channelOrLast()) throw new UnsupportedOperationException();
     }
 
     @Override public String journalName() {
@@ -134,8 +134,11 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
 
     /* --- --- --- implement SimpleChannelInboundHandler --- --- --- */
 
-    @Override public void    handlerAdded(ChannelHandlerContext ctx) { this.ctx = ctx; }
-    @Override public void   channelActive(ChannelHandlerContext ctx) {
+    @Override public void handlerAdded(ChannelHandlerContext ctx) {
+        this.ctx = ctx;
+        this.lastCh = ctx.channel();
+    }
+    @Override public void channelActive(ChannelHandlerContext ctx) {
         if (delegate != null) tryHandshake();
     }
     @Override public void channelInactive(ChannelHandlerContext ctx) {
@@ -217,9 +220,12 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
                          + (detached ? " detached" : (attached ? " attached" : " before attach"));
             journal(cause.getClass().getSimpleName(), "on", this, state);
         }
-        if      (delegate != null)     detach(cause);
-        else if (detached)             log.debug("{}: ignoring {} after detach()", this, Objects.toString(cause));
-        else if (earlyFailure == null) earlyFailure = cause;
+        if (delegate != null)
+            detach(cause);
+        else if (detached)
+            log.info("{}: ignoring {} after detach()", this, cause.getClass().getSimpleName());
+        else if (earlyFailure == null)
+            earlyFailure = cause;
         try {
             ctx.close();
         } catch (Throwable e) { log.error("{}: ctx.close() failed: ", this, e); }

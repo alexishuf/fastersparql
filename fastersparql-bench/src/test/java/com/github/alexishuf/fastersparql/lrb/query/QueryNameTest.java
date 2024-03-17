@@ -10,16 +10,12 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.results.AbstractWsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
-import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
-import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -159,40 +155,13 @@ class QueryNameTest {
 //        return fix;
 //    }
 
-    private <B extends Batch<B>, S extends ByteSink<S, T>, T> ResultsParser<B>
+    private <B extends Batch<B>> ResultsParser<B>
     createParser(SparqlResultFormat format, CompletableBatchQueue<B> dest) {
         if (format == WS) {
-            var parser = new WsClientParser<>( dest);
-            parser.setFrameSender(new WsFrameSender<S, T>() {
-                @Override public void sendFrame(T content) {}
-                @Override public S createSink() {return null;}
-                @Override public ResultsSender<S, T> createSender() {
-                    return new ResultsSender<>(WsSerializer.create(), createSink()) {
-                        @Override public void preTouch() {}
-                        @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-                            serializer.init(vars, subset, isAsk);
-                            serializer.serializeHeader(new ByteRope());
-                        }
-                        @Override public void sendSerializedAll(Batch<?> batch) {
-                            serializer.serializeAll(batch, new ByteRope());
-                        }
-                        @Override
-                        public <N extends Batch<N>>
-                        void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
-                            serializer.serializeAll(batch, new ByteRope(), nodeConsumer);
-                        }
-                        @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
-                            serializer.serialize(batch, from, nRows, new ByteRope());
-                        }
-                        @Override public void sendTrailer() {
-                            serializer.serializeTrailer(new ByteRope());
-                        }
-                        @Override public void sendError(Throwable cause) {}
-                        @Override public void sendCancel() {}
-                    };
-                }
-            });
-            return parser;
+            return new AbstractWsClientParser<>(dest, null) {
+                @Override protected void handleBindRequest(long n) {}
+                @Override protected void onPing() {}
+            };
         } else {
             return ResultsParser.createFor(format, dest);
         }

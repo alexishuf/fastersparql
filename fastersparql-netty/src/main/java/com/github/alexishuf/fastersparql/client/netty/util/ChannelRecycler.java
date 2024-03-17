@@ -13,4 +13,6 @@ public interface ChannelRecycler {
 
     /** A {@link ChannelRecycler} that simply closes the channel. */
     ChannelRecycler CLOSE = ChannelOutboundInvoker::close;
+
+    ChannelRecycler NOP = ignored -> {};
 }

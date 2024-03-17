@@ -180,7 +180,7 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * an acknowledgment that the results are incomplete due to a client-requested cancel
      * and that no more results follow.
      */
-    protected final void feedCancelledAck() {
+    public final void feedCancelledAck() {
         if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
             if (batch == null)
                 batch = batchType.create(outCols);

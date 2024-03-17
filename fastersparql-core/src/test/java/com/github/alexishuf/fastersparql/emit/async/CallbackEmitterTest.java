@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
@@ -42,17 +43,20 @@ class CallbackEmitterTest {
     private static final class Cb extends CallbackEmitter<CompressedBatch> {
         private final Semaphore canFeed = new Semaphore(0);
         private final CompressedBatch expected;
-        private final boolean cancel, fail;
+        private final boolean selfCancel, fail;
+        private boolean cancelled, released;
         private @MonotonicNonNull Future<?> feedTask;
 
-        public Cb(CompressedBatch expected, boolean fail, boolean cancel) {
-            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+        public Cb(CompressedBatch expected, boolean fail, boolean selfCancel) {
+            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
             this.expected = expected;
             this.fail     = fail;
-            this.cancel   = cancel;
+            this.selfCancel = selfCancel;
             if (ResultJournal.ENABLED)
                 ResultJournal.initEmitter(this, vars);
         }
+
+        public boolean isReleased() { return released; }
 
         private void feed() {
             boolean gotTerminated = false;
@@ -60,6 +64,8 @@ class CallbackEmitterTest {
                 for (int r = 0; r < node.rows; r++) {
                     canFeed.acquireUninterruptibly();
                     canFeed.release();
+                    if (cancelled)
+                        break;
                     try {
                         COMPRESSED.recycle(offer(node.dupRow(r)));
                     } catch (CancelledException e) {
@@ -70,9 +76,18 @@ class CallbackEmitterTest {
                 }
             }
             journal("fed all rows, st=", state(), flags, "cb=", this);
-            if      (fail)   complete(new RuntimeException("test-fail"));
-            else if (cancel) cancel();
-            else             complete(null);
+            if (fail) {
+                complete(new RuntimeException("test-fail"));
+            } else if (cancelled) {
+                cancel(true);
+            } else if (selfCancel) {
+                cancel();
+                while (!cancelled)
+                    canFeed.acquireUninterruptibly();
+                cancel(true);
+            } else {
+                complete(null);
+            }
             if (gotTerminated)
                 throw new RuntimeException("got TerminatedException");
         }
@@ -83,21 +98,36 @@ class CallbackEmitterTest {
 
         @Override public Vars bindableVars() { return Vars.EMPTY; }
 
-        @Override protected void onFirstRequest() {
-            journal("onFirstRequest, st=", state(), flags, "cb=", this);
+        @Override protected void startProducer() {
+            journal("startProducer, st=", state(), flags, "cb=", this);
             super.onFirstRequest();
             feedTask = ForkJoinPool.commonPool().submit(this::feed);
         }
 
-        @Override protected void pause() {
-            journal("pause() st=", state(), flags, "cb=", this);
+        @Override protected void resumeProducer(long requested) {
+            journal("resumeProducer st=", state(), flags, "cb=", this);
+            canFeed.release();
+        }
+
+        @Override protected void pauseProducer() {
+            journal("pauseProducer st=", state(), flags, "cb=", this);
             canFeed.acquireUninterruptibly();
             canFeed.drainPermits();
         }
 
-        @Override protected void resume() {
-            journal("resume() st=", state(), flags, "cb=", this);
+        @Override protected void cancelProducer() {
+            journal("cancelProducer, st=", statePlain(), flags, "cb=", this);
+            cancelled = true;
             canFeed.release();
+        }
+
+        @Override protected void earlyCancelProducer() {
+            journal("earlyCancelProducer, st=", statePlain(), flags, "cb=", this);
+        }
+
+        @Override protected void releaseProducer() {
+            journal("earlyCancelProducer, st=", statePlain(), flags, "cb=", this);
+            released = true;
         }
     }
 
@@ -151,7 +181,7 @@ class CallbackEmitterTest {
                 };
                 cb.subscribe(receiver);
                 cb.request(1);
-                try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
+                try (var w = Watchdog.spec("test").streamNode(receiver).create()) {
                     w.start(20_000_000_000L);
                     ready.acquireUninterruptibly();
                 }
@@ -168,6 +198,10 @@ class CallbackEmitterTest {
                 }
                 assertEquals(expected, actual[0]);
                 assertDoesNotThrow(() -> cb.feedTask.get());
+                long deadline = Timestamp.nanoTime()+1_000_000_000L;
+                while (!cb.isReleased() && deadline > Timestamp.nanoTime())
+                    Thread.yield();
+                assertTrue(cb.isReleased(), "releaseProducer() not called");
             } finally {
                 COMPRESSED.recycle(expected);
                 COMPRESSED.recycle(copy);

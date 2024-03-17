@@ -7,7 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Requestable;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 
-public class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
+public abstract class WsServerParser<B extends Batch<B>> extends AbstractWsParser<B> {
     private final int bindingSeqCol;
     private final WsBindingSeq seqWriter;
     private final Requestable requestable;

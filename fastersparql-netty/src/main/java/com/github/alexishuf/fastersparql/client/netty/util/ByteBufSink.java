@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.ByteBufOutputStream;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -22,6 +23,10 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     public ByteBufSink(ByteBufAllocator      alloc) { this.alloc = alloc; }
 
     public void alloc(ByteBufAllocator alloc) { this.alloc = alloc; }
+
+    public ByteBufOutputStream asOutputStream() {
+        return new ByteBufOutputStream(touch().bb);
+    }
 
     public int sizeHint() { return sizeHint;  }
 

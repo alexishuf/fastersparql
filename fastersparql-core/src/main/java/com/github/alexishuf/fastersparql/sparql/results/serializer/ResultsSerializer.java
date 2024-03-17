@@ -75,13 +75,13 @@ public abstract class ResultsSerializer {
         return NSL.get(SparqlResultFormat.fromMediaType(mediaType)).create(mediaType.params());
     }
 
-    public ResultsSerializer(String contentType) {
+    public ResultsSerializer(MediaType contentType) {
         this.contentType = contentType;
     }
 
     protected void onInit() {}
 
-    public final String contentType() { return contentType; }
+    public final MediaType contentType() { return contentType; }
 
     /**
      * Write a results header with the given {@code subset} to {@code dest}.

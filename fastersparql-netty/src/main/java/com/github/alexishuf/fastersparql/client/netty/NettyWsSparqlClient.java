@@ -1,9 +1,8 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.*;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
-import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
-import com.github.alexishuf.fastersparql.batch.RequestAwareCompletableBatchQueue;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.*;
@@ -14,47 +13,57 @@ import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
+import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
-import com.github.alexishuf.fastersparql.sparql.results.*;
-import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.sparql.results.AbstractWsClientParser;
+import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.UnpooledByteBufAllocator;
-import io.netty.buffer.UnpooledHeapByteBuf;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
+import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.buffer.Unpooled.wrappedBuffer;
-import static java.lang.invoke.MethodHandles.lookup;
+import static java.lang.Math.min;
+import static java.lang.Thread.onSpinWait;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyWsSparqlClient extends AbstractSparqlClient {
@@ -103,8 +112,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     @Override protected void doClose() { netty.close(); }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
-        ByteRope msg = createRequest(QUERY_VERB, sparql.sparql(), null);
-        return new WsBIt<>(msg, bt, sparql.publicVars(), null);
+        return new WsBIt<>(bt, sparql.publicVars(), sparql, null);
     }
 
     @Override
@@ -114,8 +122,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
-        ByteRope msg = createRequest(BIND_VERB[bq.type.ordinal()], bq.query.sparql(), null);
-        return new WsBIt<>(msg, bq.batchType(), bq.resultVars(), bq);
+        return new WsBIt<>(bq.batchType(), bq.resultVars(), bq.query, bq);
     }
 
     @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query,
@@ -135,706 +142,805 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             "!minus "     .getBytes(UTF_8),
     };
 
-    private static ByteRope createRequest(byte[] verb, Rope sparql, @Nullable ByteRope offer) {
-        int addLF = sparql.get(sparql.len()-1) != '\n' ? 1 : 0;
-        int required = verb.length + sparql.len() + addLF;
-        if (offer == null) offer = new ByteRope(required);
-        else               offer.clear().ensureFreeCapacity(required);
-
-        offer.append(verb).append(sparql);
-        if (addLF != 0) offer.append('\n');
-        return offer;
-    }
-
     private void adjustBindingsSizeHint(int observed) {
         bindingsSizeHint = adjustSizeHint(bindingsSizeHint, observed);
     }
 
     /* --- --- --- BIt/Emitter implementations --- --- --- */
 
-    private final class WsBIt<B extends Batch<B>> extends NettySPSCBIt<B> {
-        private final WsHandler<B> handler;
+    private final class WsBIt<B extends Batch<B>> extends SPSCBIt<B> implements WsStreamNode<B> {
+        private static final VarHandle BIND_REQUEST;
+        static {
+            try {
+                BIND_REQUEST = MethodHandles.lookup().findVarHandle(WsBIt.class, "plainBindRequest", long.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+        private final SparqlQuery query;
         private final @Nullable ItBindQuery<B> bindQuery;
+        private final WsHandler<B> h;
+        @SuppressWarnings("unused") private long plainBindRequest;
+        private long pendingRows;
+        private @Nullable Channel lastCh;
+        private final @Nullable Thread sendBindingsThread;
 
-        public WsBIt(ByteRope requestMsg, BatchType<B> batchType, Vars vars,
+        public WsBIt(BatchType<B> batchType, Vars outVars, SparqlQuery query,
                      @Nullable ItBindQuery<B> bindQuery) {
-            super(batchType, vars, NettyWsSparqlClient.this);
+            super(batchType, outVars);
+            this.query     = query;
             this.bindQuery = bindQuery;
-            if (bindQuery != null)
-                upstream(bindQuery.bindings);
-            this.handler = new WsHandler<>(NettyWsSparqlClient.this, requestMsg,
-                                           this, true, bindQuery);
-            acquireRef();
-            handler.requestRows(Long.MAX_VALUE);
-            request();
+            this.h         = new WsHandler<>(new BItWsParser(bindQuery), this, bindQuery);
+            if (bindQuery == null)
+                sendBindingsThread = null;
+            else
+                sendBindingsThread = Thread.startVirtualThread(this::sendBindings);
+            h.sendQuery();
+            h.requestRows(pendingRows = maxItems);
+        }
+
+        /* --- --- --- StreamNode & ChannelBound --- --- --- */
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
         }
 
         @Override public String journalName() {
-            return "C.WB:" + (lastChannel == null ? "null" : lastChannel.id().asShortText());
+            return "C.WB:" + (lastCh == null ? "null" : lastCh.id().asShortText()) + '@' + id();
         }
 
-        @Override protected void cleanup(@Nullable Throwable e) {
-            try {
-                super.cleanup(e);
-            } finally { releaseRef(); }
+        @Override protected StringBuilder minimalLabel() {
+            return new StringBuilder().append(journalName());
         }
-        @Override protected void request() { handler.open(); }
 
-        @Override protected boolean cancelAfterRequestSent() {
-            boolean sendCancel = true;
-            if (bindQuery != null) {
-                sendCancel = !bindQuery.bindings.tryCancel();
-                if (sendCancel)
-                    journal("bindings completed bfr cancel(), sending !cancel on", this);
+        @Override public @Nullable Channel channelOrLast() {
+            return lastCh;
+        }
+
+        @Override public void setChannel(Channel channel) {
+            if (channel != null) {
+                this.lastCh = channel;
+                if (sendBindingsThread != null)
+                    sendBindingsThread.setName(journalName());
             }
-            if (sendCancel)
-                handler.sendCancelExternal();
-            return true;
+        }
+
+        /* --- --- --- SPSCBIt --- --- --- */
+
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            h.sendCancel();
+            super.cleanup(cause);
+        }
+
+        @Override public boolean tryCancel() {
+            boolean did = super.tryCancel();
+            if (did && bindQuery != null) {
+                bindQuery.bindings.tryCancel();
+                Unparker.unpark(sendBindingsThread);
+            }
+            return did;
+        }
+
+        @Override public @This CallbackBIt<B> maxReadyItems(int n) {
+            super.maxReadyItems(n);
+            if (n > pendingRows)
+                h.requestRows(n);
+            return this;
+        }
+
+        @Override public @Nullable B nextBatch(@Nullable B offer) {
+            B b = super.nextBatch(offer);
+            if (b != null) {
+                pendingRows -= b.totalRows();
+                if (pendingRows <= maxItems>>1 && notTerminated())
+                    h.requestRows(pendingRows = maxItems);
+            }
+            return b;
+        }
+
+        @Override protected boolean mustPark(int offerRows, long queuedRows) {
+            return false;
+        }
+
+        /* --- --- --- WsStreamNode --- --- --- */
+
+        @Override public SegmentRope sparql() { return query.sparql(); }
+        @Override public void beforeSendBindQuery() {}
+        @Override public String renderState() { return state().name(); }
+        @Override public String instanceId() {return String.valueOf(id());}
+
+        /* --- --- --- parser --- --- --- */
+
+        private final class BItWsParser extends WsParser<B> {
+            public BItWsParser(ItBindQuery<B> bindQuery) {super(WsBIt.this, bindQuery);}
+
+            @Override protected void handleBindRequest(long n) {
+                if (Async.maxRelease(WsBIt.BIND_REQUEST, WsBIt.this, n))
+                    Unparker.unpark(sendBindingsThread);
+            }
+            @Override protected void onPing() {h.sendPingAck();}
+        }
+
+        /* --- --- --- bindings sender --- --- --- */
+
+        private void sendBindings() {
+            Thread.currentThread().setName(journalName());
+            assert bindQuery != null;
+            Throwable termCause = null;
+            try (var bindings = bindQuery.bindings) {
+                while (true) {
+                    long req;
+                    while ((req=(long)BIND_REQUEST.getAcquire(this)) <= 0 && notTerminated())
+                        LockSupport.park();
+                    bindings.maxBatch((int) Math.min(Integer.MAX_VALUE, req));
+                    B b = bindings.nextBatch(null);
+                    if (b == null)
+                        break;
+                    BIND_REQUEST.getAndAddRelease(this, -(long)b.totalRows());
+                    h.sendBatch(b);
+                }
+            } catch (Throwable t) {
+                termCause = t;
+            } finally {
+                journal("sendBindings done, reason", termCause == null ? "completion" : termCause,
+                        "on", this);
+                if (h.parser.noServerTermination()) {
+                    journal("no term from server, sending bindings term on", this);
+                    if (termCause instanceof BItReadCancelledException)
+                        termCause = CancelledException.INSTANCE;
+                    h.sendBindingTerm(termCause);
+                }
+            }
         }
     }
 
-    private final class WsEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B> {
-        private final SparqlQuery query;
-        private final WsHandler<B> handler;
-        private ByteRope request;
-        private final @Nullable EmitBindQuery<B> bindQuery;
-        private @Nullable BatchBinding binding;
+    private interface WsStreamNode<B extends Batch<B>>
+            extends StreamNode, ChannelBound, CompletableBatchQueue<B> {
+        SegmentRope sparql();
+        void beforeSendBindQuery();
+        String renderState();
+        String instanceId();
+    }
 
-        public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
-                         @Nullable EmitBindQuery<B> bindQuery) {
-            super(batchType, outVars, NettyWsSparqlClient.this);
-            this.query = query;
-            this.bindQuery = bindQuery;
-            this.handler = new WsHandler<>(NettyWsSparqlClient.this, makeRequest(),
-                                           this, false, bindQuery);
+    private static abstract class WsParser<B extends Batch<B>> extends AbstractWsClientParser<B> {
+        private WsHandler<B> h;
+        public WsParser(CompletableBatchQueue<B> dst, @Nullable BindQuery<B> bindQuery) {
+            super(dst, bindQuery);
+        }
+        public boolean noServerTermination() { return !serverSentTermination; }
+
+        @Override protected void beforeComplete(@Nullable Throwable error) {
+            super.beforeComplete(error);
+            h.beforeParserCompletes();
+        }
+    }
+
+
+    private class WsHandler<B extends Batch<B>> implements NettyWsClientHandler, ChannelBound {
+        private static final VarHandle BINDINGS_LOCK, REQ_ROWS, RELEASE_LOCK;
+        static {
+            try {
+                BINDINGS_LOCK = MethodHandles.lookup().findVarHandle(WsHandler.class, "plainBindingsLock", int.class);
+                RELEASE_LOCK = MethodHandles.lookup().findVarHandle(WsHandler.class, "plainReleaseLock", int.class);
+                REQ_ROWS = MethodHandles.lookup().findVarHandle(WsHandler.class, "plainRequestRows", long.class);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+        private static final int REQ_ROWS_MSG_CAP = REQUEST.length + String.valueOf(Long.MAX_VALUE).length() + 1;
+        private static final byte[] MAX_LF = "MAX\n".getBytes(UTF_8);
+
+        private static final int ST_CONNECTING         = 0x0001;
+        private static final int ST_ATTACHED           = 0x0002;
+        private static final int ST_SEND_QUERY         = 0x0004;
+        private static final int ST_QUERY_SENT         = 0x0008;
+        private static final int ST_SEND_BATCH         = 0x0010;
+        private static final int ST_SEND_BINDINGS_TERM = 0x0020;
+        private static final int ST_BINDINGS_TERM_SENT = 0x0040;
+        private static final int ST_SEND_CANCEL        = 0x0080;
+        private static final int ST_CANCEL_SENT        = 0x0100;
+        private static final int ST_GOT_FRAMES         = 0x0200;
+        private static final int ST_GOT_TERM           = 0x0400;
+        private static final int ST_CAN_RELEASE        = 0x0800;
+        private static final int ST_RELEASED           = 0x1000;
+        private static final int ST_RETRY              = 0x2000;
+
+        private static final LongRenderer ST = st -> {
+            var sb = new StringBuilder();
+            if ((st&ST_CONNECTING)         != 0) sb.append("CONNECTING,");
+            if ((st&ST_ATTACHED)           != 0) sb.append("ATTACHED,");
+            if ((st&ST_SEND_QUERY)         != 0) sb.append("SEND_QUERY,");
+            if ((st&ST_QUERY_SENT)         != 0) sb.append("QUERY_SENT,");
+            if ((st&ST_SEND_BATCH)         != 0) sb.append("SEND_BATCH,");
+            if ((st&ST_SEND_BINDINGS_TERM) != 0) sb.append("SEND_BINDINGS_TERM,");
+            if ((st&ST_BINDINGS_TERM_SENT) != 0) sb.append("BINDINGS_TERM_SENT,");
+            if ((st&ST_SEND_CANCEL)        != 0) sb.append("SEND_CANCEL,");
+            if ((st&ST_CANCEL_SENT)        != 0) sb.append("CANCEL_SENT,");
+            if ((st&ST_GOT_FRAMES)         != 0) sb.append("GOT_FRAMES,");
+            if ((st&ST_GOT_TERM)           != 0) sb.append("GOT_TERM,");
+            if ((st&ST_CAN_RELEASE)        != 0) sb.append("CAN_RELEASE,");
+            if ((st&ST_RELEASED)           != 0) sb.append("RELEASED,");
+            sb.setLength(Math.max(0, sb.length()-1));
+            return sb.toString();
+        };
+
+        private final WsBitsetRunnable bsRunnable = new WsBitsetRunnable(this);
+        private final WsParser<B> parser;
+        private final ByteBufSink bbSink = new ByteBufSink(ByteBufAllocator.DEFAULT);
+        private ByteBufRopeView bbView = ByteBufRopeView.create();
+        private @Nullable ChannelHandlerContext ctx;
+        private int st;
+        private final BatchType<B> bt;
+        private WsSerializer serializer;
+        private final @Nullable BindType bindType;
+        @SuppressWarnings("unused") private int plainBindingsLock;
+        @SuppressWarnings("unused") private long plainRequestRows;
+        private final ByteRope reqRowsMsg = new ByteRope(REQ_ROWS_MSG_CAP).append(REQUEST);
+        private final byte[] reqRowsU8 = reqRowsMsg.u8();
+        private final TextWebSocketFrame reqRowsFrame = new TextWebSocketFrame(wrappedBuffer(reqRowsU8));
+        private @Nullable B receivedBindings;
+        private @Nullable Throwable bindingsError;
+        private ChannelRecycler channelRecycler = ChannelRecycler.CLOSE;
+        private final Vars usefulBindingsVars;
+        private final WsStreamNode<B> parent;
+        private int retries;
+        @SuppressWarnings("unused") private int plainReleaseLock;
+
+        public WsHandler(WsParser<B> parser, WsStreamNode<B> parent,
+                         @Nullable BindQuery<B> bindQuery) {
+            parser.h = this;
+            this.parser = parser;
+            this.parent = parent;
+            this.bt = parser.batchType();
+            if (bindQuery == null) {
+                serializer = null;
+                usefulBindingsVars = Vars.EMPTY;
+                bindType = null;
+            } else {
+                usefulBindingsVars = parent.vars().intersection(bindQuery.bindingsVars());
+                serializer = WsSerializer.create(bindingsSizeHint);
+                bindType = bindQuery.type;
+            }
+            bsRunnable.executor(netty.executor());
             acquireRef();
         }
 
-        @Override protected void appendToSimpleLabel(StringBuilder out) {
-            out.append(" ch=").append(channel);
+        public void reset() {
+            bsRunnable.sched(AC_RESET);
         }
 
-        @Override public Stream<? extends StreamNode> upstreamNodes() {
-            var rcv = handler.parser.bindingsReceiver();
-            return Stream.ofNullable(rcv);
+        @SuppressWarnings("unused") private void doReset() {
+            if ((st&(ST_QUERY_SENT|ST_GOT_TERM)) == ST_QUERY_SENT)
+                throw new IllegalStateException("reset after query sent but before term received");
+            st &= ST_RELEASED|ST_CAN_RELEASE;
+            parser.reset();
+
+            // recycle any leftover bindings
+            while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            B batch = receivedBindings;
+            receivedBindings = null;
+            BINDINGS_LOCK.setRelease(this, 0);
+            bt.recycle(receivedBindings);
         }
 
+        @SuppressWarnings("unused") private void doRetry() {
+            if ((st&(ST_CAN_RELEASE|ST_RELEASED|ST_RETRY)) == ST_RETRY) {
+                st = 0;
+                parser.reset();
+                long req = parent instanceof WsEmitter<B> em ? em.requested() : Long.MAX_VALUE;
+                REQ_ROWS.setRelease(this, req);
+                bsRunnable.sched(AC_SEND_QUERY);
+            } else {
+                journal("skip doRetry st=", st, ST, "on", this);
+            }
+        }
+
+
+        public void release() {
+            int actions = (st&ST_CAN_RELEASE) == 0 ? AC_ALLOW_RELEASE : 0;
+            if ((st&ST_RELEASED) == 0)
+                actions |= AC_RELEASE;
+            if (actions != 0)
+                bsRunnable.sched(actions);
+        }
+
+        @SuppressWarnings("unused") private void doAllowRelease() { st |= ST_CAN_RELEASE; }
+
+        @SuppressWarnings("unused") private void doRelease() {
+            assert inEventLoop() : "not in event loop";
+            while ((int)RELEASE_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            try {
+                if (ctx == null) {
+                    if ((st & ST_RELEASED) == 0) {
+                        st |= ST_RELEASED;
+                        try {
+                            if (serializer != null)
+                                serializer.recycle();
+                            bbView.recycle();
+                            bbSink.release();
+                            if (reqRowsFrame.refCnt() > 1)
+                                reqRowsFrame.release();
+                            releaseRef();
+                        } catch (Throwable t) {
+                            log.error("Error while releasing resources for {}", this, t);
+                        } finally {
+                            serializer = null;
+                            bbView = null;
+                        }
+                    }
+                } else if ((st&ST_CAN_RELEASE) != 0) {
+                    if ((st&ST_QUERY_SENT) == 0 || (st&ST_GOT_TERM) != 0) {
+                        st &= ~ST_SEND_QUERY;
+                        channelRecycler.recycle(ctx.channel());
+                    } else if ((st&(ST_QUERY_SENT|ST_CANCEL_SENT)) == ST_QUERY_SENT) {
+                        st |= ST_SEND_CANCEL;
+                        doSendCancel();
+                    }
+                } else {
+                    journal("skip doRelease st=", st, ST, "on", this);
+                }
+            } finally { RELEASE_LOCK.setRelease(this, 0); }
+        }
+
+        /* --- --- --- event loop helpers --- --- --- */
+
+        private static final BitsetRunnable.Spec BS_RUNNABLE_SPEC;
+        public static final int AC_ALLOW_RELEASE;
+        public static final int AC_SEND_CANCEL;
+        public static final int AC_SEND_PING_ACK;
+        public static final int AC_RESET;
+        public static final int AC_RETRY;
+        public static final int AC_SEND_QUERY;
+        public static final int AC_SEND_BATCH;
+        public static final int AC_SEND_BINDINGS_TERM;
+        public static final int AC_SEND_REQ_ROWS;
+        public static final int AC_RELEASE;
+        public static final int AC_TOUCH_SINK;
+        static {
+            var s = new BitsetRunnable.Spec(MethodHandles.lookup());
+            AC_ALLOW_RELEASE      = s.add("doAllowRelease",      false);
+            AC_SEND_CANCEL        = s.add("doSendCancel",        true);
+            AC_SEND_PING_ACK      = s.add("doSendPingAck",       false);
+            AC_RESET              = s.add("doReset",             true);
+            AC_RETRY              = s.add("doRetry",             false);
+            AC_SEND_QUERY         = s.add("doSendQuery",         true);
+            AC_SEND_BATCH         = s.add("doSendBatch",         false);
+            AC_SEND_BINDINGS_TERM = s.add("doSendBindingsTerm",  true);
+            AC_SEND_REQ_ROWS      = s.add("doSendReqRows",       false);
+            AC_RELEASE            = s.add("doRelease",           true);
+            AC_TOUCH_SINK         = s.setLast("doTouchSink");
+            BS_RUNNABLE_SPEC = s;
+        }
+
+        private final class WsBitsetRunnable extends BitsetRunnable<WsHandler<?>> {
+            public WsBitsetRunnable(WsHandler<?> receiver) {
+                super(receiver, BS_RUNNABLE_SPEC);
+            }
+
+            @Override protected void onMethodError(String methodName, Throwable t) {
+                super.onMethodError(methodName, t);
+                if (ctx != null) {
+                    ctx.executor().execute(this);
+                    ctx.fireExceptionCaught(t);
+                } else if (parent.notTerminated()) {
+                    clientSideError(t);
+                }
+            }
+        }
+
+        private boolean inEventLoop() { return ctx == null || ctx.executor().inEventLoop(); }
+
+        @SuppressWarnings("unused") private void doTouchSink() {
+            if (ctx != null && bindType != null
+                    && (st&(ST_BINDINGS_TERM_SENT|ST_SEND_BINDINGS_TERM)) == 0) {
+                bbSink.touch();
+            }
+        }
+
+        /* --- --- --- extension points --- --- --- */
+
+        public void beforeParserCompletes() {
+            assert inEventLoop() : "not in event loop";
+            st |= ST_GOT_TERM;
+        }
+
+        /* --- --- --- message sending actions --- --- --- */
+
+        public void sendQuery() { bsRunnable.sched(AC_SEND_QUERY); }
+
+        @SuppressWarnings("unused") private void doSendQuery() {
+            assert inEventLoop() : "not in event loop";
+            if ((st&(ST_SEND_CANCEL|ST_CANCEL_SENT|ST_GOT_TERM|ST_CONNECTING)) != 0) {
+                journal("skip doSendQuery st=", st, ST, "on", this);
+                return;
+            } else if (ctx == null) {
+                st |= ST_CONNECTING;
+                netty.open(this);
+                return;
+            } else if ((st&ST_QUERY_SENT) != 0) {
+                throw new IllegalStateException("doSendQuery() while query is active");
+            }
+            var sparql = parent.sparql();
+            bbSink.touch().ensureFreeCapacity(sparql.len + 16);
+            bbSink.append(bindType == null ? QUERY_VERB : BIND_VERB[bindType.ordinal()]);
+            bbSink.append(sparql);
+            if (sparql.get(sparql.len-1) != '\n')
+                bbSink.append('\n');
+            var queryFrame = new TextWebSocketFrame(bbSink.take());
+            st = (st&~ST_SEND_QUERY) | ST_QUERY_SENT;
+            if (bindType != null) {
+                parent.beforeSendBindQuery();
+                serializer.init(parent.vars(), usefulBindingsVars, false);
+                serializer.serializeHeader(bbSink.touch());
+                ctx.write(queryFrame);
+                ctx.write(new TextWebSocketFrame(bbSink.take())); // headers
+                if (SEND_INFO) {
+                    bbSink.touch().append(INFO).append(parent.journalName()).append('\n');
+                    ctx.write(new TextWebSocketFrame(bbSink.take()));
+                }
+            } else {
+                ctx.writeAndFlush(queryFrame);
+            }
+            int actions = AC_SEND_REQ_ROWS;
+            if ((st&ST_SEND_BATCH) != 0)
+                actions |= AC_SEND_BATCH;
+            if ((st&ST_SEND_BINDINGS_TERM) != 0)
+                actions |= AC_SEND_BINDINGS_TERM;
+            bsRunnable.sched(actions);
+        }
+
+        protected void sendBatch(B b) {
+            while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            try {
+                receivedBindings = quickAppend(receivedBindings, b);
+            } finally { BINDINGS_LOCK.setRelease(this, 0); }
+            bsRunnable.sched(AC_SEND_BATCH);
+        }
+        @SuppressWarnings("unused") private void doSendBatch() {
+            assert inEventLoop() : "not in event loop";
+            int subSt = st&(ST_QUERY_SENT|ST_SEND_CANCEL|ST_CANCEL_SENT|ST_BINDINGS_TERM_SENT);
+            if (subSt == 0) {
+                st |= ST_SEND_BATCH;
+            } else if (ctx != null && subSt == ST_QUERY_SENT) {
+                st &= ~ST_SEND_BATCH;
+                while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+                    onSpinWait();
+                B batch = receivedBindings;
+                receivedBindings = null;
+                BINDINGS_LOCK.setRelease(this, 0);
+                if (batch != null) {
+                    if (batch.rows > 0) {
+                        serializer.serializeAll(batch, bbSink.touch(), parser);
+                        ctx.writeAndFlush(new TextWebSocketFrame(bbSink.take()));
+                    } else {
+                        bt.recycle(batch);
+                    }
+                }
+            } else  {
+                journal("skip doSendBatch st=", st, ST, "on", this);
+            }
+        }
+
+        public void sendBindingTerm(@Nullable Throwable cause) {
+            if (cause != null && cause != CancelledException.INSTANCE)
+                bindingsError = cause;
+            bsRunnable.sched(AC_SEND_BINDINGS_TERM);
+        }
+        @SuppressWarnings("unused") private void doSendBindingsTerm() {
+            assert inEventLoop() : "not in event loop";
+            int subSt = st&(ST_QUERY_SENT|ST_SEND_CANCEL|ST_CANCEL_SENT|ST_BINDINGS_TERM_SENT|ST_GOT_TERM);
+            if (subSt == 0) { // query not sent yet
+                st |= ST_SEND_BINDINGS_TERM;
+                journal("skip doSendBindingsTerm before query sent on", this);
+            } else if (ctx != null && subSt == ST_QUERY_SENT) {
+                // query sent, got no term, sent no term, cancel not queued
+                bbSink.touch();
+                if (bindingsError == null) {
+                    bbSink.append(END_LF);
+                    adjustBindingsSizeHint(bbSink.sizeHint());
+                } else {
+                    bbSink.append(ERROR).append(' ');
+                    bbSink.append(bindingsError.getClass().getSimpleName());
+                    String msg = bindingsError.getMessage().replace("\n", "\\n");
+                    bbSink.append(msg.substring(0, min(100, msg.length())));
+                    bbSink.append('\n');
+                }
+                var bindTermFrame = new TextWebSocketFrame(bbSink.take());
+                st = (st&~ST_SEND_BINDINGS_TERM) | ST_BINDINGS_TERM_SENT;
+                ctx.writeAndFlush(bindTermFrame);
+            } else {
+                journal("skip doSendBindingsTerm st=", st, ST, "on", this);
+            }
+        }
+
+        public void requestRows(long n) {
+            if (n > 0) {
+                REQ_ROWS.setRelease(this, n);
+                bsRunnable.sched(AC_SEND_REQ_ROWS);
+            }
+        }
+        @SuppressWarnings("unused") private void doSendReqRows() {
+            assert inEventLoop() : "not in event loop";
+            long n;
+            var reqRowsFrame = this.reqRowsFrame;
+            int subSt = st&(ST_QUERY_SENT|ST_SEND_CANCEL|ST_CANCEL_SENT|ST_GOT_TERM);
+            if (ctx == null || subSt != ST_QUERY_SENT) {
+                journal("skip doSendReqRows st=", st, ST, "on", this);
+            } else if (reqRowsFrame.refCnt() != 1) {
+                doSendReqRowsBadRefCnt();
+            } else if ((n=(long)REQ_ROWS.getAndSetAcquire(this, 0)) <= 0) {
+                journal("bogus doSendReqRows st=", st, ST, "on", this);
+            } else {
+                reqRowsMsg.len = REQUEST.length;
+                if (n == Long.MAX_VALUE) reqRowsMsg.append(MAX_LF);
+                else                     reqRowsMsg.append(n).append('\n');
+                reqRowsFrame.content().readerIndex(0).writerIndex(reqRowsMsg.len);
+                if (reqRowsMsg.u8() != reqRowsU8)
+                    throw new IllegalStateException("reqRowsMsg grown");
+                ctx.writeAndFlush(reqRowsFrame.retain());
+            }
+        }
+        private void doSendReqRowsBadRefCnt() {
+            assert inEventLoop() : "not in event loop";
+            if (reqRowsFrame.refCnt() < 1) {
+                String state = parent.renderState();
+                journal("reqRowsFrame released, st=", state, "on", this);
+                throw new IllegalStateException("reqRowsFrame released, st="+state+" on "+this);
+            } else {
+                journal("doSendRequestRows(): frame in-use on", this);
+                if (ctx != null)
+                    ctx.executor().execute(() -> bsRunnable.sched(AC_SEND_REQ_ROWS));
+            }
+        }
+
+        public void sendCancel() {
+            if (ctx != null)
+                bsRunnable.sched(AC_SEND_CANCEL);
+        }
+        private void doSendCancel() {
+            assert inEventLoop() : "not in event loop";
+            if (ctx != null && (st&(ST_QUERY_SENT|ST_CANCEL_SENT|ST_GOT_TERM)) == ST_QUERY_SENT) {
+                var cancel = new TextWebSocketFrame(bbSink.touch().append(CANCEL_LF).take());
+                st  = (st&~ST_SEND_CANCEL) | ST_CANCEL_SENT;
+                ctx.writeAndFlush(cancel);
+            } else {
+                journal("skip doSendCancel st=", st, ST, "on", this);
+            }
+        }
+
+        public void sendPingAck() { bsRunnable.sched(AC_SEND_PING_ACK); }
+        @SuppressWarnings("unused") private void doSendPingAck() {
+            if (ctx != null && ctx.channel().isActive())
+                ctx.writeAndFlush(new TextWebSocketFrame(bbSink.touch().append(PING_ACK).take()));
+        }
+
+        /* --- --- --- NettyWsClientHandler --- --- --- */
+
+        @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
+            assert this.ctx == null : "previous attach()";
+            bsRunnable.executor(ctx.executor());
+            this.ctx = ctx;
+            this.channelRecycler = recycler;
+            assert inEventLoop() : "not in event loop";
+            st = (st&~ST_CONNECTING) | ST_ATTACHED | ((st&ST_SEND_CANCEL) == 0 ? ST_SEND_QUERY : 0);
+            parent.setChannel(ctx.channel());
+            if (bbView == null)
+                bbView = ByteBufRopeView.create();
+            bbSink.alloc(ctx.alloc());
+            bsRunnable.sched(AC_SEND_QUERY);
+        }
+
+        private void clientSideError(@Nullable Throwable error) {
+            if (parent.isTerminated()) {
+                journal("parser terminated, ignoring clientSideError", error, "on", this);
+                journal("st=", st, ST, "on", this);
+            } else {
+                FSException ex;
+                if (error instanceof FSServerException se && (st&ST_GOT_FRAMES) != 0) {
+                    ex = se.shouldRetry(false);
+                } else if (error == null) {
+                    boolean empty = (st & ST_GOT_FRAMES) == 0;
+                    if (empty && retries < FSNettyProperties.maxRetries()) {
+                        journal("will retry query st=", st, ST, "on", this);
+                        ++retries;
+                        st |= ST_RETRY;
+                        return;
+                    } else {
+                        String msg = empty
+                                ? "server closed WebSocket before !end/!error/!cancelled"
+                                : "incomplete response";
+                        ex = new InvalidSparqlResultsException(msg).shouldRetry(empty);
+                    }
+                } else {
+                    ex = FSException.wrap(endpoint, error);
+                }
+                ex.offerEndpoint(endpoint);
+                parser.feedError(ex);
+            }
+        }
+
+        @Override public void detach(@Nullable Throwable error) {
+            assert inEventLoop() : "no in event loop";
+            bsRunnable.runNow();
+            channelRecycler = ChannelRecycler.NOP;
+            parent.setChannel(null);
+            if (parent.notTerminated())
+                clientSideError(error);
+            if (parser.noServerTermination() && ctx != null)
+                ctx.close();
+            ctx = null;
+            channelRecycler = ChannelRecycler.CLOSE;
+            bsRunnable.executor(ForkJoinPool.commonPool());
+            st = (st&~(ST_ATTACHED|ST_CONNECTING)) | ST_GOT_TERM;
+            int actions = (st&ST_RETRY) != 0 ? AC_RETRY
+                        : ((st&ST_CAN_RELEASE) != 0 ? AC_RELEASE : 0);
+            if (actions != 0)
+                bsRunnable.sched(actions);
+        }
+
+        @Override public void frame(WebSocketFrame frame) {
+            assert inEventLoop() : "not in event loop";
+            bsRunnable.runNow();
+            if (frame instanceof CloseWebSocketFrame) {
+                if (parent.notTerminated())
+                    clientSideError(null);
+            } else if (!(frame instanceof TextWebSocketFrame f)) {
+                String msg = "Unexpected frame type: "+frame.getClass().getSimpleName();
+                throw new FSServerException(msg).shouldRetry(false);
+            } else if ((st&ST_RELEASED) != 0) {
+                throw new IllegalStateException(this+" released, cannot handle frame, st="+parent.renderState());
+            } else {
+                if (bbView == null)
+                    bbView = ByteBufRopeView.create();
+                st |= ST_GOT_FRAMES;
+                try {
+                    parser.feedShared(bbView.wrapAsSingle(f.content()));
+                } catch (BatchQueue.QueueStateException e) { doSendCancel(); }
+            }
+        }
+
+        /* --- --- --- ChannelBound --- --- -- */
+
+        @Override public @Nullable Channel channelOrLast() {return parent.channelOrLast();}
+        @Override public void setChannel(Channel ch) {throw new UnsupportedOperationException();}
         @Override public String journalName() {
-            return String.format("C.WE:%s@%x",
-                    lastChannel == null ? "null" : lastChannel.id().asShortText(),
-                    System.identityHashCode(this));
+            Channel ch = parent.channelOrLast();
+            return "C.WH:" + (ch == null ? "null" : ch.id().asShortText())
+                          + '@' + parent.instanceId();
         }
+    }
 
-        private ByteRope makeRequest() {
-            var query    = binding   == null ? this.query : this.query.bound(binding);
-            var verb     = bindQuery == null ? QUERY_VERB : BIND_VERB[bindQuery.type.ordinal()];
-            var req      = createRequest(verb, query.sparql(), this.request);
-            this.request = req;
-            return req;
+    private final class WsEmitter<B extends Batch<B>> extends CallbackEmitter<B>
+            implements  Receiver<B>, WsStreamNode<B> {
+        private final SparqlQuery query;
+        private final WsHandler<B> h;
+        private final @Nullable EmitBindQuery<B> bindQuery;
+        private @Nullable Binding binding;
+        private final Vars bindableVars;
+        private @Nullable Channel lastChannel;
+
+        public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
+                         @Nullable EmitBindQuery<B> bindQuery) {
+            super(batchType, outVars, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
+            this.h         = new WsHandler<>(new EmitWsParser(bindQuery), this, bindQuery);
+            this.query     = query;
+            this.bindQuery = bindQuery;
+            if (bindQuery == null) {
+                bindableVars = query.allVars();
+            } else  {
+                bindableVars = bindQuery.bindings.vars().union(query.allVars());
+                bindQuery.bindings.subscribe(this);
+            }
         }
 
         @Override protected void doRelease() {
             try {
-                handler.reset(null);
-                releaseRef();
-            } finally { super.doRelease(); }
-        }
-        @Override protected void   request() { handler.open(); }
-
-        @Override protected boolean cancelAfterRequestSent() {
-            var br = handler.parser.bindingsReceiver();
-            if (br != null)
-                br.cancel(); // stop sending bindings
-            handler.sendCancelExternal();
-            return true; // wait for !cancelled in response to !cancel
+                super.doRelease();
+            } finally { h.release(); }
         }
 
-        @Override public int preferredRequestChunk() { return 4*super.preferredRequestChunk(); }
-
-        @Override public void request(long rows) throws NoReceiverException {
-            super.request(rows);
-            handler.requestRows(requested());
-        }
+        /* --- --- --- rebind --- --- --- */
 
         @Override public void rebindAcquire() {
-            var bReceiver = handler.parser.bindingsReceiver();
-            if (bReceiver != null)
-                bReceiver.rebindAcquire();
+            if (bindQuery != null) bindQuery.bindings.rebindAcquire();
             super.rebindAcquire();
         }
 
         @Override public void rebindRelease() {
-            var bReceiver = handler.parser.bindingsReceiver();
-            if (bReceiver != null)
-                bReceiver.rebindRelease();
+            if (bindQuery != null) bindQuery.bindings.rebindRelease();
             super.rebindRelease();
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(REBIND_CLEAR, LOCKED_MASK);
+            int st = resetForRebind(CLEAR_ON_REBIND, LOCKED_MASK);
             try {
-                assert binding.batch != null && binding.row < binding.batch.rows;
+                assert binding.batch != null && binding.row < binding.batch.rows : "bad binding";
                 this.binding = binding;
-                var bReceiver = handler.parser.bindingsReceiver();
-                if (bReceiver != null)
-                    bReceiver.rebind(binding);
-                handler.reset(makeRequest());
+                if (this.bindQuery != null)
+                    bindQuery.bindings.rebind(binding);
+                h.reset();
             } finally {
                 unlock(st);
             }
         }
 
-        @Override public Vars bindableVars() { return query.allVars(); }
-    }
+        @Override public Vars bindableVars() { return bindableVars; }
 
-    private static final class WsHandler<B extends Batch<B>>
-            implements NettyWsClientHandler, WsFrameSender<ByteBufSink, ByteBuf>, ChannelBound {
-        private static final VarHandle REC_SENDER, SENDER;
-        private static final VarHandle REQ, FLAGS, RESET_CH;
-        private static final int REQ_ROWS_FRAME_CAPACITY = 32;
-        private static final byte[] REQ_ROWS_0
-                = (new String(AbstractWsParser.REQUEST, UTF_8)+"0\n").getBytes(UTF_8);
-        private static final int RESETTING    = 0x00000001;
-        private static final int OPEN_PENDING = 0x00000002;
-        private static final int CANCELLING   = 0x00000004;
-        private static final int ALL_HANDLER_FLAGS = RESETTING|OPEN_PENDING|CANCELLING;
-        static {
-            assert REQ_ROWS_FRAME_CAPACITY > AbstractWsParser.REQUEST.length
-                    + 19 /* Long.MAX_VALUE */
-                    + 1  /* newline */;
-            try {
-                REQ        = lookup().findVarHandle(WsHandler.class, "plainRequest",   long.class);
-                REC_SENDER = lookup().findVarHandle(WsHandler.class, "plainRecSender", WsHandler.BindingsSender.class);
-                SENDER     = lookup().findVarHandle(WsHandler.class, "plainSender", WsHandler.BindingsSender.class);
-                FLAGS      = lookup().findVarHandle(WsHandler.class, "plainFlags",     int.class);
-                RESET_CH   = lookup().findVarHandle(WsHandler.class, "plainResetCh",   Channel.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
+        /* --- --- --- StreamNode --- --- --- */
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
         }
 
-        private static final byte[] CANCEL_MSG = "!cancel\n".getBytes(UTF_8);
-        private static final byte[] END_MSG    = "!end\n"   .getBytes(UTF_8);
+        /* --- --- --- ChannelBound --- --- --- */
 
-        private ByteRope requestMsg;
-        private boolean gotFrames;
-        private final boolean selfRecycle;
-        private boolean silenceSender;
-        private @Nullable ByteBufRopeView bbRopeView;
-        private final WsClientParser<B> parser;
-        private @Nullable ChannelHandlerContext ctx;
-        private @MonotonicNonNull ChannelRecycler recycler;
-        private final RequestAwareCompletableBatchQueue<B> destination;
-        @SuppressWarnings("unused") private long plainRequest;
-        private final ByteRope requestRowsMsg;
-        private final UnpooledHeapByteBuf requestRowsBB;
-        private final TextWebSocketFrame requestRowsFrame;
-        private final Runnable requestRowsTask = this::doRequestRows;
-        @SuppressWarnings("unused") private BindingsSender<B> plainRecSender;
-        @SuppressWarnings("unused") private BindingsSender<B> plainSender;
-        @SuppressWarnings("unused") private int plainFlags;
-        private final Runnable resetTask = this::doReset;
-        private final Runnable queryTask = this::doQuery;
-        private @Nullable ByteRope resetRequestMsg;
-        @SuppressWarnings("unused") private @Nullable Channel plainResetCh;
-        private final NettyWsSparqlClient sparqlClient;
-        private @Nullable Channel sendCancelCh;
-        private @MonotonicNonNull Runnable sendCancelTask;
-        private @MonotonicNonNull Channel lastCh;
-
-        public WsHandler(NettyWsSparqlClient sparqlClient, ByteRope requestMsg,
-                         RequestAwareCompletableBatchQueue<B> destination, boolean selfRecycle,
-                         @Nullable BindQuery<B> bq) {
-            this.requestMsg = requestMsg;
-            this.destination = destination;
-            this.selfRecycle = selfRecycle;
-            if (bq == null) {
-                parser = new WsClientParser<>(destination);
-            } else {
-                var useful = bq.bindingsVars().intersection(bq.query.allVars());
-                parser = new WsClientParser<>(destination, bq, useful);
-            }
-            requestRowsMsg   = new ByteRope(REQ_ROWS_FRAME_CAPACITY).append(REQ_ROWS_0);
-            requestRowsBB    = (UnpooledHeapByteBuf)wrappedBuffer(requestRowsMsg.u8());
-            requestRowsFrame = new TextWebSocketFrame(requestRowsBB);
-            assert requestRowsMsg.u8().length >= REQ_ROWS_FRAME_CAPACITY;
-            this.sparqlClient = sparqlClient;
-        }
-
-        NettyWsSparqlClient sparqlClient() { return sparqlClient; }
-
-        void open() {
-            int flags = getAndUpdateFlagsRelease(0, OPEN_PENDING);
-            if ((flags&RESETTING) != 0) {
-                journal("open() during reset, handler=", this);
-            } else {
-                getAndUpdateFlagsRelease(OPEN_PENDING, 0);
-                doOpen();
-            }
-        }
-
-        private void doOpen() {
-            ChannelHandlerContext ctx = this.ctx;
-            if (ctx == null) {
-                sparqlClient.netty.open(this);
-            } else {
-                var exec = ctx.executor();
-                if (exec.inEventLoop()) doQuery();
-                else                    exec.execute(queryTask);
-            }
-        }
-
-        private int getAndUpdateFlagsRelease(int clear, int set) {
-            int e = plainFlags, a;
-            while ((a=(int)FLAGS.compareAndExchangeAcquire(this, e, (e&~clear)|set)) != e)
-                e = a;
-            return e;
-        }
-
-        void reset(@Nullable ByteRope requestMsg) {
-            getAndUpdateFlagsRelease(0, RESETTING);
-            var ctx = this.ctx;
-            var ch = ctx != null ? ctx.channel() : null;
-            resetRequestMsg = requestMsg;
-            REQ.setRelease(this, 0L);
-            RESET_CH.setRelease(this, ch);
-            if (ctx != null) {
-                var exec = ctx.executor();
-                if (!exec.inEventLoop()) {
-                    exec.execute(resetTask);
-                    return;
-                }
-            }
-            doReset();
-        }
-
-        private boolean inEventLoop() { return ctx == null || ctx.executor().inEventLoop(); }
-
-        private void doReset() {
-            var ch = (Channel)RESET_CH.getAcquire(this);
-            ByteRope requestMsg = resetRequestMsg;
-            int flags;
-            try {
-                assert inEventLoop() : "not in event loop";
-                if (requestMsg != null) {
-                    parser.reset();
-                    this.requestMsg = requestMsg;
-                    gotFrames = false;
-                } else {
-                    var bbRopeView = this.bbRopeView;
-                    if (bbRopeView != null) {
-                        bbRopeView.recycle();
-                        this.bbRopeView = null;
-                    }
-                    //noinspection unchecked
-                    var sender = (BindingsSender<B>)
-                            REC_SENDER.getAndSetRelease(this, (BindingsSender<B>)null);
-                    if (sender != null)
-                        sender.thaw(false).recycleSerializer();
-                    if (ctx != null && ctx.channel() == ch) {
-                        this.ctx = null;
-                        if (destination instanceof ChannelBound cb)
-                            cb.setChannel(null);
-                        recycler.recycle(ch);
-                    }
-                }
-            } catch (Throwable t) {
-                complete(t);
-            } finally {
-                flags = getAndUpdateFlagsRelease(ALL_HANDLER_FLAGS, 0);
-                silenceSender = false;
-            }
-            if ((flags&OPEN_PENDING) != 0) {
-                journal("pending open() after reset, handler=", this);
-                doOpen();
-            }
-        }
-
-        void requestRows(long n) {
-            REQ.setRelease(this, n);
-            journal("scheduling !request", n, "handler=", this);
-            var ctx = this.ctx;
-            if (ctx != null && (plainFlags&OPEN_PENDING) == 0) {
-                var exec = ctx.executor();
-                if (exec.inEventLoop()) doRequestRows();
-                else                    exec.execute(requestRowsTask);
-            }
-        }
-
-        private static final byte[] MAX_LF = "MAX\n".getBytes(UTF_8);
-        private boolean doRequestRows() {
-            var ctx = this.ctx;
-            if (ctx == null || destination.isTerminated() || (plainFlags&CANCELLING) != 0) {
-                return false; // no work
-            } else if (requestRowsFrame.refCnt() > 1) {
-                // frame in-use by netty, changing may yield big garbage number
-                ctx.executor().execute(requestRowsTask);
-                return false;
-            } else {
-                long n = (long)REQ.getAndSetAcquire(this, 0L);
-                if (n <= 0)
-                    return false; // no work
-                journal("sending !request", n, "handler=", this);
-                // write the request
-                requestRowsMsg.len = AbstractWsParser.REQUEST.length;
-                if (n == Long.MAX_VALUE) requestRowsMsg.append(MAX_LF);
-                else                     requestRowsMsg.append(n).append('\n');
-                // update wrapping ByteBuf
-                assert requestRowsBB.array() == requestRowsMsg.utf8;
-                requestRowsBB.readerIndex(0).writerIndex(requestRowsMsg.len);
-                // send !request n
-                ctx.writeAndFlush(requestRowsFrame.retain());
-                return true;
-            }
-        }
-
-        /* --- --- --- ChannelBound methods --- --- --- */
-
-        @Override public @Nullable Channel channel() { return lastCh; }
-
-        @Override public void setChannel(Channel ch) {
-            if (ch != null && ch != lastCh) throw new UnsupportedOperationException();
-        }
+        @Override public @Nullable Channel channelOrLast() { return lastChannel; }
+        @Override public void setChannel(Channel ch)       { if (ch != null) lastChannel = ch; }
 
         @Override public String journalName() {
-            var id = lastCh == null ? "null" : lastCh.id().asShortText();
-            return "C.WH:"+id+'@'+Integer.toHexString(System.identityHashCode(this));
+            return "C.WE:" + (lastChannel == null ? "null" : lastChannel.id().asShortText())
+                           + '@' + Integer.toHexString(System.identityHashCode(this));
         }
 
-        @Override public String toString() {
-            return journalName();
+        @Override protected StringBuilder minimalLabel() {
+            return new StringBuilder().append(journalName());
         }
 
-        /* --- --- --- NettyWsClientHandler methods --- --- --- */
+        /* --- --- --- CallbackEmitter --- --- --- */
 
-        @Override public void attach(ChannelHandlerContext ctx, ChannelRecycler recycler) {
-            if (this.ctx != null) {
-                ThreadJournal.dumpAndReset(System.out, 100);
-                System.out.println(this);
-                if (this.ctx == null)
-                    System.out.println("race");
-            }
-            assert this.ctx == null : "previous attach()";
-            Channel ch = ctx.channel();
-            this.recycler = recycler;
-            this.ctx      = ctx;
-            this.lastCh   = ch;
-            if (destination instanceof ChannelBound cb)
-                cb.setChannel(ch);
-            if (bbRopeView == null)
-                bbRopeView = ByteBufRopeView.create();
-            doQuery();
+        @Override protected void        startProducer() { h.sendQuery(); }
+        @Override protected void        pauseProducer() {}
+        @Override protected void resumeProducer(long n) { h.requestRows(n); }
+        @Override protected void       cancelProducer() { h.sendCancel(); }
+        @Override protected void  earlyCancelProducer() {}
+        @Override protected void      releaseProducer() { h.release(); }
+
+        /* --- --- --- WsStreamNode --- --- --- */
+
+        @Override public SegmentRope sparql() {
+            return (binding == null ? query : query.bound(binding)).sparql();
         }
 
-        private void doSendInfo(ChannelHandlerContext ctx) {
-            ByteBuf bb = ctx.alloc().buffer();
-            bb.writeBytes(INFO).writeCharSequence(journalName(), UTF_8);
-            if (destination instanceof ChannelBound cb)
-                bb.writeChar(' ').writeCharSequence(cb.journalName(), UTF_8);
-            bb.writeChar('\n');
-            ctx.write(new TextWebSocketFrame(bb));
-        }
-
-        private void doQuery() {
-            if (ctx == null) {
-                complete(new IllegalStateException("doQuery() while detached"));
-            } else {
-                destination.lockRequest();
-                try {
-                    if (destination.canSendRequest()) {
-                        parser.setFrameSender(this);
-                        var bb = wrappedBuffer(requestMsg.u8(), 0, requestMsg.len);
-                        ctx.write(new TextWebSocketFrame(bb));
-                        if (SEND_INFO)
-                            doSendInfo(ctx);
-                        if (!doRequestRows())
-                            ctx.flush();
-                    } else if (selfRecycle) {
-                        reset(null);
-                    }
-                } finally { destination.unlockRequest(); }
+        @Override public void beforeSendBindQuery() {
+            long requested = requested();
+            assert bindQuery != null;
+            Emitter<B> bindings = bindQuery.bindings;
+            if (requested > 0) {
+                int chunk = min(bindings.preferredRequestChunk(),
+                                preferredRequestChunk());
+                bindings.request(min(requested, chunk>>2));
             }
         }
 
-        @Override public void detach(@Nullable Throwable error) {
-            if (ctx == null)
-                return; // indirectly called from recycle()
-            complete(error);
+        @Override public String renderState() {return flags.render(state());}
+
+        @Override public String instanceId() {
+            return Integer.toHexString(System.identityHashCode(this));
         }
 
-        @Override public void frame(WebSocketFrame frame) {
-            if (frame instanceof TextWebSocketFrame f) {
-                if (bbRopeView == null)
-                    return; // ignore frame after complete
-                gotFrames = true;
-                try {
-                    parser.feedShared(bbRopeView.wrapAsSingle(f.content()));
-                    if (selfRecycle && destination.isTerminated())
-                        reset(null);
-                } catch (TerminatedException|CancelledException e) {
-                    sendCancelFromEventLoop();
-                }
-            } else if (frame instanceof CloseWebSocketFrame) {
-                complete(null);
-            } else {
-                complete(new FSServerException("Unexpected frame type: "));
+        /* --- --- --- parser --- --- --- */
+
+        private final class EmitWsParser extends WsParser<B> {
+            public EmitWsParser(EmitBindQuery<B> bindQuery) { super(WsEmitter.this, bindQuery); }
+
+            @Override protected void handleBindRequest(long n) {
+                if (bindQuery == null)
+                    throw new UnsupportedOperationException();
+                ((EmitBindQuery<B>)bindQuery).bindings.request(n);
             }
+            @Override protected void onPing() {h.sendPingAck();}
         }
 
-        /* --- --- --- private helpers --- --- --- */
+        /* --- --- --- bindings Receiver --- --- --- */
 
-        private void completeWithError(@Nullable Throwable error) {
-            if (destination.isTerminated()) {
-                String now = error == null ? "complete(null)"
-                           : error.getClass().getSimpleName();
-                String previous = destination.error() != null
-                        ? ("failed with "+destination.error())
-                        : (destination.isCancelled() ? "cancelled" : "completed");
-                log.warn("Ignoring {} since {} was already {}",
-                         now, destination, previous, error);
-                return;
-            }
-            if (error instanceof FSServerException se && gotFrames) {
-                se.shouldRetry(false);
-            } else if (error == null) {
-                if (!gotFrames)
-                    error = new InvalidSparqlResultsException("Empty response").shouldRetry(true);
-                else
-                    error = new FSIllegalStateException("coldComplete unsatisfied preconditions");
-            }
-            parser.feedError(FSException.wrap(sparqlClient.endpoint, error));
+        @Override public @Nullable B onBatch(B batch) {
+            if (batch == null || batch.rows == 0)
+                return batch;
+            h.sendBatch(batch);
+            return null;
         }
-
-        private void complete(@Nullable Throwable error) {
-            if (!destination.isTerminated()) {
-                if (gotFrames && error == null) parser.feedEnd();
-                else                            completeWithError(error); // (should be) cold
-            }
-            if (selfRecycle)
-                reset(null);
-        }
-
-        void sendCancelExternal() {
-            var ctx = this.ctx;
-            if (bbRopeView == null || ctx == null)
-                return; // already detached
-            if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) != 0)
-                return; // !cancel already underway
-            if (ctx.executor().inEventLoop()) {
-                doSendCancelFromEventLoop();
-            } else {
-                sendCancelCh = ctx.channel();
-                if (sendCancelTask == null) sendCancelTask = this::doSendCancelTask;
-                ctx.executor().execute(sendCancelTask);
-            }
-        }
-        private void doSendCancelTask() {
-            Channel ch = sendCancelCh;
-            if (ctx == null || ctx.channel() != ch)
-                return; // stale request for !cancel
-            doSendCancelFromEventLoop();
-        }
-        private void doSendCancelFromEventLoop() {
-            assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
-            if (silenceSender || bbRopeView == null || ctx == null || !ctx.channel().isActive())
-                return; // do not send frame after complete() or before attach()
-            ctx.writeAndFlush(new TextWebSocketFrame(wrappedBuffer(CANCEL_MSG)));
-            silenceSender = true;
-        }
-        private void sendCancelFromEventLoop() {
-            if ((getAndUpdateFlagsRelease(0, CANCELLING)&CANCELLING) == 0)
-                doSendCancelFromEventLoop();
-        }
-
-        /* --- --- --- WsFrameSender methods --- --- --- */
-
-        @Override public void sendFrame(ByteBuf content) {
-            if (ctx == null) {
-                throw new IllegalStateException("sendFrame() before attach()");
-            } else if (bbRopeView == null) {
-                log.debug("{}.sendFrame() after complete(), dropping {}", this, content);
-                content.release();
-            } else {
-                ctx.writeAndFlush(new TextWebSocketFrame(content));
-            }
-        }
-
-        @Override public ByteBufSink createSink() {
-            return new ByteBufSink(ctx == null ? UnpooledByteBufAllocator.DEFAULT : ctx.alloc());
-        }
-
-        /* --- --- --- ResultsSender --- --- --- */
-
-        @Override public ResultsSender<ByteBufSink, ByteBuf> createSender() {
-            if (ctx == null)
-                throw new IllegalStateException("createSender() before attach()");
-            //noinspection unchecked
-            var sender = (BindingsSender<B>)REC_SENDER.getAndSetAcquire(this, null);
-            if (sender == null) sender = new BindingsSender<>(this, ctx);
-            else                sender.thaw(true);
-            if (SENDER.compareAndExchangeRelease(this, null, sender) != null)
-                throw new IllegalStateException(">1 ResultsSender active");
-            return sender;
-        }
-
-        private static final class BindingsSender<B extends Batch<B>> extends NettyResultsSender<TextWebSocketFrame> {
-            private static final byte REC_ST_SENDER     = 1;
-            private static final byte REC_ST_SERIALIZER = 2;
-            private final WsHandler<B> wsHandler;
-            private byte recycled;
-
-            private static final class RecycleAction extends Action {
-                public static final RecycleAction INSTANCE = new RecycleAction();
-                public RecycleAction() {super("RECYCLE_SENDER");}
-                @Override public void run(NettyResultsSender<?> sender) {
-                    var bs = (BindingsSender<?>) sender;
-                    if (bs.recycled != 0)
-                        return;
-                    bs.recycled = REC_ST_SENDER;
-                    if (REC_SENDER.compareAndExchangeRelease(bs.wsHandler, null, bs) != null) {
-                        bs.recycled = REC_ST_SERIALIZER;
-                        bs.recycleSerializer();
-                    }
-                }
-            }
-
-            public BindingsSender(WsHandler<B> wsHandler, ChannelHandlerContext ctx) {
-                super(WsSerializer.create(wsHandler.sparqlClient().bindingsSizeHint), ctx);
-                this.wsHandler = wsHandler;
-                sink.sizeHint(wsHandler.sparqlClient().bindingsSizeHint);
-            }
-
-            @This BindingsSender<B> thaw(boolean autoTouch) {
-                if (recycled != REC_ST_SENDER)
-                    throw new IllegalStateException("recycled != REC_ST_SENDER");
-                recycled = 0;
-                if (autoTouch)
-                    super.thaw();
-                return this;
-            }
-
-            void recycleSerializer() {
-                if (recycled == 0) {
-                    assert ctx.executor().inEventLoop() : "called from outside event loop";
-                    recycled = REC_ST_SERIALIZER;
-                    ((WsSerializer)serializer).recycle();
-                }
-            }
-
-            @Override public void close() {
-                super.close();
-                //noinspection unchecked
-                var ac = (BindingsSender<B>)SENDER.compareAndExchangeRelease(wsHandler, this, null);
-                journal("close", this, "ac=", ac);
-                if (recycled == 0)
-                    execute(RecycleAction.INSTANCE);
-            }
-
-            @Override protected boolean beforeSend() {
-                if (wsHandler.silenceSender) {
-                    journal("silenced sender=", this);
-                    return false;
-                }
-                return super.beforeSend();
-            }
-
-            @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {
-                if (recycled != 0) throw new IllegalStateException("recycled");
-                if (wsHandler.silenceSender) {
-                    journal("will not sendInit on silenced", this);
-                    return;
-                }
-                super.sendInit(vars, subset, isAsk);
-            }
-
-            @Override public void sendSerializedAll(Batch<?> batch) {
-                if (recycled != 0) throw new IllegalStateException("recycled");
-                if (wsHandler.silenceSender) {
-                    journal("silenced sendSerializedAll on", this);
-                    return;
-                }
-                super.sendSerializedAll(batch);
-            }
-
-            @Override
-            public <N extends Batch<N>> void sendSerializedAll(N batch, ResultsSerializer.SerializedNodeConsumer<N> nodeConsumer) {
-                if (recycled != 0) throw new IllegalStateException("recycled");
-                if (wsHandler.silenceSender) {
-                    journal("silenced sendSerializedAll on", this);
-                    return;
-                }
-                super.sendSerializedAll(batch, nodeConsumer);
-            }
-
-            @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {
-                if (recycled != 0) throw new IllegalStateException("recycled");
-                if (wsHandler.silenceSender) {
-                    journal("silenced sendSerialized on", this);
-                    return;
-                }
-                super.sendSerialized(batch, from, nRows);
-            }
-
-            @Override public void sendTrailer() {
-                if (wsHandler.silenceSender) {
-                    journal("silenced sendTrailer on", this);
-                    return;
-                }
-                sendingTerminal();
-                disableAutoTouch();
-                execute(TrailerAction.INSTANCE);
-                wsHandler.sparqlClient().adjustBindingsSizeHint(sink.sizeHint());
-            }
-
-            private static final class TrailerAction extends Action {
-                private static final TrailerAction INSTANCE = new TrailerAction();
-                public TrailerAction() {super("TRAILER");}
-                @Override public void run(NettyResultsSender<?> sender) {
-                    BindingsSender<?> bs = (BindingsSender<?>) sender;
-                    if (bs.wsHandler.silenceSender) {
-                        journal("not sending !end, silenced", this);
-                    } else {
-                        bs.ctx.writeAndFlush(new TextWebSocketFrame(wrappedBuffer(END_MSG)));
-                        bs.wsHandler.silenceSender = true;
-                    }
-                }
-            }
-
-            @Override protected void onError(Throwable t) {
-                journal("onError", t, "sender=", this);
-                var escaped = "!error "+t.toString().replace("\n", "\\n")+'\n';
-                if (wsHandler.silenceSender) {
-                    journal("not sending !error due to silenced", this);
-                } else {
-                    ctx.writeAndFlush(new TextWebSocketFrame(escaped));
-                    wsHandler.silenceSender = true;
-                }
-                Action.RELEASE_SINK.run(this);
-                wsHandler.complete(t);
-            }
-
-            private static final class CancelAction extends Action {
-                private static final CancelAction INSTANCE = new CancelAction();
-                public CancelAction() {super("CANCEL");}
-                @Override public void run(NettyResultsSender<?> sender) {
-                    ((BindingsSender<?>)sender).wsHandler.sendCancelFromEventLoop();
-                    RELEASE_SINK.run(sender);
-                }
-            }
-
-            @Override public void  sendCancel() {
-                if (wsHandler.silenceSender) {
-                    journal("silenced sendCancel on", this);
-                    return;
-                }
-                sendingTerminal();
-                journal("sendCancel, sender=", this);
-                execute(CancelAction.INSTANCE);
-            }
-
-            @Override protected TextWebSocketFrame wrap(ByteBuf bb) {
-                return new TextWebSocketFrame(bb);
-            }
-        }
+        @Override public void  onComplete() { h.sendBindingTerm(null); }
+        @Override public void onCancelled() { h.sendBindingTerm(CancelledException.INSTANCE); }
+        @Override public void onError(Throwable cause) { h.sendBindingTerm(cause); }
     }
 }

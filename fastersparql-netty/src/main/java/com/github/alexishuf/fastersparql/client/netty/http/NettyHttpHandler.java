@@ -2,265 +2,532 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
-import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
+import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
-import io.netty.util.ReferenceCounted;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
-import static io.netty.handler.codec.http.HttpResponseStatus.SERVICE_UNAVAILABLE;
 import static io.netty.handler.codec.http.HttpStatusClass.SUCCESS;
-import static java.lang.invoke.MethodHandles.lookup;
 
+/**
+ * Handles netty events and delivers higher-level events via {@code on*()} methods.
+ *
+ * <p>The typical lifecycle is:</p>
+ *
+ * <ol>
+ *     <li>{@link #start(ChannelRecycler, HttpRequest)} gets called to start a HTTP request.
+ *     Concurrent requests are not allowed and will be rejected with an
+ *     {@link IllegalStateException}</li>
+ *     <li>One of the following happens:
+ *         <ul>
+ *             <li>{@link #onCancelled(boolean)} with {@code empty=true} if a {@link #cancel(int)}
+ *                 arrived from any thread and was serialized in the event loop before the
+ *                 request got sent.</li>
+ *             <li>{@link #onSuccessResponse(HttpResponse)} if the server starts a 200 response.
+ *                 This will be followed by:
+ *                 <ol>
+ *                     <li>zero or more {@link #onContent(HttpContent)} calls</li>
+ *                     <li>Either:
+ *                         <ul>
+ *                             <li>{@link #onSuccessLastContent()}</li>
+ *                             <li>{@link #onCancelled(boolean)} if there was a
+ *                                 {@link #cancel(int)} and the channel closed before the
+ *                                 response completed</li>
+ *                             <li>{@link #onIncompleteSuccessResponse(boolean)} if the channel
+ *                                 closes before receiving the {@link LastHttpContent} and
+ *                                 the closing was not caused by {@link #cancel(int)} or
+ *                                 by an uncaught exception</li>
+ *                         </ul>
+ *                     </li>
+ *                 </ol>
+ *             </li>
+ *             <li>{@link #onFailureResponse(HttpResponse, ByteRope, boolean)} if the channel
+ *                 closes before the server starts a response or if the server answers with a
+ *                 non-200 response (which may be incomplete if the channel closes before
+ *                 it completes)</li>
+ *         </ul>
+ *     </li>
+ * </ol>
+ *
+ * <p>At any moment, {@link #onClientSideError(Throwable)} may be called to notify that an
+ * exception has been thrown from the above methods or while handling netty events. After
+ * {@link #onClientSideError(Throwable)} there will be no more {@code on*()} calls and
+ * the channel will be closed without returning to the pool.</p>
+ *
+ * <p>All the {@code on*()} methods are called from the event loop thread that runs events
+ * for the channel. {@link #start(ChannelRecycler, HttpRequest)} may be called from any
+ * thread but must not be called concurrently.</p>
+ */
 public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpObject>
         implements ChannelBound {
-    /**
-     * Whether {@link #error(Throwable)} or {@link #content(HttpContent)}
-     * (with {@link LastHttpContent}) have been called since last {@link #expectResponse()} call
-     */
-    private static final VarHandle TERMINATED;
+    private static final Logger log = LoggerFactory.getLogger(NettyHttpHandler.class);
+    private static final VarHandle COOKIE;
     static {
         try {
-            TERMINATED = lookup().findVarHandle(NettyHttpHandler.class, "plainTerminated", boolean.class);
+            COOKIE = MethodHandles.lookup().findVarHandle(NettyHttpHandler.class, "plainCookie", int.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static final Logger log = LoggerFactory.getLogger(NettyHttpHandler.class);
 
+    private @MonotonicNonNull ChannelHandlerContext ctx;
+    private int st = ST_CAN_REQUEST;
+    private @Nullable HttpResponse httpResp;
     private ChannelRecycler recycler = ChannelRecycler.CLOSE;
-    protected @MonotonicNonNull ChannelHandlerContext ctx;
-    private @Nullable HttpResponse httpResponse;
+    private final Actions actions = new Actions();
+    private @MonotonicNonNull Channel lastCh;
+    private @Nullable HttpRequest pendingRequest;
+    private int doCancelCookie;
+    @SuppressWarnings("unused") private int plainCookie;
     private ByteRope failureBody = ByteRope.EMPTY;
-    @SuppressWarnings({"unused", "FieldMayBeFinal"}) // accessed through TERMINATED
-    private boolean plainTerminated = true;
-    private boolean cancelled;
 
-    @Override public @Nullable Channel channel() {
-        return this.ctx == null ? null : this.ctx.channel();
+    private static final int ST_CAN_REQUEST     = 0x001;
+    private static final int ST_REQ_SENT        = 0x002;
+    private static final int ST_TERMINATED      = 0x004;
+    private static final int ST_OK_RESP         = 0x008;
+    private static final int ST_FAIL_RESP       = 0x010;
+    private static final int ST_FAIL_RESP_TRUNC = 0x020;
+    private static final int ST_NON_EMPTY       = 0x040;
+    private static final int ST_GOT_LAST_CHUNK  = 0x080;
+    private static final int ST_CANCELLED       = 0x100;
+    private static final int ST_UNHEALTHY       = 0x200;
+
+    private static final LongRenderer ST = st -> {
+        if (st == 0) return "";
+        var sb = new StringBuilder().append('[');
+        if ((st&ST_CAN_REQUEST)     != 0) sb.append("CAN_REQUEST,");
+        if ((st&ST_REQ_SENT)        != 0) sb.append("REQ_SENT,");
+        if ((st&ST_TERMINATED)      != 0) sb.append("TERMINATED,");
+        if ((st&ST_OK_RESP)         != 0) sb.append("OK_RESP,");
+        if ((st&ST_FAIL_RESP)       != 0) sb.append("FAIL_RESP,");
+        if ((st&ST_FAIL_RESP_TRUNC) != 0) sb.append("FAIL_RESP_TRUNC,");
+        if ((st&ST_NON_EMPTY)       != 0) sb.append("NON_EMPTY,");
+        if ((st&ST_GOT_LAST_CHUNK)  != 0) sb.append("GOT_LAST_CHUNK,");
+        if ((st&ST_CANCELLED)       != 0) sb.append("CANCELLED,");
+        if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
+        sb.setLength(sb.length()-1);
+        return sb.append(']').toString();
+    };
+
+    public NettyHttpHandler(Executor executor) {
+        actions.executor(executor);
     }
 
-    @Override public void setChannel(Channel ch) {
-        if (ch != channel()) throw new UnsupportedOperationException();
+    private void recycleChannel() {
+        var ctx = this.ctx;
+        if (ctx == null)
+            return;
+        assert ctx.executor().inEventLoop() : "recycleChannel() outside event loop";
+        var r = recycler;
+        recycler = ChannelRecycler.CLOSE;
+        if ((st&ST_UNHEALTHY) != 0) {
+            ctx.close();
+        } else {
+            assert (st&ST_TERMINATED) != 0 : "recycling before deliverTerminated";
+            st = ST_CAN_REQUEST;
+            ctx.channel().config().setAutoRead(true);
+            COOKIE.getAndAddRelease(this, 1);
+            r.recycle(ctx.channel());
+        }
+    }
+
+    /* --- --- --- cancel --- --- --- */
+
+    /**
+     * Cancel the HTTP request. This is done by not sending the request if it has not yet been
+     * sent or by closing the channel if the request has been sent and the response has not
+     * yet been completely received.
+     *
+     * <p>This method may be called from any thread at any time. A cancel will be scheduled for
+     * execution in the channel event loop. </p>
+     *
+     * @param cookie the value returned by {@link #start(ChannelRecycler, HttpRequest)}. If this
+     *               does not match the last cookie, the call will have no effect
+     */
+    public void cancel(int cookie) {
+        if (cookie != (int)COOKIE.getAcquire(this)) {
+            journal("cancel: bad cookie=", cookie, "st=", st, ST, "on", this);
+            return;
+        }
+        doCancelCookie = cookie;
+        actions.sched(AC_CANCEL);
+    }
+    @SuppressWarnings("unused") private void doCancel() {
+        int cookie = doCancelCookie;
+        if (cookie != (int)COOKIE.getAcquire(this)) {
+            journal("doCancel: bad cookie=", cookie, "st=", st, ST, "on", this);
+            return;
+        }
+        if ((st&ST_TERMINATED) != 0)         // terminated
+            return;                          // nothing to cancel or notify
+        if ((st&ST_REQ_SENT) != 0) {         // request sent
+            st |= ST_CANCELLED|ST_UNHEALTHY; // allow onCancelled, forbid recycling
+            if (ctx != null) ctx.close();    // else: channelInactive() already delivered
+        } else {                             // request not sent
+            st |= ST_CANCELLED;              // call onCancelled(), but not from here
+            deliverTermination(null);
+        }
+    }
+
+    /* --- --- --- request start --- --- --- */
+
+    /**
+     * send the given {@link HttpRequest} and when a success response is fully received and
+     * handled, recycle the channel with the given {@link ChannelRecycler}.
+     *
+     * <p><strong>Important:</strong> this method MUST only be called after the channel has
+     * been created or acquired from the pool</p>
+     *
+     * @param recycler what to do with the channel once the response has been fully received and handled.
+     * @param request the {@link HttpRequest} to send
+     * @return an usage cookie
+     */
+    public int start(ChannelRecycler recycler, HttpRequest request) {
+        int cookie = (int)COOKIE.getAcquire(this);
+        if (pendingRequest != null || (st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST)
+            throw cannotSendRequest();
+        this.recycler = recycler;
+        pendingRequest = request;
+        actions.sched(AC_ENABLE_AUTOREAD|AC_SEND_REQUEST);
+        return cookie;
+    }
+    @SuppressWarnings("unused") private void doSendRequest() {
+        HttpRequest request = pendingRequest;
+        if (request == null || ctx == null)
+            return;
+        pendingRequest = null;
+        if ((st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST)
+            throw cannotSendRequest();
+        st = (st&~ST_CAN_REQUEST) | ST_REQ_SENT;
+        ctx.writeAndFlush(request);
+    }
+
+    private IllegalStateException cannotSendRequest() {
+        String reason;
+        if (pendingRequest != null)
+            reason = ": already has a pending request";
+        else if ((st&(ST_REQ_SENT|ST_TERMINATED)) == ST_REQ_SENT)
+            reason = ": already has an active request";
+        else if ((st&ST_UNHEALTHY) != 0)
+            reason = ": channel was deemed unhealthy";
+        else if ((st&ST_CAN_REQUEST) == 0)
+            reason = ": CAN_REQUEST bit is off";
+        else
+            reason = ": unknown reason, FIXME";
+        return new IllegalStateException(this+reason);
+    }
+
+    /* --- --- --- auto read --- --- ---  */
+
+    /** Enables {@link ChannelConfig#isAutoRead()}. */
+    public void enableAutoRead()  { setAutoRead(true, AC_ENABLE_AUTOREAD); }
+    /** Disables {@link ChannelConfig#isAutoRead()} */
+    public void disableAutoRead() { setAutoRead(false, AC_DISABLE_AUTOREAD); }
+    private void setAutoRead(boolean value, int action) {
+        journal(value ? "enableAutoRead, st=" : "disableAutoRead, st=", st, ST, "on", this);
+        actions.sched(action);
+    }
+    private void doSetAutoRead(boolean value) {
+        if (ctx != null) {
+            ctx.channel().config().setAutoRead(value);
+            journal("doSetAutoRead", value?1:0, "st=", st, ST, "on", this);
+        }
+    }
+    @SuppressWarnings("unused") private void doEnableAutoRead() { doSetAutoRead(true); }
+    @SuppressWarnings("unused") private void doDisableAutoRead() { doSetAutoRead(false); }
+
+    /* --- --- --- actions --- --- ---  */
+
+    private static final BitsetRunnable.Spec ACTIONS_SPEC;
+    private static final int AC_CANCEL;
+    private static final int AC_DISABLE_AUTOREAD;
+    private static final int AC_ENABLE_AUTOREAD;
+    private static final int AC_SEND_REQUEST;
+
+    static {
+        var s = new BitsetRunnable.Spec(MethodHandles.lookup());
+        AC_CANCEL           = s.add("doCancel");
+        AC_DISABLE_AUTOREAD = s.add("doDisableAutoRead");
+        AC_ENABLE_AUTOREAD  = s.add("doEnableAutoRead");
+        AC_SEND_REQUEST     = s.add("doSendRequest");
+        ACTIONS_SPEC = s;
+    }
+
+    private class Actions extends BitsetRunnable<NettyHttpHandler> {
+        public Actions() {super(NettyHttpHandler.this, ACTIONS_SPEC);}
+
+        @Override protected void onMethodError(String methodName, Throwable t) {
+            super.onMethodError(methodName, t);
+            exceptionCaught(ctx, t);
+        }
+    }
+
+    /* --- --- --- ChannelBound --- --- ---  */
+
+    @Override public final @Nullable Channel channelOrLast() { return lastCh; }
+
+    @Override public final void setChannel(Channel ch) {
+        if (ch != channelOrLast()) throw new UnsupportedOperationException();
     }
 
     @Override public String journalName() {
-        return "NHH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
+        return "NHH:"+(lastCh == null ? "null" : lastCh.id().asShortText());
     }
 
-    @Override public String toString() {
-        var ctx = this.ctx;
-        return String.format("{ch=%s, %s}@%x", ctx == null ? null : ctx.channel(),
-                plainTerminated ? "term" : "!term", System.identityHashCode(this));
-    }
+    @Override public String toString() {return journalName()+ST.render(st);}
 
-    protected boolean isTerminated() { return (boolean)TERMINATED.getAcquire(this); }
-
-    public void recycler(ChannelRecycler recycler) {
-        this.recycler = recycler;
-    }
+    /* --- --- --- events to be handled by a subclass --- --- --- */
 
     /**
-     * Enables notification of events through {@link #successResponse(HttpResponse)},
-     * {@link #error(Throwable)}.
-     */
-    public void expectResponse() {
-        ChannelHandlerContext ctx = this.ctx;
-        if (ctx != null)
-            ctx.channel().config().setAutoRead(true);
-        if (unMarkTerminated()) {
-            journal("expectResponse() on ", this);
-            httpResponse = null;
-            if (failureBody != ByteRope.EMPTY)
-                failureBody.clear();
-        } else {
-            journal("expectResponse on non-terminated ", this);
-            log.error("expectResponse() on non-terminated {}", this);
-            assert false : "expectResponse() on non-terminated NettyHttpHandler";
-        }
-    }
-
-    protected boolean markCancelled() {
-        if (!plainTerminated)
-            cancelled = true;
-        return !(boolean)TERMINATED.compareAndExchangeRelease(this, false, true);
-    }
-    protected boolean markTerminated() {
-        return !(boolean)TERMINATED.compareAndExchangeRelease(this, false, true);
-    }
-    protected boolean unMarkTerminated() {
-        cancelled = false;
-        return (boolean)TERMINATED.compareAndExchangeRelease(this, true, false);
-    }
-
-
-    /**
-     * Called once a {@link HttpStatusClass#SUCCESS} response starts (status and headers arrived,
+     * Called once a {@link HttpStatusClass#SUCCESS} response starts (status and headers arrived),
      * but {@link HttpContent}s chunks may follow.
      *
-     * <p>After this call, chunks will be delivered via {@link #content(HttpContent)} calls
-     * with the last call being a instance of {@link LastHttpContent}. If the response arrives
-     * from the server as a single message (i.e., not {@code chunked} {@code Transfer-Encoding}),
-     * {@link #content(HttpContent)} will be called with the same {@code response} object given
-     * to this call</p>
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
      */
-    protected abstract void successResponse(HttpResponse response);
+    protected abstract void onSuccessResponse(HttpResponse response);
 
     /**
-     * Called when received a non-{@code SUCCESS} response or if no response arrived nor will
-     * arrive (i.e., connection closed or local exception leading to an immediate connection
-     * closure).
+     * Called if the channel gets closed before a response arrives or if the server responds
+     * with a non-200 {@link HttpResponse}.
      *
-     * @param cause non-null reason for termination. This may be an exception thrown locally
-     *              or may be built from the status and body of a non-{@code SUCCESS} response.
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
+     *
+     * @param response The {@link HttpResponse} sent by the server or {@code null}
+     *                 if the channel closed before a response arrived.
+     * @param body If non-null, the body of the non-200 response. if the server replied with
+     *             chunks they will be aggregated
+     * @param bodyComplete if {@code true} {@code body} contains the full response
      */
-    protected abstract void error(Throwable cause);
+    protected abstract void onFailureResponse(@Nullable HttpResponse response,
+                                              @Nullable ByteRope body,
+                                              boolean bodyComplete);
 
     /**
-     * Called after a {@link #successResponse(HttpResponse)} call for each chunk of the response.
+     * Called when any {@code on*()} method throws an exception or if an error is raised by
+     * netty at the client side. This does not include non-200 responses received from
+     * the server.
      *
-     * <p>This method may be called more than once. In any case the last call of a response
-     * will have a {@link LastHttpContent} as its argument.</p>
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
+     *
+     * @param cause non-null reason for termination.
+     */
+    protected abstract void onClientSideError(Throwable cause);
+
+    /**
+     * Called zero or more times after a {@link #onSuccessResponse(HttpResponse)}, once per
+     * {@link HttpContent}, including the {@link LastHttpContent}.
      *
      * <p>If the server does not use {@code Transfer-Encoding: chunked}, this will be called
-     * with the same {@link FullHttpResponse} given to {@link #successResponse(HttpResponse)}.</p>
+     * with the same {@link FullHttpResponse} given to {@link #onSuccessResponse(HttpResponse)}.</p>
+     *
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
      *
      * @param content a chunk of the response body.
      */
-    protected abstract void content(HttpContent content);
+    protected abstract void onContent(HttpContent content);
 
     /**
-     * This method must be eventually called during or after a {@link #content(HttpContent)}
-     * invocation with a {@link LastHttpContent} message, that is known to be the last
-     * (no new request) was/will be issued.
+     * Called once after {@link #onSuccessResponse(HttpResponse)} after the {@link LastHttpContent}
+     * is received.
+     *
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
      */
-    private void releaseChannel() {
-        if (markTerminated()) {
-            journal("releasing channel", this);
-            httpResponse = null;
-            recycler.recycle(ctx.channel());
-        } else {
-            journal("ignoring releaseChannel() due to previous fail/release");
-        }
+    protected abstract void onSuccessLastContent();
+
+    /**
+     * Called at most once after {@link #onSuccessResponse(HttpResponse)} if the channel becomes
+     * inactive before {@link #onSuccessLastContent()}.
+     *
+     * <p>See {@link NettyHttpHandler} for the lifecycle overview including which
+     * events may happen after this.</p>
+     *
+     * @param empty if the response had zero content bytes, despite having a success status code.
+     */
+    protected abstract void onIncompleteSuccessResponse(boolean empty);
+
+    /**
+     * Called at most once after a {@link #cancel(int)}, if the cancellation is enacted before
+     * the request is sent or if the channel closes before a success response completes.
+     *
+     * <p>This indicates that the results were not completely received, either because the request
+     * was never sent or because the channel got closed by the cancellation before the
+     * response arrived.</p>
+     *
+     * @param empty {@code true} if there was no non-empty {@link #onContent(HttpContent)}
+     *                         before this event.
+     */
+    protected abstract void onCancelled(boolean empty);
+
+    /* --- --- --- handle netty events --- --- ---*/
+
+    @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+        super.channelRegistered(ctx);
+        this.ctx = ctx;
+        journal("channelRegistered", this, "ctx=", ctx);
+        actions.executor(ctx.executor());
+        lastCh = ctx.channel();
     }
 
-    private boolean fail(@Nullable Throwable cause) {
-        journal("fail", this, cause, plainTerminated ? "term" : "!term");
-        if ((boolean)TERMINATED.getAcquire(this)) return false;
-        assert ctx == null || ctx.executor().inEventLoop() : "not in event loop";
-        if (cause == null) {
-            if (httpResponse != null) {
-                cause = new FSServerException(httpResponse.status()+failureBody.toString())
-                        .shouldRetry(httpResponse.status() == SERVICE_UNAVAILABLE);
-            } else {
-                cause = new FSException("Unknown failure");
-            }
-        }
-        try {
-            error(cause);
-        } catch (Throwable t) {
-            log.warn("Ignoring exception from {}.error()", this, t);
-        }
+    @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+        super.channelUnregistered(ctx);
+        actions.runNow();
+        actions.executor(ForkJoinPool.commonPool());
+        this.ctx = null;
+    }
 
-        if (httpResponse instanceof ReferenceCounted r)
-            r.release();
-        httpResponse = null;
-        failureBody = new ByteRope();
-        TERMINATED.setRelease(this, true);
-        ChannelHandlerContext ctx = this.ctx;
-        if (ctx != null) {
-            Channel ch = ctx.channel();
-            if (ch != null) {
-                ch.config().setAutoRead(true);
-                if (ch.isActive()) ctx.close();
-            }
+    @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        super.channelActive(ctx);
+        actions.runNow();
+    }
+
+    private boolean deliverTermination(@Nullable Throwable error) {
+        if ((st&ST_REQ_SENT) == 0 || (st&ST_TERMINATED) != 0)
+            return false;
+        st |= ST_TERMINATED;
+        try {
+            if (error != null)
+                onClientSideError(error);
+            else if ((st&ST_FAIL_RESP) != 0)
+                onFailureResponse(httpResp, failureBody, (st&ST_FAIL_RESP_TRUNC) == 0);
+            else if ((st&(ST_NON_EMPTY|ST_GOT_LAST_CHUNK)) == (ST_NON_EMPTY|ST_GOT_LAST_CHUNK))
+                onSuccessLastContent();
+            else if ((st&ST_CANCELLED) != 0)
+                onCancelled((st&ST_NON_EMPTY) != 0);
+            else
+                onIncompleteSuccessResponse((st&ST_NON_EMPTY) == 0);
+        } catch (Throwable t) {
+            st |= ST_UNHEALTHY;
+            log.error("Ignoring {} thrown during deliverTermination() for {}",
+                      t.getClass().getSimpleName(), this, t);
+        } finally {
+            if (httpResp instanceof HttpContent c)
+                c.release();
+            httpResp = null;
         }
         return true;
     }
 
-
-    @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
-        journal("channelRegistered", this, "ctx=", ctx);
-        this.ctx = ctx;
-        super.channelRegistered(ctx);
-    }
-
     @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        if (!(boolean)TERMINATED.getAcquire(this)) {
-            String msg = "Connection closed before server "
-                    + (httpResponse == null ? "started a response" : "completed the response");
-            journal("channelInactive !term, response=", httpResponse == null ? 0 : httpResponse.status().code(), "handler=", this);
-            fail(new FSServerException(msg));
-        }
+        actions.runNow();
+        deliverTermination(null);
         super.channelInactive(ctx);
     }
 
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        if (!fail(cause) && ctx.channel().isActive())
+    public final void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        journal("exceptionCaught st=", st, ST, cause, "on", this);
+        st |= ST_UNHEALTHY;
+        deliverTermination(cause);
+        if (ctx != null)
             ctx.close();
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
-        if ((boolean)TERMINATED.getAcquire(this)) {
-            logPostTerm(msg);
+    protected final void channelRead0(ChannelHandlerContext ctx, HttpObject msg) {
+        actions.runNow();
+        if ((st&ST_REQ_SENT) == 0) {
+            readSpontaneous(msg);
             return;
         }
-        HttpResponse response = httpResponse;
+        if ((st&ST_TERMINATED) != 0) {
+            readPostTerm(msg);
+            return;
+        }
+        var httpResponse = this.httpResp;
         if (msg instanceof HttpResponse r) {
-            if (response != null)
+            if (httpResponse != null)
                 throw new IllegalStateException("Unexpected response, already handling one");
-            httpResponse = response = r;
+            this.httpResp = httpResponse = r;
             if (r.status().codeClass() == SUCCESS) {
-                journal("successResponse() on", this);
-                successResponse(r);
+                st |= ST_OK_RESP;
+                journal("successResponse() st=", st, ST, "on", this);
+                onSuccessResponse(r);
+            } else {
+                st |= ST_FAIL_RESP;
+                journal("got HTTP ", r.status().code(), "st=", st, ST, "on", this);
             }
         }
-        HttpContent httpContent = msg instanceof HttpContent c ? c : null;
-        if (httpContent != null) {
-            if (response == null)
+        if (msg instanceof HttpContent content) {
+            if (httpResponse == null)
                 throw new IllegalStateException("received HttpContent before HttpResponse");
-            boolean isLast = httpContent instanceof LastHttpContent;
-            if (response.status().codeClass() == SUCCESS) {
-                content(httpContent);
-                if (isLast)
-                    releaseChannel();
-            } else {
-                if (failureBody == ByteRope.EMPTY)
-                    failureBody = new ByteRope();
-                ByteBuf bb = httpContent.content();
-                int nBytes = bb.readableBytes();
-                failureBody.ensureFreeCapacity(nBytes);
-                bb.readBytes(failureBody.u8(), failureBody.len, nBytes);
-                failureBody.len += nBytes;
-                if (isLast)
-                    fail(null); // will build a FSServerException from the response
+            if ((st&ST_FAIL_RESP) != 0) {
+                appendFailContent(content);
+            } else if (content.content().readableBytes() > 0) {
+                st |= ST_NON_EMPTY;
+                onContent(content);
+            }
+            if (content instanceof LastHttpContent) {
+                st |= ST_GOT_LAST_CHUNK;
+                if (deliverTermination(null)
+                        && (st&(ST_OK_RESP|ST_UNHEALTHY)) == ST_OK_RESP) {
+                    recycleChannel();
+                }
             }
         }
     }
 
-    private void logPostTerm(HttpObject msg) {
-        int bytes = msg instanceof HttpContent hc ? hc.content().readableBytes() : 0;
-        if (msg instanceof HttpResponse res) {
-            journal(cancelled ? "post-cancel HTTP" : "post-term HTTP", res.status().code(),
-                    "bytes=", bytes, "on", this);
+    private void appendFailContent(HttpContent content) {
+        if (failureBody == ByteRope.EMPTY)
+            failureBody = new ByteRope();
+        ByteBuf bb = content.content();
+        int nBytes = bb.readableBytes();
+        if (failureBody.len+nBytes > 4096) {
+            st |= ST_FAIL_RESP_TRUNC;
         } else {
-            journal(cancelled ? "post-cancel HTTP content bytes=" : "post-term HTTP content bytes=",
-                    bytes, "last=", msg instanceof LastHttpContent?1:0, "on", this);
+            failureBody.ensureFreeCapacity(nBytes);
+            bb.readBytes(failureBody.u8(), failureBody.len, nBytes);
+            failureBody.len += nBytes;
         }
-        if (!cancelled)
-            log.info("Ignoring post-terminated {} {}", msg.getClass().getSimpleName(), msg);
     }
+
+    private void readSpontaneous(HttpObject msg) {
+        st |= ST_UNHEALTHY;
+        if (msg instanceof HttpResponse res) {
+            journal("spontaneous HTTP ", res.status().code(), " response st=",
+                    st, ST, "on", this);
+        } else {
+            journal("spontaneous HTTP message, last=", msg instanceof LastHttpContent ? 1 : 0,
+                    ", st=", st, ST, "on", this);
+        }
+        if (msg instanceof HttpContent c)
+            journal("spontaneous message bytes=", c.content().readableBytes(), "on", this);
+        log.warn("Ignoring spontaneous server-sent {} on {}: {}",
+                 msg.getClass().getSimpleName(), this, msg);
+    }
+
+    private void readPostTerm(HttpObject msg) {
+        st |= ST_UNHEALTHY;
+        if (msg instanceof HttpResponse res) {
+            journal("post-term HTTP ", res.status().code(), " response st=",
+                    st, ST, "on", this);
+        } else {
+            journal("post-term HTTP message, last=", msg instanceof LastHttpContent ? 1 : 0,
+                    ", st=", st, ST, "on", this);
+        }
+        if (msg instanceof HttpContent c)
+            journal("post-term message bytes=", c.content().readableBytes(), "on", this);
+        log.debug("Ignoring unexpected server-sent {} on {}: {}",
+                  msg.getClass().getSimpleName(), this, msg);
+    }
+
 }

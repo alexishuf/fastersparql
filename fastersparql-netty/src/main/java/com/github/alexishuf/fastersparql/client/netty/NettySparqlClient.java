@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
+import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -12,14 +13,18 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
+import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient.ConnectionHandler;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyCallbackEmitter;
-import com.github.alexishuf.fastersparql.client.netty.util.NettySPSCBIt;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
+import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
+import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
+import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
@@ -29,12 +34,9 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
-import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
-import io.netty.util.concurrent.Future;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -51,10 +53,9 @@ import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
 
 public class NettySparqlClient extends AbstractSparqlClient {
-    private static final Logger log = LoggerFactory.getLogger(NettySparqlClient.class);
-
     private static final Set<SparqlMethod> SUPPORTED_METHODS
             = Set.of(SparqlMethod.GET, SparqlMethod.FORM, SparqlMethod.POST);
     private final NettyHttpClient netty;
@@ -62,7 +63,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
     public NettySparqlClient(SparqlEndpoint ep) {
         super(withSupported(ep, SUPPORTED_METHODS));
         try {
-            Supplier<NettyHandler> handlerFac = () -> new NettyHandler(this);
+            Supplier<NettyHandler> handlerFac = NettyHandler::new;
             this.netty = new NettyClientBuilder().buildHTTP(ep.uri(), handlerFac);
         } catch (Throwable t) {
             throw FSException.wrap(ep, t);
@@ -121,62 +122,138 @@ public class NettySparqlClient extends AbstractSparqlClient {
      *  while {@link NettyHandler}'s lifecycle is attached to the Netty channel which may be
      *  reused for multiple SPARQL queries.</p>
      */
-    private class QueryBIt<B extends Batch<B>> extends NettySPSCBIt<B>
-            implements NettyHttpClient.ConnectionHandler<NettyHandler> {
+    private class QueryBIt<B extends Batch<B>> extends SPSCBIt<B> implements ClientStreamNode<B> {
         private final FullHttpRequest request;
-        private @Nullable NettyHandler handler;
+        private @Nullable NettySparqlClient.NettyHandler handler;
+        private int retries;
+        private boolean backPressured;
+        private @Nullable Channel lastCh;
+        private int cookie;
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), NettySparqlClient.this);
+            super(batchType, query.publicVars());
             this.request = createRequest(query);
             acquireRef();
-            request();
+            netty.connect(this);
+        }
+
+        /* --- --- --- ChannelBound --- --- -- */
+
+        @Override public @Nullable Channel channelOrLast() { return lastCh; }
+
+        @Override public void setChannel(Channel ch) {
+            if (ch != null && ch != lastCh) throw new UnsupportedOperationException();
         }
 
         @Override public String journalName() {
-            return "C.QB:"+(lastChannel==null ? "null" : lastChannel.id().asShortText())+':'+id();
+            return "C.QB:"+(lastCh==null ? "null" : lastCh.id().asShortText())+'@'+idString();
         }
 
-        @Override protected void cleanup(@Nullable Throwable cause) {
-            try { super.cleanup(cause); } catch (Throwable t) { reportCleanupError(t); }
-            try { releaseRef();         } catch (Throwable t) { reportCleanupError(t); }
-            try { request.release();    } catch (Throwable t) { reportCleanupError(t); }
+        @Override protected StringBuilder minimalLabel() {
+            return new StringBuilder().append("C.QB:")
+                    .append(lastCh == null ? "null" : lastCh.id().asShortText())
+                    .append('@').append(id());
         }
 
-        @Override protected void request() { netty.connect(this); }
+        /* --- --- --- ClientStreamNode --- --- -- */
 
-        @Override public void operationComplete(Future<?> future) {
-            netty.handleChannel(future, this);
-        }
+        @Override public int      cookie() { return cookie; }
+        @Override public String idString() { return Integer.toString(id()); }
 
-        @Override public HttpRequest httpRequest() { return request.retain(); }
-
-        @Override public void onConnected(Channel ch, NettyHandler handler) {
-            this.channel     = ch;
-            this.lastChannel = ch;
+        @Override public boolean retry() {
             lock();
             try {
-                if (canSendRequest()) {
-                    this.handler = handler;
-                    handler.setup(this);
-                } else {
-                    this.handler = null;
-                    throw NettyHttpClient.ABORT_REQUEST;
+                if (isTerminated()) return false;
+                if (retries < FSNettyProperties.maxRetries()) {
+                    ++retries;
+                    netty.connect(this);
+                    return true;
                 }
             } finally { unlock(); }
+            return false;
         }
 
-        @Override public void onConnectionError(Throwable cause) { complete(cause); }
+        /* --- --- --- ConnectionHandler --- --- -- */
 
-        @Override protected boolean cancelAfterRequestSent() {
-            assert handler != null : "request sent but handler == null";
-            handler.cancelAndClose(this);
+        @Override public HttpRequest     httpRequest()              { return request.retain(); }
+        @Override public NettyHttpClient  httpClient()              { return netty; }
+        @Override public void      onConnectionError(Throwable t)   { complete(t); }
+
+        @Override public void onStarted(NettyHandler h, int c) {
+            lock();
+            try { this.cookie = c; } finally { unlock(); }
+        }
+
+        @Override public void onConnected(Channel ch, NettyHandler handler) {
+            this.lastCh = ch;
+            boolean abort;
+            lock();
+            try {
+                abort = isTerminated();
+                this.handler = handler;
+                handler.attach(this);
+            } finally { unlock(); }
+            if (abort)
+                throw NettyHttpClient.ABORT_REQUEST;
+        }
+
+        /* --- --- --- SPSCBIt --- --- -- */
+
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            try {
+                super.cleanup(cause);
+            } finally { releaseRef(); }
+        }
+
+        @Override protected boolean mustPark(int offerRows, long queuedRows) {
+            if (super.mustPark(offerRows, queuedRows)) {
+                if (!backPressured) {
+                    backPressured = true;
+                    var handler = this.handler;
+                    if (handler != null) handler.disableAutoRead();
+                }
+            }
             return false;
+        }
+
+        @Override public @Nullable B nextBatch(@Nullable B offer) {
+            B b = super.nextBatch(offer);
+            var handler = this.handler;
+            if (backPressured && handler != null) {
+                backPressured = false;
+                handler.enableAutoRead();
+            }
+            return b;
+        }
+
+        @Override public boolean complete(@Nullable Throwable error) {
+            boolean did = super.complete(error);
+            if (request.refCnt() > 0)
+                request.release();
+            return did;
+        }
+
+        @Override public boolean cancel(boolean ack) {
+            boolean did = super.cancel(ack);
+            if (ack && request.refCnt() > 0)
+                request.release();
+            return did;
+        }
+
+        @Override public boolean tryCancel() {
+            boolean did = super.tryCancel();
+            if (did) {
+                lock();
+                try {
+                    if (handler != null) handler.cancel(cookie);
+                } finally { unlock(); }
+            }
+            return did;
         }
     }
 
-    private final class QueryEmitter<B extends Batch<B>> extends NettyCallbackEmitter<B>
-            implements NettyHttpClient.ConnectionHandler<NettyHandler> {
+    private final class QueryEmitter<B extends Batch<B>> extends CallbackEmitter<B>
+            implements ClientStreamNode<B> {
         private final SparqlQuery originalQuery;
         private SparqlQuery boundQuery;
         private @Nullable FullHttpRequest boundRequest;
@@ -184,19 +261,109 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable BatchMerger<B> merger;
         private @Nullable Vars mergerFreeVars;
         private @Nullable NettyHandler handler;
+        private @MonotonicNonNull Channel lastCh;
+        private int retries;
+        private int cookie;
 
         public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), NettySparqlClient.this);
+            super(batchType, query.publicVars(), EmitterService.EMITTER_SVC,
+                  RR_WORKER, CREATED, CB_FLAGS);
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();
         }
 
-        @Override public String journalName() {
-            return String.format("C.QE:%s@%x",
-                    lastChannel == null ? "null" : lastChannel.id().asShortText(),
-                    System.identityHashCode(this));
+        /* --- --- --- ChannelBound --- --- --- */
+
+        @Override public @Nullable Channel channelOrLast() { return lastCh; }
+
+        @Override public void setChannel(Channel ch) {
+            if (ch != null && ch != lastCh) throw new UnsupportedOperationException();
         }
+
+        @Override public String journalName() {
+            return "C.QE:"+(lastCh == null ? "null" : lastCh.id().asShortText())+"@"+idString();
+        }
+
+        @Override protected StringBuilder minimalLabel() {
+            return new StringBuilder().append("C.QE:")
+                    .append(lastCh == null ? "null" : lastCh.id().asShortText())
+                    .append('@').append(idString());
+        }
+
+        /* --- --- --- ClientStreamNode --- --- --- */
+
+        @Override public String idString() {
+            return Integer.toHexString(System.identityHashCode(this));
+        }
+
+        @Override public int cookie() {return cookie;}
+
+        @Override public boolean retry() {
+            if ((state()&(IS_TERM|GOT_CANCEL_REQ)) != 0) return false;
+            if (retries < FSNettyProperties.maxRetries()) {
+                ++retries;
+                netty.connect(this);
+                return true;
+            }
+            return false;
+        }
+
+        /* --- --- --- ConnectionHandler --- --- --- */
+
+        @Override public HttpRequest httpRequest() {
+            var request = this.boundRequest;
+            if (request == null)
+                this.boundRequest = request = createRequest(boundQuery);
+            request.retain(); // retain for retries, Nett will release() on write()
+            return request;
+        }
+
+        @Override public void onConnected(Channel ch, NettyHandler handler) {
+            lastCh = ch;
+            boolean abort;
+            int st = lock(statePlain());
+            try {
+                abort = (st&GOT_CANCEL_REQ) != 0;
+                this.handler = handler;
+                handler.attach(this);
+            } finally { unlock(st); }
+            if (abort)
+                throw NettyHttpClient.ABORT_REQUEST; // recycle ch
+        }
+
+        @Override public void     onConnectionError(Throwable cause) { complete(cause); }
+        @Override public NettyHttpClient httpClient()                { return netty; }
+
+        @Override public void onStarted(NettyHandler handler, int cookie) {
+            int st = lock(statePlain());
+            try { this.cookie = cookie; } finally { unlock(st); }
+        }
+
+        /* --- --- --- CallbackEmitter producer actions --- --- --- */
+
+        @Override protected void startProducer() {
+            netty.connect(this);
+        }
+
+        @Override protected void pauseProducer() {
+            if (this.handler != null) this.handler.disableAutoRead();
+        }
+
+        @Override protected void resumeProducer(long requested) {
+            if (this.handler != null) this.handler.enableAutoRead();
+        }
+
+        @Override protected void cancelProducer() {
+            int st = lock(statePlain());
+            try {
+                if (handler != null) handler.cancel(cookie);
+            } finally { unlock(st); }
+        }
+
+        @Override protected void earlyCancelProducer() {}
+
+        @Override protected void releaseProducer() {}
 
         @Override protected void doRelease() {
             var boundRequest = this.boundRequest;
@@ -216,46 +383,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
             return 8*super.preferredRequestChunk();
         }
 
-        @Override protected void request() {
-            handler = null;
-            netty.connect(this);
-        }
-
-        @Override public void operationComplete(Future<?> future) {
-            netty.handleChannel(future, this);
-        }
-
-        @Override public HttpRequest httpRequest() {
-            var request = this.boundRequest;
-            if (request == null)
-                this.boundRequest = request = createRequest(boundQuery);
-            request.retain(); // retain for retries, Nett will release() on write()
-            return request;
-        }
-
-        @Override public void onConnected(Channel ch, NettyHandler handler) {
-            if (ThreadJournal.ENABLED)
-                journal("connected em=", this, "ch=", ch.toString());
-            setChannel(ch);
-            int st = lock(statePlain());
-            try {
-                if (canSendRequest()) {
-                    this.handler = handler;
-                    handler.setup(this);
-                } else {
-                    throw NettyHttpClient.ABORT_REQUEST; // recycle ch
-                }
-            } finally { unlock(st); }
-        }
-
-        @Override public void onConnectionError(Throwable cause) { complete(cause); }
-
-        @Override protected boolean cancelAfterRequestSent() {
-            assert handler != null : "REQUEST_SENT but handler == null";
-            handler.cancelAndClose(this);
-            return false; // do TaskEmitter.cancel()
-        }
-
         @Override protected @Nullable B deliver(B b) {
             if (merger == null)
                 b = super.deliver(b);
@@ -265,7 +392,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(REBIND_CLEAR, LOCKED_MASK);
+            int st = resetForRebind(CLEAR_ON_REBIND, LOCKED_MASK);
             try {
                 boundQuery = originalQuery.bound(binding);
                 var freeVars = boundQuery.publicVars();
@@ -292,92 +419,133 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public Vars bindableVars() { return originalQuery.allVars(); }
     }
 
-    private static final class NettyHandler extends NettyHttpHandler {
-        private CompletableBatchQueue<?> downstream;
-        private @MonotonicNonNull ResultsParser<?> parser;
+    private interface ClientStreamNode<B extends Batch<B>>
+            extends CompletableBatchQueue<B>, ConnectionHandler<NettyHandler>, ChannelBound {
+        int cookie();
+        boolean retry();
+        String idString();
+    }
+
+    private static final class CancelledAckException extends FSException {
+        public CancelledAckException() {super("dummy for NettyHttpHandler.onCancelled()");}
+    }
+    private static final CancelledAckException CANCELLED_ACK = new CancelledAckException();
+
+    private final class NettyHandler extends NettyHttpHandler {
+        private static final Logger log = LoggerFactory.getLogger(NettyHandler.class);
+        private @Nullable ClientStreamNode<?> downstream;
+        private @Nullable ResultsParser<?> parser;
         private @Nullable Charset decodeCS;
-        private final ByteBufRopeView bbRopeView = ByteBufRopeView.create();
-        private int resBytes = 0;
-        private final NettySparqlClient sparqlClient;
+        private ByteBufRopeView bbView = ByteBufRopeView.create();
 
-        private NettyHandler(NettySparqlClient sparqlClient) {
-            this.sparqlClient = sparqlClient;
+        public NettyHandler() { super(netty.executor()); }
+
+        public void attach(ClientStreamNode<?> downstream) {
+            this.downstream = downstream;
         }
 
-        @Override public String toString() {
-            return String.format("{ch=%s, %s, resBytes=%d}@%x",
-                    ctx == null ? null : ctx.channel(), isTerminated() ? "term" : "!term",
-                    resBytes, identityHashCode(this));
+        private void completeDownstream(@Nullable Throwable cause) {
+            journal(cause == null ? "complete" : "fail", downstream, "from", this);
+            FSException fse = cause == null ? null : FSException.wrap(endpoint, cause);
+            if (parser != null) {
+                if (fse == CANCELLED_ACK)
+                    parser.feedCancelledAck();
+                else
+                    parser.feedError(fse);
+            } else if (downstream != null) {
+                if (fse == CANCELLED_ACK)
+                    downstream.cancel(true);
+                else
+                    downstream.complete(fse);
+            } else {
+                log.error("{}: no downstream to deliver err={}", this, cause, cause);
+            }
+            parser     = null;
+            downstream = null;
         }
+
+        /* --- --- --- ChannelBound --- --- --- */
 
         @Override public String journalName() {
-            return "C.NH:" + (ctx == null ? "null" : ctx.channel().id().asShortText());
+            Channel ch = channelOrLast();
+            String id = downstream == null ? Integer.toHexString(identityHashCode(this))
+                                           : downstream.idString();
+            return "C.NHH:"+(ch == null ? "null" : ch.id().asShortText())+"@"+id;
         }
 
-        @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
-            journal("channelUnregistered on", this);
-            bbRopeView.recycle();
-            super.channelUnregistered(ctx);
-        }
+        /* --- --- --- NettyHttpHandler events --- --- --- */
 
-        public void setup(CompletableBatchQueue<?> downstream) {
-            journal("setup nettyHandler=", this, "down=", downstream);
-            resBytes = 0;
-            this.downstream = downstream;
-            expectResponse();
-        }
-
-        public void cancelAndClose(CompletableBatchQueue<?> downstream) {
-            if (downstream == this.downstream && markCancelled()) {
-                journal("cancel-induced ctx.close() on ", this);
-                ctx.close();
-            }
-        }
-
-        @Override protected void successResponse(HttpResponse resp) {
-            if (downstream == null)
-                throw new FSException(sparqlClient.endpoint, "HttpResponse received before setup()");
-            var mt = MediaType.tryParse(resp.headers().get(CONTENT_TYPE));
+        @Override protected void onSuccessResponse(HttpResponse response) {
+            var mt = MediaType.tryParse(response.headers().get(CONTENT_TYPE));
             if (mt == null)
-                throw new InvalidSparqlResultsException(sparqlClient.endpoint, "No Content-Type in HTTP response");
+                throw new InvalidSparqlResultsException("No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
-            parser = ResultsParser.createFor(fromMediaType(mt), downstream);
+            parser = ResultsParser.createFor(fromMediaType(mt), requireNonNull(this.downstream));
         }
 
-        @Override protected void error(Throwable cause) {
-            journal("error on", this, ": ", cause);
-            FSException ex = FSException.wrap(sparqlClient.endpoint, cause);
-            if (parser != null)
-                parser.feedError(ex);
-            if (downstream == null)
-                log.error("{}: error({}) before setup", this, cause, cause);
-            downstream.complete(ex);
-        }
-
-        @Override protected void content(HttpContent content) {
-            var parser = this.parser;
-            if (parser == null) {
-                log.error("{}: content({}) before setup()/successResponse()", this, content);
-                return;
-            }
-            ByteBuf bb = content.content();
-            resBytes += bb.readableBytes();
+        @Override protected void onContent(HttpContent content) {
+            var parser = requireNonNull(this.parser);
             try {
-                parser.feedShared(decodeCS == null ? bbRopeView.wrapAsSingle(bb)
+                var bb = content.content();
+                parser.feedShared(decodeCS == null ? bbView.wrapAsSingle(bb)
                                                    : new ByteRope(bb.toString(decodeCS)));
-                if (content instanceof LastHttpContent) {
-                    if (ThreadJournal.ENABLED)
-                        journal("LastHttpContent on", this, "ch=", channel());
-                    if (resBytes == 0)
-                        error(new InvalidSparqlResultsException("Zero-byte results"));
-                    else
-                        parser.feedEnd();
-                }
-            } catch (TerminatedException|CancelledException e) {
-                journal("abort content() on ", this, "due to down term|cancel");
-                ctx.close();
+            } catch (TerminatedException | CancelledException e) {
+                journal("parser already terminated, err=", e, "on", this);
+                cancel(requireNonNull(downstream).cookie());
             }
+        }
+
+        @Override
+        protected void onFailureResponse(@Nullable HttpResponse response, @Nullable ByteRope body, boolean bodyComplete) {
+            String msg;
+            if (response == null) {
+                if (downstream != null && downstream.retry())
+                    return; // handled
+                msg = "server closed connection without a response";
+            } else {
+                var sb = new StringBuilder();
+                sb.append("HTTP ").append(response.status().code()).append(": ");
+                if (body == null || body.len == 0) {
+                    sb.append("(no response body)");
+                } else {
+                    sb.append(body.toString(0, Math.min(256, body.len)).replace("\n", "\\n"));
+                    if (body.len > 256)
+                        sb.append("... (").append(body.len).append(" bytes)");
+                    if (!bodyComplete)
+                        sb.append(" (connection closed before completed)");
+                }
+                msg = sb.toString();
+            }
+            completeDownstream(new FSServerException(endpoint, msg));
+        }
+
+        @Override protected void onClientSideError(Throwable cause) {
+            completeDownstream(cause);
+        }
+
+        @Override protected void onSuccessLastContent() {
+            requireNonNull(parser).feedEnd();
+        }
+
+        @Override protected void onCancelled(boolean empty) {
+            completeDownstream(CancelledException.INSTANCE);
+        }
+
+        @Override protected void onIncompleteSuccessResponse(boolean empty) {
+            if (empty && downstream != null && downstream.retry())
+                return; // handled
+            completeDownstream(new InvalidSparqlResultsException(empty
+                    ? "empty SPARQL response"
+                    : "server closed connection before completing SPARQL results"));
+        }
+
+        /* --- --- --- netty events --- --- --- */
+
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+            super.channelUnregistered(ctx);
+            bbView.recycle();
+            bbView = null;
         }
     }
 }

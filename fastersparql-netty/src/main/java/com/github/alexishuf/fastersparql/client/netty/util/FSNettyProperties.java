@@ -46,6 +46,7 @@ public class FSNettyProperties extends FSProperties {
     public static final String CHANNEL_DEBUG_CLIENT       = "fastersparql.netty.channel.debug.client";
     public static final String CHANNEL_DEBUG_SERVER       = "fastersparql.netty.channel.debug.server";
     public static final String CHANNEL_INFO               = "fastersparql.netty.channel.info";
+    public static final String SERVER_HANDLER_POOL        = "fastersparql.netty.server.handler-pool";
 
     /* --- --- --- default values --- --- --- */
 
@@ -60,6 +61,7 @@ public class FSNettyProperties extends FSProperties {
     public static final boolean DEF_CHANNEL_INFO            = FSNettyProperties.class.desiredAssertionStatus();
     public static final int     DEF_ELG_KEEPALIVE           = 15;
     public static final int     DEF_WS_MAX_HTTP             = 8192;
+    public static final int     DEF_SERVER_HANDLER_POOL     = 512;
 
     /* --- --- --- accessors --- --- --- */
 
@@ -206,4 +208,11 @@ public class FSNettyProperties extends FSProperties {
      * {@link #CHANNEL_INFO} property may have no effect due to caching.</p>
      */
     public static boolean channelInfo() {  return readBoolean(CHANNEL_INFO, DEF_CHANNEL_INFO); }
+
+    /**
+     * The pool capacity for server-side pooling of SPARQL-level handlers.
+     *
+     * <p>If set to zero pooling is disabled. The default is {@link #DEF_SERVER_HANDLER_POOL}.</p>
+     */
+    public static int serverHandlerPool() { return readNonNegativeInteger(SERVER_HANDLER_POOL, DEF_SERVER_HANDLER_POOL); }
 }

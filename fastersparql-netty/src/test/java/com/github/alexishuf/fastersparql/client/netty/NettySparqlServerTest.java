@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
@@ -8,7 +9,6 @@ import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
-import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.BindType;
@@ -16,8 +16,7 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,6 +29,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.FlowModel.EMIT;
+import static com.github.alexishuf.fastersparql.FlowModel.ITERATE;
 import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.JSON;
@@ -42,14 +43,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class NettySparqlServerTest {
-    private NettySparqlServer createServer(Results results,
+    private NettySparqlServer createServer(FlowModel flowModel, Results results,
                                            @Nullable ResultsSparqlClient innerClient) {
         boolean shared = innerClient != null;
         if (innerClient == null) {//noinspection resource
             innerClient = new ResultsSparqlClient(false);
             innerClient.answerWith(results.query(), results);
         }
-        return new NettySparqlServer(innerClient, shared, "0.0.0.0", 0);
+        return new NettySparqlServer(flowModel, innerClient, shared, "0.0.0.0", 0);
     }
 
     private SparqlClient createClient(NettySparqlServer server, SparqlResultFormat fmt,
@@ -60,12 +61,8 @@ class NettySparqlServerTest {
         return FS.clientFor(ep);
     }
 
-    record Scenario(Results results, ResultsSparqlClient innerClient, SparqlResultFormat fmt,
-                    SparqlMethod meth, BatchType<?> bType) { }
-
-    private static final AtomicInteger nextRSClientId = new AtomicInteger(1);
-    private static final List<SparqlClient.Guard> GUARDS = new ArrayList<>();
-    private static final List<Scenario> SCENARIOS = new ArrayList<>();
+    record Scenario(FlowModel flowModel, Results results, ResultsSparqlClient innerClient,
+                    SparqlResultFormat fmt, SparqlMethod meth, BatchType<?> bt) { }
 
     private static ResultsSparqlClient rsClient(boolean nativeBind) {
         String ep = "http://"+nextRSClientId.getAndAdd(1)+".example.org/sparql";
@@ -74,7 +71,11 @@ class NettySparqlServerTest {
         return client;
     }
 
-    @SuppressWarnings("resource") @BeforeAll static void beforeAll() {
+    private static final AtomicInteger nextRSClientId = new AtomicInteger(1);
+    private static final List<SparqlClient.Guard> GUARDS = new ArrayList<>();
+    private static final List<Scenario> SCENARIOS = new ArrayList<>();
+
+    @BeforeAll @SuppressWarnings("resource") static void beforeAll() {
         var askFalse = Results.negativeResult()
                 .query("ASK { exns:Bob foaf:name \"bob\"}");
         var askTrue = Results.positiveResult()
@@ -135,13 +136,13 @@ class NettySparqlServerTest {
         // generate variations on results (format, method, batch type)
         var methods = List.of(GET, POST, FORM, WS);
         for (var proto  : data) {
-            var r  = proto.results;
+            var r = proto.results;
             var ic = proto.innerClient;
             for (var bType : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
                 for (SparqlMethod meth : methods) {
                     if (meth == WS) continue;
                     for (var fmt : List.of(TSV, JSON))
-                        SCENARIOS.add(new Scenario(r, ic, fmt, meth, bType));
+                        SCENARIOS.add(new Scenario(EMIT, r, ic, fmt, meth, bType));
                 }
                 if (ic == null) {
                     ic = rsClient(false)
@@ -150,8 +151,13 @@ class NettySparqlServerTest {
                                     .with(r.expected())
                                 .end();
                 }
-                SCENARIOS.add(new Scenario(r, ic.asEmulatingWs(), SparqlResultFormat.WS, WS, bType));
+                SCENARIOS.add(new Scenario(EMIT, r, ic.asEmulatingWs(),
+                                           SparqlResultFormat.WS, WS, bType));
             }
+        }
+        for (int i = 0, n = SCENARIOS.size(); i < n; i++) {
+            var s = SCENARIOS.get(i);
+            SCENARIOS.add(new Scenario(ITERATE, s.results, s.innerClient, s.fmt, s.meth, s.bt));
         }
     }
 
@@ -163,60 +169,49 @@ class NettySparqlServerTest {
     }
 
     static Stream<Arguments> test() {
-        return SCENARIOS.stream().map(s -> arguments(s.results, s.innerClient,
-                                                       s.fmt, s.meth, s.bType));
-    }
-
-    private void resetJournalAndCheck(Results results, SparqlClient client,
-                                      BatchType<?> batchType) {
-        NettyChannelDebugger.reset();
-        ThreadJournal.resetJournals();
-        results.check(client, batchType);
+        return SCENARIOS.stream().map(Arguments::arguments);
     }
 
     @ParameterizedTest @MethodSource
-    void test(Results results, @Nullable ResultsSparqlClient innerClient,
-              SparqlResultFormat fmt, SparqlMethod meth, BatchType<?> batchType) {
-        if (meth == WS && fmt != SparqlResultFormat.WS)
+    void test(Scenario s) {
+        if (s.meth == WS && s.fmt != SparqlResultFormat.WS)
             return;
-        if (innerClient == null)
-            assertFalse(results.hasBindings());
+        if (s.innerClient == null)
+            assertFalse(s.results.hasBindings());
         int concurrent = Runtime.getRuntime().availableProcessors();
         long minNs = 400_000_000L;
-        try (var server = createServer(results, innerClient);
-             var client = createClient(server, fmt, meth)) {
-            resetJournalAndCheck(results, client, batchType);
+        try (var server = createServer(s.flowModel, s.results, s.innerClient);
+             var client = createClient(server, s.fmt, s.meth)) {
+            Watchdog.reset();
+            s.results.check(client, s.bt);
             long startNs = nanoTime(); // repeat same test serially
-            for (int i = 0; i < 200 || nanoTime()-startNs < minNs; i++)
-                resetJournalAndCheck(results, client, batchType);
+            for (int i = 0; i < 200 || nanoTime()-startNs < minNs; i++) {
+                Watchdog.reset();
+                s.results.check(client, s.bt);
+            }
             startNs = nanoTime(); // saturate CPUs with same test
             for (int i = 0; i < 10 || nanoTime()-startNs < minNs; i++) {
-                NettyChannelDebugger.reset();
-                ThreadJournal.resetJournals();
+                Watchdog.reset();
                 assertEquals(List.of(), range(0, concurrent).parallel().mapToObj(ignored -> {
                     try {
-                        results.check(client, batchType);
+                        s.results.check(client, s.bt);
                         return null;
-                    } catch (Throwable t) {
-                        Async.uninterruptibleSleep(100);
-                        NettyChannelDebugger.dumpAndReset(System.out);
-                        return t;
-                    }
+                    } catch (Throwable t) { return t; }
                 }).filter(Objects::nonNull).toList());
             }
         }
     }
 
     static Stream<Arguments> methodsAndFormats() {
-        return Stream.of(
-                arguments(GET,  TSV),
-                arguments(GET,  JSON),
-                arguments(POST, TSV),
-                arguments(POST, JSON),
-                arguments(FORM, TSV),
-                arguments(FORM, JSON),
-                arguments(WS,   SparqlResultFormat.WS)
-        );
+        return Arrays.stream(FlowModel.values()).flatMap(fm -> Stream.of(
+                arguments(fm, GET,  TSV),
+                arguments(fm, GET,  JSON),
+                arguments(fm, POST, TSV),
+                arguments(fm, POST, JSON),
+                arguments(fm, FORM, TSV),
+                arguments(fm, FORM, JSON),
+                arguments(fm, WS,   SparqlResultFormat.WS)
+        ));
     }
 
     public static class TestException extends RuntimeException {
@@ -226,45 +221,54 @@ class NettySparqlServerTest {
     }
 
     @ParameterizedTest @MethodSource("methodsAndFormats")
-    void testThrowInServer(SparqlMethod meth,  SparqlResultFormat fmt) {
+    void testThrowInServer(FlowModel flowModel, SparqlMethod meth,  SparqlResultFormat fmt) {
         Results res = results("?x").error(FSServerException.class)
                                    .query("SELECT * WHERE { ?x a foaf:Person }");
         try (var inner = new ResultsSparqlClient(true)
                 .answerWith(res.query(), new TestException("throw-in-server"));
-             var server = createServer(res, inner);
+             var server = createServer(flowModel, res, inner);
              var client = createClient(server, fmt, meth)) {
             res.check(client);
             res.check(client); // repeatable
         }
     }
 
+    record ServerScenario(FlowModel flowModel, Results results, ResultsSparqlClient innerClient) {
+        public ServerScenario(Scenario s) {this(s.flowModel, s.results, s.innerClient);}
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) return true;
+            return obj instanceof ServerScenario r
+                    && Objects.equals(this.flowModel, r.flowModel)
+                    && this.results == r.results && this.innerClient == r.innerClient;
+        }
+    }
 
     @Test void parallelTest() throws Exception {
-        int nIterations = 16;
-        Map<Results, Map<ResultsSparqlClient, List<Scenario>>> groups = new IdentityHashMap<>();
+        int nIterations = Runtime.getRuntime().availableProcessors();
+        Map<ServerScenario, List<Scenario>> groups = new HashMap<>();
         for (Scenario s : SCENARIOS) {
-            //noinspection unused
-            groups.computeIfAbsent(s.results, k -> new IdentityHashMap<>())
-                    .computeIfAbsent(s.innerClient, k -> new ArrayList<>())
-                    .add(s);
+            groups.computeIfAbsent(new ServerScenario(s), ignored -> new ArrayList<>()).add(s);
         }
         //noinspection MismatchedQueryAndUpdateOfCollection
-        try (var servers = new AutoCloseableSet<NettySparqlServer>();
-             var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
-            for (var e0 : groups.entrySet()) {
-                for (var e1 : e0.getValue().entrySet()) {
-                    var server = createServer(e0.getKey(), e1.getKey());
-                    servers.add(server);
-                    for (Scenario s : e1.getValue()) {
-                        tasks.add(() -> {
-                            try (var client = createClient(server, s.fmt, s.meth)) {
-                                for (int i = 0; i < nIterations; i++)
-                                    s.results.check(client, s.bType);
-                            }
-                        });
-                    }
+        try (var servers = new AutoCloseableSet<>();
+             var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
+            for (var entry : groups.entrySet()) {
+                ServerScenario ss = entry.getKey();
+                var server = createServer(ss.flowModel, ss.results, ss.innerClient);
+                servers.add(server);
+                for (Scenario s : entry.getValue()) {
+                    tasks.add(() -> {
+                        try (var client = createClient(server, s.fmt, s.meth)) {
+                            for (int i = 0; i < nIterations; i++)
+                                s.results.check(client, s.bt);
+                        }
+                    });
                 }
+                tasks.awaitAndReset();
             }
         }
     }
+
 }

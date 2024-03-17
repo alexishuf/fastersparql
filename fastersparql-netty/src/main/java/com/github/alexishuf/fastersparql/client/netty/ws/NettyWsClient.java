@@ -16,10 +16,14 @@ import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.websocketx.extensions.compression.WebSocketClientCompressionHandler;
 import io.netty.handler.ssl.SslContext;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.URI;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public class NettyWsClient implements AutoCloseable {
     private final EventLoopGroupHolder elgHolder;
@@ -78,8 +82,19 @@ public class NettyWsClient implements AutoCloseable {
     }
 
     private void recycle(Channel ch) {
-        if (pool != null) pool.release(ch);
+        if (pool != null)
+            pool.release(ch);
     }
+
+
+    /**
+     * Get a executor that allows scheduling arbitrary task in a thread of the
+     * {@link EventLoopGroup} that is used to process events for {@link Channel}s established by
+     * {@link #open(NettyWsClientHandler)}.
+     *
+     * @return An {@link Executor}
+     */
+    public @NonNull Executor executor() { return bootstrap.config().group(); }
 
     /**
      * Open (or reuse an idle) WebSocket session and handle events with {@code handle}.
@@ -111,10 +126,12 @@ public class NettyWsClient implements AutoCloseable {
                 } else {
                     nettyHandler.delegate(handler);
                 }
-            } catch (ExecutionException e) {
-                handler.detach(e.getCause());
             } catch (Throwable t) {
-                handler.detach(t);
+                Throwable cause = t;
+                if (cause instanceof ExecutionException e)
+                    cause = e.getCause();
+                journal("detach ", handler, " on failed open():", cause);
+                handler.detach(cause);
             }
         });
     }

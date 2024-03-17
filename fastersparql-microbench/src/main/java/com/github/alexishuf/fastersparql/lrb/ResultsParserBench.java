@@ -13,12 +13,9 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.results.AbstractWsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
-import com.github.alexishuf.fastersparql.sparql.results.ResultsSender;
-import com.github.alexishuf.fastersparql.sparql.results.WsClientParser;
-import com.github.alexishuf.fastersparql.sparql.results.WsFrameSender;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
-import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -57,7 +54,6 @@ public class ResultsParserBench {
     private volatile int drainedRows = -1;
     private volatile BIt<? extends Batch> it = null;
     private Thread drainer;
-    private final NopWsFrameSender wsFrameSender = new NopWsFrameSender();
 
     @SuppressWarnings("unchecked") @Setup(Level.Trial) public void setup() {
         long start = Timestamp.nanoTime();
@@ -109,25 +105,6 @@ public class ResultsParserBench {
         drainer.join();
     }
 
-    private static class NopWsFrameSender<S extends ByteSink<S, T>, T>
-            implements WsFrameSender<S, T>{
-        @Override public void sendFrame(T content) {}
-        @Override public S createSink() {return null;}
-
-        @Override public ResultsSender<S, T> createSender() {
-            return new ResultsSender<>(WsSerializer.create(), null) {
-                @Override public void preTouch() {}
-                @Override public void sendInit(Vars vars, Vars subset, boolean isAsk) {}
-                @Override public void sendSerializedAll(Batch<?> batch) {}
-                @Override public <B extends Batch<B>> void sendSerializedAll(B batch, ResultsSerializer.SerializedNodeConsumer<B> nodeConsumer) {}
-                @Override public void sendSerialized(Batch<?> batch, int from, int nRows) {}
-                @Override public void sendTrailer() {}
-                @Override public void sendError(Throwable cause) {}
-                @Override public void sendCancel() {}
-            };
-        }
-    }
-
     @SuppressWarnings("unchecked") private <B extends Batch<B>>void drain() {
         while (!stopDrainer) {
             while (!stopDrainer && it == null)
@@ -171,9 +148,10 @@ public class ResultsParserBench {
 
     private ResultsParser createParser(CallbackBIt delegate) {
         if (format != SparqlResultFormat.WS) return createFor(format, delegate);
-        WsClientParser parser = new WsClientParser(delegate);
-        parser.setFrameSender(wsFrameSender);
-        return parser;
+        return new AbstractWsClientParser(delegate, null) {
+            @Override protected void handleBindRequest(long n) {}
+            @Override protected void onPing() {}
+        };
     }
 
     @Benchmark public int parse(Blackhole blackhole) {

@@ -52,7 +52,9 @@ public final class NettyClientBuilder {
         if (shareEventLoopGroup) {
             return SharedEventLoopGroupHolder.get();
         } else {
-            return new EventLoopGroupHolder(null, 0, TimeUnit.SECONDS);
+            String name = "NettyClientBuilder@"+Integer.toHexString(System.identityHashCode(this));
+            return new EventLoopGroupHolder(name, null, 0, TimeUnit.SECONDS,
+                                            FSNettyProperties.nettyEventLoopThreads());
         }
     }
 
@@ -104,7 +106,7 @@ public final class NettyClientBuilder {
     }
 
     @Override public String toString() {
-        return "NettyClientBuilder"
+        return "NettyClientBuilder@" + Integer.toHexString(System.identityHashCode(this))
                 + '[' + (shareEventLoopGroup ? "sharedELG" : "exclusiveELG")
                 + ',' + (pooled ? "" : "!") + "pooled"
                 + (pooled ? ',' + (poolFIFO ? "pool FIFO" : "pool LIFO") : "")

@@ -7,8 +7,6 @@ import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
-import com.github.alexishuf.fastersparql.exceptions.FSException;
-import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
@@ -106,9 +104,11 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     @Override public boolean cancel(boolean ack) {
         if (ThreadJournal.ENABLED)
             journal(isTerminated() ? "late cancel ack=" : "cancel, ack=", ack?1:0, "on", this);
-        FSException e = ack ? new FSCancelledException()
-                            : new FSServerException("server spontaneously cancelled");
-        return complete(e);
+        if (ack)
+            return complete(new FSCancelledException());
+        else
+            return tryCancel();
+
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

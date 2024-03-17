@@ -182,52 +182,62 @@ public class UriUtils {
      * Replace all %-escapes with the escaped characters
      *
      * @param string the string to have %-escapes decoded
+     * @param dst if {@code != null}, result will be written to it and {@code dst} itself
+     *            will be returned by this call
      * @return a new string with escapes decoded or the same instance there are no escapes.
      */
-    public static @PolyNull SegmentRope unescape(@PolyNull PlainRope string, int begin, int end) {
+    public static @PolyNull ByteRope unescape(@PolyNull PlainRope string, int begin, int end,
+                                                 @Nullable ByteRope dst) {
         if (string == null)
             return null;
         int i = string.skipUntil(begin, end, '%');
-        ByteRope b = new ByteRope(end-begin);
+        if (dst == null)
+            dst = new ByteRope(end-begin);
         while (i < end) {
-            b.append(string, begin, i);
+            dst.append(string, begin, i);
             if (i + 2 < end) {
                 try {
-                    b.append((char) Integer.parseInt(string.toString(i+1, i+3), 16));
+                    dst.append((char) Integer.parseInt(string.toString(i+1, i+3), 16));
                 } catch (NumberFormatException e) {
                     log.warn("Invalid %-escape {}, will not decode", string.sub(i, i+3));
-                    b.append(string, i, i + 3);
+                    dst.append(string, i, i + 3);
                 }
             } else {
                 log.debug("Truncated %-escape on string end: \"{}\"", string);
             }
             i = string.skipUntil(begin = i+3, end, '%');
         }
-        return b.append(string, begin, end);
+        return dst.append(string, begin, end);
+    }
+    public static @PolyNull SegmentRope unescape(@PolyNull PlainRope string, int begin, int end) {
+        return unescape(string, begin, end, null);
     }
 
     public static @PolyNull ByteRope unescapeToRope(@PolyNull String string) {
+        return unescapeToRope(string, null);
+    }
+    public static @PolyNull ByteRope unescapeToRope(@PolyNull String string,
+                                                    @Nullable ByteRope dst) {
         if (string == null)
             return null;
         int begin = 0, len = string.length(), i = string.indexOf('%');
-        if (i == -1)
-            return new ByteRope(string);
-        var b = new ByteRope(len);
+        if (dst == null)
+            dst = new ByteRope(len);
         while (i != -1) {
-            b.append(string, begin, i);
+            dst.append(string, begin, i);
             if (i + 2 < len) {
                 try {
-                    b.append((char) Integer.parseInt(string.substring(i+1, i+3), 16));
+                    dst.append((char) Integer.parseInt(string.substring(i+1, i+3), 16));
                 } catch (NumberFormatException e) {
                     log.warn("Invalid %-escape {}, will not decode", string.substring(i, i+3));
-                    b.append(string, i, i + 3);
+                    dst.append(string, i, i + 3);
                 }
             } else {
                 log.debug("Truncated %-escape on string end: \"{}\"", string);
             }
             i = string.indexOf('%', begin = i+3);
         }
-        return b.append(string, begin, len);
+        return dst.append(string, begin, len);
     }
 
     public static @PolyNull String unescape(@PolyNull String string) {

@@ -4,7 +4,7 @@ import io.netty.channel.Channel;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface ChannelBound {
-    @Nullable Channel channel();
+    @Nullable Channel channelOrLast();
     void setChannel(Channel ch);
     String journalName();
 }
