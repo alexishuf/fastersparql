@@ -32,6 +32,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.File;
@@ -49,14 +50,15 @@ import static com.github.alexishuf.fastersparql.FSProperties.OP_WEAKEN_DISTINCT;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.System.setProperty;
+import static java.util.concurrent.TimeUnit.*;
 
 @State(Scope.Thread)
 @Threads(1)
 @Fork(value = 3, warmups = 0, jvmArgsPrepend = {"--enable-preview", "--add-modules", "jdk.incubator.vector"})
-@Measurement(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
-@Warmup(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 10, time = 500, timeUnit = MILLISECONDS)
+@Warmup(iterations = 3, time = 2_000, timeUnit = MILLISECONDS)
 @BenchmarkMode({Mode.AverageTime})
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@OutputTimeUnit(MILLISECONDS)
 public class QueryBench {
 
     @Param({"S.*"}) private String queries;
@@ -68,6 +70,7 @@ public class QueryBench {
     @Param({"COMPRESSED"}) BatchKind batchKind;
     @Param({"ITERATE", "EMIT"}) FlowModel flowModel;
     @Param({"false", "true"}) boolean weakenDistinct;
+    @Param({"true"}) boolean thermalCooldown;
 //    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
@@ -112,9 +115,8 @@ public class QueryBench {
     private RowCounter rowCounter;
     private RopeLenCounter ropeLenCounter;
     private TermLenCounter termLenCounter;
-    private long iterationStart = 0;
     private int iterationNumber = 0;
-    private int iterationMs = 0;
+    private long iterationStart, lastIterationMs;
     private final MetricsConsumer metricsConsumer = new MetricsConsumer();
     private int lastBenchResult;
     private Blackhole bh;
@@ -254,34 +256,49 @@ public class QueryBench {
             //watchdog.join(Duration.ofSeconds(1));
         //} catch (InterruptedException ignored) {}
         fedHandle.close();
+        SharedEventLoopGroupHolder.get().shutdownNowIfPossible(5, SECONDS);
         FS.shutdown();
         journal("trialTearDown: exit");
     }
 
-    @Setup(Level.Iteration) public void iterationSetup() throws IOException {
-        journal("iterationSetup");
-//        CompressedBatchType.ALT = alt;
+    @Setup(Level.Iteration) public void iterationSetup(BenchmarkParams opts) throws IOException {
+        journal("iterationSetup", iterationNumber);
+        //CompressedBatchType.ALT = alt;
         lastBenchResult = -1;
-        // drop unreachable references inside pools, do I/O and call for GC
-        PoolCleaner.INSTANCE.sync();
-        IOUtils.fsync(50_000);
-        Async.uninterruptibleSleep(10);
-        if ((iterationNumber&1) == 0)
-            System.gc();
+        PoolCleaner.INSTANCE.sync(); // allow collection of objects leaked from pools
+        IOUtils.fsync(500_000); // generous timeout because there should be no I/O
 
-        int slack = Math.min(2_000, 50+iterationMs);
-        journal("interationSetup(), slack=", slack);
-        if (slack > 1_000)
-            System.out.printf("dynamic thermal slack: %dms\n", slack);
-        Async.uninterruptibleSleep(slack);
-        iterationStart = Timestamp.nanoTime();
-        journal("iterationSetup(), start=", iterationStart);
+        var wOpts  = opts.getWarmup();
+        boolean warmup  = iterationNumber < wOpts.getCount();
+        boolean first = iterationNumber == wOpts.getCount();
+        var itOpts = warmup ? wOpts : opts.getMeasurement();
+        long estimateMs = itOpts.getTime().convertTo(MILLISECONDS);
+        if (!first && lastIterationMs > estimateMs)
+            estimateMs = lastIterationMs;
+        int idle = thermalCooldown && !warmup
+                 ? (int)Math.min(5_000, estimateMs) // aim for 50% work, 50% idle
+                 : (int)Math.min(estimateMs/10, 100); // minimal sleep for background tasks
+        if (first) {
+            System.gc();
+            if (thermalCooldown) {
+                System.out.print("\nThermal cooldown of 5s...");
+                System.out.flush();
+                Async.uninterruptibleSleep(5_000);
+                System.out.printf("\nWill sleep %dms before each subsequent iteration\n", idle);
+            } else {
+                Async.uninterruptibleSleep(250); // slack for GC & JIT
+            }
+        } else {
+            if (idle > 1_000 && iterationNumber == 0)
+                System.out.printf("Will sleep %dms before each warmup iteration\n", idle);
+            Async.uninterruptibleSleep(idle);
+        }
+        iterationStart = System.nanoTime();
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
-        journal("iterationTearDown");
         ++iterationNumber;
-        iterationMs = (int)Math.max(1, (Timestamp.nanoTime()-iterationStart)/1_000_000L);
+        lastIterationMs = (System.nanoTime()-iterationStart)/1_000_000L;
     }
 
     private int checkResult(int r) {
