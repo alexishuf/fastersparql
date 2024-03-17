@@ -29,7 +29,7 @@ public interface BatchQueue<B extends Batch<B>> {
     }
     final class CancelledException extends QueueStateException {
         public static final CancelledException INSTANCE = new CancelledException();
-        private CancelledException() {super("AsyncEmitter cancel()ed, cannot offer/copy");}
+        private CancelledException() {super("CompletableBatchQueue cancel()ed, cannot offer/copy");}
     }
     final class TerminatedException extends QueueStateException {
         public static final TerminatedException INSTANCE = new TerminatedException();
