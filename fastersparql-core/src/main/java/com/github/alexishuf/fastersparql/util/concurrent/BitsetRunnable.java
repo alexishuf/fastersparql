@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import org.checkerframework.checker.fenum.qual.SwingCompassDirection;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,9 +23,9 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
     private static final int CHG_EXECUTOR = 0x00000001;
     private static final int SKIP         = 0x00000002;
     private static final int QUEUED       = 0x80000000;
-    private static final int SPECIAL_METHODS  = CHG_EXECUTOR|SKIP|QUEUED;
-    private static final int FIRST_METHOD_IDX = numberOfTrailingZeros(SKIP);
-    private static final int LAST_IDX         = numberOfTrailingZeros(QUEUED);
+    private static final int SPECIAL_METHODS = CHG_EXECUTOR|SKIP|QUEUED;
+    private static final int FIRST_IDX       = numberOfTrailingZeros(SKIP);
+    private static final int LAST_IDX        = numberOfTrailingZeros(QUEUED);
     private static final Logger log = LoggerFactory.getLogger(BitsetRunnable.class);
     private static final VarHandle A, THREAD, SET_EXECUTOR_LOCK;
     static {
@@ -51,7 +52,7 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         private final Class<?> receiver;
         private final MethodHandles.Lookup lookup;
         private int journalBitset;
-        private int size = FIRST_METHOD_IDX+1;
+        private int size = FIRST_IDX+1;
         private final MethodHandle[] methods = new MethodHandle[32];
         private final String[] methodNames = new String[32];
 
@@ -59,9 +60,9 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             this.lookup = lookup;
             this.receiver = lookup.lookupClass();
             Arrays.fill(methodNames, "UNREGISTERED");
-            methodNames[CHG_EXECUTOR]     = "CHG_EXECUTOR";
-            methodNames[SKIP]             = "SKIP";
-            methodNames[LAST_IDX]         = "LAST";
+            methodNames[numberOfTrailingZeros(CHG_EXECUTOR)] = "CHG_EXECUTOR";
+            methodNames[numberOfTrailingZeros(SKIP)]         = "SKIP";
+            methodNames[numberOfTrailingZeros(QUEUED)]       = "QUEUED";
         }
 
         public int add(String name, boolean journal) {
@@ -132,6 +133,7 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             if ((a& QUEUED) == 0 && (int)A.compareAndExchangeRelease(this, a, a&~CHG_EXECUTOR) == a)
                 return; // done: no run() scheduled or scheduled on the new executor
 
+            journal("concurrent doRun, set exec rcv=", receiver);
             // wait until:
             //   1. a previously scheduled run() concurrent with this method consumes CHG_EXECUTOR
             //   2. this method was called from within run(), in which case the only way
@@ -142,9 +144,10 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             for (int i=0; (a&CHG_EXECUTOR) != 0 && running != null && running != self ;++i) {
                 if ((i&0xf) == 0xf) Thread.yield();
                 else                onSpinWait();
-                a =    (int)A     .getAcquire(this);
+                a = (int)A.getAcquire(this);
                 running = (Thread)THREAD.getAcquire(this);
             }
+            journal("waited concurrent doRun, set exec rcv=", receiver);
         } finally {
             SET_EXECUTOR_LOCK.setRelease(this, 0);
         }
@@ -171,35 +174,33 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
      * @throws RejectedExecutionException if the executor is set, {@code this} is not scheduled
      *                                    and the executor rejects new tasks.
      */
-    public boolean sched(int methods) {
+    public void sched(int methods) {
         methods &= ~QUEUED;
         if (ThreadJournal.ENABLED && (journalBitset&methods) != 0)
             journalSched(methods);
         int queue = plainActions, witness;
         while ((witness=(int)A.compareAndExchange(this, queue, queue|methods)) != queue)
             queue = witness;
-        // if witness had LAST, run() will see methods or will call enqueue()
-        return (queue& QUEUED) != 0 || enqueue(queue|methods);
+        // if witness had QUEUED, run() will see methods or will call enqueue()
+        if ((queue&QUEUED) == 0)
+            enqueueIfNot(queue|methods);
     }
 
-    private boolean enqueue(int queue) {
-        int witness;
-        while ((queue& QUEUED) == 0) {
-            var executor = this.executor;
-            if (executor == null) {
-                return false;
-            } else if ((witness=(int)A.compareAndExchange(this, queue, queue| QUEUED)) == queue) {
-                try {
-                    executor.execute(this);
-                } catch (RejectedExecutionException re) {
-                    handleRejection();
-                }
-                return true;
-            } else {
-                queue = witness;
+    private void enqueueIfNot(int queue) {
+        for (int witness; (queue&QUEUED) == 0; queue = witness) {
+            if ((witness=(int)A.compareAndExchange(this, queue, queue|QUEUED)) == queue) {
+                enqueueUnchecked();
+                break;
             }
         }
-        return true;
+    }
+
+    private void enqueueUnchecked() {
+        try {
+            executor.execute(this);
+        } catch (RejectedExecutionException re) {
+            handleRejection();
+        }
     }
 
     private void handleRejection() {
@@ -215,7 +216,6 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
     public boolean inRun() {
         return plainThread == currentThread();
     }
-
 
     /**
      * Attempt to run queued actions from within  this call if there is no concurrent
@@ -253,17 +253,23 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         Thread self = currentThread();
         try {
             THREAD.setRelease(this, self);
-            int continueMask = stopWhen|CHG_EXECUTOR|QUEUED, queue;
+            int continueMask = stopWhen|CHG_EXECUTOR|QUEUED, queue, done = 0;
             while (((queue=(int)A.getAcquire(this))&continueMask) == QUEUED) {
                 int mthMask = Integer.lowestOneBit(queue), ex = queue;
                 while ((queue=(int)A.compareAndExchangeRelease(this, ex, ex&~mthMask)) != ex)
                     ex = queue;
                 invoke(mthMask);
+                if ((done&mthMask) != 0)
+                    continueMask |= mthMask; // break before running same method for 3rd time
+                else
+                    done |= mthMask;
             }
             if ((queue&CHG_EXECUTOR) != 0)
                 doChgExecutor();
-            else if (queue != 0) // consumed LAST concurrently with sched(), must re-enqueue
-                enqueue(queue);
+            else if ((queue&QUEUED) != 0 && (queue&stopWhen) == 0)
+                enqueueUnchecked(); // stopped due to method spam 2 invocations scheduled
+            else if (queue != 0)
+                enqueueIfNot(queue); // stopWhen or consumed QUEUED concurrently with sched()
         } catch (Throwable t) {
             journal(t, "on BitsetRunnable recv=", receiver);
             log.error("{} on {}.run()", t.getClass().getSimpleName(), this, t);
@@ -280,8 +286,8 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
     protected void onMethodError(String methodName, Throwable t) {
         journal(t.getClass().getSimpleName()+":"+t.getMessage()+"while running action=",
                 methodName, "on", receiver);
-        log.error("Ignoring {} thrown during invocation of {} on {}", t.getClass(),
-                methodName, receiver);
+        log.error("{} thrown during invocation of {} on {}", t.getClass().getSimpleName(),
+                  methodName, receiver, t);
     }
 
     private void doChgExecutor() {
@@ -289,7 +295,7 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         int e = (int)A.getAcquire(this), a;
         while ((a=(int)A.compareAndExchangeRelease(this, e, e&~CHG_EXECUTOR)) != e)
             e = a;
-        if ((e& QUEUED) != 0)  // LAST makes enqueue() a no-op, enqueue now
+        if ((e&QUEUED) != 0)  // QUEUED makes enqueue() a no-op, enqueue now
             executor.execute(this);
     }
 
