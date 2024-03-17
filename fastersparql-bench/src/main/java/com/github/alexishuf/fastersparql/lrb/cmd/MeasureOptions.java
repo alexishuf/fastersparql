@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
+import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
@@ -36,10 +37,6 @@ public class MeasureOptions {
     @Option(names = "--consumer", description = "What to do with results from queries.")
     public ResultsConsumer consumer = COUNT;
 
-    public enum FlowModel {
-        ITERATE,
-        EMIT,
-    }
     @Option(names = {"--flow"}, description = "Whether to iterate over results (pull model) or react to results (push model)")
     public FlowModel flowModel = FlowModel.ITERATE;
 

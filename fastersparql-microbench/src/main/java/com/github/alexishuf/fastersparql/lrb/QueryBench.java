@@ -2,6 +2,8 @@ package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.FlowModel;
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -64,7 +66,7 @@ public class QueryBench {
     @Param({"true"}) boolean builtinPlans;
     @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
-    @Param({"ITERATE", "EMIT"}) MeasureOptions.FlowModel flowModel;
+    @Param({"ITERATE", "EMIT"}) FlowModel flowModel;
     @Param({"false", "true"}) boolean weakenDistinct;
 //    @Param({"false","true"}) boolean alt;
 

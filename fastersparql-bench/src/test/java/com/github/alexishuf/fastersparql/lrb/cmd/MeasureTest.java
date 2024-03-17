@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
@@ -36,9 +37,9 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.FlowModel.EMIT;
+import static com.github.alexishuf.fastersparql.FlowModel.ITERATE;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
-import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.EMIT;
-import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.FlowModel.ITERATE;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.lrb.sources.SourceKind.*;
@@ -119,7 +120,7 @@ class MeasureTest {
     private void doTest(SourceKind sourceKind, boolean jsonPlans, String queries,
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer,
-                        MeasureOptions.FlowModel flowModel) throws IOException {
+                        FlowModel flowModel) throws IOException {
         int nReps = queries.startsWith("S") ? 4 : queries.startsWith("C") ? 2 : 1;
         boolean isS2 = queries.equals("S2");
         if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
