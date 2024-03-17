@@ -338,7 +338,7 @@ public abstract class Stateful {
     protected int resetForRebind(int clearFlags, int setFlags) {
         int st = lock(plainState);
         try {
-            if ((st & (IS_INIT|IS_TERM|IS_CANCEL_REQ)) == 0)
+            if ((st&(IS_INIT|IS_TERM)) == 0)
                 throw new RebindStateException(this);
             if ((st&RELEASED_MASK) != 0)
                 throw new RebindReleasedException(this);
