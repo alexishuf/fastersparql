@@ -21,7 +21,7 @@ public class JsonSerializer extends ResultsSerializer {
     }
 
     public JsonSerializer() {
-        super(JSON.contentType());
+        super(JSON.asMediaType());
     }
 
     private static final byte[] HDR_BFR = "{\"head\":{\"vars\":[".getBytes(UTF_8);

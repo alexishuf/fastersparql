@@ -20,7 +20,7 @@ public class TsvSerializer extends ResultsSerializer {
     }
 
     public TsvSerializer() {
-        super(TSV.contentType());
+        super(TSV.asMediaType());
     }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {

@@ -14,7 +14,7 @@ import java.util.Map;
 
 public abstract class ResultsSerializer {
     protected int[] columns = null;
-    protected final String contentType;
+    protected final MediaType contentType;
     protected boolean ask = false, empty = true;
     protected Vars vars = Vars.EMPTY, subset = Vars.EMPTY;
 

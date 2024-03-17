@@ -44,7 +44,7 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     protected WsSerializer(int bufferHint) {
-        super(SparqlResultFormat.WS.contentType());
+        super(SparqlResultFormat.WS.asMediaType());
         (prefixAssigner = new WsPrefixAssigner()).reset();
         rowsBuffer = new ByteRope(bufferHint);
     }
