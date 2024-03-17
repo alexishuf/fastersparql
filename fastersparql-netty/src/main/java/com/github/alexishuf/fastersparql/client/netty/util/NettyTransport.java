@@ -14,13 +14,11 @@ import io.netty.incubator.channel.uring.IOUring;
 import io.netty.incubator.channel.uring.IOUringEventLoopGroup;
 import io.netty.incubator.channel.uring.IOUringSocketChannel;
 
-import static com.github.alexishuf.fastersparql.FSProperties.nettyEventLoopThreads;
-
 public enum NettyTransport {
     NIO {
         @Override public boolean isAvailable() { return true; }
-        @Override public EventLoopGroup createGroup() {
-            return new NioEventLoopGroup(nettyEventLoopThreads());
+        @Override public EventLoopGroup createGroup(int threads) {
+            return new NioEventLoopGroup(threads);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return NioSocketChannel.class;
@@ -33,8 +31,8 @@ public enum NettyTransport {
                 return IOUring.isAvailable();
             } catch (ClassNotFoundException e) { return false; }
         }
-        @Override public EventLoopGroup createGroup() {
-            return new IOUringEventLoopGroup(nettyEventLoopThreads());
+        @Override public EventLoopGroup createGroup(int threads) {
+            return new IOUringEventLoopGroup(threads);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return IOUringSocketChannel.class;
@@ -47,8 +45,8 @@ public enum NettyTransport {
                 return KQueue.isAvailable();
             } catch (ClassNotFoundException e) {return false;}
         }
-        @Override public EventLoopGroup createGroup() {
-            return new KQueueEventLoopGroup(nettyEventLoopThreads());
+        @Override public EventLoopGroup createGroup(int threads) {
+            return new KQueueEventLoopGroup(threads);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return KQueueSocketChannel.class;
@@ -61,8 +59,8 @@ public enum NettyTransport {
                 return Epoll.isAvailable();
             } catch (ClassNotFoundException e) {return false;}
         }
-        @Override public EventLoopGroup createGroup() {
-            return new EpollEventLoopGroup(nettyEventLoopThreads());
+        @Override public EventLoopGroup createGroup(int threads) {
+            return new EpollEventLoopGroup(threads);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return EpollSocketChannel.class;
@@ -70,6 +68,6 @@ public enum NettyTransport {
     };
 
     abstract public boolean isAvailable();
-    abstract public EventLoopGroup createGroup();
+    abstract public EventLoopGroup createGroup(int threads);
     abstract public Class<? extends SocketChannel>  channelClass();
 }
