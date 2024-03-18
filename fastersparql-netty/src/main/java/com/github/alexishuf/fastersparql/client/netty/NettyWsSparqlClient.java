@@ -494,7 +494,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 } else if ((st&ST_CAN_RELEASE) != 0) {
                     if ((st&ST_QUERY_SENT) == 0 || (st&ST_GOT_TERM) != 0) {
                         st &= ~ST_SEND_QUERY;
-                        channelRecycler.recycle(ctx.channel());
+                        var recycler = channelRecycler;
+                        channelRecycler = ChannelRecycler.NOP;
+                        recycler.recycle(ctx.channel());
                     } else if ((st&(ST_QUERY_SENT|ST_CANCEL_SENT)) == ST_QUERY_SENT) {
                         st |= ST_SEND_CANCEL;
                         doSendCancel();
