@@ -124,10 +124,11 @@ public class NettySparqlClient extends AbstractSparqlClient {
      */
     private class QueryBIt<B extends Batch<B>> extends SPSCBIt<B> implements ClientStreamNode<B> {
         private final FullHttpRequest request;
-        private @Nullable NettySparqlClient.NettyHandler handler;
+        private @Nullable NettyHandler handler;
         private int retries;
         private boolean backPressured;
         private @Nullable Channel lastCh;
+        private @Nullable String info;
         private int cookie;
 
         public QueryBIt(BatchType<B> batchType, SparqlQuery query) {
@@ -155,10 +156,17 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     .append('@').append(id());
         }
 
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            super.appendToSimpleLabel(sb);
+            if (info != null)
+                sb.append(" info=").append(info);
+        }
+
         /* --- --- --- ClientStreamNode --- --- -- */
 
-        @Override public int      cookie() { return cookie; }
-        @Override public String idString() { return Integer.toString(id()); }
+        @Override public int      cookie()                   { return cookie; }
+        @Override public String idString()                   { return Integer.toString(id()); }
+        @Override public void setInfo(@Nullable String info) { this.info = info; }
 
         @Override public boolean retry() {
             lock();
@@ -262,6 +270,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable Vars mergerFreeVars;
         private @Nullable NettyHandler handler;
         private @MonotonicNonNull Channel lastCh;
+        private @Nullable String info;
         private int retries;
         private int cookie;
 
@@ -291,13 +300,19 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     .append('@').append(idString());
         }
 
+        @Override protected void appendToSimpleLabel(StringBuilder out) {
+            super.appendToSimpleLabel(out);
+            if (info != null) out.append(" info=").append(info);
+        }
+
         /* --- --- --- ClientStreamNode --- --- --- */
 
         @Override public String idString() {
             return Integer.toHexString(System.identityHashCode(this));
         }
 
-        @Override public int cookie() {return cookie;}
+        @Override public int  cookie()                       { return cookie; }
+        @Override public void setInfo(@Nullable String info) { this.info = info;}
 
         @Override public boolean retry() {
             if ((state()&(IS_TERM|GOT_CANCEL_REQ)) != 0) return false;
@@ -422,6 +437,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
     private interface ClientStreamNode<B extends Batch<B>>
             extends CompletableBatchQueue<B>, ConnectionHandler<NettyHandler>, ChannelBound {
         int cookie();
+        void setInfo(@Nullable String info);
         boolean retry();
         String idString();
     }
@@ -437,6 +453,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable ResultsParser<?> parser;
         private @Nullable Charset decodeCS;
         private ByteBufRopeView bbView = ByteBufRopeView.create();
+        private @Nullable String info;
 
         public NettyHandler() { super(netty.executor()); }
 
@@ -473,15 +490,24 @@ public class NettySparqlClient extends AbstractSparqlClient {
             return "C.NHH:"+(ch == null ? "null" : ch.id().asShortText())+"@"+id;
         }
 
+        @Override public String toString() {
+            String str = super.toString();
+            return info == null ? str : str+"{info="+info+"}";
+        }
+
         /* --- --- --- NettyHttpHandler events --- --- --- */
 
         @Override protected void onSuccessResponse(HttpResponse response) {
-            var mt = MediaType.tryParse(response.headers().get(CONTENT_TYPE));
+            HttpHeaders headers = response.headers();
+            info = headers.get("x-fastersparql-info");
+            var downstream = requireNonNull(this.downstream);
+            downstream.setInfo(info);
+            var mt = MediaType.tryParse(headers.get(CONTENT_TYPE));
             if (mt == null)
                 throw new InvalidSparqlResultsException("No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
-            parser = ResultsParser.createFor(fromMediaType(mt), requireNonNull(this.downstream));
+            parser = ResultsParser.createFor(fromMediaType(mt), downstream);
         }
 
         @Override protected void onContent(HttpContent content) {
@@ -504,6 +530,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     return; // handled
                 msg = "server closed connection without a response";
             } else {
+                info = response.headers().get("x-fastersparql-info");
+                if (downstream != null)
+                    downstream.setInfo(info);
                 var sb = new StringBuilder();
                 sb.append("HTTP ").append(response.status().code()).append(": ");
                 if (body == null || body.len == 0) {

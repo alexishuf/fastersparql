@@ -342,7 +342,7 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
     }
 
     protected String toStringNoArgs() {
-        return label(StreamNodeDOT.Label.SIMPLE);
+        return label(StreamNodeDOT.Label.SIMPLE).replace('\n', ' ');
     }
 
     static String cls2name(Class<?> cls) {

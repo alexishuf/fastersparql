@@ -265,6 +265,7 @@ public class NettySparqlServer implements AutoCloseable{
         protected int st;
         private @MonotonicNonNull ByteRope queryRope;
         protected HandlerBitsetRunnable bsRunnable = new HandlerBitsetRunnable();
+        protected @Nullable String info;
         private Channel lastCh;
 
         public QueryHandler() {
@@ -439,6 +440,7 @@ public class NettySparqlServer implements AutoCloseable{
                 journal("will not pool, st=", st, ST, "on", this);
             } else {
                 st = ST_POOLED;
+                info = null;
                 //noinspection unchecked
                 if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) != null)
                     finalRelease();
@@ -542,7 +544,9 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         @Override public String toString() {
-            return journalName()+ST.render(st);
+            var sb = new StringBuilder().append(journalName()).append(ST.render(st));
+            if (info != null) sb.append("{info=").append(info).append('}');
+            return sb.toString();
         }
 
         /* --- --- --- StreamNode --- --- --- */
@@ -587,7 +591,7 @@ public class NettySparqlServer implements AutoCloseable{
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
             st |= ST_UNHEALTHY|ST_CLOSE_ON_TERM;
             journal("exceptionCaught handler=", this, ", cause=", cause);
-            log.error("Uncaught exception for handler={}", this, cause);
+            log.error("Uncaught {} for handler={}", cause.getClass().getSimpleName(), this, cause);
             if (errorOrCancelledException == null)
                 errorOrCancelledException = cause;
             if (!cancel())
@@ -782,6 +786,7 @@ public class NettySparqlServer implements AutoCloseable{
         private static final Pattern QUERY_RX = Pattern.compile("(?i)[?&]query=([^&]+)");
         private void handleGet(FullHttpRequest req) {
             String uri = req.uri();
+            info = req.headers().get("x-fastersparql-info");
             var m = QUERY_RX.matcher(uri);
             if (m.find()) {
                 String escaped = m.group(1);
@@ -793,7 +798,9 @@ public class NettySparqlServer implements AutoCloseable{
 
         private static final byte[] QUERY_EQ = "QUERY=".getBytes(UTF_8);
         private void handlePost(FullHttpRequest req) {
-            var ct = req.headers().get(CONTENT_TYPE);
+            var reqHeaders = req.headers();
+            info = reqHeaders.get("x-fastersparql-info");
+            var ct = reqHeaders.get(CONTENT_TYPE);
             var body = bbView.wrap(req.content());
             var queryRope = queryRope(body.len);
             if (indexOfIgnoreCaseAscii(ct, APPLICATION_X_WWW_FORM_URLENCODED, 0) == 0) {
@@ -1118,14 +1125,17 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         private boolean readUnusual(SegmentRope msg) {
-            if (msg.has(0, AbstractWsParser.INFO))
-                journal(msg.toString(0, msg.skipUntil(0, msg.len, '\n')), "on", this);
-            else if (msg.has(0, AbstractWsParser.PING))
+            if (msg.has(0, AbstractWsParser.INFO)) {
+                int eol = msg.skipUntil(0, msg.len, '\n');
+                info = msg.toString(AbstractWsParser.INFO.length, eol);
+                journal("!info ", info, "on", this);
+            } else if (msg.has(0, AbstractWsParser.PING)) {
                 send(bbSink.touch().append(AbstractWsParser.PING_ACK).take());
-            else if (msg.has(0, AbstractWsParser.PING_ACK))
+            } else if (msg.has(0, AbstractWsParser.PING_ACK)) {
                 journal("got !ping-ack on", this);
-            else
+            } else {
                 return false; // not an unusual command
+            }
             return true; // handled
         }
 

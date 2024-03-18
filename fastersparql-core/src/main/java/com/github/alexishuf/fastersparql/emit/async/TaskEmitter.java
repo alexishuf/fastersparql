@@ -64,7 +64,9 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         super.doRelease();
     }
 
-    @Override public String toString() { return label(StreamNodeDOT.Label.MINIMAL); }
+    @Override public String toString() {
+        return label(StreamNodeDOT.Label.SIMPLE).replace('\n', ' ');
+    }
 
     @Override public Stream<? extends StreamNode> upstreamNodes() { return Stream.empty(); }
 

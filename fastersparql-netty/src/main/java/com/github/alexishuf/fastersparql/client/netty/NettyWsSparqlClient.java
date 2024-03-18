@@ -193,6 +193,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return new StringBuilder().append(journalName());
         }
 
+        @Override protected void appendToSimpleLabel(StringBuilder sb) {
+            super.appendToSimpleLabel(sb);
+            if (h.info != null) sb.append(" info=").append(h.info);
+        }
+
         @Override public @Nullable Channel channelOrLast() {
             return lastCh;
         }
@@ -310,6 +315,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
         public boolean noServerTermination() { return !serverSentTermination; }
 
+        @Override protected void onInfo(SegmentRope rope, int begin, int end) {
+            super.onInfo(rope, begin, end);
+            h.info = rope.toString(begin+INFO.length, end);
+        }
+
         @Override protected void beforeComplete(@Nullable Throwable error) {
             super.beforeComplete(error);
             h.beforeParserCompletes();
@@ -383,6 +393,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private @Nullable Throwable bindingsError;
         private ChannelRecycler channelRecycler = ChannelRecycler.CLOSE;
         private final Vars usefulBindingsVars;
+        private @Nullable String info;
         private final WsStreamNode<B> parent;
         private int retries;
         @SuppressWarnings("unused") private int plainReleaseLock;
@@ -808,7 +819,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String toString() {
-            return journalName();
+            var sb = new StringBuilder().append(journalName()).append(ST.render(st));
+            if (info != null)
+                sb.append("{info=").append(info).append('}');
+            return sb.toString();
         }
     }
 
@@ -882,6 +896,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return new StringBuilder().append(journalName());
         }
 
+        @Override protected void appendToSimpleLabel(StringBuilder out) {
+            super.appendToSimpleLabel(out);
+            if (h.info != null) out.append(" info=").append(h.info);
+        }
         /* --- --- --- CallbackEmitter --- --- --- */
 
         @Override protected void        startProducer() { h.sendQuery(); }
