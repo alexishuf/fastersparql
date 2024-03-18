@@ -330,6 +330,7 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         protected void subscribeTo(Emitter<CompressedBatch> emitter) {
+            while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             try {
                 assert inEventLoop() && upstream==null
                         && (st&(ST_RES_STARTED|ST_RES_TERMINATED| ST_CANCEL_REQ |ST_POOLED)) == ST_RES_STARTED
@@ -340,6 +341,8 @@ public class NettySparqlServer implements AutoCloseable{
             } catch (Throwable t) {
                 Emitters.discard(emitter);
                 throw t;
+            } finally {
+                Q.setRelease(this, 0);
             }
             emitter.subscribe(this);
             bsRunnable.sched(AC_TOUCH_SINK);
