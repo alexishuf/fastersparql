@@ -11,13 +11,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class EventLoopGroupHolder {
     private static final Logger log = LoggerFactory.getLogger(EventLoopGroupHolder.class);
@@ -32,9 +31,6 @@ public class EventLoopGroupHolder {
 
     /** Number of {@code acquire()}s without corresponding {@code release()}. */
     private int references = 0;
-
-    /** Whether {@link FS#addShutdownHook(Runnable)} was called for {@code this}. */
-    private boolean shutdownHookAdded = false;
 
     /**
      * Amount of time to wait before shutting down the {@link EventLoopGroup}
@@ -67,7 +63,7 @@ public class EventLoopGroupHolder {
     }
     private @Nullable CompletableFuture<Void> shutdown;
 
-    private String name;
+    private final String name;
 
     private static NettyTransport chooseTransport() {
         NettyTransport selected = NettyTransport.NIO;
@@ -87,9 +83,11 @@ public class EventLoopGroupHolder {
         this.transport = transport == null ? chooseTransport() : transport;
         if (keepAlive < 0)
             throw new IllegalArgumentException("Negative keepAlive="+keepAlive);
-        this.keepAlive         = keepAlive;
+        this.keepAlive     = keepAlive;
         this.keepAliveUnit = keepAliveTimeUnit == null ? MILLISECONDS : keepAliveTimeUnit;
-        this.threads           = Math.max(0, threads);
+        this.threads       = Math.max(0, threads);
+        if (keepAlive > 0)
+            FS.addShutdownHook(() -> shutdownNowIfPossible(1, SECONDS));
     }
 
     /**
@@ -130,10 +128,6 @@ public class EventLoopGroupHolder {
                     assert false : "group==null with references != 1";
                 }
                 group = transport.createGroup(threads);
-                if (!shutdownHookAdded) {
-                    shutdownHookAdded = true;
-                    FS.addShutdownHook(() -> shutdownNow(this.group, "FS.shutdownNow"));
-                }
             }
             return group;
         } finally {
@@ -173,7 +167,10 @@ public class EventLoopGroupHolder {
     }
 
     /**
-     * Equivalent to {@link EventLoopGroupHolder#release(long, TimeUnit)} with zero MILLISECONDS.
+     * Reverts a previous {@link #acquire()} or {@link #acquireBootstrap(String, int)} by
+     * decreasing the references counter. If this call makes the reference counter reach zero,
+     * a timer will be started to shut down the {@link EventLoopGroup} after the
+     * {@link #keepAlive()} timeout.
      */
     public Future<?> release() {
         lock.lock();
@@ -190,6 +187,39 @@ public class EventLoopGroupHolder {
                 }
             }
             return shutdown();
+        } finally { lock.unlock(); }
+    }
+
+    /**
+     * If there are zero references to the {@link EventLoopGroup} and it is alive until a
+     * {@link #keepAlive()} timeout is reached, start the shutdown now and wait at most
+     * the requested {@code timeout} for the {@link EventLoopGroup} to complete its
+     * shutdown.
+     *
+     * @return {@code true} if there is no {@link EventLoopGroup} or if it has been
+     *         shutdown during this call
+     */
+    @SuppressWarnings("UnusedReturnValue")
+    public boolean shutdownNowIfPossible(int timeout, TimeUnit unit) {
+        lock.lock();
+        try {
+            if (references != 0 || group == null)
+                return true;
+            if (keepAliveShutdown != null) {
+                keepAliveShutdown.cancel();
+                keepAliveShutdown = null;
+            }
+            CompletableFuture<Void> future = shutdown();
+            shutdownNow(group, "shutdownNowIfPossible");
+            try {
+                future.get(timeout, unit);
+                return true;
+            } catch (InterruptedException|TimeoutException e) {
+                return false;
+            } catch (ExecutionException e) {
+                log.error("EventLoopGroup shutdown failure on {}", this, e.getCause());
+                return true;
+            }
         } finally { lock.unlock(); }
     }
 

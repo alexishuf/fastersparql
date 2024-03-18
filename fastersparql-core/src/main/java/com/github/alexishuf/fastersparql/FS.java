@@ -110,7 +110,10 @@ public class FS {
     }
 
     static {
-        Runtime.getRuntime().addShutdownHook(new Thread(FS::shutdown, "FS::shutdown"));
+        var runtime = Runtime.getRuntime();
+        int threads = 1 + runtime.availableProcessors()/2;
+        for (int i = 0; i < threads; i++)
+            runtime.addShutdownHook(new Thread(FS::shutdown, "FS::shutdown-"+i));
     }
 
     /* --- --- --- factory methods --- --- --- */

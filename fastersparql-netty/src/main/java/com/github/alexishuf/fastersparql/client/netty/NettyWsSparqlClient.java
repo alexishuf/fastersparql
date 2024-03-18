@@ -209,6 +209,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             h.sendCancel();
+            h.release();
             super.cleanup(cause);
         }
 
@@ -412,7 +413,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @SuppressWarnings("unused") private void doReset() {
             if ((st&(ST_QUERY_SENT|ST_GOT_TERM)) == ST_QUERY_SENT)
                 throw new IllegalStateException("reset after query sent but before term received");
-            st &= ST_RELEASED|ST_CAN_RELEASE;
+            st &= ST_RELEASED;
             parser.reset();
 
             // recycle any leftover bindings
@@ -832,12 +833,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 bindableVars = bindQuery.bindings.vars().union(query.allVars());
                 bindQuery.bindings.subscribe(this);
             }
-        }
-
-        @Override protected void doRelease() {
-            try {
-                super.doRelease();
-            } finally { h.release(); }
         }
 
         /* --- --- --- rebind --- --- --- */
