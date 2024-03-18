@@ -1,5 +1,7 @@
 package com.github.alexishuf.fastersparql.util;
 
+import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -11,8 +13,10 @@ import java.util.stream.Stream;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused") // this interface is used only for debugging
-public interface StreamNode {
+public interface StreamNode extends JournalNamed {
     Stream<? extends StreamNode> upstreamNodes();
+
+    @Override default String journalName() { return label(StreamNodeDOT.Label.MINIMAL); }
 
     default String   label(StreamNodeDOT.Label type)                    { return toString(); }
     default String   toDOT(StreamNodeDOT.Label type)                    { return StreamNodeDOT.toDOT(this, type); }

@@ -3,13 +3,13 @@ package com.github.alexishuf.fastersparql.sparql.results;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
-import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
@@ -56,6 +56,8 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     protected abstract boolean handleRoleSpecificControl(Rope rope, int begin, int eol);
 
     /* --- --- --- implementations --- --- --- */
+
+    @Override public SparqlResultFormat format() {return SparqlResultFormat.WS;}
 
     @Override public void reset() {
         super.reset();
@@ -132,7 +134,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     private void handleEnd(Rope rope, int eol) {
         if (eol+1 != rope.len()) {
-            var msg = format("Received input after !end at line %d. Buggy server " +
+            var msg = String.format("Received input after !end at line %d. Buggy server " +
                             "or accidental sharing of WebSocket channel: %s", line,
                     rope.toString(eol + 1, rope.len()).replace("\r", "\\r").replace("\n", "\\n"));
             throw new InvalidSparqlResultsException(msg);
@@ -151,7 +153,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     private InvalidSparqlResultsException badControl(Rope rope, int begin, int eol) {
-        var msg = format("Invalid WS results control command at line %d: %s",
+        var msg = String.format("Invalid WS results control command at line %d: %s",
                 line, rope.sub(begin, eol));
         return new InvalidSparqlResultsException(msg);
     }

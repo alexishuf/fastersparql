@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -31,7 +32,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("SpellCheckingInspection")
-public final class Term extends Rope implements Expr, ExprEvaluator {
+public final class Term extends Rope implements Expr, ExprEvaluator, JournalNamed {
     private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
     private static final byte IS_READONLY = 0x0000010;
     private static final byte   IS_SUFFIX = 0x0000001;
@@ -1042,6 +1043,8 @@ public final class Term extends Rope implements Expr, ExprEvaluator {
         singleton.add(name);
         return singleton;
     }
+
+    @Override public String journalName() {return toSparql().toString();}
 
     /**
      * Get the SPARQL preferred representation of this {@link Term}. {@link #RDF_TYPE}

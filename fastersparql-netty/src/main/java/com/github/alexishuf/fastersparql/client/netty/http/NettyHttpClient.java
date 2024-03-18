@@ -228,9 +228,12 @@ public final class NettyHttpClient implements AutoCloseable {
                 if (!sent && request instanceof ReferenceCounted r)
                     r.release();
                 if (t == ABORT_REQUEST) {
+                    journal("abort request connHandler=", this);
                     if (handler != null) handler.cancel(cookie);
                 } else {
-                    onConnectionError(t instanceof ExecutionException ? t.getCause() : t);
+                    var cause = t instanceof ExecutionException ee ? ee.getCause() : t;
+                    journal(cause, "connHandler=", this);
+                    onConnectionError(cause);
                 }
             }
         }

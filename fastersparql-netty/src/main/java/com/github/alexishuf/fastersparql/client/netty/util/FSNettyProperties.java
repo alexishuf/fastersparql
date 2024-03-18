@@ -23,14 +23,9 @@ public class FSNettyProperties extends FSProperties {
             return ((ChannelHandlerContext)o).channel().id().asShortText();
         }
     };
-    private static final DebugJournal.ObjRenderer CHANNEL_BOUND_RENDERER
-            = new DebugJournal.ObjRenderer(ChannelBound.class) {
-        @Override protected String render(Object o) {return ((ChannelBound)o).journalName();}
-    };
     static {
         DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_RENDERER);
         DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_CTX_RENDERER);
-        DebugJournal.DefaultRenderer.INSTANCE.addObjRenderer(CHANNEL_BOUND_RENDERER);
     }
 
     /* --- --- --- property names --- --- --- */

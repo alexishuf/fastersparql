@@ -462,11 +462,18 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         private void completeDownstream(@Nullable Throwable cause) {
-            journal(cause == null ? "complete" : "fail", downstream, "from", this);
+            journal(cause == null ? "complete" : cause, downstream, "from", this);
             FSException fse = cause == null ? null : FSException.wrap(endpoint, cause);
+            if (fse != null) {
+                fse.id("handler", journalName());
+                if (info != null)
+                    fse.id("info", info);
+            }
             if (parser != null) {
                 if (fse == CANCELLED_ACK)
                     parser.feedCancelledAck();
+                else if (fse == null)
+                    parser.feedEnd();
                 else
                     parser.feedError(fse);
             } else if (downstream != null) {
@@ -508,7 +515,16 @@ public class NettySparqlClient extends AbstractSparqlClient {
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
             parser = ResultsParser.createFor(fromMediaType(mt), downstream);
+            parser.namer(PARSER_NAMER, this);
         }
+        private static final ResultsParser.Namer<NettyHandler> PARSER_NAMER = (p, h) -> {
+            if (p == null) return "null";
+            var sb = new StringBuilder().append(p.format().lowercase());
+            sb .append(':').append(h.journalName());
+            if (h.info != null)
+                sb.append("<-").append(h.info);
+            return sb.toString();
+        };
 
         @Override protected void onContent(HttpContent content) {
             var parser = requireNonNull(this.parser);

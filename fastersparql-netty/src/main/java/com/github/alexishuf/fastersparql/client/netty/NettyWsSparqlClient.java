@@ -312,7 +312,18 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private WsHandler<B> h;
         public WsParser(CompletableBatchQueue<B> dst, @Nullable BindQuery<B> bindQuery) {
             super(dst, bindQuery);
+            namer(NAMER, null);
         }
+
+        private static final Namer<Object> NAMER = (parser, ignored) -> {
+            WsParser<?> p = (WsParser<?>)parser;
+            var sb = new StringBuilder().append(p.format().lowercase());
+            sb.append(':').append(p.h.journalName());
+            if (p.h.info != null)
+                sb.append("<-").append(p.h.info);
+            return sb.toString();
+        };
+
         public boolean noServerTermination() { return !serverSentTermination; }
 
         @Override protected void onInfo(SegmentRope rope, int begin, int end) {
@@ -764,7 +775,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 } else {
                     ex = FSException.wrap(endpoint, error);
                 }
-                ex.offerEndpoint(endpoint);
+                ex.endpoint(endpoint);
                 parser.feedError(ex);
             }
         }

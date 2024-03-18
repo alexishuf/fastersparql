@@ -1,9 +1,5 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -267,17 +263,9 @@ public class DebugJournal {
     private static final ObjRenderer THROWABLE_OBJ_RENDERER = new ObjRenderer(Throwable.class) {
         @Override public String render(Object o) { return o.getClass().getSimpleName(); }
     };
-    private static final ObjRenderer TERM_OBJ_RENDERER = new ObjRenderer(Term.class) {
-        @Override public String render(Object o) { return ((Term)o).toSparql().toString(); }
-    };
-    private static final ObjRenderer TP_OBJ_RENDERER = new ObjRenderer(TriplePattern.class) {
-        @Override public String render(Object o) {
-            return o.toString();
-        }
-    };
-    private static final ObjRenderer STREAM_NODE_OBJ_RENDERER = new ObjRenderer(StreamNode.class) {
-        @Override public String render(Object o) {
-            return ((StreamNode)o).label(StreamNodeDOT.Label.MINIMAL);
+    private static final ObjRenderer JOURNAL_NAMED_OBJ_RENDERER = new ObjRenderer(JournalNamed.class) {
+        @Override protected String render(Object o) {
+            return ((JournalNamed)o).journalName();
         }
     };
 
@@ -289,9 +277,7 @@ public class DebugJournal {
         public DefaultRenderer() {
             objRenderers.add(ID_OBJ_RENDERER);
             objRenderers.add(THROWABLE_OBJ_RENDERER);
-            objRenderers.add(TERM_OBJ_RENDERER);
-            objRenderers.add(TP_OBJ_RENDERER);
-            objRenderers.add(STREAM_NODE_OBJ_RENDERER);
+            objRenderers.add(JOURNAL_NAMED_OBJ_RENDERER);
         }
 
         public void addObjRenderer(ObjRenderer renderer) { objRenderers.add(renderer); }

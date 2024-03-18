@@ -261,10 +261,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
 
     static {
         var s = new BitsetRunnable.Spec(MethodHandles.lookup());
-        AC_CANCEL           = s.add("doCancel");
-        AC_DISABLE_AUTOREAD = s.add("doDisableAutoRead");
-        AC_ENABLE_AUTOREAD  = s.add("doEnableAutoRead");
-        AC_SEND_REQUEST     = s.add("doSendRequest");
+        AC_CANCEL           = s.add("doCancel",          true);
+        AC_DISABLE_AUTOREAD = s.add("doDisableAutoRead", false);
+        AC_ENABLE_AUTOREAD  = s.add("doEnableAutoRead",  false);
+        AC_SEND_REQUEST     = s.add("doSendRequest",     true);
         ACTIONS_SPEC = s;
     }
 

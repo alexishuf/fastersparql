@@ -99,6 +99,8 @@ public final class TriplePattern extends Plan {
         throw new UnsupportedOperationException();
     }
 
+    @Override public String journalName() {return toString();}
+
     @Override public boolean equals(Object obj) {
         return obj == this || (obj instanceof TriplePattern r
                 && s.equals(r.s) && p.equals(r.p) && o.equals(r.o));

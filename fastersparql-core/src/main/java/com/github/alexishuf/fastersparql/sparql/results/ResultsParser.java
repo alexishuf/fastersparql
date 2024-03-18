@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -37,7 +38,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  *
  * @param <B> the row type
  */
-public abstract class ResultsParser<B extends Batch<B>> {
+public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed {
     private static final VarHandle TERMINATED;
     static {
         try {
@@ -57,6 +58,14 @@ public abstract class ResultsParser<B extends Batch<B>> {
     @SuppressWarnings("unused") private boolean plainTerminated;
     private final BatchType<B> batchType;
     private final int outCols;
+    private Namer<Object> namer = DEF_NAMER;
+    private @Nullable Object namerObject;
+
+    public interface Namer<T> {
+        String name(ResultsParser<?> parser, T reference);
+    }
+    private static final Namer<Object> DEF_NAMER = (p, ignored)
+            -> p.format().lowercase()+'@'+Integer.toHexString(System.identityHashCode(p));
 
     /** Interface used via SPI to discover {@link ResultsParser} implementations. */
     public interface Factory extends NamedService<SparqlResultFormat> {
@@ -201,10 +210,13 @@ public abstract class ResultsParser<B extends Batch<B>> {
      * @param error A non-null, non-serialization and non-cancellation error.
      */
     public final void feedError(FSException error) {
+        error.id("parser", journalName());
         if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
             emitLastBatch();
             dst.complete(error);
             cleanup(error);
+        } else {
+            journal("feedError", error, "ignored, prev term on", this);
         }
     }
 
@@ -227,7 +239,34 @@ public abstract class ResultsParser<B extends Batch<B>> {
         TERMINATED.setRelease(this, false);
     }
 
+    /**
+     * Use {@code namer.apply(namerObject)} to generate an identifying name to include
+     * in exceptions raised by the parser
+     *
+     * @param namer a function that uses {@code namerObject} to get a name
+     * @param namerObject An object to be used by {@code namer}
+     */
+    public <T> void namer(Namer<T> namer, Object namerObject) {//noinspection unchecked
+        this.namer = namer == null ? DEF_NAMER : (Namer<Object>)namer;
+        this.namerObject = namerObject;
+    }
+
+    @Override public String journalName() {
+        try {
+            return namer.name(this, namerObject);
+        } catch (Throwable t) {
+            log.error("{} thrown by namer {}", t.getClass().getSimpleName(), namerObject, t);
+        }
+        return DEF_NAMER.name(this, null);
+    }
+
+    @Override public String toString() {
+        return journalName();
+    }
+
     /*  --- --- --- abstract methods --- --- --- */
+
+    public abstract SparqlResultFormat format();
 
     /**
      * Called once per {@link ResultsParser}, after parsing is complete or failed.
@@ -304,11 +343,15 @@ public abstract class ResultsParser<B extends Batch<B>> {
             log.info("{} already terminated, ignoring {}", this, t.getClass().getSimpleName(), t);
         } else {
             emitLastBatch();
-            Throwable ex = t instanceof FSException e ? e : new InvalidSparqlResultsException(t);
+            if (ThreadJournal.ENABLED) {
+                String msg = t.getMessage();
+                journal(t, "in", this, msg.substring(0, Math.min(30, msg.length())));
+            }
+            FSException ex = t instanceof FSException e ? e : new InvalidSparqlResultsException(t);
+            ex.id("parser", journalName());
             dst.complete(ex);
             cleanup(ex);
         }
-        throw new RuntimeException(t);
     }
 
     private void emitLastBatch() {

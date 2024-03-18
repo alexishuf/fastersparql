@@ -33,6 +33,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser;
+import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.sparql.results.WsServerParser;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
@@ -1208,7 +1209,6 @@ public class NettySparqlServer implements AutoCloseable{
                 }
                 waitingVars = false;
 
-
                 if (useBIt) {
                     var bindings = new BindingsBIt(bindingsVars);
                     var bq = new VolatileItBindQuery(query, bindings, bType);
@@ -1220,6 +1220,7 @@ public class NettySparqlServer implements AutoCloseable{
                     bindingsParser = new BindingsParser(bindings, this);
                     em = sparqlClient.emit(bq, Vars.EMPTY);
                 }
+                bindingsParser.namer(BIND_PARSER_NAMER, this);
 
                 // only send binding seq number and right unbound vars
                 Vars all = em.vars();
@@ -1232,6 +1233,7 @@ public class NettySparqlServer implements AutoCloseable{
             } catch (Throwable t) {
                 Emitters.discard(em);
                 sendRequestError("Could not dispatch query: ", t.toString());
+                log.debug("Could not dispatch bind query on {}", this, t);
                 return;
             }
             if (useBIt)
@@ -1242,6 +1244,14 @@ public class NettySparqlServer implements AutoCloseable{
             }
             readBindings(bindingsParser, msg);
         }
+        private static final ResultsParser.Namer<WsHandler> BIND_PARSER_NAMER = (ignored, h) -> {
+            Channel ch = h.channelOrLast();
+            var sb = new StringBuilder().append("ws-bind:");
+            sb.append(ch == null ? "null" : ch.id().asShortText());
+            if (h.info != null)
+                sb.append("<-").append(h.info);
+            return sb.toString();
+        };
 
         private TextWebSocketFrame headersFrame(Vars all, Vars serialize) {
             serializer.init(all, serialize, false);
@@ -1326,6 +1336,7 @@ public class NettySparqlServer implements AutoCloseable{
                 startResponse(headersFrame(vars, vars), true);
                 subscribeTo(em);
             } catch (Throwable t) {
+                log.debug("Could not dispatch query on {}", this, t);
                 Emitters.discard(em);
                 sendRequestError("Could not dispatch query", t.toString());
             }

@@ -16,7 +16,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayDeque;
 
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
-import static java.lang.String.format;
 import static java.lang.String.join;
 
 public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
@@ -46,6 +45,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     /* --- --- --- implement/override ResultsParserBIt methods --- --- --- */
+
+    @Override public SparqlResultFormat format() {return SparqlResultFormat.JSON;}
 
     @Override public void reset() {
         super.reset();
@@ -109,7 +110,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     private static InvalidSparqlResultsException ex(SparqlState state, SegmentRope r, int b, int e) {
         e = r.skip(b = r.skipWS(b, e), e, SegmentRope.UNTIL_WS);
-        var msg = format("JSON parser at state %s expected %s but got %s",
+        var msg = String.format("JSON parser at state %s expected %s but got %s",
                 state, state.expected(), b == e ? "End-Of-Input" : r.sub(b, e).toString());
         return new InvalidSparqlResultsException(msg);
     }
@@ -117,20 +118,20 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
     private static InvalidSparqlResultsException ex(JsonState state, SegmentRope r, int b, int e) {
         e = r.skip(b = r.skipWS(b, e), e, SegmentRope.UNTIL_WS);
         var got = b == e ? "End-Of-Input" : r.sub(b, e).toString();
-        var msg = format("Malformed JSON: expected %s but got %s",
+        var msg = String.format("Malformed JSON: expected %s but got %s",
                          state.name().toLowerCase(), got);
         return new InvalidSparqlResultsException(msg);
     }
 
     private static InvalidSparqlResultsException badProperty(SparqlState state, SegmentRope r, int b, int e) {
         var name = r.sub(b, e);
-        var msg = format("Unexpected property %s at state %s, expected %s",
+        var msg = String.format("Unexpected property %s at state %s, expected %s",
                          name, state, join("/", state.expectedPropertiesString()));
         return new InvalidSparqlResultsException(msg);
     }
 
     private InvalidSparqlResultsException noType() {
-        var msg = format("No \"type\" property given for RDF value \"%s\" with " +
+        var msg = String.format("No \"type\" property given for RDF value \"%s\" with " +
                          "datatype=%s and xml:lang=%s", value,
                          dtSuffix.isEmpty() ? "null" : dtSuffix.sub(3, dtSuffix.len-1),
                          lang.len > 0 ? lang : "null");

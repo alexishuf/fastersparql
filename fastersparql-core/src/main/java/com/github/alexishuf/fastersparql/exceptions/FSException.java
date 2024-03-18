@@ -1,17 +1,19 @@
 package com.github.alexishuf.fastersparql.exceptions;
 
-import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class FSException extends RuntimeException {
-    private @Nullable SparqlEndpoint endpoint;
+    private @Nullable List<String> ids = null;
 
     public static FSException wrap(SparqlEndpoint endpoint, Throwable t) {
         return switch (t) {
             case null -> null;
             case FSException fs -> {
-                fs.offerEndpoint(endpoint);
+                fs.endpoint(endpoint);
                 yield fs;
             }
             case IllegalStateException e -> {
@@ -26,24 +28,15 @@ public class FSException extends RuntimeException {
         };
     }
 
-    public FSException(String message) { this(null, message, null); }
-    public FSException(String message, @Nullable Throwable cause) {
-        this(null, message, cause);
-    }
+    public FSException(String message) { this(message, null); }
+    public FSException(String message, @Nullable Throwable cause) {super(message, cause);}
     public FSException(@Nullable SparqlEndpoint endpoint, String message) {
         this(endpoint, message, null);
     }
-
     public FSException(@Nullable SparqlEndpoint endpoint, String message,
                        @Nullable Throwable cause) {
-        super(message, cause);
-        this.endpoint = endpoint;
-    }
-
-    private static String includeEndpoint(String message, SparqlEndpoint endpoint) {
-        if (!message.contains(endpoint.uri()))
-            return message + (message.endsWith(".") ? " " : ". ") + "Endpoint: "+endpoint;
-        return message;
+        this(message, cause);
+        this.endpoint(endpoint);
     }
 
     @Override public String getMessage() {
@@ -57,31 +50,51 @@ public class FSException extends RuntimeException {
                 message = "<<no message nor causing exception>>";
             }
         }
-        return endpoint == null ? message : includeEndpoint(message, endpoint);
+        if (ids == null)
+            return message;
+        var sb = new StringBuilder().append(message).append(". ");
+        for (String id : ids) {
+            if (!message.contains(id))
+                sb.append(id).append(", ");
+        }
+        sb.setLength(sb.length()-1);
+        return sb.length() == message.length() ? message : sb.toString();
     }
 
     @Override public String toString() {
         return getClass().getSimpleName()+ ": "+getMessage();
     }
 
-    public @Nullable SparqlEndpoint endpoint() { return endpoint; }
+    /**
+     * Attach an identifying value to this exception. {@code name+'='+value} will be added to {@link #getMessage()}.
+     * @param name a key for {@code value}. If there was a previous {@code id()} call with same
+     *             {@code name} the previous value will be replaced with the one given in
+     *             this call instead of adding a second entry for the same {@code name}
+     * @param value a value to display in {@code name+'='+value}.
+     */
+    public void id(String name, @Nullable String value) {
+        if (ids == null) ids = new ArrayList<>();
+        int i = 0, n = ids.size(), nameLen = name.length();
+        for (; i < n; ++i) {
+            var old = ids.get(i);
+            if (old.startsWith(name) && old.length() > nameLen && old.charAt(nameLen) == '=')
+                break;
+        }
+        if (value == null) {
+            if (i < n) ids.remove(i);
+        } else {
+            var display = name+'='+value;
+            if (i < n) ids.set(i, display);
+            else       ids.add(display);
+        }
+    }
 
     /**
-     * Offers a new value for {@link FSException#endpoint()}.
+     * Equivalent to {@link #id(String, String)} with {@code "endpoint"} and {@code endpoint}.
      *
-     * <p>The new value will be accepted only if there is no current endpoint or if the current
-     * endpoint has an empty {@link SparqlConfiguration} and the offer has a non-empty
-     * configuration on the same URI.</p>
-     *
-     * @param offer The {@link SparqlEndpoint} to offer
-     * @return whether the {@code offer} was set
+     * @param endpoint The {@link SparqlEndpoint} to offer
      */
-    @SuppressWarnings("UnusedReturnValue") public boolean offerEndpoint(SparqlEndpoint offer) {
-        boolean accept = endpoint == null
-                      || (!endpoint.equals(offer) && endpoint.configuration().isEmpty()
-                                                  && !offer  .configuration().isEmpty());
-        if (accept)
-            endpoint = offer;
-        return accept;
+    public void endpoint(@Nullable SparqlEndpoint endpoint) {
+        id("endpoint", endpoint == null ? null : endpoint.toString());
     }
 }

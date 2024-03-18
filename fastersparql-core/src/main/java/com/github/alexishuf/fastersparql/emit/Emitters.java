@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.async.BatchEmitter;
 import com.github.alexishuf.fastersparql.emit.async.EmptyEmitter;
+import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,8 @@ public class Emitters {
             return;
         try {
             em.subscribe(new DiscardingReceiver<>());
+        } catch (MultipleRegistrationUnsupportedException ignored) {}
+        try {
             em.cancel();
         } catch (Throwable t) {
             log.error("Ignoring {} while discarding {}", t.getClass().getSimpleName(), em, t);

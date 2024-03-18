@@ -22,7 +22,6 @@ import java.util.regex.Pattern;
 
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.BN_PREFIX_u8;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.UNTIL_LIT_ESCAPED;
-import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
@@ -95,6 +94,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         private static final ByteRope EOL = new ByteRope("\n");
 
         public Tsv(CompletableBatchQueue<B> destination) { super(EOL, destination); }
+
+        @Override public SparqlResultFormat format() {return SparqlResultFormat.TSV;}
 
         @Override protected final void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
             int begin = 0, end = rope.len();
@@ -190,6 +191,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
             super(EOL, destination);
             termParser.eager();
         }
+
+        @Override public SparqlResultFormat format() {return SparqlResultFormat.CSV;}
 
         @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
             if (partialLine != null && partialLine.len != 0) {
@@ -425,7 +428,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     protected InvalidSparqlResultsException varAsValue(Term var) {
-        var msg = format("Var %s given as value to column %d of line %d",
+        var msg = String.format("Var %s given as value to column %d of line %d",
                          var, column, line);
         return new InvalidSparqlResultsException(msg);
     }
@@ -437,7 +440,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         while ((i = partialLine.reverseSkipUntil(0, i, '"')) > 0
                     && partialLine.get(i-1) != esc)
             --i;
-        String msg = format("Unclosed quoted term at column %d of line %d.", column, line);
+        String msg = String.format("Unclosed quoted term at column %d of line %d.", column, line);
         return new InvalidSparqlResultsException(msg);
     }
 
@@ -447,14 +450,14 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         String actual = rope.sub(begin, termEnd).toString().replace("\r", "\\r")
                             .replace("\n", "\\n").replace("\t", "\\t").replace("\\", "\\\\");
         Vars vars = vars();
-        var msg = format("Bad value starting at column %d (%s) of line %d. Cause: %s. Input: %s",
+        var msg = String.format("Bad value starting at column %d (%s) of line %d. Cause: %s. Input: %s",
                          column, column < vars.size() ? vars.get(column) : "no var",
                          line, t.getMessage(), actual);
         return new InvalidSparqlResultsException(msg);
     }
 
     protected InvalidSparqlResultsException missingColumns() {
-        var msg = format("Line %d ended with %d columns, expected %d", line, column, inputColumns);
+        var msg = String.format("Line %d ended with %d columns, expected %d", line, column, inputColumns);
         return new InvalidSparqlResultsException(msg);
     }
 
@@ -472,13 +475,13 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     protected InvalidSparqlResultsException extraColumns() {
-        var msg = format("More than %d columns at line %d. Expected %s", inputColumns, line,
+        var msg = String.format("More than %d columns at line %d. Expected %s", inputColumns, line,
                          eol == Csv.EOL ? "\\r\\n (\\x0D\\x0A, CRLF)" : "\\n(\\x0A, LF)");
         return new InvalidSparqlResultsException(msg);
     }
 
     protected InvalidSparqlResultsException badSep(byte actual) {
-        String msg = format("Expected %s, got '%s' (0x%x) at line %d",
+        String msg = String.format("Expected %s, got '%s' (0x%x) at line %d",
                 column >= inputColumns - 1 ? eol.len == 1 ? "\"\\n\"" : "\"\\r\\n\""
                                     : eol.len == 1 ? "'\\t'" : "','",
                 (char)(0xff & actual),

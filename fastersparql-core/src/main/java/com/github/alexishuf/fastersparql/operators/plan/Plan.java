@@ -19,6 +19,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -33,7 +34,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 /** Represents a tree of operators applied to their arguments */
-public abstract sealed class Plan implements SparqlQuery
+public abstract sealed class Plan implements SparqlQuery, JournalNamed
         permits Join, Union, LeftJoin, Minus, Exists, Modifier, Empty, Query, TriplePattern, Values {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
@@ -502,6 +503,10 @@ public abstract sealed class Plan implements SparqlQuery
         for (int i = 0, n = opCount(); i < n; i++)
             h = 31*h + op(i).hashCode();
         return h;
+    }
+
+    @Override public String journalName() {
+        return getClass().getSimpleName()+"@"+id();
     }
 
     @Override public String toString() {
