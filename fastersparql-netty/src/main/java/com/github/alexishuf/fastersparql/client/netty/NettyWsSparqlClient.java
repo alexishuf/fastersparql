@@ -519,12 +519,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
             @Override protected void onMethodError(String methodName, Throwable t) {
                 super.onMethodError(methodName, t);
-                if (ctx != null) {
-                    ctx.executor().execute(this);
+                if (ctx != null)
                     ctx.fireExceptionCaught(t);
-                } else if (parent.notTerminated()) {
+                else if (parent.notTerminated())
                     clientSideError(t);
-                }
             }
         }
 
@@ -762,14 +760,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void detach(@Nullable Throwable error) {
             assert inEventLoop() : "no in event loop";
             bsRunnable.runNow();
-            channelRecycler = ChannelRecycler.NOP;
+            channelRecycler = ChannelRecycler.CLOSE;
             parent.setChannel(null);
             if (parent.notTerminated())
                 clientSideError(error);
             if (parser.noServerTermination() && ctx != null)
                 ctx.close();
             ctx = null;
-            channelRecycler = ChannelRecycler.CLOSE;
             bsRunnable.executor(ForkJoinPool.commonPool());
             st = (st&~(ST_ATTACHED|ST_CONNECTING)) | ST_GOT_TERM;
             int actions = (st&ST_RETRY) != 0 ? AC_RETRY
@@ -807,6 +804,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             Channel ch = parent.channelOrLast();
             return "C.WH:" + (ch == null ? "null" : ch.id().asShortText())
                           + '@' + parent.instanceId();
+        }
+
+        @Override public String toString() {
+            return journalName();
         }
     }
 
