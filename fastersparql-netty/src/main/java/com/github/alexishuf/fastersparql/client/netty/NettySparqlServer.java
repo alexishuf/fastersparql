@@ -376,7 +376,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         /* --- --- --- batch serialization --- --- --- */
 
-        protected abstract Object serialize(CompressedBatch batch);
+        protected abstract void serialize(CompressedBatch batch);
 
         @SuppressWarnings("unused") private void doSendBatch() {
             CompressedBatch batch;
@@ -388,7 +388,7 @@ public class NettySparqlServer implements AutoCloseable{
             if (batch != null) {
                 try {
                     if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED)
-                        send(serialize(batch));
+                        serialize(batch);
                     else
                         journal("skip&recycle doSendBatch, st=", st, ST, "on", this);
                 } finally {
@@ -616,9 +616,9 @@ public class NettySparqlServer implements AutoCloseable{
 
         private @MonotonicNonNull ResultsSerializer serializer;
 
-        @Override protected Object serialize(CompressedBatch batch) {
+        @Override protected void serialize(CompressedBatch batch) {
             serializer.serializeAll(batch, bbSink.touch());
-            return new DefaultHttpContent(bbSink.take());
+            send(new DefaultHttpContent(bbSink.take()));
         }
 
         @Override protected LIFOPool<SparqlHandler> pool() {return sparqlHandlerPool;}
@@ -1061,7 +1061,7 @@ public class NettySparqlServer implements AutoCloseable{
             endResponse(new TextWebSocketFrame(content));
         }
 
-        @Override protected Object serialize(CompressedBatch batch) {
+        @Override protected void serialize(CompressedBatch batch) {
             if (isBindQuery && batch.rows > 0) {
                 var tail = batch.tail();
                 long seq = tail.localView(tail.rows-1, 0, tmpView)
@@ -1071,8 +1071,16 @@ public class NettySparqlServer implements AutoCloseable{
                 else if (seq < lastSeqSent)
                     invalidLastSeqSent(seq);
             }
-            serializer.serializeAll(batch, bbSink.touch());
-            return new TextWebSocketFrame(bbSink.take());
+            bbSink.touch();
+            for (var node = batch; node != null; node = node.next) {
+                serializer.serialize(node, 0, node.rows, bbSink);
+                if (bbSink.len() > 8192) {
+                    send(new TextWebSocketFrame(bbSink.take()));
+                    bbSink.touch();
+                }
+            }
+            if (bbSink.len() > 0)
+                send(new TextWebSocketFrame(bbSink.take()));
         }
 
         private void invalidLastSeqSent(long seq) {
