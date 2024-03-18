@@ -212,7 +212,7 @@ public class NettySparqlServer implements AutoCloseable{
         protected static final int AC_RECYCLE;
         protected static final int AC_TOUCH_SINK;
         private static final BitsetRunnable.Spec BS_RUNNABLE_SPEC;
-        private static final VarHandle Q;
+        protected static final VarHandle Q;
         static {
             try {
                 Q = MethodHandles.lookup().findVarHandle(QueryHandler.class, "plainQueueLock", int.class);
@@ -262,7 +262,7 @@ public class NettySparqlServer implements AutoCloseable{
         @SuppressWarnings("unused") private int plainQueueLock;
         private @Nullable Emitter<CompressedBatch> upstream;
         private @Nullable Throwable errorOrCancelledException;
-        private CompressedBatch sendQueue;
+        protected CompressedBatch sendQueue;
         protected int st;
         private @MonotonicNonNull ByteRope queryRope;
         protected HandlerBitsetRunnable bsRunnable = new HandlerBitsetRunnable();
@@ -1278,7 +1278,7 @@ public class NettySparqlServer implements AutoCloseable{
                 else                     bindReqRope.append(n);
                 bindReqRope.append((byte)'\n');
                 long emptySeq = this.emptySeq;
-                if (lastSeqSent == nonEmptySeq && emptySeq > lastSeqSent)
+                if (lastSeqSent == nonEmptySeq && emptySeq > lastSeqSent && lastSeqSentDone())
                     bindReqRope.append(BIND_EMPTY_STREAK).append(emptySeq).append((byte)'\n');
                 assert bindReqFrame.content().array() == bindReqRope.utf8 : "rope grown";
                 bindReqFrame.content().readerIndex(0).writerIndex(bindReqRope.len);
@@ -1288,6 +1288,14 @@ public class NettySparqlServer implements AutoCloseable{
         private void retryBindReq() {
             journal("frame in-use, retrying doBindReq on", this);
             bsRunnable.sched(AC_BIND_REQ);
+        }
+        private boolean lastSeqSentDone() {
+            while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            CompressedBatch q = sendQueue;
+            boolean done = q != null && q.rows > 0 && q.localView(0, 0, tmpView)
+                    && WsBindingSeq.parse(tmpView, 0, tmpView.len) > lastSeqSent;
+            Q.setRelease(this, 0);
+            return done;
         }
 
         private void handleQueryCommand(SegmentRope msg, byte f) {
