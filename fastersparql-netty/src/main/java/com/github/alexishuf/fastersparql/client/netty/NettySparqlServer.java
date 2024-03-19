@@ -247,9 +247,9 @@ public class NettySparqlServer implements AutoCloseable{
             if ((st&ST_CLOSE_ON_TERM)   != 0) sb.append("CLOSE_ON_TERM,");
             if ((st&ST_CLOSING)         != 0) sb.append("CLOSING,");
             if ((st&ST_NOTIFIED_CLOSED) != 0) sb.append("NOTIFIED_CLOSE,");
-            if ((st&ST_CANCEL_REQ)      != 0) sb.append("CANCELLED,");
+            if ((st&ST_CANCEL_REQ)      != 0) sb.append("CANCEL_REQ,");
             if ((st&ST_POOLED)          != 0) sb.append("POOLED,");
-            if ((st&ST_RELEASED)        != 0) sb.append("POOLED,");
+            if ((st&ST_RELEASED)        != 0) sb.append("RELEASED,");
             if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
             sb.setLength(sb.length()-1);
             return sb.append(']').toString();
