@@ -574,7 +574,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void onCancelled(boolean empty) {
-            completeDownstream(CancelledException.INSTANCE);
+            completeDownstream(CANCELLED_ACK);
         }
 
         @Override protected void onIncompleteSuccessResponse(boolean empty) {
