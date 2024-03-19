@@ -192,7 +192,7 @@ public class Watchdog implements AutoCloseable {
             log.info("Starting dump for watchdog {}...", name);
             try (var os = out(threadDst, ".journal")) {
                 if (os != null)
-                    ThreadJournal.dumpAndReset(os, threadCols == 0 ? 100 : threadCols);
+                    ThreadJournal.dumpAndReset(os, threadCols == 0 ? 120 : threadCols);
             } catch (IOException e) {
                 log.error("Failed to write journal: {}", e.getMessage());
             }

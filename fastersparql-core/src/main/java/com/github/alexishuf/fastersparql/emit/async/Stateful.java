@@ -291,7 +291,7 @@ public abstract class Stateful {
             }
         }
         if (ENABLED)
-            journal("transition to", updated, flags, "on", this);
+            journal("trans", updated, flags, "on", this);
         return true;
     }
 
@@ -354,12 +354,12 @@ public abstract class Stateful {
                 ex = ac;
             if (ENABLED) {
                 if (clearFlags == STATE_MASK && setFlags == (CREATED|LOCKED_MASK)) {
-                    journal("resetForRebind+lock", this);
+                    journal("resetFR+lock", this);
                 } else if (clearFlags == STATE_MASK && setFlags == CREATED) {
-                    journal("resetForRebind", this);
+                    journal("resetFR", this);
                 } else {
-                    String op = (setFlags&LOCKED_MASK) == 0 ? "resetForRebind, cl="
-                              : "resetForRebind+lock, cl=";
+                    String op = (setFlags&LOCKED_MASK) == 0 ? "resetFR, cl="
+                              : "resetFR+lock, cl=";
                     journal(op, clearFlags, flags, "set=", setFlags, flags, "on", this);
                 }
             }
@@ -378,7 +378,7 @@ public abstract class Stateful {
         int ex = current;
         while ((current = (int)S.compareAndExchangeRelease(this, ex, ex|flags)) != ex)
             ex = current;
-        if (ENABLED) journal("set flags=", flags, this.flags, this);
+        if (ENABLED) journal("set", flags, this.flags, this);
         return ex|flags;
     }
 
@@ -394,7 +394,7 @@ public abstract class Stateful {
         int ex = current;
         while ((current = (int)S.compareAndExchangeRelease(this, ex, ex&~flags)) != ex)
             ex = current;
-        if (ENABLED) journal("clear flags=", flags, this.flags, this);
+        if (ENABLED) journal("clear", flags, this.flags, this);
         return ex&~flags;
     }
 
@@ -410,7 +410,7 @@ public abstract class Stateful {
             if ((a&flag) == flag) return false; // already set
         }
         if (ENABLED)
-            journal("CAS flag=", flag, flags, "before=", a, flags, "on", this);
+            journal("CAS", flag, flags, "on", a, flags, "on", this);
         return true;
     }
 
@@ -434,6 +434,7 @@ public abstract class Stateful {
     }
 
     private int lockCold() {
+        journal("lockCold st=", plainState, "on", this);
         int e;
         EmitterService.beginSpin();
         do {
@@ -486,7 +487,7 @@ public abstract class Stateful {
         if (IS_DEBUG && (state()&LOCKED_MASK) == 0)
             throw new IllegalStateException("not locked");
         if (ENABLED && (clear|set) != 0)
-            journal("unlck, clear=", clear, flags, "set=", set, flags, "on", this);
+            journal("unlck, cl=", clear, flags, "set=", set, flags, "on", this);
         int e = current|LOCKED_MASK;
         int mask = ~(clear|LOCKED_MASK), next;
         while ((current=(int)S.compareAndExchangeRelease(this, e, next=(e&mask)|set)) != e)
@@ -657,9 +658,12 @@ public abstract class Stateful {
                     sb.append(flagNames[i]).append(", ");
             }
             for (int i = 0; i < counterNames.length; i++) {
-                sb.append(counterNames[i]).append('=')
-                        .append((flags >>> counterBegins[i]) & (-1>>>-counterWidths[i]))
-                        .append(", ");
+                int value = (flags >>> counterBegins[i]) & (-1 >>> -counterWidths[i]);
+                if (value != 0) {
+                    sb.append(counterNames[i]).append('=')
+                            .append(value)
+                            .append(", ");
+                }
             }
             if ((flags & ~used) != 0)
                 sb.append(String.format("0x%08x", flags));
