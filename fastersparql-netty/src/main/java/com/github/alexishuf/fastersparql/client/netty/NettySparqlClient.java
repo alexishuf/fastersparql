@@ -50,7 +50,6 @@ import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.fromMediaType;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
-import static java.lang.System.identityHashCode;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
@@ -147,7 +146,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return "C.QB:"+(lastCh==null ? "null" : lastCh.id().asShortText())+'@'+idString();
+            return "C.QB:"+(lastCh==null ? "null" : lastCh.id().asShortText())+'@'+id();
         }
 
         @Override protected StringBuilder minimalLabel() {
@@ -165,7 +164,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
         /* --- --- --- ClientStreamNode --- --- -- */
 
         @Override public int      cookie()                   { return cookie; }
-        @Override public String idString()                   { return Integer.toString(id()); }
         @Override public void setInfo(@Nullable String info) { this.info = info; }
 
         @Override public boolean retry() {
@@ -291,13 +289,14 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return "C.QE:"+(lastCh == null ? "null" : lastCh.id().asShortText())+"@"+idString();
+            return "C.QE:"+(lastCh == null ? "null" : lastCh.id().asShortText())
+                          +"@"+Integer.toHexString(System.identityHashCode(this));
         }
 
         @Override protected StringBuilder minimalLabel() {
             return new StringBuilder().append("C.QE:")
                     .append(lastCh == null ? "null" : lastCh.id().asShortText())
-                    .append('@').append(idString());
+                    .append('@').append(Integer.toHexString(System.identityHashCode(this)));
         }
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
@@ -306,10 +305,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         /* --- --- --- ClientStreamNode --- --- --- */
-
-        @Override public String idString() {
-            return Integer.toHexString(System.identityHashCode(this));
-        }
 
         @Override public int  cookie()                       { return cookie; }
         @Override public void setInfo(@Nullable String info) { this.info = info;}
@@ -439,7 +434,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
         int cookie();
         void setInfo(@Nullable String info);
         boolean retry();
-        String idString();
     }
 
     private static final class CancelledAckException extends FSException {
@@ -490,16 +484,12 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         /* --- --- --- ChannelBound --- --- --- */
 
-        @Override public String journalName() {
-            Channel ch = channelOrLast();
-            String id = downstream == null ? Integer.toHexString(identityHashCode(this))
-                                           : downstream.idString();
-            return "C.NHH:"+(ch == null ? "null" : ch.id().asShortText())+"@"+id;
-        }
-
         @Override public String toString() {
-            String str = super.toString();
-            return info == null ? str : str+"{info="+info+"}";
+            var sb = new StringBuilder().append(super.toString());
+            sb.append("down=").append(downstream == null ? "null" : downstream.journalName());
+            if (info != null)
+                sb.append(", info=").append(info);
+            return sb.append('}').toString();
         }
 
         /* --- --- --- NettyHttpHandler events --- --- --- */
