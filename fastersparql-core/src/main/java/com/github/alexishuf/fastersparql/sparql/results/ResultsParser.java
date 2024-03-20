@@ -180,6 +180,8 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
                 dst.complete(error);
                 cleanup(null);
             }
+        } else {
+            journal("terminated, skip feedEnd on", this);
         }
     }
 
@@ -199,6 +201,8 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             if (e == null) dst.cancel(true);
             else           dst.complete(e);
             cleanup(null);
+        } else {
+            journal("terminated, skip feedCancelledAck on", this);
         }
     }
 
@@ -216,7 +220,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             dst.complete(error);
             cleanup(error);
         } else {
-            journal("feedError", error, "ignored, prev term on", this);
+            journal("terminated, skip feedError", error, "on", this);
         }
     }
 
