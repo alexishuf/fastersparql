@@ -15,6 +15,8 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -27,6 +29,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 
 public final class NettyHttpClient implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(NettyHttpClient.class);
     private final static boolean DEBUG = FSNettyProperties.debugClientChannel();
 
     public static final String HANDLER_NAME = "handler";
@@ -200,7 +203,7 @@ public final class NettyHttpClient implements AutoCloseable {
             NettyHttpClient client = httpClient();
             HttpRequest request = null;
             boolean sent = false;
-            int cookie = 0;
+            int cookie;
             T handler = null;
             try {
                 var ch = future instanceof ChannelFuture f ? f.channel() : (Channel)future.get();
@@ -229,7 +232,13 @@ public final class NettyHttpClient implements AutoCloseable {
                     r.release();
                 if (t == ABORT_REQUEST) {
                     journal("abort request connHandler=", this);
-                    if (handler != null) handler.cancel(cookie);
+                    try {
+                        if (handler != null) handler.cancelBeforeStart();
+                    } catch (Throwable t2) {
+                        log.error("{} while handling ABORT_REQUEST on {}",
+                                  t2.getClass().getSimpleName(), this, t2);
+                        onConnectionError(t2);
+                    }
                 } else {
                     var cause = t instanceof ExecutionException ee ? ee.getCause() : t;
                     journal(cause, "connHandler=", this);

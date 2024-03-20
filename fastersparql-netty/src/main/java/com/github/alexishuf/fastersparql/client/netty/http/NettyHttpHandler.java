@@ -92,9 +92,11 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private final Actions actions = new Actions();
     private @MonotonicNonNull Channel lastCh;
     private @Nullable HttpRequest pendingRequest;
-    private int doCancelCookie;
-    @SuppressWarnings("unused") private int plainCookie;
+    private int doSendRequestCookie, doCancelCookie;
+    @SuppressWarnings("FieldMayBeFinal") private int plainCookie = RECYCLED_COOKIE;
     private ByteRope failureBody = ByteRope.EMPTY;
+
+    private static final int RECYCLED_COOKIE = 0x80000000;
 
     private static final int ST_CAN_REQUEST     = 0x001;
     private static final int ST_REQ_SENT        = 0x002;
@@ -128,22 +130,41 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         actions.executor(executor);
     }
 
-    private void recycleChannel() {
+    private void closeOrRecycleChannel() {
         var ctx = this.ctx;
         if (ctx == null)
             return;
-        assert ctx.executor().inEventLoop() : "recycleChannel() outside event loop";
+        Channel ch = ctx.channel();
+        int ck = (int)COOKIE.getAcquire(this);
         var r = recycler;
         recycler = ChannelRecycler.CLOSE;
-        if ((st&ST_UNHEALTHY) != 0) {
-            ctx.close();
+        if (!ctx.executor().inEventLoop()) {
+            badCloseOrRecycleChannel("outside event loop");
+        } else if (!ch.isOpen()) {
+            journal("closeOrRecycleChannel", this, "is already closed");
+        } else if ((st&ST_UNHEALTHY|ST_TERMINATED) != ST_TERMINATED) {
+            if ((st&ST_TERMINATED) == 0)
+                badCloseOrRecycleChannel("before deliverTermination");
+            else
+                ctx.close();
+        } else if ((ck&RECYCLED_COOKIE) != 0) {
+            badCloseOrRecycleChannel("already recycled");
+        } else if ((int)COOKIE.compareAndExchangeRelease(this, ck, ck|RECYCLED_COOKIE) != ck) {
+            badCloseOrRecycleChannel("concurrent");
         } else {
-            assert (st&ST_TERMINATED) != 0 : "recycling before deliverTerminated";
             st = ST_CAN_REQUEST;
-            ctx.channel().config().setAutoRead(true);
-            COOKIE.getAndAddRelease(this, 1);
+            ch.config().setAutoRead(true);
             r.recycle(ctx.channel());
         }
+    }
+
+    private void badCloseOrRecycleChannel(String reason) {
+        journal("closeOrRecycleChannel", this, reason);
+        var ex = new IllegalStateException(this+".closeOrRecycleChannel(): "+reason);
+        log.error("closeOrRecycleChannel {} {}", this, reason, ex);
+        deliverTermination(ex);
+        if (ctx != null && ctx.channel().isActive())
+            ctx.close();
     }
 
     /* --- --- --- cancel --- --- --- */
@@ -175,6 +196,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         }
         if ((st&ST_TERMINATED) != 0)         // terminated
             return;                          // nothing to cancel or notify
+        if (ctx != null)
+            ctx.channel().config().setAutoRead(true);
         if ((st&ST_REQ_SENT) != 0) {         // request sent
             st |= ST_CANCELLED|ST_UNHEALTHY; // allow onCancelled, forbid recycling
             if (ctx != null) ctx.close();    // else: channelInactive() already delivered
@@ -182,6 +205,37 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             st |= ST_CANCELLED;              // call onCancelled(), but not from here
             deliverTermination(null);
         }
+    }
+
+    /**
+     * Equivalent to {@link #cancel(int)} with the cookie that
+     * {@link #start(ChannelRecycler, HttpRequest)} would return.
+     *
+     * @throws IllegalStateException if called after {@link #start(ChannelRecycler, HttpRequest)}
+     */
+    public void cancelBeforeStart() {
+        int cookie = (int)COOKIE.getAcquire(this);
+        if ((cookie&RECYCLED_COOKIE) == 0
+                || (st&(ST_REQ_SENT|ST_TERMINATED|ST_CAN_REQUEST)) != ST_CAN_REQUEST) {
+            throw new IllegalStateException("start() already called");
+        }
+        doCancelCookie = cookie;
+        actions.sched(AC_CANCEL_BEFORE_START);
+    }
+    @SuppressWarnings("unused") private void doCancelBeforeStart() {
+        int ck = doCancelCookie;
+        if (ck != (int)COOKIE.getAcquire(this) || (ck&RECYCLED_COOKIE) == 0
+                || (st&ST_REQ_SENT) != 0 ) {
+            journal("doCancelBeforeStart: bad", ck, "st=", st, ST, "on", this);
+            return;
+        }
+        if ((int)COOKIE.compareAndExchangeRelease(this, ck, ck&~RECYCLED_COOKIE) != ck) {
+            journal("doCancelBeforeStart: start() happened st=", st, ST, "on", this);
+            log.error("concurrent start() and cancelBeforeStart on {}", this);
+            return;
+        }
+        st |= ST_CANCELLED;
+        deliverTermination(null);
     }
 
     /* --- --- --- request start --- --- --- */
@@ -198,26 +252,40 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
      * @return an usage cookie
      */
     public int start(ChannelRecycler recycler, HttpRequest request) {
-        int cookie = (int)COOKIE.getAcquire(this);
-        if (pendingRequest != null || (st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST)
-            throw cannotSendRequest();
-        this.recycler = recycler;
-        pendingRequest = request;
+        int frozen = (int)COOKIE.getAcquire(this);
+        int cookie = ((frozen&~RECYCLED_COOKIE) + 1)&~RECYCLED_COOKIE;
+        if ((frozen&RECYCLED_COOKIE) == 0 || pendingRequest != null
+                || (st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST
+                || (int)COOKIE.compareAndExchangeRelease(this, frozen, cookie) != frozen) {
+            throw cannotSendRequest(frozen);
+        }
+        this.recycler       = recycler;
+        doSendRequestCookie = cookie;
+        pendingRequest      = request;
         actions.sched(AC_ENABLE_AUTOREAD|AC_SEND_REQUEST);
         return cookie;
     }
     @SuppressWarnings("unused") private void doSendRequest() {
-        HttpRequest request = pendingRequest;
-        if (request == null || ctx == null)
-            return;
+        int cookie     = doSendRequestCookie;
+        var request    = pendingRequest;
         pendingRequest = null;
-        if ((st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST)
-            throw cannotSendRequest();
-        st = (st&~ST_CAN_REQUEST) | ST_REQ_SENT;
-        ctx.writeAndFlush(request);
+        try {
+            if (cookie != (int)COOKIE.getAcquire(this)) {
+                journal("doSendRequest: bad cookie", cookie, "st=", st, ST, "on", this);
+                return;
+            }
+            if ((st&(ST_UNHEALTHY|ST_CAN_REQUEST)) != ST_CAN_REQUEST)
+                throw cannotSendRequest(cookie);
+            st = (st&~ST_CAN_REQUEST) | ST_REQ_SENT;
+            ctx.writeAndFlush(request);
+            request = null;
+        } finally {
+            if (request instanceof HttpContent hc && hc.refCnt() > 0)
+                hc.release(); // no writeAndFlush(request)
+        }
     }
 
-    private IllegalStateException cannotSendRequest() {
+    private IllegalStateException cannotSendRequest(int cookie) {
         String reason;
         if (pendingRequest != null)
             reason = ": already has a pending request";
@@ -225,6 +293,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             reason = ": already has an active request";
         else if ((st&ST_UNHEALTHY) != 0)
             reason = ": channel was deemed unhealthy";
+        else if ((cookie&RECYCLED_COOKIE) != 0)
+            reason = ": channel already in use elsewhere";
         else if ((st&ST_CAN_REQUEST) == 0)
             reason = ": CAN_REQUEST bit is off";
         else
@@ -254,6 +324,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     /* --- --- --- actions --- --- ---  */
 
     private static final BitsetRunnable.Spec ACTIONS_SPEC;
+    private static final int AC_CANCEL_BEFORE_START;
     private static final int AC_CANCEL;
     private static final int AC_DISABLE_AUTOREAD;
     private static final int AC_ENABLE_AUTOREAD;
@@ -261,10 +332,11 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
 
     static {
         var s = new BitsetRunnable.Spec(MethodHandles.lookup());
-        AC_CANCEL           = s.add("doCancel",          true);
-        AC_DISABLE_AUTOREAD = s.add("doDisableAutoRead", false);
-        AC_ENABLE_AUTOREAD  = s.add("doEnableAutoRead",  false);
-        AC_SEND_REQUEST     = s.add("doSendRequest",     true);
+        AC_CANCEL_BEFORE_START = s.add("doCancelBeforeStart", true);
+        AC_CANCEL              = s.add("doCancel",            true);
+        AC_DISABLE_AUTOREAD    = s.add("doDisableAutoRead",   false);
+        AC_ENABLE_AUTOREAD     = s.add("doEnableAutoRead",    false);
+        AC_SEND_REQUEST        = s.add("doSendRequest",       true);
         ACTIONS_SPEC = s;
     }
 
@@ -400,21 +472,24 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         actions.runNow();
     }
 
-    private boolean deliverTermination(@Nullable Throwable error) {
-        if ((st&ST_REQ_SENT) == 0 || (st&ST_TERMINATED) != 0)
-            return false;
+    private void deliverTermination(@Nullable Throwable error) {
+        if ((st&ST_TERMINATED) != 0)
+            return;
         st |= ST_TERMINATED;
         try {
-            if (error != null)
+            if (error != null) {
                 onClientSideError(error);
-            else if ((st&ST_FAIL_RESP) != 0)
+            } else if ((st&ST_FAIL_RESP) != 0) {
+                st |= ST_UNHEALTHY;
                 onFailureResponse(httpResp, failureBody, (st&ST_FAIL_RESP_TRUNC) == 0);
-            else if ((st&(ST_NON_EMPTY|ST_GOT_LAST_CHUNK)) == (ST_NON_EMPTY|ST_GOT_LAST_CHUNK))
+            } else if ((st&(ST_NON_EMPTY|ST_GOT_LAST_CHUNK)) == (ST_NON_EMPTY|ST_GOT_LAST_CHUNK)) {
                 onSuccessLastContent();
-            else if ((st&ST_CANCELLED) != 0)
+            } else if ((st&ST_CANCELLED) != 0) {
                 onCancelled((st&ST_NON_EMPTY) != 0);
-            else
+            } else {
+                st |= ST_UNHEALTHY;
                 onIncompleteSuccessResponse((st&ST_NON_EMPTY) == 0);
+            }
         } catch (Throwable t) {
             st |= ST_UNHEALTHY;
             log.error("Ignoring {} thrown during deliverTermination() for {}",
@@ -424,7 +499,12 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
                 c.release();
             httpResp = null;
         }
-        return true;
+        if ((st&ST_UNHEALTHY) == 0)
+            closeOrRecycleChannel();
+        else if (ctx != null) {
+            journal("deliverTermination", this, "closing unhealthy");
+            ctx.close();
+        }
     }
 
     @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
@@ -478,10 +558,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             }
             if (content instanceof LastHttpContent) {
                 st |= ST_GOT_LAST_CHUNK;
-                if (deliverTermination(null)
-                        && (st&(ST_OK_RESP|ST_UNHEALTHY)) == ST_OK_RESP) {
-                    recycleChannel();
-                }
+                deliverTermination(null);
             }
         }
     }
@@ -502,6 +579,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
 
     private void readSpontaneous(HttpObject msg) {
         st |= ST_UNHEALTHY;
+        ctx.close();
         if (msg instanceof HttpResponse res) {
             journal("spontaneous HTTP ", res.status().code(), " response st=",
                     st, ST, "on", this);
@@ -517,6 +595,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
 
     private void readPostTerm(HttpObject msg) {
         st |= ST_UNHEALTHY;
+        ctx.close();
         if (msg instanceof HttpResponse res) {
             journal("post-term HTTP ", res.status().code(), " response st=",
                     st, ST, "on", this);
@@ -526,8 +605,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         }
         if (msg instanceof HttpContent c)
             journal("post-term message bytes=", c.content().readableBytes(), "on", this);
-        log.debug("Ignoring unexpected server-sent {} on {}: {}",
-                  msg.getClass().getSimpleName(), this, msg);
+        if ((st&(ST_CANCELLED)) == 0) {
+            log.warn("Ignoring unexpected server-sent {} on {}: {}",
+                     msg.getClass().getSimpleName(), this, msg);
+        }
     }
 
 }
