@@ -437,18 +437,19 @@ public class NettySparqlServer implements AutoCloseable{
         @SuppressWarnings("unused") private void doRecycle() {
             if ((st&ST_POOLED) != 0)
                 throw new IllegalStateException("recycling already pooled");
-            if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED)
-                throw new IllegalStateException("doRecycle with unfinished response");
             cleanupAfterEndResponse();
-            if ((st&(ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED)) != 0) {
+            if ((st&(ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED)) != 0
+                    || (st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED) {
                 journal("will not pool, st=", st, ST, "on", this);
             } else {
-                st = ST_POOLED;
+                st   = ST_POOLED;
                 info = null;
                 //noinspection unchecked
-                if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) != null)
-                    finalRelease();
+                if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) == null)
+                    return;
+                journal("doRecycle", this, ": full pool");
             }
+            finalRelease();
         }
 
         @SuppressWarnings("unused") private void doSendTerm() {
@@ -586,6 +587,7 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            st |= ST_UNHEALTHY;
             if (!cancel() && (st&ST_CLOSING) != 0)
                 notifyClosed();
             super.channelInactive(ctx);
