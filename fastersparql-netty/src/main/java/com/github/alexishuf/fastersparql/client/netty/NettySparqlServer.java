@@ -235,7 +235,7 @@ public class NettySparqlServer implements AutoCloseable{
         protected static final int ST_CLOSING         = 0x008;
         protected static final int ST_NOTIFIED_CLOSED = 0x010;
         protected static final int ST_CANCEL_REQ      = 0x020;
-        protected static final int ST_POOLED          = 0x040;
+        protected static final int ST_ORPHAN          = 0x040;
         protected static final int ST_RELEASED        = 0x080;
         protected static final int ST_UNHEALTHY       = 0x100;
 
@@ -248,7 +248,7 @@ public class NettySparqlServer implements AutoCloseable{
             if ((st&ST_CLOSING)         != 0) sb.append("CLOSING,");
             if ((st&ST_NOTIFIED_CLOSED) != 0) sb.append("NOTIFIED_CLOSE,");
             if ((st&ST_CANCEL_REQ)      != 0) sb.append("CANCEL_REQ,");
-            if ((st&ST_POOLED)          != 0) sb.append("POOLED,");
+            if ((st&ST_ORPHAN)          != 0) sb.append("ORPHAN,");
             if ((st&ST_RELEASED)        != 0) sb.append("RELEASED,");
             if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
             sb.setLength(sb.length()-1);
@@ -270,6 +270,7 @@ public class NettySparqlServer implements AutoCloseable{
         private Channel lastCh;
 
         public QueryHandler() {
+            st = ST_ORPHAN;
             queryHandlers.add(this);
         }
 
@@ -324,7 +325,7 @@ public class NettySparqlServer implements AutoCloseable{
             } else {
                 journal("skip request", n, "st=", st, ST, "on", this);
                 if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == 0
-                        || (st&(ST_POOLED|ST_RELEASED|ST_CANCEL_REQ)) != 0) {
+                        || (st&(ST_ORPHAN |ST_RELEASED|ST_CANCEL_REQ)) != 0) {
                     log.warn("Ignoring unexpected request {} on {}", n, this);
                 }
             }
@@ -334,7 +335,7 @@ public class NettySparqlServer implements AutoCloseable{
             while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             try {
                 assert inEventLoop() && upstream==null
-                        && (st&(ST_RES_STARTED|ST_RES_TERMINATED| ST_CANCEL_REQ |ST_POOLED)) == ST_RES_STARTED
+                        && (st&(ST_RES_STARTED|ST_RES_TERMINATED|ST_CANCEL_REQ|ST_ORPHAN)) == ST_RES_STARTED
                         : "not in event loop, already subscribed or not RES_STARTED";
                 errorOrCancelledException = null;
                 sendQueue                 = COMPRESSED.recycle(sendQueue);
@@ -423,11 +424,11 @@ public class NettySparqlServer implements AutoCloseable{
             errorOrCancelledException = null;
         }
 
-        protected void finalRelease() {
+        protected void releaseResources() {
             if ((st&ST_RELEASED) != 0)
                 journal("duplicate finalRelease st=", st, ST, "on", this);
-            if ((st&ST_POOLED) != 0)
-                throw new IllegalStateException("finalRelease on pooled");
+            if ((st&ST_ORPHAN) != 0)
+                throw new IllegalStateException("finalRelease on orphan");
             st |= ST_RELEASED;
             queryHandlers.remove(this);
             bbView.recycle();
@@ -435,21 +436,21 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         @SuppressWarnings("unused") private void doRecycle() {
-            if ((st&ST_POOLED) != 0)
-                throw new IllegalStateException("recycling already pooled");
+            if ((st&ST_ORPHAN) != 0)
+                throw new IllegalStateException("recycling already orphan");
             cleanupAfterEndResponse();
             if ((st&(ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED)) != 0
                     || (st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED) {
                 journal("will not pool, st=", st, ST, "on", this);
             } else {
-                st   = ST_POOLED;
+                st   = ST_ORPHAN;
                 info = null;
                 //noinspection unchecked
                 if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) == null)
                     return;
                 journal("doRecycle", this, ": full pool");
             }
-            finalRelease();
+            releaseResources();
         }
 
         @SuppressWarnings("unused") private void doSendTerm() {
@@ -527,7 +528,7 @@ public class NettySparqlServer implements AutoCloseable{
         @SuppressWarnings("unused") protected void doBindReq() { throw new UnsupportedOperationException(); }
 
         @SuppressWarnings("unused") private void doTouchSink() {
-            if ((st&(ST_POOLED|ST_UNHEALTHY|ST_CLOSING|ST_CLOSE_ON_TERM|ST_NOTIFIED_CLOSED)) == 0
+            if ((st&(ST_ORPHAN|ST_RELEASED|ST_UNHEALTHY|ST_CLOSING|ST_CLOSE_ON_TERM|ST_NOTIFIED_CLOSED)) == 0
                     && ctx.channel().isActive()) {
                 bbSink.touch();
             }
@@ -537,7 +538,10 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override public @Nullable Channel channelOrLast() {return lastCh;}
 
-        protected String channelId() { return lastCh == null ? "null" : lastCh.id().asShortText(); }
+        protected String idTag() {
+            return lastCh == null ? '@'+Integer.toHexString(System.identityHashCode(this))
+                                  : ':'+lastCh.id().asShortText();
+        }
 
         @Override public void setChannel(Channel ch) {
             if (ch != channelOrLast())
@@ -545,7 +549,7 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         @Override public String journalName() {
-            return "S."+getClass().getSimpleName().charAt(0)+":"+channelId();
+            return "S."+getClass().getSimpleName().charAt(0)+idTag();
         }
 
         @Override public String toString() {
@@ -565,8 +569,14 @@ public class NettySparqlServer implements AutoCloseable{
             return type.showState() ? name+ST.render(st) : name;
         }
 
-        @Override public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
-            this.st &= ~ST_POOLED;
+        @Override public void channelRegistered(ChannelHandlerContext ctx) {
+            if ((st&ST_ORPHAN) == 0) {
+                var e = new InvalidSparqlException(journalName()+"in use, cannot register on "+ctx);
+                log.error("channelRegistered({}) failure", ctx.channel().id().asShortText(), e);
+                ctx.close();
+                throw e;
+            }
+            st &= ~ST_ORPHAN;
             if (this.st != 0) {
                 log.error("dirty st on channelRegistered for {}", this);
                 st = 0;
@@ -575,22 +585,22 @@ public class NettySparqlServer implements AutoCloseable{
             this.lastCh = ctx.channel();
             this.bbSink.alloc(ctx.alloc());
             this.bsRunnable.executor(ctx.executor());
-            super.channelRegistered(ctx);
+            ctx.fireChannelRegistered();
         }
 
-        @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+        @Override public void channelUnregistered(ChannelHandlerContext ctx) {
             this.bsRunnable.runNow();
             this.ctx = null;
             cleanupAfterEndResponse();
-            super.channelUnregistered(ctx);
             this.bsRunnable.sched(AC_RECYCLE);
+            ctx.fireChannelUnregistered();
         }
 
-        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        @Override public void channelInactive(ChannelHandlerContext ctx) {
             st |= ST_UNHEALTHY;
             if (!cancel() && (st&ST_CLOSING) != 0)
                 notifyClosed();
-            super.channelInactive(ctx);
+            ctx.fireChannelInactive();
         }
 
         @Override
@@ -672,8 +682,10 @@ public class NettySparqlServer implements AutoCloseable{
             bsRunnable.runNow();
             if (handleUpgrade(req))
                 return;
-            if ((st&(ST_POOLED|ST_RELEASED)) != 0) {
-                throw new IllegalStateException("message arrived on released/pooled handler");
+            if ((st&(ST_ORPHAN)) != 0) {
+                throw new IllegalStateException("message arrived on orphan handler");
+            } else if ((st&(ST_RELEASED)) != 0) {
+                throw new IllegalStateException("message arrived on released handler");
             } else if ((st&ST_RES_STARTED) != 0) {
                 sendRequestError(BAD_REQUEST, REQ_BEFORE_RES_MSG).close();
             } else if (cancelledByServerClose != null) {
@@ -929,7 +941,7 @@ public class NettySparqlServer implements AutoCloseable{
             }
 
             @Override protected StringBuilder minimalLabel() {
-                return new StringBuilder().append("S.W.BE:").append(channelId());
+                return new StringBuilder().append("S.W.BE").append(idTag());
             }
 
             @Override public void request(long rows) throws NoReceiverException {
@@ -961,7 +973,7 @@ public class NettySparqlServer implements AutoCloseable{
             }
 
             @Override protected StringBuilder minimalLabel() {
-                return new StringBuilder().append("WS.W.BB:").append(channelId());
+                return new StringBuilder().append("WS.W.BB:").append(idTag());
             }
 
             @Override protected boolean mustPark(int offerRows, long queuedRows) {return false;}
@@ -1015,8 +1027,8 @@ public class NettySparqlServer implements AutoCloseable{
             nonEmptySeq      = -1;
         }
 
-        @Override protected void finalRelease() {
-            super.finalRelease();
+        @Override protected void releaseResources() {
+            super.releaseResources();
             serializer.recycle();
             if (cancelFrame != null && cancelFrame.refCnt() > 0)
                 cancelFrame.release();
@@ -1110,12 +1122,14 @@ public class NettySparqlServer implements AutoCloseable{
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) {
             bsRunnable.runNow();
+            if ((st&ST_RELEASED) != 0)
+                throw new IllegalStateException("message on released handler");
+            if ((st&ST_ORPHAN) != 0)
+                throw new IllegalStateException("message on orphan handler");
             SegmentRope msg = bbView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
             if (cancelledByServerClose != null) {
                 readAfterServerClose();
-            } else if ((st&(ST_POOLED|ST_RELEASED)) != 0) {
-                throw new IllegalStateException("message arrived pooled/released handler");
             } else if (f == 'c' && msg.has(0, AbstractWsParser.CANCEL_LF)) {
                 readCancel();
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
