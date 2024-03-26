@@ -42,13 +42,13 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
         }
     }
 
-    @Override public void reset() {
+    @Override public void reset(CompletableBatchQueue<B> downstream) {
         if (sentBindings != null)
             sentBindings = batchType().recycle(sentBindings);
         currBindingRow = -1;
         currBinding = -1;
         bindingNotified = true;
-        super.reset();
+        super.reset(downstream);
     }
 
     public void addSentBatch(B b) { sentBindings = Batch.quickAppend(sentBindings, b); }

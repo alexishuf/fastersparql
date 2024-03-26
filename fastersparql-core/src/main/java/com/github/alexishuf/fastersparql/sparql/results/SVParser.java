@@ -27,7 +27,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     private static final Logger log = LoggerFactory.getLogger(SVParser.class);
 
-    protected final int nVars;
+    protected int nVars;
     protected final ByteRope eol;
     protected final TermParser termParser = new TermParser();
     protected @Nullable ByteRope partialLine, fedPartialLine;
@@ -40,13 +40,14 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         this.eol = eol;
     }
 
-    @Override public void reset() {
+    @Override public void reset(CompletableBatchQueue<B> downstream) {
+        super.reset(downstream);
         inputColumns = -1;
         column       =  0;
         line         =  0;
+        nVars        = downstream.vars().size();
         if (partialLine    != null) partialLine   .clear();
         if (fedPartialLine != null) fedPartialLine.clear();
-        super.reset();
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

@@ -52,12 +52,12 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
 
     protected B batch;
     protected long rowsParsed;
-    protected final CompletableBatchQueue<B> dst;
+    protected CompletableBatchQueue<B> dst;
     protected boolean incompleteRow;
     private boolean eager;
     @SuppressWarnings("unused") private boolean plainTerminated;
     private final BatchType<B> batchType;
-    private final int outCols;
+    private int outCols;
     private Namer<Object> namer = DEF_NAMER;
     private @Nullable Object namerObject;
 
@@ -231,7 +231,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      * <p>This should only be called if the destination is ready to receive another
      * {@link CompletableBatchQueue#complete(Throwable)} call.</p>
      */
-    public void reset() {
+    public void reset(CompletableBatchQueue<B> downstream) {
         if (batch != null && batch.rows > 0) {
             if (ThreadJournal.ENABLED)
                 journal("batch.totalRows=", batch.totalRows(), "during reset on", this);
@@ -240,6 +240,12 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
         incompleteRow   = false;
         eager           = false;
         rowsParsed      = 0;
+        if (downstream != dst) {
+            if (!downstream.batchType().equals(batchType))
+                throw new IllegalArgumentException("batchType cannot be changed in reset()");
+            dst     = downstream;
+            outCols = downstream.vars().size();
+        }
         TERMINATED.setRelease(this, false);
     }
 

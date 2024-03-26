@@ -24,7 +24,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
     private final ArrayDeque<SparqlState> sparqlStack = new ArrayDeque<>();
     private boolean hadSparqlProperties = false;
     private int column;
-    private final Vars vars;
+    private Vars vars;
     private final ByteRope value = new ByteRope(), lang = new ByteRope();
     private final ByteRope dtSuffix = new ByteRope();
     private final SegmentRope varName = new SegmentRope();
@@ -48,8 +48,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override public SparqlResultFormat format() {return SparqlResultFormat.JSON;}
 
-    @Override public void reset() {
-        super.reset();
+    @Override public void reset(CompletableBatchQueue<B> downstream) {
+        super.reset(downstream);
         if (partial      != null)      partial.clear();
         if (allocPartial != null) allocPartial.clear();
         jsonStack  .clear();
@@ -60,6 +60,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
         hadSparqlProperties = false;
         column              = 0;
         type                = null;
+        vars                = downstream.vars();
+        push(SparqlState.ROOT);
     }
 
     @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {

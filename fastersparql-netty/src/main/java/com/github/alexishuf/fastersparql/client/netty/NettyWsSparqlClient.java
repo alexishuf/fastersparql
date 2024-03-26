@@ -436,7 +436,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             if ((st&(ST_QUERY_SENT|ST_GOT_TERM)) == ST_QUERY_SENT)
                 throw new IllegalStateException("reset after query sent but before term received");
             st &= ST_RELEASED;
-            parser.reset();
+            parser.reset(parent);
 
             // recycle any leftover bindings
             while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
@@ -449,7 +449,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @SuppressWarnings("unused") private void doRetry() {
             if ((st&(ST_CAN_RELEASE|ST_RELEASED|ST_RETRY)) == ST_RETRY) {
                 st = 0;
-                parser.reset();
+                parser.reset(parent);
                 long req = parent instanceof WsEmitter<B> em ? em.requested() : Long.MAX_VALUE;
                 REQ_ROWS.setRelease(this, req);
                 bsRunnable.sched(AC_SEND_QUERY);

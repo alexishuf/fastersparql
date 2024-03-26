@@ -478,7 +478,6 @@ public class NettySparqlClient extends AbstractSparqlClient {
             } else {
                 log.error("{}: no downstream to deliver err={}", this, cause, cause);
             }
-            parser     = null;
             downstream = null;
         }
 
@@ -504,8 +503,18 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 throw new InvalidSparqlResultsException("No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
-            parser = ResultsParser.createFor(fromMediaType(mt), downstream);
-            parser.namer(PARSER_NAMER, this);
+            if (parser != null && parser.format().asMediaType().accepts(mt)
+                    && parser.batchType().equals(downstream.batchType())) {
+                forceReset(parser, downstream);
+            } else {
+                parser = ResultsParser.createFor(fromMediaType(mt), downstream);
+                parser.namer(PARSER_NAMER, this);
+            }
+        }
+        private static <B1 extends Batch<B1>, B2 extends Batch<B2>>
+        void forceReset(ResultsParser<B1> parser, CompletableBatchQueue<B2> dst) {
+            //noinspection unchecked
+            parser.reset((CompletableBatchQueue<B1>)dst);
         }
         private static final ResultsParser.Namer<NettyHandler> PARSER_NAMER = (p, h) -> {
             if (p == null) return "null";

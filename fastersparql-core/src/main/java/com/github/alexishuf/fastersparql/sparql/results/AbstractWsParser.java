@@ -59,8 +59,8 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     @Override public SparqlResultFormat format() {return SparqlResultFormat.WS;}
 
-    @Override public void reset() {
-        super.reset();
+    @Override public void reset(CompletableBatchQueue<B> downstream) {
+        super.reset(downstream);
         serverSentTermination = false;
     }
 
