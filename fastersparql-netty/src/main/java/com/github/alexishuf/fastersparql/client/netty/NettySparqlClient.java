@@ -169,12 +169,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public boolean retry() {
             lock();
             try {
-                if (isTerminated()) return false;
-                if (retries < FSNettyProperties.maxRetries()) {
+                boolean terminated = isTerminated();
+                if (!terminated && retries < FSNettyProperties.maxRetries()) {
                     ++retries;
+                    journal("retry ", retries, "on", this);
                     netty.connect(this);
                     return true;
                 }
+                journal("will not retry, term=", terminated?1:0, "retries=", retries,
+                        "on", this);
             } finally { unlock(); }
             return false;
         }
@@ -310,12 +313,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public void setInfo(@Nullable String info) { this.info = info;}
 
         @Override public boolean retry() {
-            if ((state()&(IS_TERM|GOT_CANCEL_REQ)) != 0) return false;
-            if (retries < FSNettyProperties.maxRetries()) {
+            int st = state();
+            if ((st&(IS_TERM|GOT_CANCEL_REQ)) == 0 && retries < FSNettyProperties.maxRetries()) {
                 ++retries;
+                journal("retry", retries, "on", this);
                 netty.connect(this);
                 return true;
             }
+            journal("will not retry, st=", st, flags, "retries=", retries,
+                    "on", this);
             return false;
         }
 
@@ -476,7 +482,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 else
                     downstream.complete(fse);
             } else {
-                log.error("{}: no downstream to deliver err={}", this, cause, cause);
+                journal("no downstream to deliver ", cause, "on", this);
+                log.error("{}: no downstream to deliver err={}", this,
+                          cause == null ? null : cause.getClass().getSimpleName(), cause);
             }
             downstream = null;
         }
