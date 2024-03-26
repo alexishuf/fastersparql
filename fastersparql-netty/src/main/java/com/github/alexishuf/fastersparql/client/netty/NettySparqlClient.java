@@ -560,7 +560,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void onSuccessLastContent() {
-            requireNonNull(parser).feedEnd();
+            completeDownstream(null);
         }
 
         @Override protected void onCancelled(boolean empty) {
