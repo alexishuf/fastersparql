@@ -58,6 +58,9 @@ public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
         if (nTerms > b.termsCapacity)
             b = reAlloc(b, nTerms);
         b.rows = (short)nRows;
+        int words = BS.longsFor(nRows);
+        if (has.length < words)
+            has = ArrayPool.grow(has, words);
         BS.clear(has, oRows, nRows);
     }
 
