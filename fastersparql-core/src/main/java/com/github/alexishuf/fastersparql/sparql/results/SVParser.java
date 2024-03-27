@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -26,10 +27,12 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     private static final Logger log = LoggerFactory.getLogger(SVParser.class);
+    private static final AffinityPool<TermParser> TERM_PARSER_POOL
+            = new AffinityPool<>(TermParser.class, 32);
 
     protected int nVars;
     protected final ByteRope eol;
-    protected final TermParser termParser = new TermParser();
+    protected TermParser termParser;
     protected @Nullable ByteRope partialLine, fedPartialLine;
     protected int inputColumns = -1, column, line;
     protected int[] inVar2outVar;
@@ -38,10 +41,18 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         super(destination);
         this.nVars = destination.vars().size();
         this.eol = eol;
+        this.termParser = createTermParser();
+    }
+
+    private static TermParser createTermParser() {
+        TermParser pooled = TERM_PARSER_POOL.get();
+        return pooled == null ? new TermParser() : pooled;
     }
 
     @Override public void reset(CompletableBatchQueue<B> downstream) {
         super.reset(downstream);
+        if (termParser == null)
+            termParser = createTermParser();
         inputColumns = -1;
         column       =  0;
         line         =  0;
@@ -52,7 +63,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        termParser.close();
+        if ((termParser=TERM_PARSER_POOL.offer(termParser)) != null)
+            termParser.close();
     }
 
     @Override protected @Nullable Throwable doFeedEnd() {
