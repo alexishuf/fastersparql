@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
@@ -298,7 +299,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
             long deadline = Timestamp.nextTick(1);
-            while (ready != null) {
+            for (boolean quick = true; quick && ready != null; quick = nanoTime() <= deadline) {
                 B b     = ready;
                 ready   = filling;
                 filling = null;
@@ -306,12 +307,10 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
                 avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
                 if (b.rows > 0 && (b = deliver(b)) != null)
                     b.recycle();
-                if (Timestamp.nanoTime() > deadline) {
-                    awake();
-                    break;
-                }
                 st = lock(st);
             }
+            if (ready != null)
+                awake();
             if (requested() <= 0 && (st&(GOT_CANCEL_REQ)) != 0)
                 pauseProducer();
             if (ready == null) {
