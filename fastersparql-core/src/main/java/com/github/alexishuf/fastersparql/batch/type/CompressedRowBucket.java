@@ -6,11 +6,14 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import com.github.alexishuf.fastersparql.util.concurrent.LevelPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -24,6 +27,14 @@ import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class CompressedRowBucket implements RowBucket<CompressedBatch> {
+    private static final VarHandle P;
+    static {
+        try {
+            P = MethodHandles.lookup().findVarHandle(CompressedRowBucket.class, "plainPooled", boolean.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
     private static final byte[][] EMPTY_ROWS_DATA = new byte[0][];
@@ -34,6 +45,7 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
     private SegmentRope[] shared;
     private int cols, rows;
     private long[] has;
+    @SuppressWarnings("unused") private boolean plainPooled;
 
     public CompressedRowBucket(int rowsCapacity, int cols) {
         int level = rowsCapacity == 0 ? 0 : 33 - Integer.numberOfLeadingZeros(rowsCapacity-1);
@@ -126,6 +138,20 @@ public class CompressedRowBucket implements RowBucket<CompressedBatch> {
         return null;
     }
 
+    @Override public boolean poolInto(LIFOPool<RowBucket<CompressedBatch>> pool) {
+        if ((boolean)P.compareAndExchangeAcquire(this, false, true))
+            throw new IllegalStateException("already pooled");
+        if (pool.offer(this) != null) {
+            P.setRelease(this, false);
+            return false;
+        }
+        return true;
+    }
+
+    @Override public void unmarkPooled() {
+        if (!(boolean)P.compareAndExchangeRelease(this, true, false))
+            throw new IllegalStateException("not pooled");
+    }
     private static void recycleRowsData(byte[][] rowsData) {
         if (DATA_POOL.offer(rowsData, rowsData.length) != null) {
             for(int i = 0; i < rowsData.length; ++i) {

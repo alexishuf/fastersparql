@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -83,6 +84,24 @@ public final class IdBatchBucket<B extends IdBatch<B>> implements RowBucket<B> {
         has = ArrayPool.LONG.offerToNearest(has, has.length);
         return null;
     }
+
+    @Override public boolean poolInto(LIFOPool<RowBucket<B>> pool) {
+        if (b == null)
+            throw new IllegalStateException("previous recycleInternals()");
+        b.markPooled();
+        if (pool.offer(this) != null) {
+            b.markUnpooled();
+            return false;
+        }
+        return true;
+    }
+
+    @Override public void unmarkPooled() {
+        if (b == null)
+            throw new IllegalStateException("previous recycleInternals()");
+        b.markUnpooled();
+    }
+
     @Override public int            cols() { return b == null ? 0 : b.cols; }
     @Override public int        capacity() { return b == null ? 0 : b.rowsCapacity(); }
     @Override public int hashCode(int row) { return BS.get(has, row) ? b.hash(row) : 0; }

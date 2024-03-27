@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -40,6 +41,22 @@ public class TermBatchBucket implements RowBucket<TermBatch> {
         return null;
     }
 
+    @Override public boolean poolInto(LIFOPool<RowBucket<TermBatch>> pool) {
+        if (b == null)
+            throw new IllegalStateException("previous recycleInternals()");
+        b.markPooled();
+        if (pool.offer(this) != null) {
+            b.markUnpooled();
+            return false;
+        }
+        return true;
+    }
+
+    @Override public void unmarkPooled() {
+        if (b == null)
+            throw new IllegalStateException("previous recycleInternals()");
+        b.markUnpooled();
+    }
     @Override public void maximizeCapacity() {
         short old = b.rows;
         if ((b.rows = (short)(b.termsCapacity()/b.cols)) > old)

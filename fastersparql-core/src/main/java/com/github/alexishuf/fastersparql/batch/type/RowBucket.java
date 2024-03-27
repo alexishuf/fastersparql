@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
@@ -36,6 +37,10 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
      * capacity and will reset all rows.</p>
      */
     @Nullable RowBucket<B> recycleInternals();
+
+    boolean poolInto(LIFOPool<RowBucket<B>> pool);
+
+    void unmarkPooled();
 
     /** How many rows fit in this bucket. */
     int capacity();

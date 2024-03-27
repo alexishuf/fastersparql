@@ -46,13 +46,15 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         if (id > pools.length) // grow POOLS, if necessary
             POOLS = pools = Arrays.copyOf(pools, pools.length << 1);
         if (pools[id] == null) { // only create pool once
-            var pool = new LIFOPool<>(RowBucket.class, REDUCED_POOL_CAPACITY);
+            LIFOPool<RowBucket<B>> pool;
+            pool = new LIFOPool<>((Class<RowBucket<B>>)(Object)RowBucket.class,
+                                  REDUCED_POOL_CAPACITY);
             pools[id] = (LIFOPool<RowBucket<?>>)(Object)pool;
             PoolCleaner.INSTANCE.monitor(pool); // clear refs of buckets removed from pool
             // prime pool
             int capacity = Math.min(Short.MAX_VALUE, bt.preferredTermsPerBatch()*reducedBatches());
             for (int i = 0; i < PRIMED_COUNT; i++)
-                pool.offer(bt.createBucket(capacity, 1));
+                bt.createBucket(capacity, 1).poolInto(pool);
         }
     }
 
@@ -63,8 +65,10 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         this.big = DistinctType.WEAK.compareTo(type) < 0;
         if (this.big) {
             rowsCapacity = Math.min(Short.MAX_VALUE/cols, rowsCapacity*reducedBatches());
-            if ((rows = bucketPool(batchType).get()) != null)
+            if ((rows = bucketPool(batchType).get()) != null) {
+                rows.unmarkPooled();
                 rows.clear(rowsCapacity, cols);
+            }
         }
         if (rows == null)
             rows = batchType.createBucket(rowsCapacity, cols);
@@ -95,7 +99,7 @@ public final class WeakDedup<B extends Batch<B>> extends Dedup<B> {
         if (recycled)
             throw new IllegalStateException("Already recycled");
         recycled = true;
-        if (!big || bucketPool(bt).offer(rows) != null)
+        if (!big || !rows.poolInto(bucketPool(bt)))
             rows.recycleInternals();
         bitset = HashBitset.recycle(bitset);
     }
