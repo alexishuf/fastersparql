@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import org.checkerframework.checker.fenum.qual.SwingCompassDirection;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,6 +117,8 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         while ((int)SET_EXECUTOR_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
             Thread.yield();
         try {
+            if (this.executor == executor)
+                return; // no-op
             this.executor = executor;
 
             // set CHG_EXECUTOR, to make a previously scheduled or concurrent run()
@@ -128,29 +129,57 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             a |= CHG_EXECUTOR;
 
             // If there is no scheduled run(), unset CHG_EXECUTOR because a future sched()
-            // will see the updated executor. This must be done after setting CHG_EXECUTOR
-            // because sched() races with executor(Executor)
-            if ((a& QUEUED) == 0 && (int)A.compareAndExchangeRelease(this, a, a&~CHG_EXECUTOR) == a)
+            // will already see the updated executor. This must be done after setting CHG_EXECUTOR
+            // because sched(int) races with executor(Executor)
+            if ((a&QUEUED) == 0 && (int)A.compareAndExchangeRelease(this, a, a&~CHG_EXECUTOR) == a)
                 return; // done: no run() scheduled or scheduled on the new executor
 
-            journal("concurrent doRun, set exec rcv=", receiver);
-            // wait until:
-            //   1. a previously scheduled run() concurrent with this method consumes CHG_EXECUTOR
-            //   2. this method was called from within run(), in which case the only way
-            //      to consume CHG_EXECUTOR is returning
-            //   3. there is no concurrent run() running, which means that when a previously
-            //      scheduled run() enters, it will consume CHG_EXECUTOR before anything else
-            Thread self = currentThread(), running = (Thread)THREAD.getAcquire(this);
-            for (int i=0; (a&CHG_EXECUTOR) != 0 && running != null && running != self ;++i) {
-                if ((i&0xf) == 0xf) Thread.yield();
-                else                onSpinWait();
-                a = (int)A.getAcquire(this);
-                running = (Thread)THREAD.getAcquire(this);
-            }
-            journal("waited concurrent doRun, set exec rcv=", receiver);
+            Thread running = (Thread) THREAD.getAcquire(this);
+            // if doRun() indirectly called this method, waiting is a deadlock.
+            // else, if web observe doRun() not running, we can safely exit because:
+            //   1. doRun() was not executed yet: when it does, it will enqueue on the new executor
+            //   2. doRun() already executed and exited, then:
+            //      1. it enqueued this on the old executor: then it did not consume CHG_EXECUTOR,
+            //         which will be consumed when it runs again
+            //      2. it enqueued this on the new executor, which was the goal
+            //      3. it did not enqueued this anywhere: then it saw no scheduled actions and
+            //         a future sched() will use the new executor. This is very rare and
+            //         should not happen in x86. On Arm it may happen because memory ordering
+            if (running == Thread.currentThread() || running == null)
+                return;
+
+            // doRun() appears to be concurrently running, it is not safe to return
+            // control to our caller
+            waitConcurrentDoRunChgExecutor();
         } finally {
             SET_EXECUTOR_LOCK.setRelease(this, 0);
         }
+    }
+
+    private void waitConcurrentDoRunChgExecutor() {
+        journal("concurrent doRun, set exec rcv=", receiver);
+        // this is scheduled on the old executor and a thread from the old executor has
+        // entered doRun(). Wait until:
+        //   1. concurrent doRun() has unset CHG_EXECUTOR: it will re-schdule this on the
+        //      new executor which is already visible to it.
+        //   2. concurrent doRun() exits before it saw CHG_EXECUTOR. This is rare but may
+        //      happen because A and THREAD are independently synchronized. The old executor
+        //      might have scheduled itself on the old executor, on the new executor or in
+        //      no executor at all:
+        //      - If it rescheduled on the old executor, a future doRun() it will process
+        //        CHG_EXECUTOR before any method and re-schedule on the new executor
+        //      - If it rescheduled on the new executor, all is good
+        //      - If it did not reschedule, it there were no actions left and it cleared QUEUED
+        //        a future sched() will enqueue this on the new executor.
+        Thread running = (Thread)THREAD.getAcquire(this);
+        int a = (int)A.getAcquire(this);
+        for (int i=0; (a&CHG_EXECUTOR) != 0 && running != null; ++i) {
+            if ((i&0xf) == 0xf) Thread.yield();
+            else                Thread.onSpinWait();
+            a = (int)A.getAcquire(this);
+            running = (Thread)THREAD.getAcquire(this);
+        }
+        journal("waited concurrent doRun, set exec rcv=", receiver);
     }
 
     private void journalSched(int actions) {
