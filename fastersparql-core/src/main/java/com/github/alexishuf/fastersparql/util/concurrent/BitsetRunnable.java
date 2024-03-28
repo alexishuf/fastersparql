@@ -119,6 +119,7 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         try {
             if (this.executor == executor)
                 return; // no-op
+            journal("set exec=", executor, "rcv=", this);
             this.executor = executor;
 
             // set CHG_EXECUTOR, to make a previously scheduled or concurrent run()
@@ -256,7 +257,7 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             return; // no work
         if ((ex&SKIP) != 0)
             throw new IllegalStateException("concurrent runNow()");
-        Thread self = currentThread();
+        Thread self = currentThread(), witness;
         if (plainThread == self)
             return; // do not run recursively
         // set SKIP to make a previously scheduled or concurrent run() exit
@@ -269,42 +270,59 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
             // invoke queued methods
             doRun(0);
         } finally {
+            // unset running thread
+            witness = (Thread)THREAD.compareAndExchangeRelease(this, self, null);
             // unset SKIP
             ex = (int)A.getAcquire(this);
             while ((ac=(int)A.compareAndExchangeRelease(this, ex, ex&~SKIP)) != ex)
                 ex = ac;
         }
+        assert witness == self : "concurrent execution of runNow()/run()";
     }
 
-    @Override public void run() { doRun(SKIP); }
-
-    private void doRun(int stopWhen) {
+    @Override public void run() {
         Thread self = currentThread();
+        if (THREAD.compareAndExchangeAcquire(this, null, self) != null) {
+            onConcurrentRun();
+            return;
+        }
         try {
-            THREAD.setRelease(this, self);
-            int continueMask = stopWhen|CHG_EXECUTOR|QUEUED, queue, done = 0;
-            while (((queue=(int)A.getAcquire(this))&continueMask) == QUEUED) {
-                int mthMask = Integer.lowestOneBit(queue), ex = queue;
-                while ((queue=(int)A.compareAndExchangeRelease(this, ex, ex&~mthMask)) != ex)
-                    ex = queue;
-                invoke(mthMask);
-                if ((done&mthMask) != 0)
-                    continueMask |= mthMask; // break before running same method for 3rd time
-                else
-                    done |= mthMask;
-            }
-            if ((queue&CHG_EXECUTOR) != 0)
-                doChgExecutor();
-            else if ((queue&QUEUED) != 0 && (queue&stopWhen) == 0)
-                enqueueUnchecked(); // stopped due to method spam 2 invocations scheduled
-            else if (queue != 0)
-                enqueueIfNot(queue); // stopWhen or consumed QUEUED concurrently with sched()
+            doRun(SKIP);
         } catch (Throwable t) {
             journal(t, "on BitsetRunnable recv=", receiver);
             log.error("{} on {}.run()", t.getClass().getSimpleName(), this, t);
         } finally {
-            THREAD.compareAndExchangeRelease(this, self, null);
+            Thread witness = (Thread) THREAD.compareAndExchangeRelease(this, self, null);
+            assert witness == self : "concurrent run()/runNow()";
         }
+    }
+
+    private void onConcurrentRun() {
+        int actions = (int) A.getAcquire(this);
+        if ((actions &(CHG_EXECUTOR|QUEUED)) == QUEUED) {
+            journal("reschedule due to concurrent doRun() actions=", actions, this,
+                    " rcv=", receiver);
+            executor.execute(this);
+        } else {
+            journal("skip concurrent doRun() actions=", actions, this, "rcv=", receiver);
+        }
+    }
+
+    private void doRun(int stopWhen) {
+        int continueMask = stopWhen|CHG_EXECUTOR|QUEUED, queue;
+        while (((queue=(int)A.getAcquire(this))&continueMask) == QUEUED) {
+            int mthMask = Integer.lowestOneBit(queue), ex = queue;
+            while ((queue=(int)A.compareAndExchangeRelease(this, ex, ex&~mthMask)) != ex)
+                ex = queue;
+            invoke(mthMask);
+            continueMask |= mthMask; // break before running same method for 2nd time
+        }
+        if ((queue&CHG_EXECUTOR) != 0)
+            doChgExecutor();
+        else if ((queue&QUEUED) != 0 && (queue&stopWhen) == 0)
+            enqueueUnchecked(); // stopped due to method spam
+        else if (queue != 0)
+            enqueueIfNot(queue); // stopWhen or consumed QUEUED concurrently with sched()
     }
 
     /**
