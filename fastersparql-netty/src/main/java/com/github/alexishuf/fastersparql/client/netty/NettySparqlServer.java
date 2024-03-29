@@ -223,36 +223,38 @@ public class NettySparqlServer implements AutoCloseable{
             }
             var s = new BitsetRunnable.Spec(MethodHandles.lookup());
             BS_RUNNABLE_SPEC = s;
-            AC_SEND_BATCH = s.add("doSendBatch", false);
-            AC_BIND_REQ   = s.add("doBindReq",   false);
-            AC_SEND_TERM  = s.add("doSendTerm",  false);
-            AC_CLOSE      = s.add("doClose",     false);
-            AC_RECYCLE    = s.add("doRecycle",   true);
+            AC_SEND_BATCH = s.add("doSendBatch",       false);
+            AC_BIND_REQ   = s.add("doBindReq",         false);
+            AC_SEND_TERM  = s.add("doSendTerm",        false);
+            AC_CLOSE      = s.add("doClose",           false);
+            AC_RECYCLE    = s.add("doReleaseOrRecycle", true);
             AC_TOUCH_SINK = s.setLast("doTouchSink");
         }
 
-        protected static final int ST_RES_STARTED     = 0x001;
-        protected static final int ST_RES_TERMINATED  = 0x002;
-        protected static final int ST_CLOSE_ON_TERM   = 0x004;
-        protected static final int ST_CLOSING         = 0x008;
-        protected static final int ST_NOTIFIED_CLOSED = 0x010;
-        protected static final int ST_CANCEL_REQ      = 0x020;
-        protected static final int ST_ORPHAN          = 0x040;
-        protected static final int ST_RELEASED        = 0x080;
-        protected static final int ST_UNHEALTHY       = 0x100;
+        protected static final int ST_GOT_REQ               = 0x001;
+        protected static final int ST_RES_STARTED           = 0x002;
+        protected static final int ST_RES_TERMINATED        = 0x004;
+        protected static final int ST_CLOSING               = 0x010;
+        protected static final int ST_NOTIFIED_CLOSED       = 0x020;
+        protected static final int ST_CANCEL_REQ            = 0x040;
+        protected static final int ST_DIRECT_RES_TERMINATED = 0x080;
+        protected static final int ST_ORPHAN                = 0x100;
+        protected static final int ST_RELEASED              = 0x200;
+        protected static final int ST_UNHEALTHY             = 0x400;
 
         protected static final LongRenderer ST = st -> {
             if (st == 0) return "[]";
             var sb = new StringBuilder().append('[');
-            if ((st&ST_RES_STARTED)     != 0) sb.append("RES_STARTED,");
-            if ((st&ST_RES_TERMINATED)  != 0) sb.append("RES_TERMINATED,");
-            if ((st&ST_CLOSE_ON_TERM)   != 0) sb.append("CLOSE_ON_TERM,");
-            if ((st&ST_CLOSING)         != 0) sb.append("CLOSING,");
-            if ((st&ST_NOTIFIED_CLOSED) != 0) sb.append("NOTIFIED_CLOSE,");
-            if ((st&ST_CANCEL_REQ)      != 0) sb.append("CANCEL_REQ,");
-            if ((st&ST_ORPHAN)          != 0) sb.append("ORPHAN,");
-            if ((st&ST_RELEASED)        != 0) sb.append("RELEASED,");
-            if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
+            if ((st&ST_GOT_REQ)               != 0) sb.append("GOT_REQ,");
+            if ((st&ST_RES_STARTED)           != 0) sb.append("RES_STARTED,");
+            if ((st&ST_RES_TERMINATED)        != 0) sb.append("RES_TERMINATED,");
+            if ((st&ST_CLOSING)               != 0) sb.append("CLOSING,");
+            if ((st&ST_NOTIFIED_CLOSED)       != 0) sb.append("NOTIFIED_CLOSE,");
+            if ((st&ST_CANCEL_REQ)            != 0) sb.append("CANCEL_REQ,");
+            if ((st&ST_DIRECT_RES_TERMINATED) != 0) sb.append("ST_DIRECT_RES_TERMINATED,");
+            if ((st&ST_ORPHAN)                != 0) sb.append("ORPHAN,");
+            if ((st&ST_RELEASED)              != 0) sb.append("RELEASED,");
+            if ((st&ST_UNHEALTHY)             != 0) sb.append("UNHEALTHY,");
             sb.setLength(sb.length()-1);
             return sb.append(']').toString();
         };
@@ -292,22 +294,37 @@ public class NettySparqlServer implements AutoCloseable{
 
         /* --- --- --- NettyEmitSparqlServer.close() --- --- --- */
 
-        public void close() { bsRunnable.sched(AC_CLOSE); }
+        public void close() {
+            bsRunnable.sched(AC_CLOSE);
+        }
 
         @SuppressWarnings("unused") private void doClose() {
             st |= ST_CLOSING;
-            if (upstream != null)
-                upstream.cancel();
-            else if (ctx != null && ctx.channel().isActive())
-                ctx.close();
-            else
+            if (upstream != null) {
+                journal("doClose, upstream.cancel()", this);
+                if (errorOrCancelledException != null)
+                    errorOrCancelledException = serverClosing;
+                boolean did = upstream.cancel();
+            } else if (ctx != null && ctx.channel().isActive()) {
+                var otherCls = this instanceof SparqlHandler
+                        ? WsHandler.class : SparqlHandler.class;
+                QueryHandler<?> other = ctx.pipeline().get(otherCls);
+                boolean hasQuery = other.upstream != null;
+                if (hasQuery) {
+                    journal("doClose, skip ctx.close(), other handler has upstream", this);
+                } else {
+                    journal("doClose, ctx.close9)", this);
+                    ctx.close();
+                }
+            } else {
                 notifyClosed();
+            }
         }
-
         private void notifyClosed() {
-            assert inEventLoop() : "not called from event loop";
             if ((st&ST_NOTIFIED_CLOSED) != 0)
                 return;
+            shouldBeInEventLoop("notifyClosed");
+            journal("notifyClosed", this);
             st |= ST_NOTIFIED_CLOSED;
             var handlersClosed = NettySparqlServer.this.handlersClosed;
             if (handlersClosed != null)
@@ -317,6 +334,7 @@ public class NettySparqlServer implements AutoCloseable{
         /* --- --- --- Receiver --- --- --- */
 
         protected final boolean cancel() {
+            shouldBeInEventLoop("cancel");
             if (upstream != null) {
                 st |= ST_CANCEL_REQ;
                 upstream.cancel();
@@ -326,14 +344,15 @@ public class NettySparqlServer implements AutoCloseable{
         }
 
         public final void request(long n) {
-            assert inEventLoop() : "not called from event loop";
+            shouldBeInEventLoop("request");
             if (upstream != null && (st&ST_CANCEL_REQ) == 0) {
                 upstream.request(n);
             } else {
                 journal("skip request", n, "st=", st, ST, "on", this);
                 if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == 0
                         || (st&(ST_ORPHAN |ST_RELEASED|ST_CANCEL_REQ)) != 0) {
-                    log.warn("Ignoring unexpected request {} on {}", n, this);
+                    log.warn("Ignoring unexpected request {} on {}", n, this,
+                             new Exception("request()ed here"));
                 }
             }
         }
@@ -341,9 +360,18 @@ public class NettySparqlServer implements AutoCloseable{
         protected void subscribeTo(Emitter<CompressedBatch> emitter) {
             while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             try {
-                assert inEventLoop() && upstream==null
-                        && (st&(ST_RES_STARTED|ST_RES_TERMINATED|ST_CANCEL_REQ|ST_ORPHAN)) == ST_RES_STARTED
-                        : "not in event loop, already subscribed or not RES_STARTED";
+                shouldBeInEventLoop("subscribeTo");
+                checkReleasedOrOrphan("subscribeTo", emitter);
+                if (upstream != null)
+                    onSuspicious("subscribeTo, already has upstream");
+                if ((st&ST_CLOSING) != 0)
+                    onSuspicious("subscribeTo with ST_CLOSING");
+                if ((st&ST_CANCEL_REQ) != 0) {
+                    onSuspicious("subscribeTo with ST_CANCEL_REQ");
+                    st &= ~ST_CANCEL_REQ;
+                }
+                if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) != ST_RES_STARTED)
+                    throw new IllegalStateException("subscribeTo: response not started");
                 errorOrCancelledException = null;
                 sendQueue                 = COMPRESSED.recycle(sendQueue);
                 upstream                  = emitter;
@@ -353,6 +381,8 @@ public class NettySparqlServer implements AutoCloseable{
             } finally {
                 Q.setRelease(this, 0);
             }
+            // a batch using < 6.25% of its rows capacity is small. See doSendBatch()
+            smallBatchRows = COMPRESSED.preferredRowsPerBatch(emitter.vars())>>4;
             emitter.subscribe(this);
             bbSink.sizeHint(ByteBufSink.NORMAL_HINT);
             bsRunnable.sched(AC_TOUCH_SINK);
@@ -388,7 +418,7 @@ public class NettySparqlServer implements AutoCloseable{
             bsRunnable.sched(AC_SEND_TERM);
         }
 
-        /* --- --- --- batch serialization --- --- --- */
+        /* --- --- --- event-loop side of Receiver --- --- --- */
 
         protected abstract void serialize(CompressedBatch batch);
 
@@ -434,92 +464,70 @@ public class NettySparqlServer implements AutoCloseable{
                     notifyClosed();
             }
         }
+        private static final int CAN_SEND_TERM = ST_GOT_REQ | ST_RES_TERMINATED
+                                               | ST_DIRECT_RES_TERMINATED
+                                               | ST_ORPHAN | ST_RELEASED;
 
-        /* --- --- --- termination --- --- --- */
+        @SuppressWarnings("unused") protected void doBindReq() { throw new UnsupportedOperationException(); }
 
-        /** Send a {@link HttpResponse}/{@link LastHttpContent}/{@link TextWebSocketFrame}
-         *  signaling the query has been fully processed and no more messages will follow
-         *  from the server pertaining this query. <strong>This will be called within the
-         *  event loop</strong> */
+        /* --- --- --- response start/termination management --- --- --- */
+
+        /**
+         * Build a {@link FullHttpMessage}/{@link LastHttpContent}/{@link TextWebSocketFrame}
+         * that symbolizes the end of the response and report {@code cause} to the client,
+         * if non-null.
+         *
+         * <p>This will be called from the event loop, the following will hold about {@code st}:</p>
+         *
+         * <ul>
+         *     <li>Both {@link #ST_RELEASED} and {@link #ST_ORPHAN} are unset</li>
+         *     <li>{@link #ST_GOT_REQ} is set</li>
+         *     <li>{@link #ST_RES_TERMINATED} is not set</li>
+         *     <li>{@link #ST_RES_STARTED} <strong>MAY</strong> be set</li>
+         * </ul>
+         */
         protected abstract Object termMessage(@Nullable Throwable cause);
 
         /** Used by {@link #channelUnregistered(ChannelHandlerContext)} to recycle the handler */
         protected abstract LIFOPool<? extends QueryHandler<I>> pool();
 
-        protected void cleanupAfterEndResponse() {
-            cancel();
-            bbSink.release();
-            while((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
-            try {
-                sendQueue = COMPRESSED.recycle(sendQueue);
-            } finally { Q.setRelease(this, 0); }
-            errorOrCancelledException = null;
-        }
-
-        protected void releaseResources() {
-            if ((st&ST_RELEASED) != 0)
-                journal("duplicate finalRelease st=", st, ST, "on", this);
-            if ((st&ST_ORPHAN) != 0)
-                throw new IllegalStateException("finalRelease on orphan");
-            st |= ST_RELEASED;
-            queryHandlers.remove(this);
-            bbView.recycle();
-            bbView = null;
-        }
-
-        @SuppressWarnings("unused") private void doRecycle() {
-            if ((st&ST_ORPHAN) != 0)
-                throw new IllegalStateException("recycling already orphan");
-            cleanupAfterEndResponse();
-            if ((st&(ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED)) != 0
-                    || (st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED) {
-                journal("will not pool, st=", st, ST, "on", this);
-            } else {
-                st   = ST_ORPHAN;
-                info = null;
-                //noinspection unchecked
-                if (((LIFOPool<QueryHandler<I>>)pool()).offer(this) == null)
-                    return;
-                journal("doRecycle", this, ": full pool");
+        protected void onNewRequest() {
+            checkReleasedOrOrphan("onNewRequest", null);
+            if ((st&ST_GOT_REQ) != 0) {
+                throw new IllegalStateException("client sent a new request before receiving " +
+                                                "a response to its previous request");
+            } if (serverClosing != null) {
+                throw serverClosing;
             }
-            releaseResources();
+            shouldBeInEventLoop("onNewRequest");
+            st = st&~(ST_RES_STARTED|ST_RES_TERMINATED) | ST_GOT_REQ;
         }
-
-        @SuppressWarnings("unused") private void doSendTerm() {
-            if ((st&ST_RES_TERMINATED) != 0) {
-                journal("dup doSendTerm() on", this);
-            } else {
-                if ((st&ST_RES_STARTED) == 0) {
-                    assert false : "doSendTerm() before RES_STARTED";
-                    journal("suspicious doSendTerm() before RES_STARTED on", this);
-                }
-                if (upstream == null) {
-                    assert false : "doSendTerm() without upstream";
-                    journal("suspicious doSendTerm() without upstream on", this);
-                } else {
-                    upstream = null;
-                }
-                endResponse(termMessage(errorOrCancelledException));
-            }
-        }
-
         protected void startResponse() {
-            assert inEventLoop() : "not in event loop";
+            checkReleasedOrOrphan("startResponse", null);
+            startResponse0();
+        }
+        private void startResponse0() {
+            if ((st&ST_GOT_REQ) == 0)
+                throw new IllegalStateException("startResponse without request");
             if ((st&ST_RES_STARTED) != 0)
-                throw new IllegalStateException("response already started");
-            st = (st&~ST_RES_TERMINATED) | ST_RES_STARTED;
+                throw new IllegalStateException("startResponse: already started");
+            shouldBeInEventLoop("startResponse");
+            st |= ST_RES_STARTED;
         }
         protected void startResponse(Object msg, boolean flush) {
-            startResponse();
+            checkReleasedOrOrphan("startResponse", msg);
+            startResponse0();
             if (flush) ctx.writeAndFlush(msg);
             else       ctx.write(msg);
         }
+
         protected void endResponse(Object msg) {
             try {
-                assert inEventLoop() : "not in event loop";
+                checkReleasedOrOrphan("endResponse", msg);
                 if ((st&ST_RES_TERMINATED) != 0)
                     throw new IllegalStateException("response already terminated");
-                st = (st&~ST_RES_STARTED) | ST_RES_TERMINATED;
+                shouldBeInEventLoop("endResponse");
+                st = (st&~ST_GOT_REQ) | ST_RES_TERMINATED;
                 ctx.writeAndFlush(msg);
             } finally {
                 try {
@@ -528,17 +536,27 @@ public class NettySparqlServer implements AutoCloseable{
                     log.error("ignoring {} from cleanupAfterEndResponse on {}",
                               t.getClass().getSimpleName(), this, t);
                 }
-                if ((st&(ST_CLOSING|ST_CLOSE_ON_TERM)) != 0) {
-                    if      (ctx.channel().isActive()) ctx.close();
-                    else if ((st&ST_CLOSING) != 0)     notifyClosed();
-                }
+                if ((st&ST_CLOSING) != 0)
+                    doClose();
             }
         }
 
+        protected void cleanupAfterEndResponse() {
+            if (!cancel())
+                st &= ~ST_CANCEL_REQ;
+            bbSink.release();
+            while((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
+            try {
+                sendQueue = COMPRESSED.recycle(sendQueue);
+            } finally { Q.setRelease(this, 0); }
+            errorOrCancelledException = null;
+        }
+
         protected void send(Object msg) {
-            assert inEventLoop() : "not in event loop";
+            checkReleasedOrOrphan("send", msg);
             if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) != ST_RES_STARTED)
                 throw new IllegalStateException("response terminated or not started");
+            shouldBeInEventLoop("send");
             ctx.writeAndFlush(msg);
         }
 
@@ -557,14 +575,22 @@ public class NettySparqlServer implements AutoCloseable{
             return ctx == null ? bsRunnable.inRun() : ctx.executor().inEventLoop();
         }
 
-        @SuppressWarnings("unused") protected void doBindReq() { throw new UnsupportedOperationException(); }
+        protected void shouldBeInEventLoop(String action) {
+            if (!inEventLoop())
+                onSuspicious(action+" outside event loop");
+        }
+
+        protected void onSuspicious(String msg) {
+            journal("st=", st, ST, msg, "on", this);
+            assert false : msg;
+        }
 
         @SuppressWarnings("unused") private void doTouchSink() {
-            if ((st&(ST_ORPHAN|ST_RELEASED|ST_UNHEALTHY|ST_CLOSING|ST_CLOSE_ON_TERM|ST_NOTIFIED_CLOSED)) == 0
-                    && ctx.channel().isActive()) {
+            if ((st&CANT_TOUCH_SINK) == 0 && ctx.channel().isActive())
                 bbSink.touch();
-            }
         }
+        private static final int CANT_TOUCH_SINK = ST_ORPHAN | ST_RELEASED | ST_UNHEALTHY
+                                                 | ST_CLOSING | ST_NOTIFIED_CLOSED;
 
         /* --- --- --- ChannelBound --- --- --- */
 
@@ -601,34 +627,91 @@ public class NettySparqlServer implements AutoCloseable{
             return type.showState() ? name+ST.render(st) : name;
         }
 
+        /* --- --- --- handler lifecycle (ST_ORPHAN/ST_RELEASED) --- --- --- */
+
+        protected void releaseResources() {
+            if ((st&ST_RELEASED) != 0)
+                journal("duplicate finalRelease st=", st, ST, "on", this);
+            if ((st&ST_ORPHAN) != 0)
+                throw new IllegalStateException("finalRelease on orphan");
+            st |= ST_RELEASED;
+            queryHandlers.remove(this);
+            bbView.recycle();
+            bbView = null;
+        }
+
+        protected final void checkReleasedOrOrphan(String action, @Nullable Object actionArg) {
+            if ((st&(ST_RELEASED|ST_ORPHAN)) == 0)
+                return;
+            throw createReleasedOrOrphanEx(action, actionArg);
+        }
+
+        protected final IllegalStateException createReleasedOrOrphanEx(String action,
+                                                                       @Nullable Object actionArg) {
+            String msgNoArg = action+" on released/orphan "+this;
+            journal(msgNoArg);
+            return new IllegalStateException(msgNoArg + ": " + actionArg);
+        }
+
+        @SuppressWarnings("unused") private void doReleaseOrRecycle() {
+            try {
+                if ((st&ST_ORPHAN) != 0)
+                    throw new IllegalStateException("recycling already orphan");
+                cleanupAfterEndResponse();
+                if ((st & (ST_UNHEALTHY|ST_CLOSING|ST_NOTIFIED_CLOSED|ST_GOT_REQ)) != 0
+                        || (st & (ST_RES_STARTED | ST_RES_TERMINATED)) == ST_RES_STARTED) {
+                    journal("will not pool, st=", st, ST, "on", this);
+                } else {
+                    st = ST_ORPHAN;
+                    info = null;
+                    //noinspection unchecked
+                    if (((LIFOPool<QueryHandler<I>>) pool()).offer(this) == null)
+                        return;
+                    journal("doRecycle", this, ": full pool");
+                }
+                releaseResources();
+            } finally {
+                if ((st&(ST_CLOSING|ST_NOTIFIED_CLOSED)) == ST_CLOSING)
+                    notifyClosed();
+                journal("exit doReleaseOrRecycle", this);
+            }
+        }
+
         @Override public void channelRegistered(ChannelHandlerContext ctx) {
             if ((st&ST_ORPHAN) == 0) {
-                var e = new InvalidSparqlException(journalName()+"in use, cannot register on "+ctx);
-                log.error("channelRegistered({}) failure", ctx.channel().id().asShortText(), e);
-                ctx.close();
-                throw e;
+                var ex = new IllegalStateException(journalName() + " registering non-orphan on " + ctx);
+                var oldCtx = this.ctx;
+                ctx.fireExceptionCaught(ex);
+                if (oldCtx != ctx && oldCtx != null)
+                    oldCtx.fireExceptionCaught(ex);
+            } else {
+                st &= ~ST_ORPHAN;
+                if (this.st != 0) {
+                    onSuspicious("dirty st at channelRegistered");
+                    st = 0;
+                }
+                this.ctx = ctx;
+                this.lastCh = ctx.channel();
+                this.bbSink.alloc(ctx.alloc());
+                this.bsRunnable.executor(ctx.executor());
+                ctx.fireChannelRegistered();
             }
-            st &= ~ST_ORPHAN;
-            if (this.st != 0) {
-                log.error("dirty st on channelRegistered for {}", this);
-                st = 0;
-            }
-            this.ctx = ctx;
-            this.lastCh = ctx.channel();
-            this.bbSink.alloc(ctx.alloc());
-            this.bsRunnable.executor(ctx.executor());
-            ctx.fireChannelRegistered();
         }
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) {
+            journal("channelUnregistered", this);
+            this.bsRunnable.runNow();
+            cleanupAfterEndResponse();
             this.bsRunnable.runNow();
             this.ctx = null;
-            cleanupAfterEndResponse();
-            this.bsRunnable.sched(AC_RECYCLE);
+            this.bsRunnable.executor(ForkJoinPool.commonPool());
+            if (upstream == null)
+                this.bsRunnable.sched(AC_RECYCLE);
             ctx.fireChannelUnregistered();
         }
 
         @Override public void channelInactive(ChannelHandlerContext ctx) {
+            journal("channelInactive", this);
             st |= ST_UNHEALTHY;
             if (!cancel() && (st&ST_CLOSING) != 0)
                 notifyClosed();
@@ -637,13 +720,20 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            st |= ST_UNHEALTHY|ST_CLOSE_ON_TERM;
-            journal("exceptionCaught handler=", this, ", cause=", cause);
-            log.error("Uncaught {} for handler={}", cause.getClass().getSimpleName(), this, cause);
+            st |= ST_UNHEALTHY;
+            journal("exception st=", st, ST, cause, "on", this);
+            log.error("exceptionCaught({}) for handler={}", cause.getClass().getSimpleName(),
+                      this, cause);
             if (errorOrCancelledException == null)
                 errorOrCancelledException = cause;
-            if (!cancel())
+            if (!cancel()) {
                 exceptionCaughtWhileUnsubscribed(cause);
+            } else if ((st&(ST_GOT_REQ|ST_RES_TERMINATED|ST_RELEASED|ST_ORPHAN)) == ST_GOT_REQ) {
+                st |= ST_DIRECT_RES_TERMINATED;
+                endResponse(termMessage(cause));
+            }
+            if (ctx != null)
+                ctx.close();
         }
 
         protected abstract void exceptionCaughtWhileUnsubscribed(Throwable cause);
@@ -652,8 +742,6 @@ public class NettySparqlServer implements AutoCloseable{
     private class SparqlHandler extends QueryHandler<FullHttpRequest> {
         private static final byte[] CANCEL_MSG = "query processing was cancelled".getBytes(UTF_8);
         private static final byte[] BAD_UPGRADE_MSG = "Ony possible upgrade is WebSocket".getBytes(UTF_8);
-        private static final byte[] REQ_BEFORE_RES_MSG = "Request before response to previous request was completed".getBytes(UTF_8);
-        private static final byte[] SERVER_CLOSING_MSG = "Server is closing".getBytes(UTF_8);
         private static final byte[] BAD_HTTP_VERSION_MSG = "Only HTTP 1.1 is supported".getBytes(UTF_8);
         private static final byte[] BAD_HTTP_ENCODE_MSG = "Could not decode HTTP request".getBytes(UTF_8);
         private static final byte[] NOT_FOUND_MSG = "The requested path was not found, use /sparql for SPARQL protocol and the WebSocket extension".getBytes(UTF_8);
@@ -709,23 +797,14 @@ public class NettySparqlServer implements AutoCloseable{
         @Override protected void exceptionCaughtWhileUnsubscribed(Throwable cause) {
             sendRequestError(INTERNAL_SERVER_ERROR, cause,
                     "Unexpected error processing request\n", null, null, null);
-            ctx.close();
         }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
-            bsRunnable.runNow();
             if (handleUpgrade(req))
                 return;
-            if ((st&(ST_ORPHAN)) != 0) {
-                throw new IllegalStateException("message arrived on orphan handler");
-            } else if ((st&(ST_RELEASED)) != 0) {
-                throw new IllegalStateException("message arrived on released handler");
-            } else if ((st&ST_RES_STARTED) != 0) {
-                sendRequestError(BAD_REQUEST, REQ_BEFORE_RES_MSG).close();
-            } else if (cancelledByServerClose != null) {
-                sendRequestError(INTERNAL_SERVER_ERROR, SERVER_CLOSING_MSG).close();
-            } else if (req.protocolVersion() != HTTP_1_1) {
+            onNewRequest();
+            if (req.protocolVersion() != HTTP_1_1) {
                 sendRequestError(BAD_REQUEST, BAD_HTTP_VERSION_MSG).close();
             } else if (!req.decoderResult().isSuccess()) {
                 sendRequestError(BAD_REQUEST, BAD_HTTP_ENCODE_MSG).close();
@@ -1101,7 +1180,6 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override protected void exceptionCaughtWhileUnsubscribed(Throwable cause) {
             sendRequestError("Unexpected exception", cause);
-            ctx.close();
         }
 
         private void sendRequestError(Object o0, Object o1) {
@@ -1151,16 +1229,10 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) {
-            bsRunnable.runNow();
-            if ((st&ST_RELEASED) != 0)
-                throw new IllegalStateException("message on released handler");
-            if ((st&ST_ORPHAN) != 0)
-                throw new IllegalStateException("message on orphan handler");
+            checkReleasedOrOrphan("read0", frame);
             SegmentRope msg = bbView.wrapAsSingle(frame.content());
             byte f = msg.len < 2 ? 0 : msg.get(1);
-            if (cancelledByServerClose != null) {
-                readAfterServerClose();
-            } else if (f == 'c' && msg.has(0, AbstractWsParser.CANCEL_LF)) {
+            if (f == 'c' && msg.has(0, AbstractWsParser.CANCEL_LF)) {
                 readCancel();
             } else if (f == 'r' && msg.has(0, AbstractWsParser.REQUEST)) {
                 readRequest(msg);
@@ -1189,20 +1261,13 @@ public class NettySparqlServer implements AutoCloseable{
             return true; // handled
         }
 
-        private void readAfterServerClose() {
-            if (!cancel() && (st&ST_RES_STARTED) != 0)
-                endResponse(termMessage(cancelledByServerClose));
-        }
-
         private void readCancel() {
             if (cancel())
                 return;
-            if (waitingVars) {
+            if (waitingVars)
                 earlyCancel = true;
-            } else {
-                journal("extraneous !cancel, handler=", this);
-                log.info("Ignoring extraneous cancel, handler={}, ch={}", this, channelOrLast());
-            }
+            else
+                journal("ignoring early/late !cancel on", this);
         }
 
         private void readRequest(SegmentRope msg) {
@@ -1219,22 +1284,30 @@ public class NettySparqlServer implements AutoCloseable{
             }
             if (waitingVars)
                 earlyRequest = n;
-            else
+            else if ((st&ST_GOT_REQ) != 0)
                 request(n);
+            else
+                journal("ignoring late/early !request on", this);
         }
 
-        private void readVarsFrame(SegmentRope msg) {
-            if (query == null) {
-                sendRequestError("No query set", null);
-                return;
-            }
-            if (earlyCancel) {
+        private void abortReadVarsFrame() {
+            if (earlyCancel)  {
+                if ((st&ST_RES_STARTED) == 0)
+                    startResponse();
                 endResponse(termMessage(CancelledException.INSTANCE));
-                return;
+            } else {
+                Object m;
+                if      (query == null)         m = "No query set at readVarsFrame()";
+                else if (serverClosing != null) m = serverClosing;
+                else if ((st&ST_CLOSING) != 0)  m = "Server close()d server-side handler";
+                else                            m = "bindings vars frame missing LF (\\n)";
+                sendRequestError(m, null);
             }
+        }
+        private void readVarsFrame(SegmentRope msg) {
             int len = msg.len, eol = msg.skipUntil(0, len, '\n');
-            if (eol == len) {
-                sendRequestError("bindings vars frame has no line feed (\\n)", null);
+            if (query == null || earlyCancel || (st&ST_CLOSING) != 0 || eol == len) {
+                abortReadVarsFrame();
                 return;
             }
 
@@ -1355,6 +1428,7 @@ public class NettySparqlServer implements AutoCloseable{
                 case 'n' -> { bType = BindType.NOT_EXISTS; ex = NOT_EXISTS; }
                 case 'm' -> { bType = BindType.MINUS;      ex = MINUS; }
             }
+            onNewRequest();
             if (ex == null || !msg.has(0, ex)) {
                 var cmd = msg.sub(0, msg.skipUntil(0, msg.len, '\n', ' '));
                 sendRequestError("Unexpected command: ", cmd);
