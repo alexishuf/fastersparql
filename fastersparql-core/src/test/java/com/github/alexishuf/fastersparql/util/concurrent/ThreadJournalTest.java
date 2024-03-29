@@ -31,12 +31,12 @@ class ThreadJournalTest {
         assertEquals("""
                       
                           |                                                                             main
-                      T=0 | main journal started                                                           \s
-                      T=0 | x=1 y=2 z=one                                                                  \s
-                      T=1 | x=3 y=4 z=two                                                                  \s
-                      T=2 | x=5 y=6 z=three                                                                \s
-                      T=3 | x=7 y=8 z=four                                                                 \s
-                      T=4 | x=9 y=0 z=five                                                                 \s
+                      T=0 | main journal started                                                            \s
+                      T=0 | x=1 y=2 z=one                                                                   \s
+                      T=1 | x=3 y=4 z=two                                                                   \s
+                      T=2 | x=5 y=6 z=three                                                                 \s
+                      T=3 | x=7 y=8 z=four                                                                  \s
+                      T=4 | x=9 y=0 z=five                                                                  \s
                       """, sb.toString());
     }
 
@@ -44,7 +44,7 @@ class ThreadJournalTest {
         if (!ENABLED)
             return;
         int threads = Runtime.getRuntime().availableProcessors();
-        int height = DebugJournal.DEF_LINES;
+        int height = DebugJournal.LINES;
         int[] last = new int[threads], expectedLast = new int[threads];
         Arrays.fill(expectedLast, height-1);
         for (int rep = 0; rep < 50; rep++) {

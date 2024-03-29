@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.io.Closeable;
 import java.io.Flushable;
 import java.io.IOException;
 import java.lang.invoke.VarHandle;
@@ -49,7 +50,7 @@ public class DebugJournal {
     /**
      * Default lines capacity for {@link #role(String)}.
      */
-    public static final int DEF_LINES = 1024;
+    public static final int LINES = 1024;
 
     private static final int UNLOCKED = 0;
     private static final int LOCKED   = 1;
@@ -73,9 +74,7 @@ public class DebugJournal {
         return new Watchdog(() -> dump(columnWidth));
     }
 
-    public RoleJournal role(String name) { return role(name, DEF_LINES); }
-
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted") private boolean lock(int target) {
+    private boolean lock(int target) {
         int actual;
         while ((actual=(int)LOCK.compareAndExchangeAcquire(this, UNLOCKED, target)) != UNLOCKED) {
             if (actual == DUMPING) return false;
@@ -84,16 +83,15 @@ public class DebugJournal {
         return true;
     }
 
-
-    public RoleJournal role(String name, int lines) {
+    public RoleJournal role(String name) {
         if (!lock(LOCKED))
-            return new RoleJournal(name, 2);
+            return new RoleJournal(name, DUMMY_STORAGE);
         try {
             int i = roles.indexOf(name);
             if (i >= 0)
                 return roleJournals.get(i);
             roles.add(name);
-            RoleJournal j  = new RoleJournal(name, lines);
+            RoleJournal j  = new RoleJournal(name, ROLE_STORAGE_POOL.get());
             roleJournals.add(j);
             return j;
         } finally { LOCK.setRelease(this, 0); }
@@ -116,45 +114,75 @@ public class DebugJournal {
 
     public void dump(int columnWidth) { dump(System.err, columnWidth); }
 
-    public void dump(Appendable dest, int columnWidth) {
-        try {
-            dest.append('\n');
-            dest.append(toString(columnWidth));
-            if (dest instanceof Flushable f) f.flush();
+    public void dump(Appendable appendableDst, int columnWidth) {
+        boolean canDump = lock(DUMPING);
+        try (var dst = new SmartAppendable(appendableDst)) {
+            if (canDump) {
+                String tickFmt = "T=%0" + Integer.toString(tick).length() + "d";
+                String colFmt = " | %" + columnWidth + "s";
+
+                // write header
+                appendHeaders(dst, tickFmt, colFmt);
+
+                // write rs
+                ParallelIterator it = new ParallelIterator();
+                String whitespace = " ".repeat(columnWidth);
+                for (int i = 0, t = it.currentTick(); it.hasNext(); t = it.nextTick(t), ++i) {
+                    dst.append(String.format(tickFmt, t));
+                    it.render(dst, whitespace, t);
+                    dst.append('\n');
+                    if (i == 100)  {
+                        i = -1;
+                        appendHeaders(dst, tickFmt, colFmt);
+                    }
+                }
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            if (canDump)
+                LOCK.setRelease(this, 0);
         }
     }
 
     public String toString(int columnWidth) {
-        if (!lock(DUMPING))
-            return "<<<concurrent DebugJournal.toString() call>>>";
-        try {
-            String tickFmt = "T=%0" + Integer.toString(tick).length() + "d";
-            String colFmt = " | %" + columnWidth + "s";
+        StringBuilder sb = new StringBuilder();
+        dump(sb, columnWidth);
+        return sb.toString();
+    }
 
-            // write header
-            StringBuilder sb = new StringBuilder();
-            appendHeaders(sb, tickFmt, colFmt);
+    public static final class SmartAppendable implements Appendable, Closeable {
+        private final Appendable delegate;
+        public char last;
 
-            // write rs
-            ParallelIterator it = new ParallelIterator();
-            for (int i = 0, t = it.currentTick(); it.hasNext(); t = it.nextTick(t), ++i) {
-                sb.append(String.format(tickFmt, t));
-                it.render(sb, columnWidth, t);
-                sb.append('\n');
-                if (i == 100)  {
-                    i = -1;
-                    appendHeaders(sb, tickFmt, colFmt);
-                }
-            }
-            return sb.toString();
-        } finally {
-            LOCK.setRelease(this, 0);
+        private SmartAppendable(Appendable delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override public void close() throws IOException {
+            if (delegate instanceof Flushable f)
+                f.flush();
+        }
+
+        @Override public Appendable append(CharSequence csq) throws IOException {
+            return append(csq, 0, csq.length());
+        }
+
+        @Override
+        public Appendable append(CharSequence csq, int start, int end) throws IOException {
+            if (end > start) last = csq.charAt(end-1);
+            return delegate.append(csq, start, end);
+        }
+
+        @Override public Appendable append(char c) throws IOException {
+            last = c;
+            return delegate.append(c);
         }
     }
 
-    private void appendHeaders(StringBuilder sb, String tickFmt, String colFmt) {
+
+
+    private void appendHeaders(Appendable sb, String tickFmt, String colFmt) throws IOException {
         sb.append(" ".repeat(String.format(tickFmt, 0).length()));
         for (String name : roles)
             sb.append(String.format(colFmt, name));
@@ -208,18 +236,17 @@ public class DebugJournal {
             return currentTick();
         }
 
-        void render(StringBuilder dst, int width, int currentTick) {
-            String whitespace = " ".repeat(Math.max(0, width));
+        void render(SmartAppendable dst, String whitespace, int currentTick) throws IOException {
+            int width = whitespace.length();
             for (int i = 0; i < physRows.length; i++) {
                 dst.append(" | ");
                 RoleJournal j = roleJournals.get(i);
                 int physRow = physRows[i];
                 if (j.ticksAndFlags[physRow<<1] == currentTick) {
-                    int before = dst.length();
-                    j.render(dst, width, physRow);
-                    dst.append(" ".repeat(Math.max(0, width - (dst.length() - before))));
+                    int charsWritten = j.render(dst, width, physRow);
+                    for (int k = 0, n = width-charsWritten; k < n; k++)
+                        dst.append(' ');
                 } else {
-                    dst.ensureCapacity(dst.length()+width);
                     dst.append(whitespace);
                 }
             }
@@ -242,10 +269,10 @@ public class DebugJournal {
     }
 
     public interface Renderer {
-        void render(int maxWidth, StringBuilder dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4);
-        void render(int maxWidth, StringBuilder dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2,          Object o3, Object o4);
-        void render(int maxWidth, StringBuilder dest, Object o1,          Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4);
-        void render(int maxWidth, StringBuilder dest, Object o1,          Object o2,          Object o3, Object o4);
+        int render(int maxWidth, SmartAppendable dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) throws IOException;
+        int render(int maxWidth, SmartAppendable dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2,          Object o3, Object o4) throws IOException;
+        int render(int maxWidth, SmartAppendable dest, Object o1,          Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) throws IOException;
+        int render(int maxWidth, SmartAppendable dest, Object o1,          Object o2,          Object o3, Object o4) throws IOException;
     }
 
     public static abstract class ObjRenderer {
@@ -298,24 +325,33 @@ public class DebugJournal {
             return str;
         }
 
-        private StringBuilder writeObj(StringBuilder sb, Object o, int maxWidth) {
+        private int writeObj(SmartAppendable dst, Object o, int maxWidth) throws IOException{
             if (o == null)
-                return sb;
+                return 0;
+            int written;
             if (o instanceof String str) {
-                sb.append(str.replace('|', '∥'));
+                written = str.length();
+                if (written > 0 && dst.last != ' ' && dst.last != '=') {
+                    ++written;
+                    dst.append(' ');
+                }
+                dst.append(str.replace('|', '∥'));
             } else {
                 String str = renderObj(o).replace('|', '∥');
+                written = str.isEmpty() || dst.last == ' ' || dst.last == '=' ? 0 : 1;
+                if (written > 0)
+                    dst.append(' ');
                 if (maxWidth > 12 && str.length() > maxWidth) {
                     int side = maxWidth - 12 /* ...@12345678 */;
-                    sb.append(str, 0, side).append("...");
-                    sb.append(str, str.length()-9, str.length());
+                    dst.append(str, 0, side).append("...");
+                    dst.append(str, str.length()-9, str.length());
+                    written += side + 3 + 9;
                 } else {
-                    sb.append(str);
+                    dst.append(str);
+                    written += str.length();
                 }
             }
-            if (!sb.isEmpty() && sb.charAt(sb.length()-1) != '=')
-                sb.append(' ');
-            return sb;
+            return written;
         }
 
         private static int objWidth(int max, Object o1, Object o2, Object o3, Object o4) {
@@ -333,48 +369,79 @@ public class DebugJournal {
 
         private static String render(long l, LongRenderer lr) {
             if (lr != null) return lr.render(l);
-            return l > 1_000 ? "0x"+Long.toHexString(l) : Long.toString(l);
+            return l >= 1_0000 ? "0x"+Long.toHexString(l) : Long.toString(l);
         }
 
-        @Override public void render(int maxWidth, StringBuilder dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) {
+        @Override public int render(int maxWidth, SmartAppendable dst, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) throws IOException {
             String l1s = render(l1, l1Renderer);
             String l2s = render(l2, l2Renderer);
             maxWidth -= l1s.length() + l2s.length();
             int objWidth = objWidth(maxWidth, o1, o2, o3, o4);
-            writeObj(dest, o1, objWidth).append(l1s).append(' ');
-            writeObj(dest, o2, objWidth).append(l2s).append(' ');
-            writeObj(dest, o3, objWidth);
-            writeObj(dest, o4, objWidth);
+            int written = writeObj(dst, o1, objWidth);
+            if (dst.last != ' ' && dst.last != '=') {
+                ++written;
+                dst.append(' ');
+            }
+            dst.append(l1s);
+            written += l1s.length() +  writeObj(dst, o2, objWidth);
+            if (dst.last != ' ' && dst.last != '=') {
+                ++written;
+                dst.append(' ');
+            }
+            dst.append(l2s);
+            return written + l2s.length()
+                           + writeObj(dst, o3, objWidth) + writeObj(dst, o4, objWidth);
         }
 
-        @Override public void render(int maxWidth, StringBuilder dest, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, Object o3, Object o4) {
+        @Override public int render(int maxWidth, SmartAppendable dst, Object o1, long l1, @Nullable LongRenderer l1Renderer, Object o2, Object o3, Object o4) throws IOException {
             String l1s = render(l1, l1Renderer);
             maxWidth -= l1s.length();
             int objWidth = objWidth(maxWidth, o1, o2, o3, o4);
-            writeObj(dest, o1, objWidth).append(l1s).append(' ');
-            writeObj(dest, o2, objWidth);
-            writeObj(dest, o3, objWidth);
-            writeObj(dest, o4, objWidth);
+            int written = writeObj(dst, o1, objWidth);
+            if (dst.last != ' ' && dst.last != '=') {
+                ++written;
+                dst.append(' ');
+            }
+            dst.append(l1s);
+            return written + l1s.length()
+                    + writeObj(dst, o2, objWidth) + writeObj(dst, o3, objWidth)
+                    + writeObj(dst, o4, objWidth);
         }
 
-        @Override public void render(int maxWidth, StringBuilder dest, Object o1, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) {
+        @Override public int render(int maxWidth, SmartAppendable dst, Object o1, Object o2, long l2, @Nullable LongRenderer l2Renderer, Object o3, Object o4) throws IOException {
             String l2s = render(l2, l2Renderer);
             maxWidth -= l2s.length();
             int objWidth = objWidth(maxWidth, o1, o2, o3, o4);
-            writeObj(dest, o1, objWidth);
-            writeObj(dest, o2, objWidth).append(l2s);
-            writeObj(dest, o3, objWidth);
-            writeObj(dest, o4, objWidth);
+            int written = writeObj(dst, o1, objWidth) + writeObj(dst, o2, objWidth);
+            if (dst.last != ' ' && dst.last != '=') {
+                dst.append(' ');
+                ++written;
+            }
+            dst.append(l2s);
+            return written + l2s.length() + writeObj(dst, o3, objWidth) + writeObj(dst, o4, objWidth);
         }
 
-        @Override public void render(int maxWidth, StringBuilder dest, Object o1, Object o2, Object o3, Object o4) {
+        @Override public int render(int maxWidth, SmartAppendable dest, Object o1, Object o2, Object o3, Object o4) throws IOException {
             int objWidth = objWidth(maxWidth, o1, o2, o3, o4);
-            writeObj(dest, o1, objWidth);
-            writeObj(dest, o2, objWidth);
-            writeObj(dest, o3, objWidth);
-            writeObj(dest, o4, objWidth);
+            return writeObj(dest, o1, objWidth) + writeObj(dest, o2, objWidth)
+                 + writeObj(dest, o3, objWidth) + writeObj(dest, o4, objWidth);
         }
     }
+
+    private record RoleStorage(Object[] messages, long[] longs,
+                               LongRenderer[] longRenderers, int[] ticksAndFlags)  {
+        public RoleStorage(RoleJournal rj) {
+            this(rj.messages, rj.longs, rj.longRenderers, rj.ticksAndFlags);
+        }
+    }
+    private static final RoleStorage DUMMY_STORAGE = new RoleStorage(
+            new Object[4*2], new long[2*2], new LongRenderer[2*2], new int[2*2]
+    );
+
+    private static final LIFOPool<RoleStorage> ROLE_STORAGE_POOL = new LIFOPool<>(
+            RoleStorage.class,
+            Runtime.getRuntime().availableProcessors()*8
+    );
 
     public final class RoleJournal {
         public static final VarHandle END;
@@ -401,14 +468,21 @@ public class DebugJournal {
         @SuppressWarnings("FieldMayBeFinal") private int end0 = 1;
         private boolean closed;
 
-        public RoleJournal(String name, int lines) {
+        private RoleJournal(String name, @Nullable RoleStorage storage) {
             this.name  = name;
-            this.messages = new Object[4*lines];
-            this.longs = new long[2*lines];
-            this.longRenderers = new LongRenderer[2*lines];
-            this.ticksAndFlags = new int[2*lines];
-            this.messages[0] = name+" journal started";
-            this.ticksAndFlags[0] = tick;
+            if (storage == null) {
+                messages      = new Object[4*LINES];
+                longs         = new long[2*LINES];
+                longRenderers = new LongRenderer[2*LINES];
+                ticksAndFlags = new int[2*LINES];
+            } else {
+                messages      = storage.messages;
+                longs         = storage.longs;
+                longRenderers = storage.longRenderers;
+                ticksAndFlags = storage.ticksAndFlags;
+            }
+            messages[0] = name+" journal started";
+            ticksAndFlags[0] = tick;
         }
 
         public boolean isClosed() {
@@ -418,6 +492,7 @@ public class DebugJournal {
         public void close() {
             dropRole(name);
             closed = true;
+
         }
 
         public @This RoleJournal renderer(Renderer renderer) {
@@ -425,19 +500,20 @@ public class DebugJournal {
             return this;
         }
 
-        void render(StringBuilder dest, int colWidth, int physRow) {
+        int render(SmartAppendable dest, int colWidth, int physRow) throws IOException {
             int base = physRow*4;
             Object o1 = messages[base  ], o2 = messages[base+1];
             Object o3 = messages[base+2], o4 = messages[base+3];
             base = physRow*2;
             long l1 = longs[base], l2 = longs[base+1];
             LongRenderer l1R = longRenderers[base], l2R = longRenderers[base+1];
-            switch (ticksAndFlags[base+1]) {
+            return switch (ticksAndFlags[base+1]) {
                 case NO_L     -> renderer.render(colWidth, dest, o1, o2, o3, o4);
                 case HAS_L1   -> renderer.render(colWidth, dest, o1, l1, l1R, o2, o3, o4);
                 case HAS_L2   -> renderer.render(colWidth, dest, o1, o2, l2, l2R, o3, o4);
                 case HAS_L1L2 -> renderer.render(colWidth, dest, o1, l1, l1R, o2, l2, l2R, o3, o4);
-            }
+                default       -> throw new IllegalArgumentException("bad flags");
+            };
         }
 
         public void write(Object o1, long l1, long l2)                                   { write(HAS_L1L2, o1, l1, null, null, l2, null, null, null); }
