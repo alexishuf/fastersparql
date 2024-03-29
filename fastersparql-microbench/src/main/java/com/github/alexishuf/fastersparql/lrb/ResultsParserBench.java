@@ -75,7 +75,7 @@ public class ResultsParserBench {
             serializer.serializeHeader(sink.touch());
             fragments.add(ropeTypeHolder.takeRope(sink));
             for (Batch b : batches) {
-                serializer.serializeAll(b, sink.touch());
+                serializer.serialize(b, sink.touch());
                 fragments.add(ropeTypeHolder.takeRope(sink));
             }
             serializer.serializeTrailer(sink.touch());

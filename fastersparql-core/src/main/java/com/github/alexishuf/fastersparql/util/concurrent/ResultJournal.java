@@ -78,18 +78,15 @@ public class ResultJournal {
     public static void logBatch(Object emitter, Batch<?> b) {
         EmitterJournal j;
         if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null) {
-            for (var n = b; n != null; n = n.next) {
-                int tick = DebugJournal.SHARED.tick();
-                while ((int) EmitterJournal.LOCK.compareAndExchangeAcquire(j, 0, 1) != 0)
-                    onSpinWait();
-                try {
-                    j.serializer.serialize(b, 0, b.rows, j.log);
-                    j.log.append("tick=").append(tick)
-                            .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
-                            .append(", fromRow=").append(0)
-                            .append(", nRows=").append((int) b.rows).append('\n');
-                } finally { EmitterJournal.LOCK.setRelease(j, 0); }
-            }
+            while ((int) EmitterJournal.LOCK.compareAndExchangeAcquire(j, 0, 1) != 0)
+                onSpinWait();
+            try {
+                j.serializer.serialize(b, j.log);
+                j.log.append("tick=").append(DebugJournal.SHARED.tick())
+                        .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
+                        .append(", fromRow=").append(0)
+                        .append(", nRows=").append((int) b.rows).append('\n');
+            } finally { EmitterJournal.LOCK.setRelease(j, 0); }
         }
     }
 

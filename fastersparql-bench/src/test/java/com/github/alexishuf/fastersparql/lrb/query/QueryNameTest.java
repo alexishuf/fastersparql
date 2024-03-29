@@ -113,7 +113,7 @@ class QueryNameTest {
         ByteRope sink = new ByteRope();
         serializer.init(vars, vars, false);
         serializer.serializeHeader(sink);
-        serializer.serializeAll(expected, sink);
+        serializer.serialize(expected, sink);
         serializer.serializeTrailer(sink);
 
         //parse

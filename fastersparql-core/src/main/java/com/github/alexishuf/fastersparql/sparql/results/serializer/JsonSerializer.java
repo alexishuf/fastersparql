@@ -28,9 +28,7 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] HDR_ASK = "]},\n \"boolean\":".getBytes(UTF_8);
     private static final byte[] HDR_SEL = "]},\n\"results\":{\"bindings\":[".getBytes(UTF_8);
 
-    @Override protected void onInit() {
-        firstRow = true;
-    }
+    @Override protected void onInit() { firstRow = true; }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {
         dest.append(HDR_BFR);
@@ -50,49 +48,90 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] COL_SEP = ",\n ".getBytes(UTF_8);
     private static final byte[] ROW_OPEN  = "\n{".getBytes(UTF_8);
     private static final byte[] ROW_SEP   = ",\n{".getBytes(UTF_8);
-    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest) {
-        if (ask) {
-            if (nRows > 0) empty = false;
-            return;
-        }
-        for (int end = begin+nRows; begin < end; ++begin) {
-            dest.append(firstRow ? ROW_OPEN : ROW_SEP);
-            this.firstRow = false;
-            boolean firstCol = true;
-            for (int col : columns) {
-                var type = col < 0 ? null : batch.termType(begin, col);
-                if (type == null) continue;
-                if (firstCol) firstCol = false;
-                else          dest.append(COL_SEP);
-                dest.append('"').append(vars.get(col)); // write: "$VAR
-                int len = batch.len(begin, col);
-                switch (type) {
-                    case LIT -> {
-                        dest.append(COL_LIT);
-                        int lexEnd = batch.lexEnd(begin, col);
-                        batch.write(dest, begin, col, 0, lexEnd);
-                        Term dtTerm = batch.datatypeTerm(begin, col);
-                        if (dtTerm == Term.RDF_LANGSTRING) { // @lang
-                            dest.append(COL_LANG);
-                            batch.write(dest, begin, col, lexEnd + 2, len);
-                        } else if (dtTerm != null && dtTerm != Term.XSD_STRING) { // datatype
-                            dest.append(COL_DATATYPE);
-                            dest.append(dtTerm, 1, dtTerm.len - 1);
+
+    @Override
+    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
+    void serialize(Batch<B> batch0, ByteSink<S, T> sink, int hardMax,
+                   NodeConsumer<B> nodeConsumer, ChunkConsumer<T> chunkConsumer) {
+        if (batch0 == null) return;
+        if (batch0.rows > 0) empty = false;
+
+        @SuppressWarnings("unchecked") B batch = (B)batch0;
+        boolean chunk = !chunkConsumer.isNoOp();
+        int softMax = sink.freeCapacity();
+        int chunkRows = 0, lastLen = 0, r = 0;
+        try {
+            if (ask) {
+                serializeAsk(batch, nodeConsumer);
+                return;
+            }
+            for (; batch != null; batch = detachAndDeliverNode(batch, nodeConsumer)) {
+                r = 0;
+                for (int rows = batch.rows; r < rows; ++r) {
+                    serialize(batch, sink, r);
+                    ++chunkRows;
+                    if (chunk) {
+                        int len = sink.len();
+                        if (len >= softMax-((len-lastLen)<<1)) {
+                            deliver(sink, chunkConsumer, chunkRows, lastLen, hardMax);
+                            chunkRows = 0;
+                            sink.touch();
                         }
                     }
-                    case IRI -> {
-                        dest.append(COL_IRI);
-                        batch.write(dest, begin, col, 1, len - 1);
-                    }
-                    case BLANK -> {
-                        dest.append(COL_BLANK);
-                        batch.write(dest, begin, col, 2, len);
+                    lastLen = sink.len();
+                }
+            }
+            if (chunk)
+                deliver(sink, chunkConsumer, 1, sink.len(),  hardMax);
+        } catch (Throwable t) {
+            handleNotSerialized(batch, r, nodeConsumer, t);
+            throw t;
+        }
+    }
+
+    private <B extends Batch<B>> void serializeAsk(B batch, NodeConsumer<B> nodeConsumer) {
+        while (batch != null)
+            batch = detachAndDeliverNode(batch, nodeConsumer);
+    }
+
+    @Override
+    public void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row) {
+        sink.append(firstRow ? ROW_OPEN : ROW_SEP);
+        this.firstRow = false;
+        boolean firstCol = true;
+        for (int col : columns) {
+            var type = col < 0 ? null : batch.termType(row, col);
+            if (type == null) continue;
+            if (firstCol) firstCol = false;
+            else          sink.append(COL_SEP);
+            sink.append('"').append(vars.get(col)); // write: "$VAR
+            int len = batch.len(row, col);
+            switch (type) {
+                case LIT -> {
+                    sink.append(COL_LIT);
+                    int lexEnd = batch.lexEnd(row, col);
+                    batch.write(sink, row, col, 0, lexEnd);
+                    Term dtTerm = batch.datatypeTerm(row, col);
+                    if (dtTerm == Term.RDF_LANGSTRING) { // @lang
+                        sink.append(COL_LANG);
+                        batch.write(sink, row, col, lexEnd + 2, len);
+                    } else if (dtTerm != null && dtTerm != Term.XSD_STRING) { // datatype
+                        sink.append(COL_DATATYPE);
+                        sink.append(dtTerm, 1, dtTerm.len - 1);
                     }
                 }
-                dest.append(COL_END);
+                case IRI -> {
+                    sink.append(COL_IRI);
+                    batch.write(sink, row, col, 1, len - 1);
+                }
+                case BLANK -> {
+                    sink.append(COL_BLANK);
+                    batch.write(sink, row, col, 2, len);
+                }
             }
-            dest.append('}');
+            sink.append(COL_END);
         }
+        sink.append('}');
     }
 
     private static final byte[] TRAILER_SEL = "\n]}}".getBytes(UTF_8);

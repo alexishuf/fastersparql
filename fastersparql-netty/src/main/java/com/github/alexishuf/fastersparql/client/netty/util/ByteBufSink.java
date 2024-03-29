@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.ByteBufOutputStream;
+import io.netty.buffer.PooledByteBufAllocator;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -16,30 +17,25 @@ import java.lang.foreign.MemorySegment;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
+    public static final int NORMAL_HINT = PooledByteBufAllocator.defaultPageSize();
+    public static final int    MIN_HINT = 1024;
+    public static final int    MAX_HINT = 32768;
+
     private ByteBufAllocator alloc;
     private ByteBuf bb;
-    private int sizeHint = 512;
+    private int sizeHint = MIN_HINT;
 
     public ByteBufSink(ByteBufAllocator      alloc) { this.alloc = alloc; }
 
     public void alloc(ByteBufAllocator alloc) { this.alloc = alloc; }
 
-    public ByteBufOutputStream asOutputStream() {
-        return new ByteBufOutputStream(touch().bb);
-    }
+    public ByteBufOutputStream asOutputStream() { return new ByteBufOutputStream(touch().bb); }
 
-    public int sizeHint() { return sizeHint;  }
+    @Override public int sizeHint() { return sizeHint;  }
 
-    public void sizeHint(int hint) {
-        sizeHint = hint;
-    }
-
-    public static int adjustSizeHint(int old, int observed) {
-        int updated = observed > old ? observed
-                    : Math.max(old - 256, (old * 3 + observed) >> 2);
-        // round to nearest multiple of 256
-        return (updated & ~256) /* round down */
-            + ((updated &  128) << 1) /* maybe round up */;
+    @Override public void sizeHint(int hint) {
+        int safeHint = Math.max(MIN_HINT, Math.min(MAX_HINT, hint));
+        sizeHint = 1 << (32 - Integer.numberOfLeadingZeros(safeHint -1));
     }
 
     @Override public ByteBuf take() {
@@ -47,8 +43,22 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         this.bb = null;
         if (bb == null)
             throw new IllegalStateException("no ByteBuf to take()");
-        sizeHint = adjustSizeHint(sizeHint, bb.readableBytes());
         return bb;
+    }
+
+    @Override public ByteBuf takeUntil(int len) {
+        ByteBuf taken = take();
+        int takenLen = taken.readableBytes();
+        if (len > takenLen) {
+            taken.release();
+            throw new IndexOutOfBoundsException("len > taken.readableBytes()");
+        } else if (len < takenLen) {
+            int tailLen = takenLen - len;
+            bb = alloc.buffer(Math.max(sizeHint, tailLen));
+            bb.writeBytes(taken, len, tailLen); // copy un-taken bytes back
+            taken.writerIndex(len);             // remove un-taken bytes
+        }
+        return taken;
     }
 
     @Override public boolean needsTouch() { return bb == null; }
@@ -69,6 +79,8 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     @Override public boolean isEmpty() { return bb == null || bb.readableBytes() == 0; }
 
     @Override public int len() { return bb == null ? 0 : bb.readableBytes(); }
+
+    @Override public int freeCapacity() { return bb == null ? 0 : bb.writableBytes(); }
 
     @Override public @This ByteBufSink append(byte[] arr, int begin, int len) {
         bb.writeBytes(arr, begin, len);

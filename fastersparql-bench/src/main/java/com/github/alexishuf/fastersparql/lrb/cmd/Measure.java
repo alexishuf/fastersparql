@@ -443,7 +443,7 @@ public class Measure implements Callable<Void>{
                             ser.init(vars, vars, false);
                             ser.serializeHeader(sink);
                             forEachMissing((b, r) -> {
-                                ser.serialize(b, r, 1, sink);
+                                ser.serialize(b, sink, r);
                                 return true;
                             });
                             ser.serializeTrailer(sink);
@@ -456,7 +456,7 @@ public class Measure implements Callable<Void>{
                                 sink.os = os;
                                 ser.init(vars, vars, false);
                                 ser.serializeHeader(sink);
-                                ser.serializeAll(unexpected, sink);
+                                ser.serialize(unexpected, sink);
                                 ser.serializeTrailer(sink);
                             } catch (Throwable t) {
                                 log.error("Failed to write {}", file, t);

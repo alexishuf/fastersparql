@@ -199,8 +199,6 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
      * by this call will be scheduled and eventually executed.</p>
      *
      * @param methods bitset of methods to execute
-     * @return {@code true} iff all methods have been executed or will certainly execute
-     *         even if there is no future {@link #executor(Executor)} call
      * @throws RejectedExecutionException if the executor is set, {@code this} is not scheduled
      *                                    and the executor rejects new tasks.
      */
@@ -214,6 +212,22 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         // if witness had QUEUED, run() will see methods or will call enqueue()
         if ((queue&QUEUED) == 0)
             enqueueIfNot(queue|methods);
+    }
+
+    /**
+     * Test whether any (or all) of the given methods are scheduled.
+     *
+     * <p>This check uses <i>plain</i> memory ordering: previous {@link #sched(int)} calls from
+     * the same will be visible if there was no #run meanwhile. However the removal of a method
+     * bit by a previous {@link #run()} execution or the {@link #sched(int)} from another thread
+     * may not be visible.</p>
+     *
+     * @param methods a bitset of methods
+     * @return {@code true} if at least one of the methods was previously {@link #sched(int)}
+     * and maybe has not been executed yet.
+     */
+    public boolean isAnySched(int methods) {
+        return (plainActions&methods) != methods;
     }
 
     private void enqueueIfNot(int queue) {

@@ -29,12 +29,11 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.results.AbstractWsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
-import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -57,7 +56,8 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
-import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.adjustSizeHint;
+import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.MIN_HINT;
+import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.NORMAL_HINT;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -71,7 +71,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     private static final boolean SEND_INFO = FSNettyProperties.channelInfo();
 
     private final NettyWsClient netty;
-    private int bindingsSizeHint = WsSerializer.DEF_BUFFER_HINT;
 
     private static SparqlEndpoint restrictConfig(SparqlEndpoint endpoint) {
         SparqlConfiguration request = endpoint.configuration();
@@ -141,10 +140,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             "!not-exists ".getBytes(UTF_8),
             "!minus "     .getBytes(UTF_8),
     };
-
-    private void adjustBindingsSizeHint(int observed) {
-        bindingsSizeHint = adjustSizeHint(bindingsSizeHint, observed);
-    }
 
     /* --- --- --- BIt/Emitter implementations --- --- --- */
 
@@ -338,7 +333,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
 
-    private class WsHandler<B extends Batch<B>> implements NettyWsClientHandler, ChannelBound {
+    private class WsHandler<B extends Batch<B>>
+            implements NettyWsClientHandler, ChannelBound,
+                       ResultsSerializer.ChunkConsumer<ByteBuf> {
         private static final VarHandle BINDINGS_LOCK, REQ_ROWS, RELEASE_LOCK;
         static {
             try {
@@ -421,7 +418,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 bindType = null;
             } else {
                 usefulBindingsVars = parent.vars().intersection(bindQuery.bindingsVars());
-                serializer = WsSerializer.create(bindingsSizeHint);
+                serializer = WsSerializer.create(NORMAL_HINT);
                 bindType = bindQuery.type;
             }
             bsRunnable.executor(netty.executor());
@@ -584,7 +581,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 throw new IllegalStateException("doSendQuery() while query is active");
             }
             var sparql = parent.sparql();
-            bbSink.touch().ensureFreeCapacity(sparql.len + 16);
+            int requiredBytes = sparql.len + 16;
+            bbSink.sizeHint(Math.max(bbSink.sizeHint(), requiredBytes));
+            bbSink.touch().ensureFreeCapacity(requiredBytes);
             bbSink.append(bindType == null ? QUERY_VERB : BIND_VERB[bindType.ordinal()]);
             bbSink.append(sparql);
             if (sparql.get(sparql.len-1) != '\n')
@@ -604,6 +603,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else {
                 ctx.writeAndFlush(queryFrame);
             }
+            bbSink.sizeHint(NORMAL_HINT);
             int actions = AC_SEND_REQ_ROWS;
             if ((st&ST_SEND_BATCH) != 0)
                 actions |= AC_SEND_BATCH;
@@ -633,8 +633,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 BINDINGS_LOCK.setRelease(this, 0);
                 if (batch != null) {
                     if (batch.rows > 0) {
-                        serializer.serializeAll(batch, bbSink.touch(), parser);
-                        ctx.writeAndFlush(new TextWebSocketFrame(bbSink.take()));
+                        serializer.serialize(batch, bbSink.touch(), REC_MAX_FRAME_LEN,
+                                             parser, this);
                     } else {
                         bt.recycle(batch);
                     }
@@ -642,6 +642,13 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else  {
                 journal("skip doSendBatch st=", st, ST, "on", this);
             }
+            if (bsRunnable.isAnySched(AC_SEND_BINDINGS_TERM))
+                bbSink.sizeHint(MIN_HINT);
+        }
+
+        @Override public void onSerializedChunk(ByteBuf chunk) {
+            assert ctx != null;
+            ctx.writeAndFlush(new TextWebSocketFrame(chunk));
         }
 
         public void sendBindingTerm(@Nullable Throwable cause) {
@@ -660,7 +667,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 bbSink.touch();
                 if (bindingsError == null) {
                     bbSink.append(END_LF);
-                    adjustBindingsSizeHint(bbSink.sizeHint());
                 } else {
                     bbSink.append(ERROR).append(' ');
                     bbSink.append(bindingsError.getClass().getSimpleName());

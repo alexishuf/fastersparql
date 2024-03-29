@@ -16,7 +16,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
 public abstract class AbstractWsClientParser<B extends Batch<B>> extends AbstractWsParser<B>
-        implements ResultsSerializer.SerializedNodeConsumer<B> {
+        implements ResultsSerializer.NodeConsumer<B> {
     protected final @Nullable BindQuery<B> bindQuery;
     private B sentBindings;
     private long currBinding = -1;
@@ -54,6 +54,15 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
     public void addSentBatch(B b) { sentBindings = Batch.quickAppend(sentBindings, b); }
 
     @Override public void onSerializedNode(B node) { addSentBatch(node); }
+
+    @Override public void onNotSerializedNode(B node, int serializedUntilRow) {
+        if (serializedUntilRow > 0) {
+            node.rows = (short)Math.min(node.rows, serializedUntilRow);
+            addSentBatch(node);
+        } else {
+            node.recycle();
+        }
+    }
 
     @Override protected void onCancel() {
         throw new FSServerException("server sent spontaneous !cancel");

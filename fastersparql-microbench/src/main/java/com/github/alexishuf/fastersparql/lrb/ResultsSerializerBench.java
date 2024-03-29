@@ -50,11 +50,11 @@ public class ResultsSerializerBench {
         ResultsSerializer serializer = ResultsSerializer.create(format);
         ByteSink sink = ropeTypeHolder.byteSink();
         serializer.init(vars, vars, false);
-        serializer.serializeHeader(sink);
+        serializer.serializeHeader(sink.touch());
         List<Batch> batches = batchLists.get(nextBatchList);
         nextBatchList = (nextBatchList+1) % batchLists.size();
         for (Batch b : batches)
-            serializer.serializeAll(b, sink);
+            serializer.serialize(b, sink);
         serializer.serializeTrailer(sink);
         return ropeTypeHolder.takeRope(sink);
     }

@@ -124,6 +124,18 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
         return copy;
     }
 
+    @Override public ByteRope takeUntil(int len) {
+        ByteRope copy = new ByteRope(toArray(0, len));
+        int tail = this.len-len;
+        if (tail > 0) {
+            byte[] u8 = utf8;
+            if (offset != 0 || this == EMPTY || u8 == null) raiseImmutable();
+            arraycopy(u8, len, u8, 0, tail);
+        }
+        this.len = tail;
+        return copy;
+    }
+
     @Override public @This ByteRope ensureFreeCapacity(int increment) {
         byte[] u8 = utf8;
         if (offset != 0 || this == EMPTY || u8 == null) raiseImmutable();
@@ -138,6 +150,11 @@ public final class ByteRope extends SegmentRope implements ByteSink<ByteRope, By
     @SuppressWarnings("unused") public @This ByteRope ensureCapacity(int capacity) {
         ensureFreeCapacity(capacity-len);
         return this;
+    }
+
+    @Override public int freeCapacity() {
+        byte[] u8 = utf8;
+        return u8 == null ? 0 : u8.length;
     }
 
     public @This ByteRope clear() {

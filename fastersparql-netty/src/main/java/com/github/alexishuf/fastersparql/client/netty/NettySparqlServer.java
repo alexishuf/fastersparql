@@ -62,6 +62,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Semaphore;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -70,6 +71,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.REC_MAX_FRAME_LEN;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -106,12 +108,11 @@ public class NettySparqlServer implements AutoCloseable{
             = new LIFOPool<>(WsHandler.class, HANDLER_POOL_SIZE);
     private final boolean useBIt;
     private final ContentNegotiator negotiator = ResultsSerializer.contentNegotiator();
-    private int wsSizeHint = WsSerializer.DEF_BUFFER_HINT;
     private final SparqlClient.@Nullable Guard sparqlClientGuard;
     private final FastAliveSet<QueryHandler<?>> queryHandlers = new FastAliveSet<>(512);
     private final @Nullable EventLoopGroupHolder workerELGHolder;
     private @MonotonicNonNull Semaphore handlersClosed;
-    private @MonotonicNonNull FSCancelledException cancelledByServerClose;
+    private @MonotonicNonNull FSCancelledException serverClosing;
 
     public NettySparqlServer(FlowModel flowModel, SparqlClient client, boolean sharedSparqlClient,
                              String host, int port) {
@@ -162,8 +163,8 @@ public class NettySparqlServer implements AutoCloseable{
     }
 
     @Override public void close() {
-        if (cancelledByServerClose != null) return;
-        cancelledByServerClose = new FSCancelledException(null, "cancelled by server.close()");
+        if (serverClosing != null) return;
+        serverClosing = new FSCancelledException(null, "cancelled by server.close()");
         int[] handlersCount = {0};
         handlersClosed = new Semaphore(0);
         if (!server.close().awaitUninterruptibly(2, SECONDS))
@@ -204,7 +205,8 @@ public class NettySparqlServer implements AutoCloseable{
 
     @ChannelHandler.Sharable
     private abstract class QueryHandler<I> extends SimpleChannelInboundHandler<I>
-            implements ChannelBound, Receiver<CompressedBatch>, Requestable {
+            implements ChannelBound, Receiver<CompressedBatch>, Requestable,
+                       ResultsSerializer.ChunkConsumer<ByteBuf> {
         protected static final int AC_SEND_BATCH;
         protected static final int AC_BIND_REQ;
         protected static final int AC_SEND_TERM;
@@ -255,6 +257,9 @@ public class NettySparqlServer implements AutoCloseable{
             return sb.append(']').toString();
         };
 
+        protected static final ResultsSerializer.Recycler<CompressedBatch> BATCH_RECYCLER
+                = ResultsSerializer.recycler(COMPRESSED);
+
         public final SparqlParser parser = new SparqlParser();
         protected ByteBufRopeView bbView = ByteBufRopeView.create();
         protected @MonotonicNonNull ByteBufSink bbSink = new ByteBufSink(ByteBufAllocator.DEFAULT);
@@ -262,6 +267,7 @@ public class NettySparqlServer implements AutoCloseable{
         @SuppressWarnings("unused") private int plainQueueLock;
         private @Nullable Emitter<CompressedBatch> upstream;
         private @Nullable Throwable errorOrCancelledException;
+        private int smallBatchRows;
         protected CompressedBatch sendQueue;
         protected int st;
         private @MonotonicNonNull ByteRope queryRope;
@@ -272,6 +278,7 @@ public class NettySparqlServer implements AutoCloseable{
         public QueryHandler() {
             st = ST_ORPHAN;
             queryHandlers.add(this);
+            bbSink.sizeHint(ByteBufSink.MIN_HINT);
         }
 
         protected final ByteRope queryRope(int capacity) {
@@ -347,6 +354,7 @@ public class NettySparqlServer implements AutoCloseable{
                 Q.setRelease(this, 0);
             }
             emitter.subscribe(this);
+            bbSink.sizeHint(ByteBufSink.NORMAL_HINT);
             bsRunnable.sched(AC_TOUCH_SINK);
         }
 
@@ -385,21 +393,45 @@ public class NettySparqlServer implements AutoCloseable{
         protected abstract void serialize(CompressedBatch batch);
 
         @SuppressWarnings("unused") private void doSendBatch() {
-            CompressedBatch batch;
+            boolean canSend = (st&CAN_SEND_BATCH) == ST_RES_STARTED, detach;
+            CompressedBatch b;
             while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             try {
-                batch = sendQueue;
-                sendQueue = null;
+                b         = sendQueue;
+                detach    = canSend && b != null && b.rows > smallBatchRows;
+                sendQueue = detach ? b.detachHead() : null;
             } finally { Q.setRelease(this, 0); }
-            if (batch != null) {
-                try {
-                    if ((st&(ST_RES_STARTED|ST_RES_TERMINATED)) == ST_RES_STARTED)
-                        serialize(batch);
-                    else
-                        journal("skip&recycle doSendBatch, st=", st, ST, "on", this);
-                } finally {
-                    COMPRESSED.recycle(batch);
+            if (b != null) {
+                if (canSend) {
+                    serialize(b);
+                    if (detach)
+                        bsRunnable.sched(AC_SEND_BATCH);
+                } else {
+                    COMPRESSED.recycle(b);
+                    journal("skip&recycle doSendBatch, st=", st, ST, "on", this);
                 }
+            }
+            if (bsRunnable.isAnySched(AC_SEND_TERM))
+                bbSink.sizeHint(ByteBufSink.MIN_HINT);
+        }
+        private static final int CAN_SEND_BATCH = ST_RES_STARTED | ST_RES_TERMINATED
+                                                | ST_DIRECT_RES_TERMINATED | ST_CANCEL_REQ
+                                                | ST_ORPHAN | ST_RELEASED;
+
+        @SuppressWarnings("unused") private void doSendTerm() {
+            upstream = null;
+            st &= ~ST_CANCEL_REQ;
+            try {
+                if ((st&CAN_SEND_TERM) == ST_GOT_REQ) {
+                    endResponse(termMessage(errorOrCancelledException));
+                } else {
+                    journal("skip doSendTerm st=", st, ST, "on", this);
+                    if (errorOrCancelledException != null)
+                        journal("skip doSendTerm cause=", errorOrCancelledException, "on", this);
+                }
+            } finally {
+                if ((st&ST_CLOSING) != 0)
+                    notifyClosed();
             }
         }
 
@@ -633,12 +665,15 @@ public class NettySparqlServer implements AutoCloseable{
         private static final byte[] MISSING_QUERY_FORM_MSG = "Missing \"query\" parameter in application/x-www-form".getBytes(UTF_8);
         private static final byte[] NOT_FORM_MSG = "Expected Content-Type of request to be application/x-www-form or application/sparql-query".getBytes(UTF_8);
 
-
         private @MonotonicNonNull ResultsSerializer serializer;
 
         @Override protected void serialize(CompressedBatch batch) {
-            serializer.serializeAll(batch, bbSink.touch());
-            send(new DefaultHttpContent(bbSink.take()));
+            serializer.serialize(batch, bbSink.touch(), REC_MAX_FRAME_LEN,
+                                 BATCH_RECYCLER, this);
+        }
+
+        @Override public void onSerializedChunk(ByteBuf chunk) {
+            send(new DefaultHttpContent(chunk));
         }
 
         @Override protected LIFOPool<SparqlHandler> pool() {return sparqlHandlerPool;}
@@ -898,7 +933,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         private static final int LONG_MAX_VALUE_LEN = String.valueOf(Long.MAX_VALUE).length();
 
-        protected final WsSerializer serializer = WsSerializer.create(wsSizeHint);
+        protected final WsSerializer serializer = WsSerializer.create(ByteBufSink.NORMAL_HINT);
         protected boolean earlyCancel, waitingVars, isBindQuery;
         protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
         protected final ByteRope bindReqRope;
@@ -921,7 +956,7 @@ public class NettySparqlServer implements AutoCloseable{
 
     }
 
-    private final class WsHandler extends WsHandler0 implements Requestable {
+    private final class WsHandler extends WsHandler0 {
         private static final VarHandle BIND_REQUEST_N;
         static {
             try {
@@ -1039,7 +1074,6 @@ public class NettySparqlServer implements AutoCloseable{
         @Override protected LIFOPool<WsHandler> pool() {return wsHandlerPool;}
 
         @Override protected Object termMessage(@Nullable Throwable cause) {
-            wsSizeHint = ByteBufSink.adjustSizeHint(wsSizeHint, bbSink.sizeHint());
             TextWebSocketFrame frame;
             if (cause == null) {
                 if (endFrame.refCnt() == 1)
@@ -1096,16 +1130,12 @@ public class NettySparqlServer implements AutoCloseable{
                 else if (seq < lastSeqSent)
                     invalidLastSeqSent(seq);
             }
-            bbSink.touch();
-            for (var node = batch; node != null; node = node.next) {
-                serializer.serialize(node, 0, node.rows, bbSink);
-                if (bbSink.len() > 8192) {
-                    send(new TextWebSocketFrame(bbSink.take()));
-                    bbSink.touch();
-                }
-            }
-            if (bbSink.len() > 0)
-                send(new TextWebSocketFrame(bbSink.take()));
+            serializer.serialize(batch, bbSink.touch(), REC_MAX_FRAME_LEN,
+                                 BATCH_RECYCLER, this);
+        }
+
+        @Override public void onSerializedChunk(ByteBuf chunk) {
+            send(new TextWebSocketFrame(chunk));
         }
 
         private void invalidLastSeqSent(long seq) {

@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -120,22 +121,28 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
     }
 
     @SuppressWarnings("unused") private void serialize(File dest, Object rows) {
+        List<SegmentRope> lines = new ArrayList<>();
+        ResultsSerializer.ChunkConsumer<ByteRope> chunkConsumer = lines::add;
         var sink = new ByteRope();
         var serializer = new TsvSerializer();
         serializer.init(vars, vars, false);
         serializer.serializeHeader(sink);
-        if (rows instanceof Dedup<?> d)
-            d.forEach(b -> serializer.serializeAll(b, sink));
-        else if (rows instanceof Batch<?> b)
-            serializer.serializeAll(b, sink);
-        else
+        if (rows instanceof Dedup<?> d) {
+            d.forEach(b -> {
+                var reassemble = new ResultsSerializer.LeakingReassemble<B>();
+                //noinspection unchecked
+                serializer.serialize((B)b, sink, Integer.MAX_VALUE,
+                                     reassemble, chunkConsumer);
+            });
+        } else if (rows instanceof Batch<?> b) {
+            var reassemble = new ResultsSerializer.LeakingReassemble<B>();
+            //noinspection unchecked
+            serializer.serialize((B)b, sink, Integer.MAX_VALUE,
+                                  reassemble, chunkConsumer);
+        } else {
             throw new IllegalArgumentException("Unsupported type for rows="+rows);
-        serializer.serializeTrailer(sink);
-        List<SegmentRope> lines = new ArrayList<>();
-        for (int i = 0, j; i < sink.len; i = j) {
-            long sepLenAndEnd = sink.skipUntilLineBreak(i, sink.len);
-            lines.add(sink.sub(i, j = (int)sepLenAndEnd + (int)(sepLenAndEnd>>32)));
         }
+        serializer.serializeTrailer(sink);
         lines.sort(Comparator.naturalOrder());
         try (var out = new FileOutputStream(dest)) {
             for (int i = 0, n = vars.size(); i < n; i++) {

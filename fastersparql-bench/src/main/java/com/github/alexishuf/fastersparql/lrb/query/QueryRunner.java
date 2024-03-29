@@ -232,7 +232,7 @@ public final class QueryRunner {
             serializer.init(vars, vars, vars.isEmpty());
             serializer.serializeHeader(sink);
         }
-        @Override public void accept(Batch<?> b) { serializer.serializeAll(b, sink); }
+        @Override public void accept(Batch<?> b) { serializer.serialize(b, sink); }
         @Override public void finish(@Nullable Throwable error) {
             try {
                 if (close) sink.os.close();

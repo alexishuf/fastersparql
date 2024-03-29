@@ -5,10 +5,12 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -31,6 +33,17 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     public static final byte[] END_LF           = "!end\n".getBytes(UTF_8);
     public static final byte[] REQUEST          = "!request ".getBytes(UTF_8);
     public static final byte[] MAX              = "MAX".getBytes(UTF_8);
+
+    /**
+     * Maximum WebSocket frame size, clients and servers parsing frames should accept
+     * frames bigger than this (if such frames do not raise an error before they reach the parser).
+     */
+    public static final int MAX_FRAME_LEN = 65536;
+    /**
+     * Recommended maximum WebSocket frame for clients or servers sending the frames. See
+     * {@code hardMaxBYtes} in {@link ResultsSerializer#serialize(Batch, ByteSink, int, ResultsSerializer.NodeConsumer, ResultsSerializer.ChunkConsumer)}
+     */
+    public static final int REC_MAX_FRAME_LEN = MAX_FRAME_LEN - 8192 /* 2 pages */; // 56KiB
 
     /* --- --- --- constructors --- --- --- */
 

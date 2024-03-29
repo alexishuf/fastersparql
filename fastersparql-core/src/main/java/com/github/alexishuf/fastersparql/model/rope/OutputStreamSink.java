@@ -35,8 +35,13 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
 
     @Override public OutputStreamSink take() { return this; }
 
-    @Override public boolean isEmpty() { return len == 0; }
-    @Override public int         len() { return len; }
+    @Override public OutputStreamSink takeUntil(int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override public boolean  isEmpty() { return len == 0; }
+    @Override public int          len() { return len; }
+    @Override public int freeCapacity() { return Integer.MAX_VALUE; }
 
     @Override public @This OutputStreamSink append(byte[] arr, int begin, int len) {
         return write(arr, begin, len);

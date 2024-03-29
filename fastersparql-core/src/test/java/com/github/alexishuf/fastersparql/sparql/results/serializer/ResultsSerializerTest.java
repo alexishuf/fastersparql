@@ -14,10 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.*;
@@ -138,38 +135,21 @@ class ResultsSerializerTest {
     }
 
     @ParameterizedTest @MethodSource
-    void test(BatchType<?> type, Results results, SparqlResultFormat fmt, String expected) {
+    <B extends Batch<B>>
+    void test(BatchType<B> type, Results results, SparqlResultFormat fmt, String expected) {
         // serialize using a single batch
-        Batch<?> b = type.create(results.vars().size());
+        B b = type.create(results.vars().size());
         for (List<Term> row : results.expected()) b.putRow(row);
         var serializer = serializers.get(fmt);
 
         ByteRope out = new ByteRope();
         serializer.init(results.vars(), results.vars(), results.isAsk());
         serializer.serializeHeader(out);
-        serializer.serializeAll(b, out);
-        serializer.serializeTrailer(out);
-
-        assertEquals(expected, out.toString());
-
-        //serialize again with a single batch but skipping fir column and first row
-        b = b.clear(results.vars().size()+1);
-        b.beginPut();
-        for (int i = 0; i < b.cols; i++) b.putTerm(i, Term.RDF_SEQ);
-        b.commitPut();
-        for (List<Term> row : results.expected()) {
-            b.beginPut();
-            b.putTerm(0, Term.XSD_ANYURI);
-            int c = 1;
-            for (Term t : row)  b.putTerm(c++, t);
-            b.commitPut();
+        try (var reassemble = new ResultsSerializer.Reassemble<B>()) {
+            serializer.serialize(b, new ByteRope(),
+                    expected.length(), reassemble, out::append);
+            b = Objects.requireNonNull(reassemble.take());
         }
-        serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
-                        results.isAsk());
-        serializer.serializeHeader(out.clear());
-        serializer.serialize(b, 1, b.rows-1, out);
-        if (b.next != null)
-            serializer.serializeAll(b.next, out);
         serializer.serializeTrailer(out);
         assertEquals(expected, out.toString());
 
@@ -178,26 +158,34 @@ class ResultsSerializerTest {
         serializer.serializeHeader(out.clear());
         for (List<Term> row : results.expected()) {
             (b = b.clear(row.size())).putRow(row);
-            serializer.serializeAll(b, out);
+            try (var reassemble = new ResultsSerializer.Reassemble<B>()) {
+                serializer.serialize(b, new ByteRope(),
+                        expected.length()-1, reassemble, out::append);
+                b = Objects.requireNonNull(reassemble.take());
+            }
         }
         serializer.serializeTrailer(out);
         assertEquals(expected, out.toString());
 
-        // serialize a sequence of two-row batches, always skipping first row and column
+        // serialize a sequence of at most 2 row batches, always skipping first column
         serializer.init(Vars.of("dummy").union(results.vars()), results.vars(),
                         results.isAsk());
         serializer.serializeHeader(out.clear());
-        for (List<Term> row : results.expected()) {
-            b = b.clear(row.size()+1);
-            b.beginPut();
-            for (int i = 0; i < b.cols; i++)  b.putTerm(i, Term.XSD_SHORT);
-            b.commitPut();
-            int c = 0;
-            b.beginPut();
-            b.putTerm(c++, Term.XSD_BOOLEAN);
-            for (Term t : row) b.putTerm(c++, t);
-            b.commitPut();
-            serializer.serialize(b, 1, 1, out);
+        for (int r = 0, rows = results.expected().size(); r < rows; r += 2) {
+            b = b.clear(results.vars().size()+1);
+            for (int rOff = 0, rCount = r+1 < rows ? 2 : 1; rOff < rCount; rOff++) {
+                List<Term> row = results.expected().get(r+rOff);
+                int c = 0;
+                b.beginPut();
+                b.putTerm(c++, Term.XSD_BOOLEAN);
+                for (Term t : row) b.putTerm(c++, t);
+                b.commitPut();
+            }
+            try (var reassemble = new ResultsSerializer.Reassemble<B>()) {
+                serializer.serialize(b, new ByteRope(),
+                        expected.length(), reassemble, out::append);
+                b = Objects.requireNonNull(reassemble.take());
+            }
         }
         serializer.serializeTrailer(out);
         assertEquals(expected, out.toString());

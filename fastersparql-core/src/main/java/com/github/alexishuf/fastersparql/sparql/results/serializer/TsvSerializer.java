@@ -31,16 +31,66 @@ public class TsvSerializer extends ResultsSerializer {
         dest.append('\n');
     }
 
-    @Override public void serialize(Batch<?> batch, int begin, int nRows, ByteSink<?, ?> dest) {
-        for (int end = begin+nRows; begin < end; begin++) {
-            for (int i = 0; i < columns.length; i++) {
-                int col = columns[i];
-                if (i != 0) dest.append('\t');
-                if (col >= 0)
-                    batch.writeNT(dest, begin, col);
-            }
-            dest.append('\n');
+    @Override
+    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
+    void serialize(Batch<B> batch0, ByteSink<S, T> sink, int hardMax,
+                   NodeConsumer<B> nodeConsumer, ChunkConsumer<T> chunkConsumer) {
+        if (batch0 == null) return;
+        @SuppressWarnings("unchecked") B batch = (B) batch0;
+        if (batch.rows == 0) {
+            detachAndDeliverNode(batch, nodeConsumer);
+            return;
         }
+        boolean chunk = !chunkConsumer.isNoOp();
+        int r = 0;
+        try {
+            if (ask) {
+                serializePositiveAsk(batch, sink, nodeConsumer, chunkConsumer);
+                return;
+            }
+            int chunkRows = 0, lastLen = sink.len();
+            int softMax = Math.min(hardMax, sink.freeCapacity());
+            for (; batch != null; batch = detachAndDeliverNode(batch, nodeConsumer)) {
+                r = 0;
+                for (int rows = batch.rows; r < rows; ++r) {
+                    serialize(batch, sink, r);
+                    ++chunkRows;
+                    if (chunk) {
+                        int len = sink.len();
+                        // send chunk "2 rows" from reaching softMax
+                        if (len >= softMax-(len-lastLen <<1)) {
+                            deliver(sink, chunkConsumer, chunkRows, lastLen, hardMax);
+                            chunkRows = 0;
+                            sink.touch();
+                        }
+                    }
+                    lastLen = sink.len();
+                }
+            }
+            if (chunk)
+                deliver(sink, chunkConsumer, 1, sink.len(), hardMax);
+        } catch (Throwable t) {
+            handleNotSerialized(batch, r, nodeConsumer, t);
+            throw t;
+        }
+    }
+
+    @Override public void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row) {
+        for (int outCol = 0, inCol; outCol < columns.length; outCol++) {
+            if (outCol != 0) sink.append('\t');
+            if ((inCol = columns[outCol]) >= 0)
+                batch.writeNT(sink, row, inCol);
+        }
+        sink.append('\n');
+    }
+
+    private <B extends Batch<B>, S extends ByteSink<S, T>, T>
+    void serializePositiveAsk(B batch, ByteSink<S, T> sink, NodeConsumer<B> nodeConsumer,
+                              ChunkConsumer<T> chunkConsumer) {
+        sink.append('\n');
+        deliver(sink, chunkConsumer, 1, 0, Integer.MAX_VALUE);
+        while (batch != null)
+            batch = detachAndDeliverNode(batch, nodeConsumer);
     }
 
     @Override public void serializeTrailer(ByteSink<?, ?> dest) { }

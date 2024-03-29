@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer.recycler;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -97,10 +99,13 @@ class WsSerializerTest {
     @ParameterizedTest @MethodSource
     <B extends Batch<B>> void testSerialize(Results in, String expected,
                                             BatchType<B> batchType) {
-        var serializer = WsSerializer.create();
-        var buffer = new ByteRope();
+        var serializer = WsSerializer.create(256);
+        int hardMax = expected.length();
+        var recycler = recycler(batchType);
+        ByteRope actual = new ByteRope(), sink = new ByteRope();
+        ResultsSerializer.ChunkConsumer<ByteRope> appender = actual::append;
         serializer.init(in.vars(), in.vars(), false);
-        serializer.serializeHeader(buffer);
+        serializer.serializeHeader(actual);
         var b = TermBatchType.TERM.create(in.vars().size());
         var rows = in.expected();
 
@@ -108,26 +113,29 @@ class WsSerializerTest {
         //feed single batch with first row
         if (!rows.isEmpty()) {
             b.putRow(rows.getFirst());
-            serializer.serializeAll(batchType.convert(b), buffer);
+            serializer.serialize(batchType.convert(b), sink, hardMax, recycler, appender);
         }
         // feed a batch with rows [1,rows.size()-1)
         if (rows.size() > 2) {
             b.clear();
             for (int i = 1; i < rows.size()-1; i++)
                 b.putRow(rows.get(i));
-            serializer.serializeAll(batchType.convert(b), buffer);
+            serializer.serialize(batchType.convert(b), sink, hardMax, recycler, appender);
         }
         // feed a batch with the last row if it is not also the first
         if (rows.size() > 1) {
             b.clear();
             b.putRow(rows.getLast());
-            serializer.serializeAll(batchType.convert(b), buffer);
+            serializer.serialize(batchType.convert(b), sink, hardMax, recycler, appender);
         }
-        // feeding a terminal batch has no effect
-        serializer.serializeAll(null, buffer);
-        serializer.serializeTrailer(buffer);
+        // feeding an empty batch has no effect
+        serializer.serialize(batchType.create(in.vars().size()),
+                             sink, hardMax, recycler, appender);
+        // feeding a null batch has no effect
+        serializer.serialize(null, sink, hardMax, recycler, appender);
+        serializer.serializeTrailer(actual);
 
-        assertEquals(expected, buffer.toString());
+        assertEquals(expected, actual.toString());
     }
 
 

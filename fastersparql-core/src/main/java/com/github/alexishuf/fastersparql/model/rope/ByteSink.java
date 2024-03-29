@@ -20,6 +20,27 @@ public interface ByteSink<S extends ByteSink<S, T>, T>  {
     T take();
 
     /**
+     * Similar to {@link #take()}, but only the first {@code len} bytes are moved or copied
+     * into the returned instance of {@code T}. The bytes between index {@code len} (inclusive)
+     * and {@link #len()} (exclusive) are copied/moved to {@code this} {@link ByteSink} after
+     * an implicit  {@link #touch()}.
+     *
+     * <p>This is equivalent to (but more efficient than):</p>
+     *
+     * <pre>{@code
+     * var data = sink.take();
+     * sink.touch().append(data, len, data.len()); // copy trailing bytes back
+     * data.len = len;                             // remove trailing bytes
+     * }</pre>
+     *
+     * @param len the number of bytes to copy/move out. Must be {@code <=} {@link #len()}
+     * @return an object containing all bytes from {@code 0} to {@code len} (non-inclusive).
+     *         Such object has an independent lifecycle: mutations to it are not visible in the
+     *         sink and mutations in the sink are not visible in it.
+     */
+    T takeUntil(int len);
+
+    /**
      * If {@link #take()} implementation relies on mocing an object under manual memory management
      * (e.g., reference-counted), this will have the same effects as {@link #take()} on this sink
      * but will also perform the type-specific release required by the internal object used by
@@ -41,6 +62,24 @@ public interface ByteSink<S extends ByteSink<S, T>, T>  {
 
     boolean isEmpty();
     int len();
+
+    /** How many bytes can be appended before the ByteSink performs reallocation internally.  */
+    int freeCapacity();
+
+    /**
+     * Get the last value set with {@link #sizeHint(int)}.
+     */
+    default int sizeHint() { return freeCapacity(); }
+
+    /**
+     * At next {@link #touch()} call, if {@link #needsTouch()}, suggest an allocation that would
+     * yield {@link #freeCapacity()} {@code >= hint}.
+     *
+     * <p>This method is merely a hint and can be safely ignored by some implementations.</p>
+     *
+     * @param hint desired {@link #freeCapacity()} on next {@link #touch()}
+     */
+    default void sizeHint(int hint) { /* ignore */  }
 
     @This S append(MemorySegment segment, byte @Nullable [] utf8, long offset, int len);
     @This S append(byte[] arr, int begin, int len);
