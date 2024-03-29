@@ -190,6 +190,9 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
         rightRecv.rebindRelease();
+        // if this happens before the first startNextBinding(), right upstream will be
+        // in CREATED state and the above rebindRelease() will not cause an actual release
+        rightRecv.upstream.cancel();
         lr                   = -1;
         lb                   = batchType.recycle(lb);
         fillingLB            = batchType.recycle(fillingLB);
@@ -478,18 +481,20 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
     private void rightFailedOrCancelled(int flag, @Nullable Throwable error) {
         int state = lock(statePlain());
         try {
-            if (ENABLED)
-                journal("rightFailedOrCancelled", state, flags, "flag=", flag, flags, "on", this);
-            if (error != null && this.error == UNSET_ERROR) {
-                if (ENABLED) journal("error=", error);
-                this.error = error;
-            }
-            if ((state&RIGHT_TERM) == 0) {
-                dropLeftQueued();
-                state = setFlagsRelease(state, flag);
-                if ((state&LEFT_TERM) == 0) leftUpstream.cancel(); // if right failed, cancel
-                else                        state = terminateStage(state);
-            }
+            journal("rightFailedOrCancelled", state, flags, "flag=", flag, flags,
+                    "on", this);
+            if ((state&RELEASED_MASK) == 0) {
+                if (error != null && this.error == UNSET_ERROR) {
+                    if (ENABLED) journal("error=", error);
+                    this.error = error;
+                }
+                if ((state&RIGHT_TERM) == 0) {
+                    dropLeftQueued();
+                    state = setFlagsRelease(state, flag);
+                    if ((state&LEFT_TERM) == 0) leftUpstream.cancel(); // if right failed, cancel
+                    else                        state = terminateStage(state);
+                }
+            } // likely caused by cancel() from within doRelease()
         } finally {
             if ((state&LOCKED_MASK) != 0)
                 unlock(state);
@@ -814,8 +819,14 @@ public class BindingStage<B extends Batch<B>> extends Stateful implements Stage<
         }
 
         @Override public void onCancelled() {
-            if (type.isJoin()) rightFailedOrCancelled(RIGHT_CANCELLED, null);
-            else               onComplete();
+            if ((stateAcquire()&RELEASED_MASK) == 0) {
+                if (type.isJoin()) rightFailedOrCancelled(RIGHT_CANCELLED, null);
+                else               onComplete();
+            }
+            // doRelease will call cancel() to cause the right upstream tree to release itself
+            // in case no startNextBinding() happened before doRelease(). In such scenario the
+            // right upstream will be in CREATED state and rebindRelease() will not trigger
+            // a release, thus a cancel() is necessary to cause it to terminate, then release.
         }
 
         @Override public void onError(Throwable cause) {
