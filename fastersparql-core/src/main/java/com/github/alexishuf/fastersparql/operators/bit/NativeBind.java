@@ -99,6 +99,7 @@ public class NativeBind {
                             if (!q.isTerminated())
                                 q.complete(new FSException("Unexpected Terminated|CancelledException"));
                             it.remove();
+                            left.tryCancel();
                         } catch (Throwable t) {
                             String bStr = "batch with " + b.totalRows() + " rows";
                             try {
