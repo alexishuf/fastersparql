@@ -10,7 +10,7 @@ public class BItReadCancelledException extends BItIllegalStateException {
         StackTraceElement[] trace = when == null ? null : when.getStackTrace();
         var sb = new StringBuilder().append(it).append(" already close()d ");
         if (trace == null) return sb.toString();
-        for (int i = 1, last = Math.min(trace.length, 6); i <= last; i++) {
+        for (int i = 1, last = Math.min(trace.length, 6); i < last; i++) {
             StackTraceElement e = trace[i];
             String cls = e.getClassName();
             sb.append(cls.substring(cls.lastIndexOf('.')+1));
