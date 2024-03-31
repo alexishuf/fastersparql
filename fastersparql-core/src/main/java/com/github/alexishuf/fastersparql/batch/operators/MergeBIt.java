@@ -1,11 +1,13 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
@@ -22,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.BIt.State.ACTIVE;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
@@ -39,7 +40,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     protected final List<? extends BIt<B>> sources;
     private final Condition canOffer = newCondition();
-    private boolean offering;
+    private boolean offering, cancelRequested;
     private final Thread[] drainerThreads;
     @SuppressWarnings("unused") private int plainActiveSources;
 
@@ -92,6 +93,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     private void drainTask(int i) {
         if (MergeBIt.class.desiredAssertionStatus())
             Thread.currentThread().setName(label(StreamNodeDOT.Label.MINIMAL)+'-'+i);
+        Throwable cause = null;
         BatchProcessor<B> processor = null;
         try (var source = sources.get(i)) {
             processor = createProcessor(i);
@@ -102,17 +104,29 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 }
                 if (b.rows > 0) b = offer(b);
             }
-        } catch (BItReadCancelledException e) {
-            if (e.it() != sources.get(i)) // ignore if caused by cleanup() calling source.close()
-                complete(e);
+        } catch (BItReadCancelledException ignored) {
+            lock(); // required for the load/acquire barrier
+            boolean cancelRequested = this.cancelRequested;
+            unlock();
+            if (!cancelRequested)
+                cause = new FSCancelledException();
+            //else: single BItCancelledException.get() call when last upstream finishes
         } catch (TerminatedException|CancelledException e) {
-            if (notTerminated())
-                complete(new Exception("Unexpected "+e.getClass().getSimpleName()));
+            assert notTerminated() : "Terminated or CancelledException from non-terminated";
         } catch (Throwable t) {
-            complete(t);
+            cause = t;
         } finally {
-            if ((int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1 && state() == ACTIVE)
-                complete(null);
+            boolean last = (int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1;
+            if (cause != null || (last && notTerminated())) {
+                if (cause == null) {
+                    lock();
+                    try {
+                        if (cancelRequested)
+                            cause = BItCancelledException.get(this);
+                    } finally { unlock(); }
+                }
+                complete(cause);
+            }
             if (processor != null)
                 processor.release();
         }
@@ -169,14 +183,18 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     @Override public boolean tryCancel() {
-        boolean did = super.tryCancel();
-        if (did) {
-            for (BIt<B> s : sources) {
-                try {
-                    s.tryCancel();
-                } catch (Throwable t) {
-                    log.warn("Ignoring tryCancel() failure for {} by {}", s, this, t);
-                }
+        lock();
+        try {
+            if (isTerminated())
+                return false;
+            cancelRequested = true;
+        } finally { unlock(); }
+        boolean did = false;
+        for (BIt<B> s : sources) {
+            try {
+                did |= s.tryCancel();
+            } catch (Throwable t) {
+                log.warn("Ignoring tryCancel() failure for {} by {}", s, this, t);
             }
         }
         return did;

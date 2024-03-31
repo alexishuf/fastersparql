@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
 import com.github.alexishuf.fastersparql.batch.IntsBatch;
+import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.RepeatedTest;
@@ -15,6 +16,7 @@ import java.util.Objects;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
 
 public abstract class AbstractBItTest {
+    protected static final Vars X = Vars.of("x");
 
     public static class Scenario {
         protected final int size, minBatch, maxBatch;

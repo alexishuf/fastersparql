@@ -111,6 +111,14 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     }
 
+    protected void dropAllQueued() {
+        lock();
+        try {
+            ready   = batchType.recycle(ready);
+            filling = batchType.recycle(filling);
+        } finally { unlock(); }
+    }
+
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {
             if (cause instanceof BItCancelledException) { // drop all queued

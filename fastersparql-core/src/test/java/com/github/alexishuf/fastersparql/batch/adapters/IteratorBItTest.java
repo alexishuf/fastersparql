@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.batch.adapters;
 import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
-import com.github.alexishuf.fastersparql.model.Vars;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
@@ -25,8 +24,6 @@ import static com.github.alexishuf.fastersparql.batch.IntsBatch.intsBatch;
 import static org.junit.jupiter.api.Assertions.*;
 
 class IteratorBItTest extends AbstractBItTest {
-    private final static Vars X = Vars.of("x");
-
     @Override protected List<? extends Scenario> scenarios() { return baseScenarios(); }
 
     @Override protected void run(Scenario s) {

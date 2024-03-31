@@ -3,8 +3,7 @@ package com.github.alexishuf.fastersparql.batch;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class BItReadCancelledException extends BItIllegalStateException {
-    public final BItCancelledException when;
-    protected final BIt<?> it;
+    public final @Nullable BItCancelledException when;
 
     private static String buildMessage(BIt<?> it, @Nullable BItCancelledException when) {
         StackTraceElement[] trace = when == null ? null : when.getStackTrace();
@@ -23,8 +22,5 @@ public class BItReadCancelledException extends BItIllegalStateException {
     public BItReadCancelledException(BIt<?> it, @Nullable BItCancelledException when) {
         super(buildMessage(it, when));
         this.when = when;
-        this.it = it;
     }
-
-    public BIt<?> it() { return it; }
 }

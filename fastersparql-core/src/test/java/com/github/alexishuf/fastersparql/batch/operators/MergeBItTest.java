@@ -39,7 +39,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MergeBItTest extends AbstractMergeBItTest {
     private static final Logger log = LoggerFactory.getLogger(MergeBItTest.class);
-    private static final Vars X = Vars.of("x");
 
     @Override protected void run(Scenario scenario) {
         MergeScenario s = (MergeScenario) scenario;

@@ -74,8 +74,12 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             fillingStart = Timestamp.ORIGIN;
             if (b.rows == 0) {
                 batchType.recycle(b);
-                if (pendingError != null) throwPending();
-                else onTermination(null);
+                if (pendingError != null) {
+                    throwPending();
+                } else {
+                    onTermination(null);
+                    checkError(); // raises BitReadCancelledException
+                }
                 return null;
             }
             onNextBatch(b);
