@@ -140,7 +140,7 @@ public class Measure implements Callable<Void>{
             mkdir(msrOp.asyncProfiler);
             asyncProfiler = AsyncProfiler.getInstance();
             asyncProfilerDest = Path.of(msrOp.asyncProfiler).toAbsolutePath();
-            asyncProfilerCmd = "resume,event=cpu,jfr,file="+msrOp.asyncProfiler;
+            asyncProfilerCmd = "resume,event=cpu,alloc,jfr,file="+msrOp.asyncProfiler;
             log.info("Will dump a JFR by async-profiler to {} at exit{}",
                      asyncProfilerDest, msrOp.profWarmup ? " (including warmup)" : "");
         }
