@@ -436,11 +436,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             parser.reset(parent);
 
             // recycle any leftover bindings
+            doReleaseReceivedBindings();
+        }
+
+        /** Release the queue of bindings received from upstream (not from our server) */
+        private void doReleaseReceivedBindings() {
             while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             B batch = receivedBindings;
             receivedBindings = null;
             BINDINGS_LOCK.setRelease(this, 0);
-            bt.recycle(receivedBindings);
+            bt.recycle(batch);
         }
 
         @SuppressWarnings("unused") private void doRetry() {
@@ -474,6 +479,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     if ((st & ST_RELEASED) == 0) {
                         st |= ST_RELEASED;
                         try {
+                            doReleaseReceivedBindings();
                             if (serializer != null)
                                 serializer.recycle();
                             bbView.recycle();
