@@ -143,10 +143,16 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
                     try {
                         b = last.offer(b);
                     } catch (BatchQueue.QueueStateException e) {
+                        b = null; // offer() recycles b
                         handleTerminatedDuringOffer(e, last);
                     }
                 }
             }
+            // this is not a leak. If nextBatch() throws, it SHOULD recycle b if it has not
+            // already passed ownership or recycled it. Therefore, this stack frame always
+            // looses ownership of b upon entry on upstream.nextBatch() and we must not recycle b
+            // in case of an exception.
+            Batch.recycle(b);
         } catch (Throwable e) {
             if (e instanceof BItReadFailedException rfe) {
                 cause = rfe.getCause();
@@ -167,7 +173,6 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
                     qCause = cause;
                 q.complete(qCause);
             }
-            Batch.recycle(b);
         }
     }
 
