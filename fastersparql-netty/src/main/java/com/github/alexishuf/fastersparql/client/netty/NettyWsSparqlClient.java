@@ -401,6 +401,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private @Nullable Throwable bindingsError;
         private ChannelRecycler channelRecycler = ChannelRecycler.CLOSE;
         private final Vars usefulBindingsVars;
+        private final Vars bindingsVars, usefulBindingsVars;
         private @Nullable String info;
         private final WsStreamNode<B> parent;
         private int retries;
@@ -414,10 +415,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.bt = parser.batchType();
             if (bindQuery == null) {
                 serializer = null;
+                bindingsVars = Vars.EMPTY;
                 usefulBindingsVars = Vars.EMPTY;
                 bindType = null;
             } else {
-                usefulBindingsVars = parent.vars().intersection(bindQuery.bindingsVars());
+                bindingsVars = bindQuery.bindingsVars();
+                usefulBindingsVars = parent.vars().intersection(bindingsVars);
                 serializer = WsSerializer.create(NORMAL_HINT);
                 bindType = bindQuery.type;
             }
@@ -601,7 +604,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             st = (st&~ST_SEND_QUERY) | ST_QUERY_SENT;
             if (bindType != null) {
                 parent.beforeSendBindQuery();
-                serializer.init(parent.vars(), usefulBindingsVars, false);
+                serializer.init(bindingsVars, usefulBindingsVars, false);
                 serializer.serializeHeader(bbSink.touch());
                 ctx.write(queryFrame);
                 ctx.write(new TextWebSocketFrame(bbSink.take())); // headers
