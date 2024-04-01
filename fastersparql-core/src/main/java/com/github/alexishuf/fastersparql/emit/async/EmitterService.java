@@ -340,10 +340,8 @@ public class EmitterService {
             // scan for a non-spinning non-parked worker that has no scheduled tasks
             while ((i=(short)((i+1)&mask)) != id) {
                 mdb = (short)(i<<MD_BITS);
-                if (md[mdb+MD_SIZE] == 0 && (int)MD.getAcquire(md, mdb+MD_SPINNING) == 0
-                                         && md[mdb+MD_SPINNING] == 0) {
+                if ((int)MD.getAcquire(md, mdb+MD_SPINNING) == 0 && md[mdb+MD_SIZE] == 0)
                     return; // found a stealer, no need to unpark()
-                }
             }
             // unpark at most one worker, staring from most likely stealer
             while ((i=(short)((i-1)&mask)) != id) {
