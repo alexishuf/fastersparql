@@ -477,6 +477,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             try {
                 if (ctx == null) {
                     if ((st & ST_RELEASED) == 0) {
+                        journal("doRelease", this, ": really release");
                         st |= ST_RELEASED;
                         try {
                             doReleaseReceivedBindings();
@@ -499,9 +500,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                         st &= ~ST_SEND_QUERY;
                         var recycler = channelRecycler;
                         channelRecycler = ChannelRecycler.NOP;
+                        journal("doRelease", this, ": recycle channel");
                         recycler.recycle(ctx.channel());
                     } else if ((st&(ST_QUERY_SENT|ST_CANCEL_SENT)) == ST_QUERY_SENT) {
                         st |= ST_SEND_CANCEL;
+                        journal("doRelease", this, ": send cancel");
                         doSendCancel();
                     }
                 } else {
@@ -535,7 +538,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             AC_SEND_BATCH         = s.add("doSendBatch",         false);
             AC_SEND_BINDINGS_TERM = s.add("doSendBindingsTerm",  true);
             AC_SEND_REQ_ROWS      = s.add("doSendReqRows",       false);
-            AC_RELEASE            = s.add("doRelease",           true);
+            AC_RELEASE            = s.add("doRelease",           false);
             AC_TOUCH_SINK         = s.setLast("doTouchSink");
             BS_RUNNABLE_SPEC = s;
         }
