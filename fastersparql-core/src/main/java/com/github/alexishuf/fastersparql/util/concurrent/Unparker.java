@@ -6,13 +6,15 @@ import org.jctools.queues.atomic.MpmcAtomicArrayQueue;
 import java.util.concurrent.locks.LockSupport;
 
 public class Unparker {
-    private static final MpmcAtomicArrayQueue<Thread> unparkQueue = new MpmcAtomicArrayQueue<>(16);
-    private static final Thread thread = new Thread(new UnparkerTask(), "Unparker");
+    private static final int QUEUE_CAPACITY = 32;
+    private static final int TICK_UNPARK_LIMIT = QUEUE_CAPACITY>>1;
+    private static final MpmcAtomicArrayQueue<Thread> unparkQueue = new MpmcAtomicArrayQueue<>(QUEUE_CAPACITY);
+    private static final Thread unparkerThread = new Thread(new UnparkerTask(), "Unparker");
     static {
-        thread.setDaemon(true);
-        thread.setPriority(Thread.NORM_PRIORITY-1);
-        thread.start();
-        Timestamp.ON_TICK = new UnparkUnparker();
+        unparkerThread.setDaemon(true);
+        unparkerThread.setPriority(Thread.NORM_PRIORITY-1);
+        unparkerThread.start();
+        Timestamp.ON_TICK = new DrainOnTick();
     }
 
     private static final Unpark UNPARK = new Unpark();
@@ -24,21 +26,29 @@ public class Unparker {
         @SuppressWarnings("InfiniteLoopStatement") @Override public void run() {
             while (true) {
                 unparkQueue.drain(UNPARK);
-                LockSupport.parkNanos(61_000);
+                LockSupport.park();
             }
         }
     }
-    private static final class UnparkUnparker implements Runnable {
+    private static final class DrainOnTick implements Runnable {
+        private final Thread[] tmp = new Thread[QUEUE_CAPACITY+(128/4)];
         @Override public void run() {
-            if (!unparkQueue.isEmpty())
-                LockSupport.unpark(thread);
+            int n = 0;
+            Thread last = null;
+            for (Thread t; n < TICK_UNPARK_LIMIT && (t=unparkQueue.relaxedPoll()) != null; ) {
+                if (t != last)
+                    tmp[n++] = last = t;
+            }
+            if (n == TICK_UNPARK_LIMIT)
+                LockSupport.unpark(unparkerThread);
+            for (int i = 0; i < n; i++)
+                LockSupport.unpark(tmp[i]);
         }
-        @Override public String toString() {return "UnparkUnparker";}
+        @Override public String toString() {return "DrainUnparkQueue";}
     }
 
     public static void unpark(Thread thread) {
         if (!unparkQueue.offer(thread))
             LockSupport.unpark(thread);
-
     }
 }
