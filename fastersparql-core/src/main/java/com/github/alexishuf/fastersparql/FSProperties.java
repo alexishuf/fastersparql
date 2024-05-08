@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolEvent;
 import com.github.alexishuf.fastersparql.util.owned.*;
 import com.github.alexishuf.fastersparql.util.owned.OwnershipEvent.RecycledEvent;
 import com.github.alexishuf.fastersparql.util.owned.OwnershipEvent.ReleasedOwnershipEvent;
@@ -49,6 +50,7 @@ public class FSProperties {
     public static final String OWNED_PRINT_LEAKS         = "fastersparql.owned.print-leaks";
     public static final String OWNED_JFR_LEAKS           = "fastersparql.owned.jfr";
     public static final String POOLS_STATS               = "fastersparql.pools.stats";
+    public static final String POOLS_TRANS_EVENTS        = "fastersparql.pools.trans";
     public static final String BATCH_JFR_ENABLED         = "fastersparql.batch.jfr";
     public static final String BATCH_MIN_SIZE            = "fastersparql.batch.min-size";
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
@@ -104,6 +106,7 @@ public class FSProperties {
     public static final boolean DEF_OWNED_DETECT_LEAKS        = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_OWNED_PRINT_LEAKS         = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_POOL_STATS                = FSProperties.class.desiredAssertionStatus();
+    public static final boolean DEF_POOL_TRANS_EVENTS         = false;
 
     /* --- --- --- cached values --- --- --- */
     private static int CACHE_CLIENT_MAX_QUERY_GET      = -1;
@@ -140,6 +143,7 @@ public class FSProperties {
     private static Boolean CACHE_OWNED_PRINT_LEAKS      = null;
     private static Boolean CACHE_OWNED_JFR_LEAKS        = null;
     private static Boolean CACHE_POOL_STATS             = null;
+    private static Boolean CACHE_POOL_TRANS_EVENTS      = null;
     private static Boolean CACHE_BATCH_JFR_ENABLED      = null;
     private static Batch.Validation CACHE_BATCH_SELF_VALIDATE   = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
@@ -256,6 +260,7 @@ public class FSProperties {
         CACHE_OWNED_DETECT_LEAKS        = null;
         CACHE_OWNED_PRINT_LEAKS         = null;
         CACHE_POOL_STATS                = null;
+        CACHE_POOL_TRANS_EVENTS         = null;
         CACHE_BATCH_SELF_VALIDATE       = null;
         CACHE_OP_JOIN_REORDER           = null;
         CACHE_OP_JOIN_REORDER_BIND      = null;
@@ -619,6 +624,17 @@ public class FSProperties {
         Boolean v = CACHE_POOL_STATS;
         if (v == null)
             CACHE_POOL_STATS = v = readBoolean(POOLS_STATS, DEF_POOL_STATS);
+        return v;
+    }
+
+    /**
+     * Whether {@link PoolEvent.Get} and {@link PoolEvent.Offer} JFR events should be
+     * generated. The default is {@code false}, since {@code create/poll/offer} are hot.
+     */
+    public static boolean poolTransactionEvents() {
+        Boolean v = CACHE_POOL_TRANS_EVENTS;
+        if (v == null)
+            CACHE_POOL_TRANS_EVENTS = v = readBoolean(POOLS_TRANS_EVENTS, DEF_POOL_TRANS_EVENTS);
         return v;
     }
 

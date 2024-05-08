@@ -81,7 +81,7 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
 
     /** Equivalent to {@link #poll(int)}. */
     public @Nullable T poll() {
-        return getFromStack(md, mdb((int)currentThread().threadId()), MD_SHARED, pool);
+        return poll((int)currentThread().threadId());
     }
 
     /**
@@ -92,6 +92,8 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
      * @return {@code null} or a previously pooled object
      */
     public @Nullable T poll(int threadId) {
+        if (PoolEvent.Get.ENABLED)
+            new PoolEvent.Get().fillAndCommit(this, 1);
         return getFromStack(md, mdb(threadId), MD_SHARED, pool);
     }
 
@@ -104,6 +106,8 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
      * @return a pooled or new object.
      */
     public T create(int threadId) {
+        if (PoolEvent.Get.ENABLED)
+            new PoolEvent.Get().fillAndCommit(this, 1);
         T o = getFromStack(md, mdb(threadId), MD_SHARED, pool);
         if (o == null) {
             PoolEvent.EmptyPool.record(this, 1);
@@ -134,6 +138,8 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
      *         or {@code null} if {@code o} was taken by the pool.
      */
     public @Nullable T offer(int threadId, T o) {
+        if (PoolEvent.Offer.ENABLED)
+            new PoolEvent.Offer().fillAndCommit(this, 1);
         if (offerToStack(md, mdb(threadId), MD_SHARED, pool, o) == null)
             return null;
         PoolEvent.OfferToLocals.record(this, 1);
@@ -150,6 +156,8 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
      *         full or {@code null} if {@code o} was taken into the pool.
      */
     public @Nullable T offerToShared(T o) {
+        if (PoolEvent.Offer.ENABLED)
+            new PoolEvent.Offer().fillAndCommit(this, 1);
         if (offerToStack(md, MD_SHARED, pool, o) == null)
             return null;
         int surrogate = (int)(Timestamp.nanoTime() >> 16);

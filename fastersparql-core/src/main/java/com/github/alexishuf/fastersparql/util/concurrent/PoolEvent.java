@@ -28,6 +28,32 @@ public abstract class PoolEvent extends Event {
     }
 
     @Enabled
+    @Label("Get an item from the pool")
+    @Name("com.github.alexishuf.fastersparql.util.concurrent.Get")
+    @Description("a call to poll*() or create*()")
+    @StackTrace(false)
+    public static class Get extends PoolEvent {
+        public static boolean ENABLED = FSProperties.poolTransactionEvents();
+        public static void record(StatsPool pool, int objLen) {
+            if (ENABLED)
+                new Get().fillAndCommit(pool, objLen);
+        }
+    }
+
+    @Enabled()
+    @Label("Offer an item back into the pool")
+    @Name("com.github.alexishuf.fastersparql.util.concurrent.Offer")
+    @Description("a call to offer*()")
+    @StackTrace(false)
+    public static class Offer extends PoolEvent {
+        public static boolean ENABLED = FSProperties.poolTransactionEvents();
+        public static void record(StatsPool pool, int objLen) {
+            if (ENABLED)
+                new Offer().fillAndCommit(pool, objLen);
+        }
+    }
+
+    @Enabled
     @Label("Offer to local stacks")
     @Name("com.github.alexishuf.fastersparql.util.concurrent.OfferToLocals")
     @Description("This event happens when both the thread-affinity and the shared stacks " +

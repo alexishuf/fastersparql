@@ -246,6 +246,8 @@ public class LevelAlloc<T> implements LeakyPool, StatsPool, JournalNamed {
      *         will be {@code 1<<level} or {@code 0} if {@code level==32}.
      */
     public final @Nullable T pollFromLevel(int threadId, @NonNegative int level) {
+        if (PoolEvent.Get.ENABLED)
+            PoolEvent.Get.record(this, level2len(level));
         if (level == 32 && zero != null)
             return zero;
         int lBase = level<<MD_LEVEL_SHIFT;
@@ -287,6 +289,8 @@ public class LevelAlloc<T> implements LeakyPool, StatsPool, JournalNamed {
      */
     public final T createFromLevel(int threadId, @NonNegative int level) {
         int lBase = level<<MD_LEVEL_SHIFT;
+        if (PoolEvent.Get.ENABLED)
+            PoolEvent.Get.record(this, level2len(level));
         T o = getFromStack(md, mdb(threadId)+lBase, MD_SHARED_BASE+lBase, pool);
         if (o == null) {
             int len = level2len(level);
@@ -346,6 +350,8 @@ public class LevelAlloc<T> implements LeakyPool, StatsPool, JournalNamed {
      * @param level the length level corresponding to {@code o} length.
      */
     public final @Nullable T offerToLevel(int threadId, T o, int level) {
+        if (PoolEvent.Offer.ENABLED)
+            PoolEvent.Offer.record(this, level2len(level));
         if (o == null || (pooledLevels&(1<<level)) == 0)
             return o;
         int lb = level<<MD_LEVEL_SHIFT;
