@@ -7,7 +7,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 
-public sealed class TermView extends Term permits PooledTermView {
+public sealed class TermView extends Term permits PooledTermView0 {
     public static final int BYTES = Term.BYTES + 2*4;
     protected final SegmentRopeView local;
 

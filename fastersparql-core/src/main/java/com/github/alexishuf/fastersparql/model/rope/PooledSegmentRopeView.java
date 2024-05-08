@@ -10,8 +10,8 @@ import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
-public class PooledSegmentRopeView extends SegmentRopeView implements AutoCloseable {
-    private static final int BYTES = SegmentRopeView.BYTES + 2*4;
+public class PooledSegmentRopeView extends PooledSegmentRopeView0 implements AutoCloseable {
+    private static final int BYTES = SegmentRopeView.BYTES + 2*4 + 64;
     private static final boolean DEBUG = PooledSegmentRopeView.class.desiredAssertionStatus();
     private static final Supplier<PooledSegmentRopeView> FAC = new Supplier<>() {
         @Override public PooledSegmentRopeView get() {return new PooledSegmentRopeView();}
@@ -22,7 +22,8 @@ public class PooledSegmentRopeView extends SegmentRopeView implements AutoClosea
             Alloc.THREADS*64, FAC, BYTES);
     static { Primer.INSTANCE.sched(ALLOC::prime); }
 
-    private boolean pooled = true;
+    @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
+    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
 
     private PooledSegmentRopeView() { }
 
@@ -137,4 +138,8 @@ public class PooledSegmentRopeView extends SegmentRopeView implements AutoClosea
             throw new IllegalStateException("duplicate/concurrent close()");
         ALLOC.offer(this);
     }
+}
+
+abstract class PooledSegmentRopeView0 extends SegmentRopeView {
+    protected boolean pooled;
 }

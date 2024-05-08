@@ -10,8 +10,8 @@ import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 
-public final class PooledTermView extends TermView implements AutoCloseable {
-    private static final int BYTES = TermView.BYTES + 2*4;
+public final class PooledTermView extends PooledTermView0 implements AutoCloseable {
+    private static final int BYTES = TermView.BYTES + 2*4 + 64;
     private static final boolean DEBUG = PooledTermView.class.desiredAssertionStatus();
     private static final SegmentRope EMPTY_STRING_LOCAL = EMPTY_STRING.local();
 
@@ -32,7 +32,8 @@ public final class PooledTermView extends TermView implements AutoCloseable {
         Primer.INSTANCE.sched(ALLOC::prime);
     }
 
-    private boolean pooled;
+    @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
+    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
 
     public static PooledTermView ofEmptyString() {
         PooledTermView view = ALLOC.create();
@@ -66,4 +67,7 @@ public final class PooledTermView extends TermView implements AutoCloseable {
             throw new IllegalStateException("duplicate/concurrent close");
         ALLOC.offer(this);
     }
+}
+abstract sealed class PooledTermView0 extends TermView permits PooledTermView {
+    protected boolean pooled;
 }

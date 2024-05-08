@@ -25,7 +25,7 @@ import static jdk.incubator.vector.ByteVector.fromArray;
 
 @SuppressWarnings({"UnusedReturnValue", "resource"})
 public sealed class MutableRope extends SegmentRope
-        implements ByteSink<MutableRope, FinalSegmentRope> permits PooledMutableRope {
+        implements ByteSink<MutableRope, FinalSegmentRope> permits PooledMutableRope0 {
     public static final int BYTES = 16 + 2*4 + 8+2*4 + 2*4;
     private static final int READLINE_CHUNK = 128;
 

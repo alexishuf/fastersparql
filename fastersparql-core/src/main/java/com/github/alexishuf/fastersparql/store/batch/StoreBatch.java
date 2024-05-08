@@ -36,6 +36,8 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     protected static final class Concrete extends StoreBatch implements Orphan<StoreBatch> {
+        @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
+        private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
         public Concrete(long[] ids, short cols) {super(ids, cols);}
         @Override public StoreBatch takeOwnership(Object o) {return takeOwnership0(o);}
     }

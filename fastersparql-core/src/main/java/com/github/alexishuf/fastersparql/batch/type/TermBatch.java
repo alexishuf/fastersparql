@@ -61,6 +61,8 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
     }
 
     protected final static class Concrete extends TermBatch implements Orphan<TermBatch> {
+        @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
+        private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
         public Concrete(FinalTerm[] arr, int rows, int cols) {
             super(arr, rows, cols);
         }

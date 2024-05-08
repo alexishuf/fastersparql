@@ -152,7 +152,7 @@ public class Splitter extends AbstractOwned<Splitter> {
                 wrapper.wrap(t.snd, t.sndU8, t.sndOff + begin - fstLen, len);
                 return wrapper;
             } else {
-                TwoSegmentRope tsw = wrapper == localView ? tsLocalView : tsSharedView;
+                var tsw = wrapper == localView ? tsLocalView : tsSharedView;
                 boolean created = tsw == null;
                 if (created)
                     tsw = new TwoSegmentRope();

@@ -43,6 +43,8 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     protected static final class Concrete extends HdtBatch implements Orphan<HdtBatch> {
+        @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
+        private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
         public Concrete(long[] ids, short cols) {super(ids, cols);}
         @Override public HdtBatch takeOwnership(Object o) {return takeOwnership0(o);}
     }
