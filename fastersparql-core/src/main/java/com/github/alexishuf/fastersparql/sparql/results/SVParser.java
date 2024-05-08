@@ -57,6 +57,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         termParser = termParser.recycle(this);
         if (partialLine != null)
             partialLine.close();
+        if (fedPartialLine != null)
+            fedPartialLine.close();
     }
 
     @Override protected @Nullable Throwable doFeedEnd() {
